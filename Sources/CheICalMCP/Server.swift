@@ -288,6 +288,11 @@ class CheICalMCPServer {
                             ]),
                             "required": .array([.string("frequency")])
                         ]),
+                        "alarms_minutes_offsets": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("integer")]),
+                            "description": .string("List of minutes before the event to trigger reminders. Replaces all existing alarms. Use empty array [] to remove all alarms.")
+                        ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
                             "description": .string("Set to true to remove recurrence rule from event")
@@ -1104,6 +1109,11 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let isAllDay = arguments["all_day"]?.boolValue
 
+        var alarmOffsets: [Int]?
+        if let alarmsArray = arguments["alarms_minutes_offsets"]?.arrayValue {
+            alarmOffsets = alarmsArray.compactMap { $0.intValue }
+        }
+
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let clearRecurrence = arguments["clear_recurrence"]?.boolValue ?? false
         let structuredLocation = parseStructuredLocation(from: arguments)
@@ -1119,6 +1129,7 @@ class CheICalMCPServer {
             calendarName: calendarName,
             calendarSource: calendarSource,
             isAllDay: isAllDay,
+            alarmOffsets: alarmOffsets,
             recurrenceRule: recurrenceRule,
             clearRecurrence: clearRecurrence,
             structuredLocation: structuredLocation
