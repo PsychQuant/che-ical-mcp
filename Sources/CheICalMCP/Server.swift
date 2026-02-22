@@ -1,3 +1,4 @@
+import CoreLocation
 import EventKit
 import Foundation
 import MCP
@@ -918,13 +919,16 @@ class CheICalMCPServer {
         let entityType: EKEntityType = typeStr == "reminder" ? .reminder : .event
         let color = arguments["color"]?.stringValue
 
-        let calendar = try await eventKitManager.createCalendar(
+        let result = try await eventKitManager.createCalendar(
             title: title,
             entityType: entityType,
             color: color
         )
 
-        return "Created calendar: \(calendar.title) (ID: \(calendar.calendarIdentifier))"
+        if result.isDuplicate {
+            return "Skipped (duplicate): calendar \"\(result.calendar.title)\" already exists (ID: \(result.calendar.calendarIdentifier))"
+        }
+        return "Created calendar: \(result.calendar.title) (ID: \(result.calendar.calendarIdentifier))"
     }
 
     private func handleDeleteCalendar(arguments: [String: Value]) async throws -> String {
@@ -1064,7 +1068,7 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let structuredLocation = parseStructuredLocation(from: arguments)
 
-        let event = try await eventKitManager.createEvent(
+        let result = try await eventKitManager.createEvent(
             title: title,
             startDate: startDate,
             endDate: endDate,
@@ -1079,7 +1083,10 @@ class CheICalMCPServer {
             structuredLocation: structuredLocation
         )
 
-        return "Created event: \(event.title ?? title) (ID: \(event.eventIdentifier ?? "unknown"))"
+        if result.isDuplicate {
+            return "Skipped (duplicate): \(result.event.title ?? title) already exists (ID: \(result.event.eventIdentifier ?? "unknown"))"
+        }
+        return "Created event: \(result.event.title ?? title) (ID: \(result.event.eventIdentifier ?? "unknown"))"
     }
 
     private func handleUpdateEvent(arguments: [String: Value]) async throws -> String {
@@ -1277,7 +1284,7 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let locationTrigger = try parseLocationTrigger(from: arguments)
 
-        let reminder = try await eventKitManager.createReminder(
+        let result = try await eventKitManager.createReminder(
             title: title,
             notes: notes,
             dueDate: dueDate,
@@ -1288,7 +1295,10 @@ class CheICalMCPServer {
             locationTrigger: locationTrigger
         )
 
-        return "Created reminder: \(reminder.title ?? title) (ID: \(reminder.calendarItemIdentifier))"
+        if result.isDuplicate {
+            return "Skipped (duplicate): \(result.reminder.title ?? title) already exists (ID: \(result.reminder.calendarItemIdentifier))"
+        }
+        return "Created reminder: \(result.reminder.title ?? title) (ID: \(result.reminder.calendarItemIdentifier))"
     }
 
     private func handleUpdateReminder(arguments: [String: Value]) async throws -> String {
@@ -1463,7 +1473,7 @@ class CheICalMCPServer {
 
             do {
                 let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
-                let reminder = try await eventKitManager.createReminder(
+                let result = try await eventKitManager.createReminder(
                     title: title,
                     notes: reminderDict["notes"]?.stringValue,
                     dueDate: batchDueDate,
@@ -1471,12 +1481,16 @@ class CheICalMCPServer {
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
                 )
-                results.append([
+                var entry: [String: Any] = [
                     "index": index,
                     "success": true,
-                    "reminder_id": reminder.calendarItemIdentifier,
-                    "title": reminder.title ?? title
-                ])
+                    "reminder_id": result.reminder.calendarItemIdentifier,
+                    "title": result.reminder.title ?? title
+                ]
+                if result.isDuplicate {
+                    entry["skipped"] = true
+                }
+                results.append(entry)
             } catch {
                 results.append([
                     "index": index,
@@ -1486,13 +1500,18 @@ class CheICalMCPServer {
             }
         }
 
-        let successCount = results.filter { ($0["success"] as? Bool) == true }.count
-        let response: [String: Any] = [
+        let successCount = results.filter { ($0["success"] as? Bool) == true && ($0["skipped"] as? Bool) != true }.count
+        let skippedCount = results.filter { ($0["skipped"] as? Bool) == true }.count
+        let failedCount = remindersArray.count - successCount - skippedCount
+        var response: [String: Any] = [
             "total": remindersArray.count,
             "succeeded": successCount,
-            "failed": remindersArray.count - successCount,
+            "failed": failedCount,
             "results": results
         ]
+        if skippedCount > 0 {
+            response["skipped"] = skippedCount
+        }
         return formatJSON(response)
     }
 
@@ -1707,7 +1726,7 @@ class CheICalMCPServer {
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
 
-                let event = try await eventKitManager.createEvent(
+                let result = try await eventKitManager.createEvent(
                     title: title,
                     startDate: startDate,
                     endDate: endDate,
@@ -1721,12 +1740,16 @@ class CheICalMCPServer {
                     recurrenceRule: batchRecurrence,
                     structuredLocation: batchStructuredLocation
                 )
-                results.append([
+                var entry: [String: Any] = [
                     "index": index,
                     "success": true,
-                    "event_id": event.eventIdentifier ?? "",
-                    "title": event.title ?? title
-                ])
+                    "event_id": result.event.eventIdentifier ?? "",
+                    "title": result.event.title ?? title
+                ]
+                if result.isDuplicate {
+                    entry["skipped"] = true
+                }
+                results.append(entry)
             } catch {
                 results.append([
                     "index": index,
@@ -1736,13 +1759,18 @@ class CheICalMCPServer {
             }
         }
 
-        let successCount = results.filter { ($0["success"] as? Bool) == true }.count
-        let response: [String: Any] = [
+        let successCount = results.filter { ($0["success"] as? Bool) == true && ($0["skipped"] as? Bool) != true }.count
+        let skippedCount = results.filter { ($0["skipped"] as? Bool) == true }.count
+        let failedCount = eventsArray.count - successCount - skippedCount
+        var response: [String: Any] = [
             "total": eventsArray.count,
             "succeeded": successCount,
-            "failed": eventsArray.count - successCount,
+            "failed": failedCount,
             "results": results
         ]
+        if skippedCount > 0 {
+            response["skipped"] = skippedCount
+        }
         return formatJSON(response)
     }
 

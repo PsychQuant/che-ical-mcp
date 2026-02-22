@@ -1,4 +1,2 @@
-# Binary files - use Git LFS
-*.mcpb filter=lfs diff=lfs merge=lfs -text
-mcpb/server/* filter=lfs diff=lfs merge=lfs -text
-*.png filter=lfs diff=lfs merge=lfs -text binary
+# No LFS needed — build artifacts are distributed via GitHub Release
+# Only use LFS for non-rebuildable files > 50MB (currently none)

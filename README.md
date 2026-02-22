@@ -361,7 +361,7 @@ If ambiguity is detected, the error message will list all available sources.
 
 ## Technical Details
 
-- **Current Version**: v1.1.0
+- **Current Version**: v1.2.0
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.10.2
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -374,6 +374,7 @@ If ambiguity is detected, the error message will list all available sources.
 
 | Version | Changes |
 |---------|---------|
+| v1.2.0 | **Idempotent writes**: `create_event`, `create_events_batch`, `create_reminder`, `create_reminders_batch`, `create_calendar` now check-before-write to prevent duplicates on retry; responses include `skipped` count |
 | v1.1.0 | **Recurrence + Location**: recurring events/reminders (daily/weekly/monthly/yearly), structured locations with coordinates, location-based reminder triggers (geofence enter/leave), rich recurrence output |
 | v1.0.0 | **DX improvements**: flexible date parsing (4 formats), fuzzy calendar matching, `list_events`/`list_reminders` filter/sort/limit, `delete_events_batch` dry-run + date range mode |
 | v0.9.0 | **4 new tools** (20→24): `update_calendar`, `search_reminders`, `create_reminders_batch`, `delete_reminders_batch` |

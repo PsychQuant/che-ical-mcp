@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-22
+
+### Added
+- **Idempotent writes**: All create operations (`create_event`, `create_events_batch`, `create_reminder`, `create_reminders_batch`, `create_calendar`) now perform check-before-write to prevent duplicate data when AI agents retry failed requests
+- **Duplicate detection at lowest layer**: Idempotency checks implemented in `EventKitManager` (data access layer), protecting all callers automatically
+- **Idempotency keys**: Events use `title + startDate + calendar`, reminders use `title + dueDate + list`, calendars use `title + entityType`
+- **Skipped status in responses**: Batch operations now report `skipped` count and per-item `skipped: true` for duplicates
+- **`find_duplicate_events` handler**: Exposed duplicate event detection as a standalone tool
+
+### Summary
+No new tools (24 total). Major reliability improvement: all write operations are now idempotent, preventing duplicate data creation when agents retry due to network errors or response loss.
+
+---
+
 ## [1.1.0] - 2026-02-06
 
 ### Added

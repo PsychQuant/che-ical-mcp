@@ -361,7 +361,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 ## 技術細節
 
-- **目前版本**：v1.0.0
+- **目前版本**：v1.2.0
 - **框架**：[MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.10.2
 - **行事曆 API**：EventKit（原生 macOS 框架）
 - **傳輸**：stdio
@@ -374,6 +374,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 | 版本 | 變更 |
 |------|------|
+| v1.2.0 | **冪等寫入**：`create_event`、`create_events_batch`、`create_reminder`、`create_reminders_batch`、`create_calendar` 寫入前自動查重，防止 Agent 重試產生重複資料；回傳包含 `skipped` 計數 |
+| v1.1.0 | **循環規則 + 位置**：循環事件/提醒（每日/每週/每月/每年）、含座標結構化位置、基於地理圍欄的位置提醒觸發、豐富的循環規則輸出 |
 | v1.0.0 | **開發體驗改進**：彈性日期解析（4 種格式）、模糊日曆匹配、`list_events`/`list_reminders` 篩選/排序/限制、`delete_events_batch` 預覽模式 + 日期範圍模式 |
 | v0.9.0 | **4 個新工具**（20→24）：`update_calendar`、`search_reminders`、`create_reminders_batch`、`delete_reminders_batch` |
 | v0.8.2 | **國際化週支援**：`list_events_quick` 新增 `week_starts_on` 參數（monday/sunday/saturday/system） |

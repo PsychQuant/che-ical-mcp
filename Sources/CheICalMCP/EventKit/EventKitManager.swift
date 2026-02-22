@@ -179,11 +179,22 @@ actor EventKitManager {
         }
     }
 
-    func createCalendar(title: String, entityType: EKEntityType, color: String? = nil) async throws -> EKCalendar {
+    struct CreateCalendarResult {
+        let calendar: EKCalendar
+        let isDuplicate: Bool
+    }
+
+    func createCalendar(title: String, entityType: EKEntityType, color: String? = nil) async throws -> CreateCalendarResult {
         if entityType == .event {
             try await requestCalendarAccess()
         } else {
             try await requestReminderAccess()
+        }
+
+        // Idempotency: check for existing calendar with same title and type
+        let existing = eventStore.calendars(for: entityType).first { $0.title == title }
+        if let existing = existing {
+            return CreateCalendarResult(calendar: existing, isDuplicate: true)
         }
 
         let calendar = EKCalendar(for: entityType, eventStore: eventStore)
@@ -203,7 +214,7 @@ actor EventKitManager {
 
         try eventStore.saveCalendar(calendar, commit: true)
         markNeedsRefresh()
-        return calendar
+        return CreateCalendarResult(calendar: calendar, isDuplicate: false)
     }
 
     func updateCalendar(
@@ -243,6 +254,30 @@ actor EventKitManager {
 
     // MARK: - Events
 
+    struct CreateEventResult {
+        let event: EKEvent
+        let isDuplicate: Bool
+    }
+
+    /// Find an existing event that matches by title and start date on the same calendar.
+    /// Used for idempotency checks to prevent duplicate event creation.
+    private func findDuplicateEvent(
+        title: String,
+        startDate: Date,
+        calendar: EKCalendar
+    ) -> EKEvent? {
+        // Search within a 1-minute window around the start date
+        let searchStart = startDate.addingTimeInterval(-30)
+        let searchEnd = startDate.addingTimeInterval(30)
+        let predicate = eventStore.predicateForEvents(
+            withStart: searchStart,
+            end: searchEnd,
+            calendars: [calendar]
+        )
+        let events = eventStore.events(matching: predicate)
+        return events.first { $0.title == title }
+    }
+
     func listEvents(
         startDate: Date,
         endDate: Date,
@@ -274,8 +309,19 @@ actor EventKitManager {
         alarmOffsets: [Int]? = nil,
         recurrenceRule: RecurrenceRuleInput? = nil,
         structuredLocation: StructuredLocationInput? = nil
-    ) async throws -> EKEvent {
+    ) async throws -> CreateEventResult {
         try await requestCalendarAccess()
+
+        // Resolve calendar first (required for both duplicate check and creation)
+        guard let name = calendarName else {
+            throw EventKitError.calendarNameRequired(forType: "events")
+        }
+        let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
+
+        // Idempotency: check for existing event with same title + start time on same calendar
+        if let existing = findDuplicateEvent(title: title, startDate: startDate, calendar: calendar) {
+            return CreateEventResult(event: existing, isDuplicate: true)
+        }
 
         let event = EKEvent(eventStore: eventStore)
         event.title = title
@@ -284,16 +330,11 @@ actor EventKitManager {
         event.notes = notes
         event.location = location
         event.isAllDay = isAllDay
+        event.calendar = calendar
 
         if let urlString = url, let eventURL = URL(string: urlString) {
             event.url = eventURL
         }
-
-        // Set calendar (required)
-        guard let name = calendarName else {
-            throw EventKitError.calendarNameRequired(forType: "events")
-        }
-        event.calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
 
         // Add alarms
         if let offsets = alarmOffsets {
@@ -322,7 +363,7 @@ actor EventKitManager {
 
         try eventStore.save(event, span: .thisEvent)
         markNeedsRefresh()
-        return event
+        return CreateEventResult(event: event, isDuplicate: false)
     }
 
     func updateEvent(
@@ -730,6 +771,47 @@ actor EventKitManager {
         }
     }
 
+    struct CreateReminderResult {
+        let reminder: EKReminder
+        let isDuplicate: Bool
+    }
+
+    /// Find an existing incomplete reminder that matches by title on the same list.
+    /// Optionally also matches due date if provided.
+    private func findDuplicateReminder(
+        title: String,
+        dueDate: Date?,
+        calendar: EKCalendar
+    ) async -> EKReminder? {
+        let predicate = eventStore.predicateForIncompleteReminders(
+            withDueDateStarting: nil,
+            ending: nil,
+            calendars: [calendar]
+        )
+        let reminders = await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                continuation.resume(returning: reminders ?? [])
+            }
+        }
+        return reminders.first { reminder in
+            guard reminder.title == title else { return false }
+            // If both have due dates, compare them (within 1-minute window)
+            if let existingDue = reminder.dueDateComponents,
+               let due = dueDate {
+                let existingDate = Calendar.current.date(from: existingDue)
+                if let existingDate = existingDate {
+                    return abs(existingDate.timeIntervalSince(due)) < 60
+                }
+            }
+            // If neither has a due date, it's a match by title alone
+            if reminder.dueDateComponents == nil && dueDate == nil {
+                return true
+            }
+            // One has due date, the other doesn't — not a duplicate
+            return false
+        }
+    }
+
     func createReminder(
         title: String,
         notes: String? = nil,
@@ -740,13 +822,25 @@ actor EventKitManager {
         alarmOffsets: [Int]? = nil,
         recurrenceRule: RecurrenceRuleInput? = nil,
         locationTrigger: LocationTriggerInput? = nil
-    ) async throws -> EKReminder {
+    ) async throws -> CreateReminderResult {
         try await requestReminderAccess()
+
+        // Resolve calendar first (required for both duplicate check and creation)
+        guard let name = calendarName else {
+            throw EventKitError.calendarNameRequired(forType: "reminders")
+        }
+        let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
+
+        // Idempotency: check for existing reminder with same title (+due date) on same list
+        if let existing = await findDuplicateReminder(title: title, dueDate: dueDate, calendar: calendar) {
+            return CreateReminderResult(reminder: existing, isDuplicate: true)
+        }
 
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = title
         reminder.notes = notes
         reminder.priority = priority
+        reminder.calendar = calendar
 
         if let due = dueDate {
             reminder.dueDateComponents = Calendar.current.dateComponents(
@@ -754,13 +848,6 @@ actor EventKitManager {
                 from: due
             )
         }
-
-        // Set calendar (required)
-        guard let name = calendarName else {
-            throw EventKitError.calendarNameRequired(forType: "reminders")
-        }
-        let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
-        reminder.calendar = calendar
 
         // Add alarms
         if let offsets = alarmOffsets {
@@ -788,7 +875,7 @@ actor EventKitManager {
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        return reminder
+        return CreateReminderResult(reminder: reminder, isDuplicate: false)
     }
 
     func updateReminder(

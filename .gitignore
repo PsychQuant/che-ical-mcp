@@ -16,7 +16,11 @@ wheels/
 .vscode
 .DS_Store
 
-# MCPB package (generated, rebuild via scripts/build-mcpb.sh)
+# Build artifacts (distributed via GitHub Release)
+mcpb/server/*
+!mcpb/server/.gitkeep
+
+# MCPB package (generated)
 mcpb/*.mcpb
 
 # Private docs (not for public repo)
