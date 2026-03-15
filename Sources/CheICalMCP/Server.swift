@@ -530,7 +530,7 @@ class CheICalMCPServer {
             // Feature 2: Search Events (enhanced with multi-keyword support)
             Tool(
                 name: "search_events",
-                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, searches all events (may be slow for large calendars).",
+                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -588,7 +588,7 @@ class CheICalMCPServer {
             // Feature 4: Batch Create Events
             Tool(
                 name: "create_events_batch",
-                description: "PREFERRED: Create multiple events in a single call. Use this instead of calling create_event multiple times - it's faster and more reliable. Returns detailed results for each event.",
+                description: "PREFERRED: Create multiple events in a single call. Use this instead of calling create_event multiple times - it's faster and more reliable. Returns detailed results for each event. Also returns similar_events hints showing existing events with similar titles, so you can reuse the correct calendar name and avoid duplicates.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1708,16 +1708,21 @@ class CheICalMCPServer {
         }
 
         let matchMode = arguments["match_mode"]?.stringValue ?? "any"
-        let startDate: Date? = try arguments["start_date"]?.stringValue.map { try parseFlexibleDate($0) }
-        let endDate: Date? = try arguments["end_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let userStartDate: Date? = try arguments["start_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let userEndDate: Date? = try arguments["end_date"]?.stringValue.map { try parseFlexibleDate($0) }
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+
+        // Compute effective search range (same defaults as EventKitManager)
+        let now = Date()
+        let effectiveStart = userStartDate ?? Calendar.current.date(byAdding: .year, value: -2, to: now)!
+        let effectiveEnd = userEndDate ?? Calendar.current.date(byAdding: .year, value: 2, to: now)!
 
         let events = try await eventKitManager.searchEvents(
             keywords: keywords,
             matchMode: matchMode,
-            startDate: startDate,
-            endDate: endDate,
+            startDate: effectiveStart,
+            endDate: effectiveEnd,
             calendarName: calendarName,
             calendarSource: calendarSource
         )
@@ -1757,6 +1762,13 @@ class CheICalMCPServer {
             "keywords": keywords,
             "match_mode": matchMode,
             "result_count": events.count,
+            "searched_range": [
+                "start": dateFormatter.string(from: effectiveStart),
+                "start_local": localDateFormatter.string(from: effectiveStart),
+                "end": dateFormatter.string(from: effectiveEnd),
+                "end_local": localDateFormatter.string(from: effectiveEnd),
+                "is_default_range": userStartDate == nil || userEndDate == nil
+            ] as [String: Any],
             "events": result
         ]
         return formatJSON(response)
@@ -1919,6 +1931,30 @@ class CheICalMCPServer {
         if skippedCount > 0 {
             response["skipped"] = skippedCount
         }
+
+        // Collect unique titles from the batch to find similar existing events
+        let batchTitles = Set(eventsArray.compactMap { $0.objectValue?["title"]?.stringValue })
+        var similarHints: [[String: Any]] = []
+        for title in batchTitles {
+            if let similar = try? await eventKitManager.findSimilarEvents(title: title, limit: 3) {
+                for event in similar {
+                    // Skip events we just created in this batch
+                    let createdIds = Set(results.compactMap { $0["event_id"] as? String })
+                    if let eid = event.eventIdentifier, createdIds.contains(eid) { continue }
+                    similarHints.append([
+                        "matched_title": title,
+                        "existing_title": event.title ?? "",
+                        "existing_calendar": event.calendar.title,
+                        "existing_date": dateFormatter.string(from: event.startDate),
+                        "existing_date_local": localDateFormatter.string(from: event.startDate)
+                    ])
+                }
+            }
+        }
+        if !similarHints.isEmpty {
+            response["similar_events"] = similarHints
+        }
+
         return formatJSON(response)
     }
 
