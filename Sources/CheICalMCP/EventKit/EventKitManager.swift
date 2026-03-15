@@ -506,9 +506,11 @@ actor EventKitManager {
         try await requestCalendarAccess()
         refreshIfNeeded()
 
-        // Default to a wide date range if not specified
-        let searchStart = startDate ?? Date.distantPast
-        let searchEnd = endDate ?? Date.distantFuture
+        // Default to ±2 years from now. EventKit's predicateForEvents can return
+        // incomplete results with extremely wide ranges (distantPast/distantFuture).
+        let now = Date()
+        let searchStart = startDate ?? Calendar.current.date(byAdding: .year, value: -2, to: now)!
+        let searchEnd = endDate ?? Calendar.current.date(byAdding: .year, value: 2, to: now)!
 
         var calendars: [EKCalendar]?
         if let name = calendarName {
@@ -555,6 +557,49 @@ actor EventKitManager {
             calendarName: calendarName,
             calendarSource: calendarSource
         )
+    }
+
+    /// Find events with similar titles (case-insensitive substring match).
+    /// Used to provide hints when creating events, helping LLMs reuse correct calendar names.
+    /// - Parameters:
+    ///   - title: The title to match against
+    ///   - limit: Maximum number of results (default 5)
+    /// - Returns: Array of matching events, sorted by start date descending (most recent first)
+    func findSimilarEvents(title: String, limit: Int = 5) async throws -> [EKEvent] {
+        try await requestCalendarAccess()
+        refreshIfNeeded()
+
+        let now = Date()
+        let searchStart = Calendar.current.date(byAdding: .year, value: -2, to: now)!
+        let searchEnd = Calendar.current.date(byAdding: .year, value: 2, to: now)!
+
+        let predicate = eventStore.predicateForEvents(withStart: searchStart, end: searchEnd, calendars: nil)
+        let allEvents = eventStore.events(matching: predicate)
+
+        let lowercasedTitle = title.lowercased()
+        // Split title into words for flexible matching
+        let titleWords = lowercasedTitle.split(separator: " ").map(String.init).filter { $0.count >= 2 }
+
+        let matches = allEvents.filter { event in
+            guard let eventTitle = event.title?.lowercased() else { return false }
+            // Match if any significant word from the new title appears in existing event title
+            return titleWords.contains { eventTitle.contains($0) }
+        }
+        .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
+
+        // Deduplicate by title+calendar (keep most recent)
+        var seen = Set<String>()
+        var unique: [EKEvent] = []
+        for event in matches {
+            let key = "\(event.title ?? "")|\(event.calendar.title)"
+            if !seen.contains(key) {
+                seen.insert(key)
+                unique.append(event)
+            }
+            if unique.count >= limit { break }
+        }
+
+        return unique
     }
 
     // MARK: - Batch Operations
