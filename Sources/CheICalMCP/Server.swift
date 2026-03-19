@@ -2093,12 +2093,60 @@ class CheICalMCPServer {
         return formatJSON(response)
     }
 
+    /// Delete a list of events, handling span="all" by calling deleteEventSeries per event.
+    private func deleteEventsWithSpan(
+        eventIds: [String],
+        spanStr: String,
+        mode: String,
+        extraFields: [String: Any] = [:]
+    ) async throws -> String {
+        let deleteAll = spanStr == "all"
+
+        if deleteAll {
+            var successCount = 0
+            var failures: [[String: String]] = []
+            for id in eventIds {
+                do {
+                    try await eventKitManager.deleteEventSeries(identifier: id)
+                    successCount += 1
+                } catch {
+                    failures.append(["event_id": id, "error": error.localizedDescription])
+                }
+            }
+            var response: [String: Any] = [
+                "dry_run": false,
+                "mode": mode,
+                "total": eventIds.count,
+                "succeeded": successCount,
+                "failed": eventIds.count - successCount,
+                "span": "all"
+            ]
+            for (k, v) in extraFields { response[k] = v }
+            if !failures.isEmpty { response["failures"] = failures }
+            return formatJSON(response)
+        }
+
+        let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
+        let result = try await eventKitManager.deleteEventsBatch(identifiers: eventIds, span: span)
+        var response: [String: Any] = [
+            "dry_run": false,
+            "mode": mode,
+            "total": eventIds.count,
+            "succeeded": result.successCount,
+            "failed": result.failedCount,
+            "span": spanStr
+        ]
+        for (k, v) in extraFields { response[k] = v }
+        if !result.failures.isEmpty {
+            response["failures"] = result.failures.map { ["event_id": $0.identifier, "error": $0.error] }
+        }
+        return formatJSON(response)
+    }
+
     /// Feature 8: Delete multiple events at once (by IDs or by date range)
     private func handleDeleteEventsBatch(arguments: [String: Value]) async throws -> String {
         let dryRun = arguments["dry_run"]?.boolValue ?? true
         let spanStr = arguments["span"]?.stringValue ?? "this"
-        let deleteAll = spanStr == "all"
-        let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
 
         // Determine mode: by event_ids or by calendar + date range
         if let eventIdsArray = arguments["event_ids"]?.arrayValue {
@@ -2135,42 +2183,9 @@ class CheICalMCPServer {
                 return formatJSON(response)
             }
 
-            if deleteAll {
-                var successCount = 0
-                var failures: [[String: String]] = []
-                for id in eventIds {
-                    do {
-                        try await eventKitManager.deleteEventSeries(identifier: id)
-                        successCount += 1
-                    } catch {
-                        failures.append(["event_id": id, "error": error.localizedDescription])
-                    }
-                }
-                var response: [String: Any] = [
-                    "dry_run": false,
-                    "mode": "by_event_ids",
-                    "total": eventIds.count,
-                    "succeeded": successCount,
-                    "failed": eventIds.count - successCount,
-                    "span": "all"
-                ]
-                if !failures.isEmpty { response["failures"] = failures }
-                return formatJSON(response)
-            }
-
-            let result = try await eventKitManager.deleteEventsBatch(identifiers: eventIds, span: span)
-            var response: [String: Any] = [
-                "dry_run": false,
-                "mode": "by_event_ids",
-                "total": eventIds.count,
-                "succeeded": result.successCount,
-                "failed": result.failedCount,
-                "span": spanStr
-            ]
-            if !result.failures.isEmpty {
-                response["failures"] = result.failures.map { ["event_id": $0.identifier, "error": $0.error] }
-            }
-            return formatJSON(response)
+            return try await deleteEventsWithSpan(
+                eventIds: eventIds, spanStr: spanStr, mode: "by_event_ids"
+            )
 
         } else if let calendarName = arguments["calendar_name"]?.stringValue {
             // Mode 2: Delete by calendar + date range
@@ -2218,44 +2233,10 @@ class CheICalMCPServer {
 
             let eventIds = events.compactMap { $0.eventIdentifier }
 
-            if deleteAll {
-                var successCount = 0
-                var failures: [[String: String]] = []
-                for id in eventIds {
-                    do {
-                        try await eventKitManager.deleteEventSeries(identifier: id)
-                        successCount += 1
-                    } catch {
-                        failures.append(["event_id": id, "error": error.localizedDescription])
-                    }
-                }
-                var response: [String: Any] = [
-                    "dry_run": false,
-                    "mode": "by_date_range",
-                    "calendar": calendarName,
-                    "total": eventIds.count,
-                    "succeeded": successCount,
-                    "failed": eventIds.count - successCount,
-                    "span": "all"
-                ]
-                if !failures.isEmpty { response["failures"] = failures }
-                return formatJSON(response)
-            }
-
-            let result = try await eventKitManager.deleteEventsBatch(identifiers: eventIds, span: span)
-            var response: [String: Any] = [
-                "dry_run": false,
-                "mode": "by_date_range",
-                "calendar": calendarName,
-                "total": eventIds.count,
-                "succeeded": result.successCount,
-                "failed": result.failedCount,
-                "span": spanStr
-            ]
-            if !result.failures.isEmpty {
-                response["failures"] = result.failures.map { ["event_id": $0.identifier, "error": $0.error] }
-            }
-            return formatJSON(response)
+            return try await deleteEventsWithSpan(
+                eventIds: eventIds, spanStr: spanStr, mode: "by_date_range",
+                extraFields: ["calendar": calendarName]
+            )
 
         } else {
             throw ToolError.invalidParameter("Either event_ids or calendar_name (with before_date/after_date) is required")
