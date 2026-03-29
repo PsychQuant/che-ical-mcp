@@ -505,6 +505,19 @@ actor EventKitManager {
             }
         }
 
+        // Validate recurrence weekday consistency (#5) — same check as createEvent
+        if let rule = recurrenceRule, rule.frequency == .weekly, let days = rule.daysOfWeek, !days.isEmpty {
+            var cal = Calendar.current
+            if let tz = timezone ?? event.timeZone { cal.timeZone = tz }
+            let weekday = cal.component(.weekday, from: event.startDate)
+            if !days.contains(weekday) {
+                let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                let startDay = dayNames[weekday]
+                let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
+                throw EventKitError.weekdayMismatch(startDay: startDay, expectedDays: expectedDays)
+            }
+        }
+
         // Update recurrence rule
         if clearRecurrence {
             event.recurrenceRules = nil
@@ -889,6 +902,7 @@ actor EventKitManager {
         newEvent.location = sourceEvent.location
         newEvent.url = sourceEvent.url
         newEvent.isAllDay = sourceEvent.isAllDay
+        newEvent.timeZone = sourceEvent.timeZone
         newEvent.calendar = targetCalendar
 
         // Copy alarms

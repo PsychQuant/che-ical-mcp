@@ -1245,6 +1245,9 @@ class CheICalMCPServer {
         let structuredLocation = parseStructuredLocation(from: arguments)
         let timezone = try parseTimezone(from: arguments)
         let clearTimezone = arguments["clear_timezone"]?.boolValue ?? false
+        if clearTimezone && timezone != nil {
+            throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
+        }
 
         let event = try await eventKitManager.updateEvent(
             identifier: eventId,
