@@ -435,7 +435,7 @@ actor EventKitManager {
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             event = occurrence
@@ -562,8 +562,9 @@ actor EventKitManager {
 
     /// Find a specific occurrence of a recurring event on a given date.
     /// Returns the occurrence EKEvent (not the master event).
-    func findOccurrence(identifier: String, on date: Date) -> EKEvent? {
-        let calendar = Calendar.current
+    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil) -> EKEvent? {
+        var calendar = Calendar.current
+        if let tz = timeZone { calendar.timeZone = tz }
         let dayStart = calendar.startOfDay(for: date)
         guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return nil }
         let predicate = eventStore.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
@@ -591,7 +592,7 @@ actor EventKitManager {
         // For recurring events, always resolve the specific occurrence (this/future both need it).
         // Non-recurring events operate on master directly.
         if masterEvent.hasRecurrenceRules, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             try eventStore.remove(occurrence, span: span)
@@ -775,7 +776,7 @@ actor EventKitManager {
                 }
 
                 if masterEvent.hasRecurrenceRules, let date = item.occurrenceDate {
-                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date) else {
+                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
