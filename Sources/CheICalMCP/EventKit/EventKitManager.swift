@@ -560,6 +560,11 @@ actor EventKitManager {
         return event
     }
 
+    /// Get the timezone of an event by identifier (nil if not found or no timezone set).
+    func getEventTimezone(identifier: String) -> TimeZone? {
+        return eventStore.event(withIdentifier: identifier)?.timeZone
+    }
+
     /// Find a specific occurrence of a recurring event on a given date.
     /// Returns the occurrence EKEvent (not the master event).
     func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil) -> EKEvent? {

@@ -1283,8 +1283,10 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("event_id is required")
         }
 
+        // Use the event's own timezone for occurrence_date parsing to match findOccurrence's day boundary
+        let eventTz = await eventKitManager.getEventTimezone(identifier: eventId)
         let spanStr = arguments["span"]?.stringValue ?? "this"
-        let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: eventTz) }
 
         if spanStr == "all" {
             try await eventKitManager.deleteEventSeries(identifier: eventId)
