@@ -313,7 +313,8 @@ actor EventKitManager {
         isAllDay: Bool = false,
         alarmOffsets: [Int]? = nil,
         recurrenceRule: RecurrenceRuleInput? = nil,
-        structuredLocation: StructuredLocationInput? = nil
+        structuredLocation: StructuredLocationInput? = nil,
+        timezone: TimeZone? = nil
     ) async throws -> CreateEventResult {
         try await requestCalendarAccess()
 
@@ -339,6 +340,11 @@ actor EventKitManager {
 
         if let urlString = url, let eventURL = URL(string: urlString) {
             event.url = eventURL
+        }
+
+        // Set per-event timezone (#12)
+        if let tz = timezone {
+            event.timeZone = tz
         }
 
         // Add alarms
@@ -403,7 +409,9 @@ actor EventKitManager {
         structuredLocation: StructuredLocationInput? = nil,
         span: EKSpan = .thisEvent,
         occurrenceDate: Date? = nil,
-        applyToAll: Bool = false
+        applyToAll: Bool = false,
+        timezone: TimeZone? = nil,
+        clearTimezone: Bool = false
     ) async throws -> EKEvent {
         try await requestCalendarAccess()
 
@@ -466,6 +474,13 @@ actor EventKitManager {
 
         if let urlString = url, let eventURL = URL(string: urlString) {
             event.url = eventURL
+        }
+
+        // Update per-event timezone (#12)
+        if clearTimezone {
+            event.timeZone = nil
+        } else if let tz = timezone {
+            event.timeZone = tz
         }
 
         if let name = calendarName {

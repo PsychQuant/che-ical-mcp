@@ -18,6 +18,14 @@ class CheICalMCPServer {
         return f
     }()
 
+    /// Format a date as local time in a specific timezone
+    private func formatLocal(_ date: Date, in tz: TimeZone?) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.timeZone = tz ?? TimeZone.current
+        return formatter.string(from: date)
+    }
+
     /// All available tools
     private let tools: [Tool]
 
@@ -223,6 +231,7 @@ class CheICalMCPServer {
                             ]),
                             "required": .array([.string("frequency")])
                         ]),
+                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone in Calendar.app.")]),
                         "structured_location": .object([
                             "type": .string("object"),
                             "description": .string("Structured location with coordinates. If provided, overrides the 'location' text field."),
@@ -307,6 +316,11 @@ class CheICalMCPServer {
                                 "radius": .object(["type": .string("number"), "description": .string("Radius in meters (default 100)")])
                             ]),
                             "required": .array([.string("title")])
+                        ]),
+                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
+                        "clear_timezone": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone)")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -674,6 +688,7 @@ class CheICalMCPServer {
                                         ]),
                                         "required": .array([.string("frequency")])
                                     ]),
+                                    "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier (e.g., 'Europe/Berlin')")]),
                                     "structured_location": .object([
                                         "type": .string("object"),
                                         "description": .string("Structured location with coordinates"),
@@ -1103,10 +1118,10 @@ class CheICalMCPServer {
                 "id": event.eventIdentifier ?? "",
                 "title": event.title ?? "",
                 "start_date": dateFormatter.string(from: event.startDate),
-                "start_date_local": localDateFormatter.string(from: event.startDate),
+                "start_date_local": formatLocal(event.startDate, in: event.timeZone),
                 "end_date": dateFormatter.string(from: event.endDate),
-                "end_date_local": localDateFormatter.string(from: event.endDate),
-                "timezone": TimeZone.current.identifier,
+                "end_date_local": formatLocal(event.endDate, in: event.timeZone),
+                "timezone": (event.timeZone ?? TimeZone.current).identifier,
                 "is_all_day": event.isAllDay,
                 "calendar": event.calendar.title
             ]
@@ -1172,6 +1187,7 @@ class CheICalMCPServer {
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let structuredLocation = parseStructuredLocation(from: arguments)
+        let timezone = try parseTimezone(from: arguments)
 
         let result = try await eventKitManager.createEvent(
             title: title,
@@ -1185,7 +1201,8 @@ class CheICalMCPServer {
             isAllDay: isAllDay,
             alarmOffsets: alarmOffsets,
             recurrenceRule: recurrenceRule,
-            structuredLocation: structuredLocation
+            structuredLocation: structuredLocation,
+            timezone: timezone
         )
 
         if result.isDuplicate {
@@ -1226,6 +1243,8 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let clearRecurrence = arguments["clear_recurrence"]?.boolValue ?? false
         let structuredLocation = parseStructuredLocation(from: arguments)
+        let timezone = try parseTimezone(from: arguments)
+        let clearTimezone = arguments["clear_timezone"]?.boolValue ?? false
 
         let event = try await eventKitManager.updateEvent(
             identifier: eventId,
@@ -1244,7 +1263,9 @@ class CheICalMCPServer {
             structuredLocation: structuredLocation,
             span: span,
             occurrenceDate: occurrenceDate,
-            applyToAll: spanStr == "all"
+            applyToAll: spanStr == "all",
+            timezone: timezone,
+            clearTimezone: clearTimezone
         )
 
         return "Updated event: \(event.title ?? "")"
@@ -1859,10 +1880,10 @@ class CheICalMCPServer {
                 "id": event.eventIdentifier ?? "",
                 "title": event.title ?? "",
                 "start_date": dateFormatter.string(from: event.startDate),
-                "start_date_local": localDateFormatter.string(from: event.startDate),
+                "start_date_local": formatLocal(event.startDate, in: event.timeZone),
                 "end_date": dateFormatter.string(from: event.endDate),
-                "end_date_local": localDateFormatter.string(from: event.endDate),
-                "timezone": TimeZone.current.identifier,
+                "end_date_local": formatLocal(event.endDate, in: event.timeZone),
+                "timezone": (event.timeZone ?? TimeZone.current).identifier,
                 "is_all_day": event.isAllDay,
                 "calendar": event.calendar.title
             ]
@@ -1924,10 +1945,10 @@ class CheICalMCPServer {
                 "id": event.eventIdentifier ?? "",
                 "title": event.title ?? "",
                 "start_date": dateFormatter.string(from: event.startDate),
-                "start_date_local": localDateFormatter.string(from: event.startDate),
+                "start_date_local": formatLocal(event.startDate, in: event.timeZone),
                 "end_date": dateFormatter.string(from: event.endDate),
-                "end_date_local": localDateFormatter.string(from: event.endDate),
-                "timezone": TimeZone.current.identifier,
+                "end_date_local": formatLocal(event.endDate, in: event.timeZone),
+                "timezone": (event.timeZone ?? TimeZone.current).identifier,
                 "is_all_day": event.isAllDay,
                 "calendar": event.calendar.title
             ]
@@ -2009,9 +2030,10 @@ class CheICalMCPServer {
             }
 
             do {
-                // Parse recurrence and structured location from batch item
+                // Parse recurrence, structured location, and timezone from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
+                let batchTimezone = try parseTimezone(from: eventDict)
 
                 let result = try await eventKitManager.createEvent(
                     title: title,
@@ -2025,7 +2047,8 @@ class CheICalMCPServer {
                     isAllDay: eventDict["all_day"]?.boolValue ?? false,
                     alarmOffsets: nil,
                     recurrenceRule: batchRecurrence,
-                    structuredLocation: batchStructuredLocation
+                    structuredLocation: batchStructuredLocation,
+                    timezone: batchTimezone
                 )
                 var entry: [String: Any] = [
                     "index": index,
@@ -2113,10 +2136,10 @@ class CheICalMCPServer {
                 "id": event.eventIdentifier ?? "",
                 "title": event.title ?? "",
                 "start_date": dateFormatter.string(from: event.startDate),
-                "start_date_local": localDateFormatter.string(from: event.startDate),
+                "start_date_local": formatLocal(event.startDate, in: event.timeZone),
                 "end_date": dateFormatter.string(from: event.endDate),
-                "end_date_local": localDateFormatter.string(from: event.endDate),
-                "timezone": TimeZone.current.identifier,
+                "end_date_local": formatLocal(event.endDate, in: event.timeZone),
+                "timezone": (event.timeZone ?? TimeZone.current).identifier,
                 "calendar": event.calendar.title
             ]
             if let location = event.location { dict["location"] = location }
@@ -2611,6 +2634,14 @@ class CheICalMCPServer {
             longitude: dict["longitude"]?.doubleValue,
             radius: dict["radius"]?.doubleValue
         )
+    }
+
+    private func parseTimezone(from arguments: [String: Value]) throws -> TimeZone? {
+        guard let tzString = arguments["timezone"]?.stringValue else { return nil }
+        guard let tz = TimeZone(identifier: tzString) else {
+            throw ToolError.invalidParameter("Invalid timezone identifier: '\(tzString)'. Use IANA format (e.g., 'Europe/Berlin', 'America/New_York', 'Asia/Taipei').")
+        }
+        return tz
     }
 
     private func parseLocationTrigger(from arguments: [String: Value]) throws -> LocationTriggerInput? {
