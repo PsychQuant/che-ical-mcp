@@ -92,8 +92,10 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```bash
 git clone https://github.com/kiki830621/che-ical-mcp.git
 cd che-ical-mcp
-swift build -c release
+make release && make install
 ```
+
+> **⚠️ Swift 6 / Xcode 18 users:** Do not use `swift build` directly — upstream MCP SDK has a concurrency error ([swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)). The Makefile auto-detects this and falls back to Swift 5 language mode.
 
 On first use, macOS will prompt for **Calendar** and **Reminders** access - click "Allow".
 
@@ -215,12 +217,13 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```bash
 git clone https://github.com/kiki830621/che-ical-mcp.git
 cd che-ical-mcp
-swift build -c release
+make release && make install
 
-# Copy to ~/bin and register
-cp .build/release/CheICalMCP ~/bin/
+# Register with Claude Code
 claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```
+
+> **⚠️ Swift 6 / Xcode 18 使用者：** 不要直接使用 `swift build` — 上游 MCP SDK 有 concurrency 錯誤（[swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)）。Makefile 會自動偵測並回退到 Swift 5 語言模式。
 
 ### Grant Permissions
 
@@ -367,7 +370,7 @@ If ambiguity is detected, the error message will list all available sources.
 
 | Problem | Solution |
 |---------|----------|
-| Server disconnected | Rebuild with `swift build -c release` |
+| Server disconnected | Rebuild with `make release && make install` |
 | Permission denied | Grant Calendar/Reminders access in System Settings > Privacy & Security |
 | Permission dialog never appears | See [Grant Permissions](#grant-permissions) for macOS Sequoia workaround |
 | **Permission denied over SSH** | See [SSH Access](#ssh-access) below |
