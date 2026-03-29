@@ -1164,14 +1164,17 @@ class CheICalMCPServer {
         guard let title = arguments["title"]?.stringValue else {
             throw ToolError.invalidParameter("title is required")
         }
+        // Parse timezone first — naive datetimes (no offset) use this as default
+        let timezone = try parseTimezone(from: arguments)
+
         guard let startStr = arguments["start_time"]?.stringValue else {
             throw ToolError.invalidParameter("start_time is required")
         }
-        let startDate = try parseFlexibleDate(startStr)
+        let startDate = try parseFlexibleDate(startStr, defaultTimezone: timezone)
         guard let endStr = arguments["end_time"]?.stringValue else {
             throw ToolError.invalidParameter("end_time is required")
         }
-        let endDate = try parseFlexibleDate(endStr)
+        let endDate = try parseFlexibleDate(endStr, defaultTimezone: timezone)
 
         let notes = arguments["notes"]?.stringValue
         let location = arguments["location"]?.stringValue
@@ -1187,7 +1190,6 @@ class CheICalMCPServer {
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let structuredLocation = parseStructuredLocation(from: arguments)
-        let timezone = try parseTimezone(from: arguments)
 
         let result = try await eventKitManager.createEvent(
             title: title,
@@ -1216,9 +1218,12 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("event_id is required")
         }
 
+        // Parse timezone first — naive datetimes (no offset) use this as default
+        let timezone = try parseTimezone(from: arguments)
+
         let title = arguments["title"]?.stringValue
-        let startDate: Date? = try arguments["start_time"]?.stringValue.map { try parseFlexibleDate($0) }
-        let endDate: Date? = try arguments["end_time"]?.stringValue.map { try parseFlexibleDate($0) }
+        let startDate: Date? = try arguments["start_time"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
+        let endDate: Date? = try arguments["end_time"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
         let notes = arguments["notes"]?.stringValue
         let location = arguments["location"]?.stringValue
         let url = arguments["url"]?.stringValue
@@ -1243,7 +1248,6 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let clearRecurrence = arguments["clear_recurrence"]?.boolValue ?? false
         let structuredLocation = parseStructuredLocation(from: arguments)
-        let timezone = try parseTimezone(from: arguments)
         let clearTimezone = arguments["clear_timezone"]?.boolValue ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
@@ -2009,13 +2013,22 @@ class CheICalMCPServer {
                 results.append(["index": index, "success": false, "error": "title is required"])
                 continue
             }
+            // Parse timezone first so naive datetimes use event timezone
+            let batchTimezone: TimeZone?
+            do {
+                batchTimezone = try parseTimezone(from: eventDict)
+            } catch {
+                results.append(["index": index, "success": false, "error": error.localizedDescription])
+                continue
+            }
+
             guard let startStr = eventDict["start_time"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "start_time is required"])
                 continue
             }
             let startDate: Date
             do {
-                startDate = try parseFlexibleDate(startStr)
+                startDate = try parseFlexibleDate(startStr, defaultTimezone: batchTimezone)
             } catch {
                 results.append(["index": index, "success": false, "error": error.localizedDescription])
                 continue
@@ -2026,17 +2039,16 @@ class CheICalMCPServer {
             }
             let endDate: Date
             do {
-                endDate = try parseFlexibleDate(endStr)
+                endDate = try parseFlexibleDate(endStr, defaultTimezone: batchTimezone)
             } catch {
                 results.append(["index": index, "success": false, "error": error.localizedDescription])
                 continue
             }
 
             do {
-                // Parse recurrence, structured location, and timezone from batch item
+                // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
-                let batchTimezone = try parseTimezone(from: eventDict)
 
                 let result = try await eventKitManager.createEvent(
                     title: title,
@@ -2479,17 +2491,23 @@ class CheICalMCPServer {
     /// 2. ISO8601 without timezone: "2026-02-06T14:00:00" (assumes system timezone)
     /// 3. Date only: "2026-02-06" (00:00:00 system timezone)
     /// 4. Time only: "14:00" or "14:00:00" (today at that time)
-    private func parseFlexibleDate(_ string: String) throws -> Date {
-        // 1. Full ISO8601 (with timezone)
+    /// Parse a flexible date string. When `defaultTimezone` is provided and the
+    /// string has no explicit offset, interpret the time in that timezone instead
+    /// of the system timezone. Strings with explicit offsets (+XX:XX or Z) are
+    /// always parsed correctly regardless of this parameter.
+    private func parseFlexibleDate(_ string: String, defaultTimezone: TimeZone? = nil) throws -> Date {
+        // 1. Full ISO8601 (with timezone) — offset is explicit, no ambiguity
         if let date = dateFormatter.date(from: string) {
             return date
         }
+
+        let tz = defaultTimezone ?? TimeZone.current
 
         // 2. ISO8601 without timezone (e.g., "2026-02-06T14:00:00")
         if string.contains("T") && !string.contains("+") && !string.contains("Z") {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            formatter.timeZone = TimeZone.current
+            formatter.timeZone = tz
             if let date = formatter.date(from: string) {
                 return date
             }
@@ -2499,7 +2517,7 @@ class CheICalMCPServer {
         if string.count == 10 && string.contains("-") && !string.contains("T") {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = TimeZone.current
+            formatter.timeZone = tz
             if let date = formatter.date(from: string) {
                 return date
             }
@@ -2513,7 +2531,7 @@ class CheICalMCPServer {
                let minute = Int(components[1]) {
                 let second = components.count >= 3 ? Int(components[2]) ?? 0 : 0
                 var cal = Calendar.current
-                cal.timeZone = TimeZone.current
+                cal.timeZone = tz
                 let now = Date()
                 var dc = cal.dateComponents([.year, .month, .day], from: now)
                 dc.hour = hour
