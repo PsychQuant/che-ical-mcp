@@ -21,6 +21,7 @@ struct EventSnapshot {
     let structuredLocationRadius: Double?
     // Recurrence rules stored as raw EKRecurrenceRule for re-application
     let recurrenceRules: [EKRecurrenceRule]?
+    let timeZone: TimeZone?
 
     init(from event: EKEvent) {
         self.title = event.title ?? ""
@@ -38,6 +39,7 @@ struct EventSnapshot {
         self.structuredLocationLon = event.structuredLocation?.geoLocation?.coordinate.longitude
         self.structuredLocationRadius = event.structuredLocation?.radius
         self.recurrenceRules = event.recurrenceRules
+        self.timeZone = event.timeZone
     }
 }
 

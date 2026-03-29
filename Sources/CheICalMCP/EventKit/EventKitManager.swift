@@ -356,8 +356,11 @@ actor EventKitManager {
         }
 
         // Validate recurrence: start_time weekday must match days_of_week (#5)
+        // Use event timezone (if provided) to determine the correct weekday near midnight
         if let rule = recurrenceRule, rule.frequency == .weekly, let days = rule.daysOfWeek, !days.isEmpty {
-            let weekday = Calendar.current.component(.weekday, from: startDate) // 1=Sun, 7=Sat
+            var cal = Calendar.current
+            if let tz = timezone { cal.timeZone = tz }
+            let weekday = cal.component(.weekday, from: startDate) // 1=Sun, 7=Sat
             if !days.contains(weekday) {
                 let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                 let startDay = dayNames[weekday]
@@ -1518,6 +1521,9 @@ actor EventKitManager {
         if let rules = snapshot.recurrenceRules {
             event.recurrenceRules = rules
         }
+
+        // Timezone
+        event.timeZone = snapshot.timeZone
     }
 
     /// Apply a ReminderSnapshot to an EKReminder.
