@@ -182,31 +182,39 @@ enum CLIRunner {
 
     // MARK: - Run
 
+    /// Check if argv has a tool name after --cli (i.e., flag-based mode).
+    private static func hasToolNameInArgs(_ args: [String]) -> Bool {
+        guard let cliIndex = args.firstIndex(of: "--cli"),
+              cliIndex + 1 < args.count
+        else { return false }
+        // Tool name should not start with -- (that would be another flag)
+        return !args[cliIndex + 1].hasPrefix("--")
+    }
+
     /// Run CLI mode: detect input source, parse, dispatch, print result.
     static func run(server: CheICalMCPServer, args: [String]) async {
         do {
             let toolName: String
             let mcpArgs: [String: Value]
 
-            // Detect if stdin has data (piped JSON mode)
-            if isatty(fileno(stdin)) == 0 {
+            // Priority: if argv has a tool name, always use flag parsing.
+            // This avoids isatty issues in non-interactive environments (launchd, CI)
+            // where stdin may be a pipe but no JSON is being sent.
+            if hasToolNameInArgs(args) {
+                let (tool, strArgs) = try parseArgs(args)
+                toolName = tool
+                mcpArgs = toMCPArguments(strArgs)
+            } else if isatty(fileno(stdin)) == 0 {
+                // No tool name in argv — try reading JSON from stdin
                 let inputData = FileHandle.standardInput.readDataToEndOfFile()
                 guard let input = String(data: inputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !input.isEmpty
                 else {
-                    // No stdin data, fall back to flag parsing
-                    let (tool, strArgs) = try parseArgs(args)
-                    let result = try await server.executeToolCall(name: tool, arguments: toMCPArguments(strArgs))
-                    print(result)
-                    return
+                    throw CLIError.missingToolName
                 }
-                // JSON stdin: preserve native types directly
                 (toolName, mcpArgs) = try parseJSONInputToValues(input)
             } else {
-                // Flag-based: infer types from strings
-                let (tool, strArgs) = try parseArgs(args)
-                toolName = tool
-                mcpArgs = toMCPArguments(strArgs)
+                throw CLIError.missingToolName
             }
 
             let result = try await server.executeToolCall(name: toolName, arguments: mcpArgs)
