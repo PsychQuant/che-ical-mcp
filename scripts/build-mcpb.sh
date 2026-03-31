@@ -13,13 +13,28 @@ echo "=== che-ical-mcp MCPB Build Script ==="
 echo "Project directory: $PROJECT_DIR"
 echo ""
 
+# Swift 6 Concurrency Guard
+# Try Swift 6 (strict concurrency) first; if upstream dependencies fail,
+# fall back to Swift 5 language mode. Remove fallback once
+# modelcontextprotocol/swift-sdk#214 is fixed.
+SWIFT_FALLBACK_FLAGS=()
+
+echo "[0/4] Checking Swift 6 strict concurrency compatibility..."
+if swift build -c release --arch arm64 2>&1 | grep -q "SendingRisksDataRace"; then
+    echo "  ⚠ Upstream dependency has Swift 6 concurrency errors (swift-sdk#214)"
+    echo "  → Falling back to Swift 5 language mode for dependencies"
+    SWIFT_FALLBACK_FLAGS=(-Xswiftc -swift-version -Xswiftc 5)
+else
+    echo "  ✓ Swift 6 strict concurrency OK"
+fi
+
 # Step 1: Build for both architectures
 echo "[1/4] Building for Apple Silicon (arm64)..."
 cd "$PROJECT_DIR"
-swift build -c release --arch arm64
+swift build -c release --arch arm64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
 echo "[2/4] Building for Intel (x86_64)..."
-swift build -c release --arch x86_64
+swift build -c release --arch x86_64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
 # Step 2: Create Universal Binary
 echo "[3/4] Creating Universal Binary..."

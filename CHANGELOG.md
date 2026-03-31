@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-03-31
+
+### Added
+- **`--setup` flag** (#13): Pre-authorize TCC (Calendars/Reminders) permissions for launchd and automation environments
+- **Non-interactive session detection**: Detect launchd/SSH sessions via TERM, ppid, and environment variables; show targeted error messages with workaround instructions
+- **`--cli` mode** (#14): Invoke all 28 tools directly from command line without starting MCP server
+  - Flag-based mode: `CheICalMCP --cli list_events --start_date 2026-04-01 --end_date 2026-04-07`
+  - JSON stdin mode: `echo '{"start_date":"2026-04-01"}' | CheICalMCP --cli list_events`
+  - Smart type inference for bool/int/double/array parameters
+
+### Changed
+- **MCP Swift SDK 0.12.0**: Updated for Swift 6.3 compatibility
+- **argv prioritized over stdin**: Fixes isatty hang in non-interactive environments
+
+### Fixed
+- **Non-interactive detection**: Improved SSH and launchd error handling (#13)
+- **CLI arg parsing**: Native JSON types for stdin, smart type inference for argv (#14)
+
+## [1.5.0] - 2026-03-28
+
+### Added
+- **Per-event timezone** (#12): `timezone` parameter on `create_event`, `update_event`, and `create_events_batch`; event output uses event's own timezone; naive datetimes parsed in event timezone
+- **Clear due date** (#9): `clear_due_date` parameter on `update_reminder`
+- **Weekday validation** (#5): `create_event` and `update_event` validate `start_time` weekday against `days_of_week`
+- **Undo/redo system** (#8): 3 new tools — `undo`, `redo`, `undo_history`
+- **Recurring event fixes** (#7): Occurrence-level delete and update with `occurrence_date`
+
+### Changed
+- **Swift 6 build** (#11): Updated build workflow and README for `make release`
+- Tool count: 25 → 28
+
 ## [1.4.1] - 2026-03-25
 
 ### Improved

@@ -25,3 +25,13 @@ mcpb/*.mcpb
 
 # Private docs (not for public repo)
 docs/private/
+
+# Competitor source code (local reference only)
+references/
+.spectra/
+openspec/.vector-search.db*
+
+# Session / local state
+.remember/
+.claude/settings.local.json
+.claude/issue-driven-dev.local.md
