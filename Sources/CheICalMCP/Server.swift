@@ -1046,9 +1046,9 @@ class CheICalMCPServer {
         )
 
         if result.isDuplicate {
-            return "Skipped (duplicate): calendar \"\(result.calendar.title)\" already exists (ID: \(result.calendar.calendarIdentifier))"
+            return actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
         }
-        return "Created calendar: \(result.calendar.title) (ID: \(result.calendar.calendarIdentifier))"
+        return actionResult(["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
     }
 
     private func handleDeleteCalendar(arguments: [String: Value]) async throws -> String {
@@ -1056,7 +1056,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("id is required")
         }
         try await eventKitManager.deleteCalendar(identifier: id)
-        return "Calendar deleted successfully"
+        return actionResult(["action": "deleted", "id": id])
     }
 
     // MARK: - Event Handlers
@@ -1179,9 +1179,9 @@ class CheICalMCPServer {
         )
 
         if result.isDuplicate {
-            return "Skipped (duplicate): \(result.event.title ?? title) already exists (ID: \(result.event.eventIdentifier ?? "unknown"))"
+            return actionResult(["action": "skipped", "reason": "duplicate", "title": result.event.title ?? title, "id": result.event.eventIdentifier ?? "unknown"])
         }
-        return "Created event: \(result.event.title ?? title) (ID: \(result.event.eventIdentifier ?? "unknown"))"
+        return actionResult(["action": "created", "title": result.event.title ?? title, "id": result.event.eventIdentifier ?? "unknown"])
     }
 
     private func handleUpdateEvent(arguments: [String: Value]) async throws -> String {
@@ -1246,7 +1246,7 @@ class CheICalMCPServer {
             clearTimezone: clearTimezone
         )
 
-        return "Updated event: \(event.title ?? "")"
+        return actionResult(["action": "updated", "title": event.title ?? "", "id": eventId])
     }
 
     private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {
@@ -1261,28 +1261,30 @@ class CheICalMCPServer {
 
         if spanStr == "all" {
             try await eventKitManager.deleteEventSeries(identifier: eventId)
-            return "Recurring event series deleted successfully"
+            return actionResult(["action": "deleted", "id": eventId, "span": "all"])
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
         try await eventKitManager.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
-        return "Event deleted successfully"
+        return actionResult(["action": "deleted", "id": eventId, "span": spanStr])
     }
 
     // MARK: - Undo/Redo Handlers
 
     private func handleUndo() async throws -> String {
         guard let record = await CalendarUndoManager.shared.popUndo() else {
-            return "Nothing to undo"
+            return actionResult(["action": "undo", "success": false, "message": "Nothing to undo"])
         }
-        return try await eventKitManager.executeUndo(record.operation)
+        let message = try await eventKitManager.executeUndo(record.operation)
+        return actionResult(["action": "undo", "success": true, "message": message])
     }
 
     private func handleRedo() async throws -> String {
         guard let record = await CalendarUndoManager.shared.popRedo() else {
-            return "Nothing to redo"
+            return actionResult(["action": "redo", "success": false, "message": "Nothing to redo"])
         }
-        return try await eventKitManager.executeRedo(record.operation)
+        let message = try await eventKitManager.executeRedo(record.operation)
+        return actionResult(["action": "redo", "success": true, "message": message])
     }
 
     private func handleUndoHistory(arguments: [String: Value]) async throws -> String {
@@ -1472,13 +1474,13 @@ class CheICalMCPServer {
         )
 
         if result.isDuplicate {
-            return "Skipped (duplicate): \(result.reminder.title ?? title) already exists (ID: \(result.reminder.calendarItemIdentifier))"
+            return actionResult(["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier])
         }
-        var response = "Created reminder: \(result.reminder.title ?? title) (ID: \(result.reminder.calendarItemIdentifier))"
+        var fields: [String: Any] = ["action": "created", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
         if !tags.isEmpty {
-            response += " [tags: \(tags.joined(separator: ", "))]"
+            fields["tags"] = tags
         }
-        return response
+        return actionResult(fields)
     }
 
     private func handleUpdateReminder(arguments: [String: Value]) async throws -> String {
@@ -1546,7 +1548,7 @@ class CheICalMCPServer {
             clearDueDate: clearDueDate
         )
 
-        return "Updated reminder: \(reminder.title ?? "")"
+        return actionResult(["action": "updated", "title": reminder.title ?? "", "id": reminderId])
     }
 
     private func handleCompleteReminder(arguments: [String: Value]) async throws -> String {
@@ -1561,8 +1563,7 @@ class CheICalMCPServer {
             completed: completed
         )
 
-        let status = reminder.isCompleted ? "completed" : "incomplete"
-        return "Reminder marked as \(status): \(reminder.title ?? "")"
+        return actionResult(["action": "completed", "title": reminder.title ?? "", "id": reminderId, "is_completed": reminder.isCompleted])
     }
 
     private func handleDeleteReminder(arguments: [String: Value]) async throws -> String {
@@ -1571,7 +1572,7 @@ class CheICalMCPServer {
         }
 
         try await eventKitManager.deleteReminder(identifier: reminderId)
-        return "Reminder deleted successfully"
+        return actionResult(["action": "deleted", "id": reminderId])
     }
 
     private func handleUpdateCalendar(arguments: [String: Value]) async throws -> String {
@@ -1592,7 +1593,7 @@ class CheICalMCPServer {
             color: color
         )
 
-        return "Updated calendar: \(calendar.title) (ID: \(calendar.calendarIdentifier))"
+        return actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.calendarIdentifier])
     }
 
     private func handleSearchReminders(arguments: [String: Value]) async throws -> String {
@@ -2096,8 +2097,8 @@ class CheICalMCPServer {
             deleteOriginal: deleteOriginal
         )
 
-        let action = deleteOriginal ? "Moved" : "Copied"
-        return "\(action) event '\(newEvent.title ?? "")' to calendar '\(targetCalendar)' (New ID: \(newEvent.eventIdentifier ?? "unknown"))"
+        let action = deleteOriginal ? "moved" : "copied"
+        return actionResult(["action": action, "title": newEvent.title ?? "", "target_calendar": targetCalendar, "new_id": newEvent.eventIdentifier ?? "unknown"])
     }
 
     /// Feature 7: Move multiple events to another calendar
@@ -2743,6 +2744,11 @@ class CheICalMCPServer {
         }
 
         return buildNotesWithTags(notes: cleanNotes, tags: tags)
+    }
+
+    /// Wrap a mutation result in a JSON envelope for consistent --cli output.
+    private func actionResult(_ fields: [String: Any]) -> String {
+        return formatJSON(fields)
     }
 
     private func formatJSON(_ value: Any) -> String {
