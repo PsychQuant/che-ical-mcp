@@ -1029,7 +1029,7 @@ actor EventKitManager {
             // If both have due dates, compare them (within 1-minute window)
             if let existingDue = reminder.dueDateComponents,
                let due = dueDate {
-                let existingDate = Calendar.current.date(from: existingDue)
+                let existingDate = safeDateFromComponents(existingDue)
                 if let existingDate = existingDate {
                     return abs(existingDate.timeIntervalSince(due)) < 60
                 }
