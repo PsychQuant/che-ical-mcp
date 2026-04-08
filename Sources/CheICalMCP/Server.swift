@@ -3,6 +3,30 @@ import EventKit
 import Foundation
 import MCP
 
+/// Safely extract a Date from DateComponents, ignoring week-based fields
+/// that EventKit may add (weekOfYear, yearForWeekOfYear, weekday) which can
+/// conflict with day-based fields and cause +7 day date shifts. (#18)
+func safeDateFromComponents(_ components: DateComponents?) -> Date? {
+    guard let dc = components else { return nil }
+
+    var clean = DateComponents()
+    clean.year = dc.year
+    clean.month = dc.month
+    clean.day = dc.day
+    clean.hour = dc.hour
+    clean.minute = dc.minute
+    clean.second = dc.second
+    clean.timeZone = dc.timeZone
+
+    // If we have enough day-based fields, use them
+    if dc.year != nil && dc.month != nil && dc.day != nil {
+        return Calendar.current.date(from: clean)
+    }
+
+    // Fallback: if no day-based fields, use the original .date
+    return dc.date
+}
+
 /// MCP Server for EventKit integration
 class CheICalMCPServer {
     private let server: Server
@@ -1346,7 +1370,7 @@ class CheICalMCPServer {
         if filterMode == "overdue" {
             reminders = reminders.filter { reminder in
                 !reminder.isCompleted &&
-                reminder.dueDateComponents?.date.map { $0 < now } == true
+                safeDateFromComponents(reminder.dueDateComponents).map { $0 < now } == true
             }
         }
 
@@ -1367,8 +1391,8 @@ class CheICalMCPServer {
                 let d2 = r2.creationDate ?? Date.distantPast
                 return d1 < d2
             default: // "due_date"
-                let d1 = r1.dueDateComponents?.date
-                let d2 = r2.dueDateComponents?.date
+                let d1 = safeDateFromComponents(r1.dueDateComponents)
+                let d2 = safeDateFromComponents(r2.dueDateComponents)
                 if d1 == nil && d2 == nil { return false }
                 if d1 == nil { return false }  // nulls last
                 if d2 == nil { return true }
@@ -1393,7 +1417,7 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = reminder.dueDateComponents?.date {
+            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
                 dict["is_overdue"] = !reminder.isCompleted && dueDate < now
@@ -1646,7 +1670,7 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = reminder.dueDateComponents?.date {
+            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
             }
