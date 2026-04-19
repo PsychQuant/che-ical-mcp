@@ -38,7 +38,7 @@
 
 #### 方式 A：MCPB 一鍵安裝（推薦）
 
-從 [Releases](https://github.com/kiki830621/che-ical-mcp/releases) 下載最新的 `.mcpb` 檔案，雙擊即可安裝。
+從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) 下載最新的 `.mcpb` 檔案，雙擊即可安裝。
 
 #### 方式 B：手動設定
 
@@ -83,7 +83,7 @@ claude plugin install che-ical-mcp@psychquant-claude-plugins
 mkdir -p ~/bin
 
 # 下載最新版本
-curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
 # 加入 Claude Code
@@ -98,7 +98,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ### 從原始碼編譯（可選）
 
 ```bash
-git clone https://github.com/kiki830621/che-ical-mcp.git
+git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
 ```
@@ -190,7 +190,7 @@ make release && make install
 
 #### 方法 1：MCPB 一鍵安裝（推薦）
 
-1. 從 [Releases](https://github.com/kiki830621/che-ical-mcp/releases) 下載 `che-ical-mcp.mcpb`
+1. 從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) 下載 `che-ical-mcp.mcpb`
 2. 雙擊 `.mcpb` 檔案安裝
 3. 重新啟動 Claude Desktop
 
@@ -198,7 +198,7 @@ make release && make install
 
 1. 下載執行檔：
    ```bash
-   curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
+   curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
    chmod +x /usr/local/bin/che-ical-mcp
    ```
 
@@ -222,7 +222,7 @@ make release && make install
 mkdir -p ~/bin
 
 # 下載執行檔
-curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
 # 註冊到 Claude Code（user scope = 所有專案都可使用）
@@ -232,7 +232,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ### 從原始碼編譯（可選）
 
 ```bash
-git clone https://github.com/kiki830621/che-ical-mcp.git
+git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
 

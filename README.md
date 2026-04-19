@@ -38,7 +38,7 @@
 
 #### Option A: MCPB One-Click Install (Recommended)
 
-Download the latest `.mcpb` file from [Releases](https://github.com/kiki830621/che-ical-mcp/releases) and double-click to install.
+Download the latest `.mcpb` file from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) and double-click to install.
 
 #### Option B: Manual Configuration
 
@@ -83,7 +83,7 @@ If you only need the MCP server without plugin features:
 mkdir -p ~/bin
 
 # Download the latest release
-curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
 # Add to Claude Code
@@ -98,7 +98,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ### Build from Source (Optional)
 
 ```bash
-git clone https://github.com/kiki830621/che-ical-mcp.git
+git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
 ```
@@ -209,7 +209,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 
 #### Method 1: MCPB One-Click Install (Recommended)
 
-1. Download `che-ical-mcp.mcpb` from [Releases](https://github.com/kiki830621/che-ical-mcp/releases)
+1. Download `che-ical-mcp.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases)
 2. Double-click the `.mcpb` file to install
 3. Restart Claude Desktop
 
@@ -217,7 +217,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 
 1. Download the binary:
    ```bash
-   curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
+   curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
    chmod +x /usr/local/bin/che-ical-mcp
    ```
 
@@ -241,7 +241,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 mkdir -p ~/bin
 
 # Download the binary
-curl -L https://github.com/kiki830621/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
 # Register with Claude Code (user scope = available in all projects)
@@ -251,7 +251,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ### Build from Source (Optional)
 
 ```bash
-git clone https://github.com/kiki830621/che-ical-mcp.git
+git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
 
