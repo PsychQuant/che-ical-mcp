@@ -60,9 +60,17 @@
 
 Plugin 包含快捷指令（`/today`、`/week`、`/quick-event`、`/remind`）、skills，以及**建立/修改事件時自動驗證星期的 PreToolUse hook** — 防止日期與星期不符的錯誤。
 
+兩個步驟 — 先註冊 marketplace，再安裝 plugin：
+
 ```bash
-claude plugin add --marketplace psychquant-claude-plugins che-ical-mcp
+# 1. 註冊 marketplace（一次性）
+claude plugin marketplace add PsychQuant/psychquant-claude-plugins
+
+# 2. 安裝 plugin
+claude plugin install che-ical-mcp@psychquant-claude-plugins
 ```
+
+> **已經在 Claude Code 裡？** 等價的 slash-command `/plugin marketplace add PsychQuant/psychquant-claude-plugins` 和 `/plugin install che-ical-mcp@psychquant-claude-plugins` 效果相同。
 
 > **備註：** Plugin 內建自動下載功能。如果 `~/bin/CheICalMCP` 不存在，首次使用時會自動從 GitHub Releases 下載。
 
