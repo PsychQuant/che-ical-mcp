@@ -69,7 +69,7 @@ This extension does not have direct access to these services' servers; it only a
 ## Open Source
 
 This extension is open source. You can review the complete source code at:
-https://github.com/kiki830621/che-ical-mcp
+https://github.com/PsychQuant/che-ical-mcp
 
 ## Platform Limitation
 
@@ -78,7 +78,7 @@ This extension is **macOS only** because it uses Apple's EventKit framework, whi
 ## Contact
 
 For privacy concerns or questions, please:
-- Open an issue on [GitHub](https://github.com/kiki830621/che-ical-mcp/issues)
+- Open an issue on [GitHub](https://github.com/PsychQuant/che-ical-mcp/issues)
 - Contact the developer: [@kiki830621](https://github.com/kiki830621)
 
 ## Changes to This Policy

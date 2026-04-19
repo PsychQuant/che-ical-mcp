@@ -21,7 +21,7 @@ Introducing che-ical-mcp - macOS Calendar & Reminders MCP server
 
 Built natively in Swift with EventKit
 
-https://github.com/kiki830621/che-ical-mcp
+https://github.com/PsychQuant/che-ical-mcp
 
 #Claude #MCP #macOS #Swift #Calendar
 ```
@@ -33,7 +33,7 @@ https://github.com/kiki830621/che-ical-mcp
 
 Unlike other calendar MCPs, this one includes FULL Reminders support!
 
-https://github.com/kiki830621/che-ical-mcp
+https://github.com/PsychQuant/che-ical-mcp
 
 2/4 20 tools available:
 
@@ -100,7 +100,7 @@ Most calendar MCPs only handle events. This one also provides complete Reminders
 
 ### Links
 
-- GitHub: https://github.com/kiki830621/che-ical-mcp
+- GitHub: https://github.com/PsychQuant/che-ical-mcp
 - Chinese README: README_zh-TW.md
 
 Would love any feedback!
@@ -132,7 +132,7 @@ Reminders (unique feature!):
 
 Works with iCloud, Google Calendar, Outlook, and any CalDAV source.
 
-GitHub: https://github.com/kiki830621/che-ical-mcp
+GitHub: https://github.com/PsychQuant/che-ical-mcp
 
 Built with Swift and EventKit - happy to answer any questions!
 ```
@@ -145,7 +145,7 @@ Built with Swift and EventKit - happy to answer any questions!
 ```
 I built an MCP (Model Context Protocol) server for macOS Calendar and Reminders with 20 tools.
 
-GitHub: https://github.com/kiki830621/che-ical-mcp
+GitHub: https://github.com/PsychQuant/che-ical-mcp
 
 Key differentiator: Full Reminders support (most calendar MCPs only handle events)
 

@@ -11,14 +11,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kiki830621/che-ical-mcp.git"
+    "url": "https://github.com/PsychQuant/che-ical-mcp.git"
   },
-  "homepage": "https://github.com/kiki830621/che-ical-mcp",
-  "support": "https://github.com/kiki830621/che-ical-mcp/issues",
+  "homepage": "https://github.com/PsychQuant/che-ical-mcp",
+  "support": "https://github.com/PsychQuant/che-ical-mcp/issues",
   "icon": "icon.png",
   "keywords": ["calendar", "reminders", "eventkit", "macos", "tasks", "scheduling", "tags"],
   "license": "MIT",
-  "privacy_policies": ["https://github.com/kiki830621/che-ical-mcp/blob/main/mcpb/PRIVACY.md"],
+  "privacy_policies": ["https://github.com/PsychQuant/che-ical-mcp/blob/main/mcpb/PRIVACY.md"],
   "server": {
     "type": "binary",
     "entry_point": "server/CheICalMCP",

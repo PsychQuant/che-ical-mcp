@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kiki830621/che-ical-mcp",
+  "name": "io.github.PsychQuant/che-ical-mcp",
   "title": "macOS Calendar & Reminders",
   "description": "macOS Calendar & Reminders MCP server (24 tools). Native Swift EventKit, iCloud/Google/Exchange.",
   "repository": {
-    "url": "https://github.com/kiki830621/che-ical-mcp",
+    "url": "https://github.com/PsychQuant/che-ical-mcp",
     "source": "github"
   },
   "version": "1.1.0",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/kiki830621/che-ical-mcp/releases/download/v1.1.0/che-ical-mcp.mcpb",
+      "identifier": "https://github.com/PsychQuant/che-ical-mcp/releases/download/v1.1.0/che-ical-mcp.mcpb",
       "fileSha256": "0a56eada57271a58a6c0c85c3f207aecbb06b9d2d17520f3f87cde1e55eea709",
       "transport": {
         "type": "stdio"

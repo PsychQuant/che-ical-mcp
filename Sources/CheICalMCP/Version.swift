@@ -35,7 +35,7 @@ enum AppVersion {
                            Pass arguments as --key value pairs, or pipe JSON via stdin.
 
         Version: \(current)
-        Repository: https://github.com/kiki830621/che-ical-mcp
+        Repository: https://github.com/PsychQuant/che-ical-mcp
         """
     }
 }
