@@ -60,9 +60,17 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 The plugin includes slash commands (`/today`, `/week`, `/quick-event`, `/remind`), skills, and **a PreToolUse hook that automatically verifies day-of-week** when creating or updating events — preventing date/weekday mismatch errors.
 
+Two steps — register the marketplace once, then install the plugin:
+
 ```bash
-claude plugin add --marketplace psychquant-claude-plugins che-ical-mcp
+# 1. Register the marketplace (one-time)
+claude plugin marketplace add PsychQuant/psychquant-claude-plugins
+
+# 2. Install the plugin
+claude plugin install che-ical-mcp@psychquant-claude-plugins
 ```
+
+> **Inside Claude Code?** The slash-command equivalents `/plugin marketplace add PsychQuant/psychquant-claude-plugins` and `/plugin install che-ical-mcp@psychquant-claude-plugins` work the same way.
 
 > **Note:** The plugin wraps the MCP binary with auto-download. If the binary is not found at `~/bin/CheICalMCP`, it will be downloaded from GitHub Releases on first use.
 
