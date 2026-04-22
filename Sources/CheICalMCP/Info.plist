@@ -7,7 +7,7 @@
     <key>CFBundleName</key>
     <string>CheICalMCP</string>
     <key>CFBundleVersion</key>
-    <string>1.4.1</string>
+    <string>1.7.0</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>CheICalMCP needs access to your calendars to manage events and schedules.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
