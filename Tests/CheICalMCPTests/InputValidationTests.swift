@@ -1,4 +1,5 @@
 import XCTest
+import MCP
 @testable import CheICalMCP
 
 /// Tests for input validators used at MCP tool boundaries.
@@ -7,7 +8,7 @@ final class InputValidationTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func assertInvalidParameter(_ expression: @autoclosure () throws -> Void, messageContains needle: String? = nil, file: StaticString = #file, line: UInt = #line) {
+    private func assertInvalidParameter<T>(_ expression: @autoclosure () throws -> T, messageContains needle: String? = nil, file: StaticString = #file, line: UInt = #line) {
         XCTAssertThrowsError(try expression(), file: file, line: line) { error in
             guard case ToolError.invalidParameter(let message) = error else {
                 XCTFail("Expected ToolError.invalidParameter, got \(error)", file: file, line: line)
@@ -202,5 +203,61 @@ final class InputValidationTests: XCTestCase {
 
     func testReminderTextInputAllNilIsAccepted() throws {
         try InputValidation.validateReminderTextInput(title: nil, notes: nil)
+    }
+
+    // MARK: - requireIntIfPresent
+
+    func testRequireIntIfPresentUsesDefaultWhenAbsent() throws {
+        let args: [String: Value] = [:]
+        let v = try InputValidation.requireIntIfPresent(args, key: "priority", default: 0)
+        XCTAssertEqual(v, 0)
+    }
+
+    func testRequireIntIfPresentAcceptsInt() throws {
+        let args: [String: Value] = ["priority": .int(5)]
+        let v = try InputValidation.requireIntIfPresent(args, key: "priority", default: 0)
+        XCTAssertEqual(v, 5)
+    }
+
+    func testRequireIntIfPresentAcceptsWholeNumberDouble() throws {
+        // JSON parsers often lift integer literals to Double; 5.0 is a
+        // clear integer intent and must be accepted to avoid breaking
+        // existing callers.
+        let args: [String: Value] = ["priority": .double(5.0)]
+        let v = try InputValidation.requireIntIfPresent(args, key: "priority", default: 0)
+        XCTAssertEqual(v, 5)
+    }
+
+    func testRequireIntIfPresentRejectsFractionalDouble() {
+        let args: [String: Value] = ["interval": .double(1.5)]
+        assertInvalidParameter(
+            try InputValidation.requireIntIfPresent(args, key: "interval", default: 1),
+            messageContains: "interval"
+        )
+    }
+
+    func testRequireIntIfPresentRejectsString() {
+        // The bug that motivates this helper: LLM sends priority: "high",
+        // old code silently masked it to the default 0. Now it throws.
+        let args: [String: Value] = ["priority": .string("high")]
+        assertInvalidParameter(
+            try InputValidation.requireIntIfPresent(args, key: "priority", default: 0),
+            messageContains: "priority"
+        )
+    }
+
+    func testRequireIntIfPresentRejectsNumericString() {
+        // Even "5" must be rejected — it reveals a type bug in the caller.
+        let args: [String: Value] = ["tolerance_minutes": .string("5")]
+        assertInvalidParameter(
+            try InputValidation.requireIntIfPresent(args, key: "tolerance_minutes", default: 5)
+        )
+    }
+
+    func testRequireIntIfPresentRejectsBool() {
+        let args: [String: Value] = ["limit": .bool(true)]
+        assertInvalidParameter(
+            try InputValidation.requireIntIfPresent(args, key: "limit", default: 10)
+        )
     }
 }

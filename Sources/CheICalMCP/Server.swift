@@ -1329,7 +1329,7 @@ class CheICalMCPServer {
     }
 
     private func handleUndoHistory(arguments: [String: Value]) async throws -> String {
-        let limit = arguments["limit"]?.intValue ?? 10
+        let limit = try InputValidation.requireIntIfPresent(arguments, key: "limit", default: 10)
         let history = await CalendarUndoManager.shared.history()
         let undoCount = await CalendarUndoManager.shared.undoCount
         let redoCount = await CalendarUndoManager.shared.redoCount
@@ -1498,7 +1498,7 @@ class CheICalMCPServer {
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
         let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
-        let priority = arguments["priority"]?.intValue ?? 0
+        let priority = try InputValidation.requireIntIfPresent(arguments, key: "priority", default: 0)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -1761,7 +1761,7 @@ class CheICalMCPServer {
                     title: title,
                     notes: batchNotes,
                     dueDate: batchDueDate,
-                    priority: reminderDict["priority"]?.intValue ?? 0,
+                    priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
                 )
@@ -2392,7 +2392,7 @@ class CheICalMCPServer {
             }
         }
 
-        let toleranceMinutes = arguments["tolerance_minutes"]?.intValue ?? 5
+        let toleranceMinutes = try InputValidation.requireIntIfPresent(arguments, key: "tolerance_minutes", default: 5)
 
         let duplicates = try await eventKitManager.findDuplicateEvents(
             calendarNames: calendarNames,
@@ -2630,7 +2630,7 @@ class CheICalMCPServer {
         default: throw ToolError.invalidParameter("Invalid frequency: \(freqStr). Use daily/weekly/monthly/yearly.")
         }
 
-        let interval = recurrenceDict["interval"]?.intValue ?? 1
+        let interval = try InputValidation.requireIntIfPresent(recurrenceDict, key: "interval", default: 1)
         let endDate: Date? = try recurrenceDict["end_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: defaultTimezone) }
         let occurrenceCount = recurrenceDict["occurrence_count"]?.intValue
 

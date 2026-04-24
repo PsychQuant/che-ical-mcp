@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 
 /// Pure input validators applied at MCP tool boundaries.
 ///
@@ -40,6 +41,28 @@ enum InputValidation {
     static func validateReminderTextInput(title: String?, notes: String?) throws {
         if let title { try validateLength(title, field: "title", max: maxTitleLength) }
         if let notes { try validateLength(notes, field: "notes", max: maxNotesLength) }
+    }
+
+    // MARK: - Numeric argument coercion with loud failure
+    //
+    // These helpers separate "key absent -> use default" from "key present
+    // but unparseable -> throw". The naive `arguments[key]?.intValue ?? def`
+    // pattern conflates the two and silently turns malformed input into the
+    // default, which an LLM cannot learn from.
+
+    static func requireIntIfPresent(_ arguments: [String: Value], key: String, default def: Int) throws -> Int {
+        guard let raw = arguments[key] else { return def }
+        if let n = raw.intValue { return n }
+        // Some JSON clients lift integer literals to Double to avoid precision
+        // loss. Accept whole-number doubles (5.0 -> 5) but reject fractional
+        // (5.5 stays an error — it's clearly not an integer intent).
+        if let d = raw.doubleValue,
+           d.truncatingRemainder(dividingBy: 1) == 0,
+           d >= Double(Int.min), d <= Double(Int.max)
+        {
+            return Int(d)
+        }
+        throw ToolError.invalidParameter("\(key) must be an integer")
     }
 }
 
