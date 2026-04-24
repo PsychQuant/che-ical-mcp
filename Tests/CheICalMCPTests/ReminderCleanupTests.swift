@@ -155,4 +155,30 @@ final class ReminderCleanupTests: XCTestCase {
         )
         XCTAssertEqual(deduped.count, 3)
     }
+
+    // MARK: - #28 binding-mode reminder_ids parsing invariants
+    //
+    // The handler parses reminder_ids inline. These tests pin the stdlib
+    // invariants the handler composes: order-preserving dedupe, trimmed
+    // emptiness semantics. Full handler integration tests belong in #31.
+
+    func testOrderedDedupePreservesFirstOccurrence() {
+        // Handler uses `Set.insert(_:).inserted` to build a dedupe'd array
+        // that preserves first-occurrence order — so the dry-run preview is
+        // read in the same order execute will operate on.
+        var seen = Set<String>()
+        var out: [String] = []
+        for id in ["c", "a", "b", "a", "c", "d"] {
+            if seen.insert(id).inserted { out.append(id) }
+        }
+        XCTAssertEqual(out, ["c", "a", "b", "d"],
+            "dedupe must preserve first-occurrence order — callers read dry-run preview in order")
+    }
+
+    func testEmptyStringTrimmedIsEmpty() {
+        XCTAssertTrue("".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertTrue("   ".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertTrue("\t\n".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertFalse("x".trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
 }

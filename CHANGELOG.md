@@ -20,8 +20,14 @@ Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7
 - **`DispatchRoundTripTests`** (#21): guards against tool-name drift between `defineTools()` and the `executeToolCall` dispatch switch — catches the "compiles green, silently unroutable" class of bug that can't be caught by individual handler tests.
 - **`ReminderCleanupTests`** (#21): pure-function unit tests for the `calendar_source` guard and the dedupe invariant F2 relies on.
 
+- **`cleanup_completed_reminders` binding mode** (#28): new optional `reminder_ids: [String]` parameter. When supplied, the handler operates on exactly those IDs instead of re-listing completed reminders from the filter — so dry-run's "I approve these IDs" is honored verbatim by the execute call. Filter parameters (`calendar_name`, `calendar_source`, `limit`) are ignored in binding mode. Response includes a `mode` field (`"filter"` or `"binding"`) so callers can distinguish. Filter mode is unchanged (still re-derives the set for automation use).
+- **`delete_events_batch` untrusted-content hardening** (#27): dry-run preview entries no longer echo `event.title` or `event.calendar.title` — both are attacker-controllable via malicious `.ics` invites or shared-calendar collaborators, and the handler is excluded from `UntrustedContentWrapper.readTools`. Mirrors the #21 F3 fix. Preview now returns only `event_id` + server-formatted dates; pipe through `list_events` for human-readable titles.
+- **`list_reminders` / `list_reminder_tags` scope-invariant** (#29): both handlers now reject `calendar_source` supplied without `calendar_name` (consistent with `cleanup_completed_reminders` as of #21). Non-string JSON input on either filter key is also rejected (R2-F1 type-coerce defense applied cross-handler).
+- **`ManifestParityTests`** (#30): new test guards drift between `Server.defineTools()` and `mcpb/manifest.json`. The #21 two-commit history — `feat` commit adding a tool to Swift, `docs` commit adding the manifest entry afterwards — demonstrated the failure mode. Now caught at `swift test` time.
+
 ### Known follow-up (tracked separately)
-- #27: `delete_events_batch` has the same dry-run-echoes-untrusted-title pattern; fix will mirror #21 or land a broader `UntrustedContentWrapper` refactor.
+- #31: handler-level integration tests for `handleCleanupCompletedReminders` (requires EventKitManager test-double infra).
+- #32: `failures[].error` EventKit `localizedDescription` surface hardening.
 
 ### Fixed
 - **`formatJSON` crash on invalid JSON types** (#22): `JSONSerialization.data(withJSONObject:)` raises an Objective-C `NSInvalidArgumentException` on unsupported types (raw `Date`, `NaN`, `Infinity`, non-string dict keys) — an ObjC exception that Swift `try/catch` cannot capture, crashing the process in release builds. The previous `catch { return "[]" }` never actually handled this path. Now pre-checks with `JSONSerialization.isValidJSONObject(_:)` and throws `ToolError.invalidParameter`, which `handleToolCall` converts into MCP `isError: true`. Moved `formatJSON` / `actionResult` to top-level `ResponseFormatting.swift` to match the repo's utility-function pattern.
