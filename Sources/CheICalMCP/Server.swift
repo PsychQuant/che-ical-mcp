@@ -1174,6 +1174,8 @@ class CheICalMCPServer {
         let notes = arguments["notes"]?.stringValue
         let location = arguments["location"]?.stringValue
         let url = arguments["url"]?.stringValue
+        try validateEventTextInput(title: title, notes: notes, location: location, url: url)
+
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
         let isAllDay = arguments["all_day"]?.boolValue ?? false
@@ -1227,6 +1229,8 @@ class CheICalMCPServer {
         let notes = arguments["notes"]?.stringValue
         let location = arguments["location"]?.stringValue
         let url = arguments["url"]?.stringValue
+        try validateEventTextInput(title: title, notes: notes, location: location, url: url)
+
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
         let isAllDay = arguments["all_day"]?.boolValue
@@ -1485,6 +1489,8 @@ class CheICalMCPServer {
         }
 
         let userNotes = arguments["notes"]?.stringValue
+        try validateReminderTextInput(title: title, notes: userNotes)
+
         let tags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
@@ -1524,6 +1530,8 @@ class CheICalMCPServer {
 
         let title = arguments["title"]?.stringValue
         let userNotes = arguments["notes"]?.stringValue
+        try validateReminderTextInput(title: title, notes: userNotes)
+
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = arguments["clear_tags"]?.boolValue ?? false
         let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
@@ -1740,9 +1748,12 @@ class CheICalMCPServer {
             }
 
             do {
+                let batchUserNotes = reminderDict["notes"]?.stringValue
+                try validateReminderTextInput(title: title, notes: batchUserNotes)
+
                 let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
-                let batchNotes = buildNotesWithTags(notes: reminderDict["notes"]?.stringValue, tags: batchTags)
+                let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
                 let result = try await eventKitManager.createReminder(
                     title: title,
                     notes: batchNotes,
@@ -2000,12 +2011,16 @@ class CheICalMCPServer {
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
 
+                let batchNotes = eventDict["notes"]?.stringValue
+                let batchLocation = eventDict["location"]?.stringValue
+                try validateEventTextInput(title: title, notes: batchNotes, location: batchLocation, url: nil)
+
                 let result = try await eventKitManager.createEvent(
                     title: title,
                     startDate: startDate,
                     endDate: endDate,
-                    notes: eventDict["notes"]?.stringValue,
-                    location: eventDict["location"]?.stringValue,
+                    notes: batchNotes,
+                    location: batchLocation,
                     url: nil,
                     calendarName: eventDict["calendar_name"]?.stringValue,
                     calendarSource: eventDict["calendar_source"]?.stringValue,
@@ -2761,6 +2776,39 @@ class CheICalMCPServer {
         let cleanNotes = cleanLines.isEmpty ? nil : cleanLines.joined(separator: "\n")
 
         return (cleanNotes, tags)
+    }
+
+    // MARK: - Input Validation
+
+    private static let maxTitleLength = 255
+    private static let maxNotesLength = 65535
+    private static let maxLocationLength = 1024
+
+    private func validateLength(_ value: String, field: String, max: Int) throws {
+        guard value.count <= max else {
+            throw ToolError.invalidParameter("\(field) exceeds maximum length of \(max) characters")
+        }
+    }
+
+    private func validateHTTPScheme(_ url: String) throws {
+        guard let comps = URLComponents(string: url),
+              let scheme = comps.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else {
+            throw ToolError.invalidParameter("url must use http:// or https:// scheme")
+        }
+    }
+
+    private func validateEventTextInput(title: String?, notes: String?, location: String?, url: String?) throws {
+        if let title { try validateLength(title, field: "title", max: Self.maxTitleLength) }
+        if let notes { try validateLength(notes, field: "notes", max: Self.maxNotesLength) }
+        if let location { try validateLength(location, field: "location", max: Self.maxLocationLength) }
+        if let url { try validateHTTPScheme(url) }
+    }
+
+    private func validateReminderTextInput(title: String?, notes: String?) throws {
+        if let title { try validateLength(title, field: "title", max: Self.maxTitleLength) }
+        if let notes { try validateLength(notes, field: "notes", max: Self.maxNotesLength) }
     }
 
     /// Build notes string by combining user notes with tags
