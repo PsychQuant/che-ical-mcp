@@ -2,8 +2,38 @@ import CoreLocation
 import EventKit
 import Foundation
 
+/// The subset of `EventKitManager`'s surface that handler integration tests
+/// need to script. Kept deliberately minimal (#31 design D1): new methods land
+/// here only when at least one landing test exercises them via
+/// `FakeEventKitManager`.
+///
+/// Conformance is `Sendable` because `EventKitManager` is an actor and
+/// `FakeEventKitManager` is also expected to be actor-isolated.
+protocol EventKitManaging: Sendable {
+    /// Return completed-reminder identifiers, optionally scoped to a calendar.
+    ///
+    /// The cleanup handler only needs identifiers — it never reads other
+    /// `EKReminder` properties in its flow. Returning `[String]` directly
+    /// lets `FakeEventKitManager` be a simple struct holder instead of
+    /// fabricating `EKReminder` instances (which are tied to a real,
+    /// authorized `EKEventStore`).
+    func listCompletedReminderIdentifiers(
+        calendarName: String?,
+        calendarSource: String?
+    ) async throws -> [String]
+
+    /// See `EventKitManager.deleteRemindersBatch(identifiers:onlyCompleted:)`.
+    func deleteRemindersBatch(
+        identifiers: [String],
+        onlyCompleted: Bool
+    ) async throws -> BatchDeleteResult
+
+    /// See `EventKitManager.requestReminderAccess()`.
+    func requestReminderAccess() async throws
+}
+
 /// EventKit wrapper for Calendar and Reminders operations
-actor EventKitManager {
+actor EventKitManager: EventKitManaging {
     private let eventStore = EKEventStore()
     private var hasCalendarAccess = false
     private var hasReminderAccess = false
@@ -962,6 +992,24 @@ actor EventKitManager {
     }
 
     // MARK: - Reminders
+
+    /// Return identifiers of completed reminders matching the optional scope.
+    ///
+    /// Thin wrapper over `listReminders(completed: true, ...)` that projects
+    /// the result to `[String]`. Exposed on `EventKitManaging` so handlers
+    /// can be tested against `FakeEventKitManager` without having to fabricate
+    /// `EKReminder` instances (which require an authorized `EKEventStore`).
+    func listCompletedReminderIdentifiers(
+        calendarName: String?,
+        calendarSource: String?
+    ) async throws -> [String] {
+        let reminders = try await listReminders(
+            completed: true,
+            calendarName: calendarName,
+            calendarSource: calendarSource
+        )
+        return reminders.map { $0.calendarItemIdentifier }
+    }
 
     func listReminders(completed: Bool? = nil, calendarName: String? = nil, calendarSource: String? = nil) async throws -> [EKReminder] {
         try await requestReminderAccess()

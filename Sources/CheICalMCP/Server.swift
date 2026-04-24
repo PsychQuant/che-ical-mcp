@@ -32,6 +32,12 @@ class CheICalMCPServer {
     private let server: Server
     private let transport: StdioTransport
     private let eventKitManager = EventKitManager.shared
+    // #31: narrow `EventKitManaging` surface injected at init time so tests
+    // can supply `FakeEventKitManager` for the cleanup handler without
+    // having to fake the full 30-method EventKitManager surface. Production
+    // uses the shared singleton (D1 in design.md: protocol covers only the
+    // 3 methods the cleanup handler needs).
+    private let reminderCleanupSource: any EventKitManaging
     private let dateFormatter: ISO8601DateFormatter
 
     /// Local time formatter for user-friendly display
@@ -53,7 +59,9 @@ class CheICalMCPServer {
     /// All available tools
     private let tools: [Tool]
 
-    init() async throws {
+    init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared) async throws {
+        self.reminderCleanupSource = reminderCleanupSource
+
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
 
@@ -1956,14 +1964,18 @@ class CheICalMCPServer {
                 throw ToolError.invalidParameter("limit must be greater than zero")
             }
 
-            let completed = try await eventKitManager.listReminders(
-                completed: true,
+            // #31: dispatched through the injected `reminderCleanupSource`
+            // (protocol-typed) rather than `eventKitManager` (concrete)
+            // so tests can substitute a fake. `listCompletedReminderIdentifiers`
+            // projects [EKReminder] → [String] so the fake doesn't have to
+            // fabricate EKReminder instances.
+            let completedIdentifiers = try await reminderCleanupSource.listCompletedReminderIdentifiers(
                 calendarName: calendarName,
                 calendarSource: calendarSource
             )
 
-            // F2 dedupe + F7 map (non-optional calendarItemIdentifier).
-            uniqueIdentifiers = Array(Set(completed.map { $0.calendarItemIdentifier }))
+            // F2 dedupe.
+            uniqueIdentifiers = Array(Set(completedIdentifiers))
             total = uniqueIdentifiers.count
             limit = parsedLimit
             mode = "filter"
@@ -2019,8 +2031,10 @@ class CheICalMCPServer {
         // tool schema promises. Filter mode always starts from
         // listReminders(completed: true) so every candidate is already
         // completed when we dispatch; no need to re-check there.
+        // #31: dispatched via `reminderCleanupSource` (protocol-typed) for
+        // testability.
         let onlyCompleted = (mode == "binding")
-        let result = try await eventKitManager.deleteRemindersBatch(
+        let result = try await reminderCleanupSource.deleteRemindersBatch(
             identifiers: identifiers,
             onlyCompleted: onlyCompleted
         )
