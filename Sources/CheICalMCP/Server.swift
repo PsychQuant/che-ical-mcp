@@ -2065,14 +2065,18 @@ class CheICalMCPServer {
             response["skipped"] = skippedCount
         }
 
-        // Collect unique titles from the batch to find similar existing events
+        // Collect unique titles from the batch to find similar existing events.
+        // Failures here are advisory-only — they don't affect batch success —
+        // but must be visible so callers know the hint is incomplete rather
+        // than treating an error as "no similar events exist".
         let batchTitles = Set(eventsArray.compactMap { $0.objectValue?["title"]?.stringValue })
         var similarHints: [[String: Any]] = []
+        var similarLookupErrors: [String: String] = [:]
+        let createdIds = Set(results.compactMap { $0["event_id"] as? String })
         for title in batchTitles {
-            if let similar = try? await eventKitManager.findSimilarEvents(title: title, limit: 3) {
+            do {
+                let similar = try await eventKitManager.findSimilarEvents(title: title, limit: 3)
                 for event in similar {
-                    // Skip events we just created in this batch
-                    let createdIds = Set(results.compactMap { $0["event_id"] as? String })
                     if let eid = event.eventIdentifier, createdIds.contains(eid) { continue }
                     similarHints.append([
                         "matched_title": title,
@@ -2082,10 +2086,16 @@ class CheICalMCPServer {
                         "existing_date_local": localDateFormatter.string(from: event.startDate)
                     ])
                 }
+            } catch {
+                FileHandle.standardError.write(Data("findSimilarEvents(\(title)) failed: \(error.localizedDescription)\n".utf8))
+                similarLookupErrors[title] = error.localizedDescription
             }
         }
         if !similarHints.isEmpty {
             response["similar_events"] = similarHints
+        }
+        if !similarLookupErrors.isEmpty {
+            response["similar_events_errors"] = similarLookupErrors
         }
 
         return formatJSON(response)
