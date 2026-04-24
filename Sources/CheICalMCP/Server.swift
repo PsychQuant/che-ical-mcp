@@ -1379,8 +1379,14 @@ class CheICalMCPServer {
         let filterMode = arguments["filter"]?.stringValue
         let sortMode = arguments["sort"]?.stringValue ?? "due_date"
         let limit = arguments["limit"]?.intValue
-        let calendarName = arguments["calendar_name"]?.stringValue
-        let calendarSource = arguments["calendar_source"]?.stringValue
+        // #29: enforce scope invariant consistent with cleanup_completed_reminders.
+        // listReminders silently discards calendar_source when calendar_name is
+        // nil — read-only so not destructive, but the API asymmetry is confusing
+        // (users who learn from cleanup_completed_reminders that source-alone is
+        // rejected reasonably expect the same here).
+        let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
+        let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
+        try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
 
         // Determine completion filter: 'filter' parameter takes priority over legacy 'completed'
         let completed: Bool?
@@ -1849,8 +1855,10 @@ class CheICalMCPServer {
     // MARK: - Tag Handlers
 
     private func handleListReminderTags(arguments: [String: Value]) async throws -> String {
-        let calendarName = arguments["calendar_name"]?.stringValue
-        let calendarSource = arguments["calendar_source"]?.stringValue
+        // #29: same scope-invariant enforcement as handleListReminders — see there for rationale.
+        let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
+        let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
+        try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
         let includeCompleted = arguments["include_completed"]?.boolValue ?? false
 
         let completed: Bool? = includeCompleted ? nil : false
