@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-04-24
+
+### Security
+- **Input validation at MCP tool boundaries** (#20): `create_event`, `update_event`, `create_reminder`, `update_reminder`, and their batch counterparts now enforce length limits (title ≤ 255, notes ≤ 65535, location ≤ 1024) and a URL scheme allowlist (http / https only). Rejects `javascript:`, `file:`, `data:`, and other non-web schemes that could be rendered as clickable URIs by calendar clients.
+- **Prompt-injection defense** (#20): Responses from tools that echo externally-sourced content (`list_events`, `search_events`, `list_events_quick`, `check_conflicts`, `find_duplicate_events`, `list_reminders`, `search_reminders`, `list_reminder_tags`) are wrapped with `[UNTRUSTED CALENDAR DATA ...]` markers over the MCP interface so consuming LLMs can distinguish data from instructions. CLI mode preserves pure JSON output.
+- **Loud failures for LLM-malformed integer arrays**: `recurrence.days_of_week`, `recurrence.days_of_month`, and `alarms_minutes_offsets` now throw `ToolError.invalidParameter` on out-of-range or non-integer values. Previously the code silently dropped invalid elements with no warning, leaving callers unaware their input was partially ignored.
+- **Force-unwrap crash eliminated** (originally from #20): `EKWeekday(rawValue:)!` in `EventKitManager.createRecurrenceRule` replaced with safe `compactMap`. With parse-boundary validation now in place, the safe-unwrap path is unreachable but retained for defense-in-depth.
+
+### Fixed
+- **`Info.plist` CFBundleVersion sync**: plist version was stuck at `1.4.1` since before the v1.5.0 release. Bumped to match `AppVersion.current`.
+
+### Added (Tests)
+- `InputValidationTests` (32 cases): URL scheme allowlist, length boundaries, Unicode grapheme semantics.
+- `UntrustedContentWrapperTests` (10 cases): wrap format, allowlist membership (read tools included, write tools excluded).
+
 ## [1.7.0] - 2026-04-01
 
 ### Added
