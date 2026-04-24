@@ -7,7 +7,7 @@ The shim protocol SHALL declare only the EventKit surface that at least one land
 #### Scenario: Initial shipment contains exactly the cleanup-handler surface
 
 - **WHEN** this change lands
-- **THEN** `EventKitManaging` declares exactly three methods: `listReminders(completed:calendarName:calendarSource:)`, `deleteRemindersBatch(identifiers:onlyCompleted:)`, `requestReminderAccess()`
+- **THEN** `EventKitManaging` declares exactly the two methods exercised by `CleanupHandlerTests` via `FakeEventKitManager`: `listCompletedReminderIdentifiers(calendarName:calendarSource:) -> [String]` and `deleteRemindersBatch(identifiers:onlyCompleted:) -> BatchDeleteResult`
 
 #### Scenario: Protocol expansion requires a landing test
 
@@ -21,34 +21,37 @@ Dependency injection SHALL use a default-argument initializer. Production code S
 #### Scenario: Production instantiation unchanged
 
 - **WHEN** `main.swift` (or any production caller) invokes `CheICalMCPServer()` with no arguments
-- **THEN** the server uses `EventKitManager.shared` as its `EventKitManaging` dependency
+- **THEN** the server resolves `reminderCleanupSource` to `EventKitManager.shared`
 
 #### Scenario: Test instantiation injects fake
 
-- **WHEN** a test invokes `CheICalMCPServer(eventKitManager: FakeEventKitManager(...))`
-- **THEN** the server uses the supplied fake for every call it would otherwise make on `.shared`
+- **WHEN** a test invokes `CheICalMCPServer(reminderCleanupSource: FakeEventKitManager(...))`
+- **THEN** the server uses the supplied fake for every EventKit call the cleanup handler would otherwise make on `.shared`
 
 ### Requirement: `FakeEventKitManager` is scriptable per test
 
-The fake SHALL allow each test to pre-configure: what `listReminders` returns (including empty, duplicates, mixed completed/incomplete), whether `deleteRemindersBatch` succeeds per-ID, and whether `requestReminderAccess` throws.
+The fake SHALL allow each test to pre-configure: what `listCompletedReminderIdentifiers` returns (including empty, duplicates) and whether `deleteRemindersBatch` succeeds per-ID.
 
-#### Scenario: Scripted `listReminders` return values
+#### Scenario: Scripted identifier return values
 
-- **WHEN** a test sets `fake.listRemindersResult = [reminderA, reminderB]`
-- **AND** the handler under test calls `listReminders`
-- **THEN** the fake returns `[reminderA, reminderB]`
+- **WHEN** a test sets the fake's scripted identifiers to `["r1", "r2", "r3"]`
+- **AND** the handler under test calls `listCompletedReminderIdentifiers`
+- **THEN** the fake returns `["r1", "r2", "r3"]`
 
 #### Scenario: Invocation recording for assertions
 
 - **WHEN** the handler calls `deleteRemindersBatch(identifiers: ["x", "y"], onlyCompleted: true)`
 - **THEN** the fake records the call so the test can assert on both the identifiers passed and the `onlyCompleted` flag
 
-##### Example: Binding-mode onlyCompleted assertion
+##### Example: Binding-mode onlyCompleted wiring assertion
 
-- **GIVEN** a fake with `listRemindersResult = [completed("a"), notCompleted("b")]`
+- **GIVEN** a fake with a scripted `BatchDeleteResult` containing `failures: [("b", "Reminder is no longer completed")]`
 - **WHEN** the test calls `handleCleanupCompletedReminders` with `reminder_ids: ["a", "b"], dry_run: false`
 - **THEN** the fake records `deleteRemindersBatch(identifiers: ["a", "b"], onlyCompleted: true)`
-- **AND** the returned `BatchDeleteResult` has `failures` containing `b` with message `"Reminder is no longer completed"`
+- **AND** the response `failures[0].error` contains `"no longer completed"`
+- **AND** the response `deleted_ids` does not contain `"b"`
+
+> Note: this wiring-level test pins that the handler passes the correct `onlyCompleted` flag and surfaces failures into the response. It does NOT pin the destructive guard inside `EventKitManager.deleteRemindersBatch` itself (that `if onlyCompleted && !reminder.isCompleted` branch requires a separate test against a real `EKReminder` with toggleable `isCompleted`, tracked in a follow-up issue).
 
 ### Requirement: `CleanupHandlerTests` pins documented contract invariants
 
@@ -57,19 +60,18 @@ The test file SHALL include at least one test case per invariant established in 
 #### Scenario: R2-F2 arithmetic invariant pinned
 
 - **WHEN** a cleanup call returns a response with `total`, `deleted_count`, `failures.count`, and `remaining`
-- **THEN** the test asserts `total == deleted_count + failures.count + remaining` across at least one test case with deduplication and one with partial failures
+- **THEN** the test asserts `total == preview.count + remaining` for dry-run and `total == deleted_count + failures.count + remaining` for execute
 
-#### Scenario: #28 F1 onlyCompleted invariant pinned
+#### Scenario: #28 F1 onlyCompleted wiring pinned
 
-- **WHEN** a binding-mode call includes an identifier whose underlying reminder `isCompleted == false`
-- **THEN** the test asserts the response's `failures[]` contains that identifier with a message indicating it is no longer completed
-- **AND** the test asserts the reminder was NOT passed to `eventStore.remove`
+- **WHEN** a binding-mode call supplies `reminder_ids` and `dry_run=false`
+- **THEN** the test asserts `onlyCompleted == true` is passed to the fake's `deleteRemindersBatch`
 
 #### Scenario: F1 guard ordering pinned at integration level
 
 - **WHEN** a filter-mode call supplies `calendar_source` without `calendar_name`
 - **THEN** the test asserts `ToolError.invalidParameter` is thrown
-- **AND** the test asserts `listReminders` was never called on the fake
+- **AND** the test asserts `listCompletedReminderIdentifiers` was never called on the fake
 
 #### Scenario: F8 3-branch response shape stability pinned
 
@@ -92,7 +94,7 @@ The production binary SHALL behave identically before and after this change.
 
 ### Requirement: Existing `EventKitManager` call sites outside the cleanup handler are NOT refactored in this change
 
-Fifteen-plus direct `eventKitManager.` call sites in `Server.swift` SHALL remain using the singleton directly. Retrofitting them is deferred to future changes that introduce their own handler tests.
+Thirty-plus direct `eventKitManager.` call sites in `Server.swift` SHALL remain using the singleton directly. Retrofitting them is deferred to future changes that introduce their own handler tests.
 
 #### Scenario: Non-cleanup handlers continue using the singleton directly
 

@@ -133,7 +133,44 @@ final class CleanupHandlerTests: XCTestCase {
         )
     }
 
-    func testBindingModeRejectsUncompletedReminderViaFakeResult() async throws {
+    // Integration-level coverage for #21 R2-F1 type-coercion bypass.
+    // The helper-unit test `ReminderCleanupTests.testRequireStringIfPresentRejectsInt`
+    // already covers `requireStringIfPresent` in isolation; this test pins
+    // the handler-to-fake integration path so a refactor that dropped the
+    // call to `requireStringIfPresent` would fail loudly.
+    func testFilterModeRejectsNonStringCalendarSource() async throws {
+        let fake = FakeEventKitManager()
+        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+
+        do {
+            _ = try await server.executeToolCall(
+                name: "cleanup_completed_reminders",
+                arguments: ["calendar_source": .int(123)]
+            )
+            XCTFail("Expected ToolError.invalidParameter on non-string calendar_source")
+        } catch ToolError.invalidParameter {
+            // expected
+        }
+
+        let listCalls = await fake.listCompletedReminderIdentifiersCalls
+        XCTAssertTrue(
+            listCalls.isEmpty,
+            "#21 R2-F1: type-coerce bypass must throw before reaching the EventKit primitive"
+        )
+    }
+
+    /// Pins that binding mode's `deleteRemindersBatch` failure (whatever the
+    /// cause) surfaces into the response's `failures[]` with the provided
+    /// error message, and that the failed identifier is excluded from
+    /// `deleted_ids`.
+    ///
+    /// NOTE: this is a WIRING test — it verifies the handler plumbs the
+    /// fake's `BatchDeleteResult` correctly into the response JSON. It does
+    /// NOT prove that the real `EventKitManager.deleteRemindersBatch(
+    /// onlyCompleted: true)` actually refuses to delete a reminder whose
+    /// `isCompleted == false`. That destructive guard is tracked as a
+    /// separate follow-up issue.
+    func testBindingModeFailureSurfacesInResponse() async throws {
         let fake = FakeEventKitManager()
         await fake.scriptDeleteResult(
             BatchDeleteResult(

@@ -13,9 +13,9 @@ The discussion that preceded this proposal (`/spectra-discuss` on 2026-04-25) co
 
 ## What Changes
 
-- Extract `EventKitManaging` protocol with the 3 methods `handleCleanupCompletedReminders` uses: `listReminders(completed:calendarName:calendarSource:)`, `deleteRemindersBatch(identifiers:onlyCompleted:)`, `requestReminderAccess()`
-- `EventKitManager` conforms to the new protocol (behavior unchanged; existing callers unaffected)
-- `CheICalMCPServer.init(eventKitManager: any EventKitManaging = .shared)` — new initializer with default argument preserving production behavior
+- Extract `EventKitManaging` protocol with the 2 methods `handleCleanupCompletedReminders` uses: `listCompletedReminderIdentifiers(calendarName:calendarSource:) -> [String]` (a new thin wrapper around `listReminders(completed: true, ...)` that projects to identifier strings — see D4 in `design.md`) and `deleteRemindersBatch(identifiers:onlyCompleted:) -> BatchDeleteResult`
+- `EventKitManager` (actor) conforms to the new protocol (behavior unchanged; existing callers unaffected)
+- `CheICalMCPServer.init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared)` — new initializer with default argument preserving production behavior. Named `reminderCleanupSource` (not `eventKitManager`) so it coexists with the concrete `private let eventKitManager = EventKitManager.shared` property used by 30+ non-cleanup handlers that stay direct-singleton per D1 narrow scope
 - `FakeEventKitManager` (new, in `Tests/`) — scriptable in-memory fake with canned `listReminders` results and recording of `deleteRemindersBatch` calls
 - `CleanupHandlerTests` (new) — pins the cleanup handler's behavior across dry-run vs execute, filter-mode vs binding-mode, onlyCompleted enforcement, `total` arithmetic, and response shape stability
 
@@ -42,7 +42,7 @@ The discussion that preceded this proposal (`/spectra-discuss` on 2026-04-25) co
 - **Affected specs**: new `specs/eventkit-handler-test-harness/spec.md`
 - **Affected code**:
   - `Sources/CheICalMCP/EventKit/EventKitManager.swift` — declare `EventKitManaging` protocol + conformance on the existing class
-  - `Sources/CheICalMCP/Server.swift` — replace `private let eventKitManager = EventKitManager.shared` with initializer-injection via new `init(eventKitManager:)`
+  - `Sources/CheICalMCP/Server.swift` — add a `reminderCleanupSource: any EventKitManaging` property and `init(reminderCleanupSource:)` with default `EventKitManager.shared`; the existing `eventKitManager` concrete property stays for the other 30+ handlers. `handleCleanupCompletedReminders` dispatches via `reminderCleanupSource` so tests can inject `FakeEventKitManager`
   - `Tests/CheICalMCPTests/FakeEventKitManager.swift` — new, scriptable fake
   - `Tests/CheICalMCPTests/CleanupHandlerTests.swift` — new, pins cleanup handler contract
   - `CHANGELOG.md` — Unreleased entry under `### Added` / `### Tests`

@@ -27,9 +27,6 @@ protocol EventKitManaging: Sendable {
         identifiers: [String],
         onlyCompleted: Bool
     ) async throws -> BatchDeleteResult
-
-    /// See `EventKitManager.requestReminderAccess()`.
-    func requestReminderAccess() async throws
 }
 
 /// EventKit wrapper for Calendar and Reminders operations

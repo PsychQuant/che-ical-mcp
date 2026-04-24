@@ -25,7 +25,6 @@ actor FakeEventKitManager: EventKitManaging {
     private var scriptedListError: Error?
     private var scriptedDeleteResult: BatchDeleteResult?
     private var scriptedDeleteError: Error?
-    private var scriptedAccessError: Error?
 
     // MARK: - Recorded invocations
 
@@ -41,7 +40,6 @@ actor FakeEventKitManager: EventKitManaging {
 
     private(set) var listCompletedReminderIdentifiersCalls: [ListCall] = []
     private(set) var deleteRemindersBatchCalls: [DeleteCall] = []
-    private(set) var requestReminderAccessCallCount: Int = 0
 
     // MARK: - Scripting API
 
@@ -59,10 +57,6 @@ actor FakeEventKitManager: EventKitManaging {
 
     func scriptDeleteError(_ error: Error) {
         scriptedDeleteError = error
-    }
-
-    func scriptAccessError(_ error: Error) {
-        scriptedAccessError = error
     }
 
     // MARK: - EventKitManaging conformance
@@ -93,10 +87,5 @@ actor FakeEventKitManager: EventKitManaging {
             failedCount: 0,
             failures: []
         )
-    }
-
-    func requestReminderAccess() async throws {
-        requestReminderAccessCallCount += 1
-        if let scriptedAccessError { throw scriptedAccessError }
     }
 }

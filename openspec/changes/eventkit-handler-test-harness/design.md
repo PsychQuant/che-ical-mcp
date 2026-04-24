@@ -37,7 +37,7 @@ The #21 and #28 verification rounds surfaced 4 P1/P2 bugs that shipped to main b
 ### D1: Protocol scope is minimal — only 3 methods
 
 `EventKitManaging` declares only:
-- `listReminders(completed:calendarName:calendarSource:)` → `[EKReminder]`
+- `listCompletedReminderIdentifiers(calendarName:calendarSource:)` → `[String]` (thin wrapper around the existing `listReminders(completed: true, ...)` that projects to identifier strings — see D4 resolution below)
 - `deleteRemindersBatch(identifiers:onlyCompleted:)` → `BatchDeleteResult`
 - `requestReminderAccess()` → `Void` (throws on denial)
 
@@ -51,7 +51,7 @@ Expansion policy: when a future handler test lands (e.g., `CreateEventsBatchHand
 ### D2: Injection via default-argument init, not DI container
 
 ```swift
-init(eventKitManager: any EventKitManaging = EventKitManager.shared) {
+init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared) {
     self.eventKitManager = eventKitManager
 }
 ```
@@ -66,7 +66,7 @@ Each test instantiates its own fake with canned data:
 
 ```swift
 let fake = FakeEventKitManager()
-fake.listRemindersResult = [MockReminder(id: "a", completed: true), ...]
+await fake.scriptCompletedReminderIdentifiers(["a", "b", "c"])
 fake.expectDeleteCalled = ["a"]
 ```
 
