@@ -505,7 +505,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.7.0
+- **Current Version**: v1.7.1
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -518,6 +518,7 @@ CheICalMCP --setup
 
 | Version | Changes |
 |---------|---------|
+| v1.7.1 | **Security hardening** (#20 #26): input validation (length limits + URL scheme allowlist) at all event/reminder entry points, prompt-injection wrapper on MCP read responses, parse-boundary validation for `days_of_week` / `days_of_month` / `alarms_minutes_offsets` (throws instead of silent-dropping invalid values), `Info.plist` catch-up, 42 new regression tests. |
 | v1.7.0 | **Attendee & organizer info** (#17): read-only `attendees` array and `organizer` object in event responses. Refactored shared `formatEventDict` method. |
 | v1.6.0 | **`--setup` flag** (#13): pre-authorize TCC permissions for launchd/automation. Non-interactive session detection (TERM + ppid). Combined SSH+launchd error messages. **`--cli` mode** (#14): invoke all 28 tools directly from command line without MCP server. Flag-based (`--key value`) and JSON stdin modes. Smart type inference for bool/int/double/array params. MCP Swift SDK 0.12.0 (Swift 6.3 compat). |
 | v1.5.0 | **Per-event timezone** (#12): `timezone` parameter on `create_event`/`update_event`/`create_events_batch`, event output uses event's own timezone, naive datetimes parsed in event timezone. **Clear due date** (#9): `clear_due_date` on `update_reminder`. **Weekday validation** (#5): `create_event`/`update_event` validate `start_time` weekday against `days_of_week`. **Undo/redo** (#8): 3 new tools (`undo`, `redo`, `undo_history`). **Recurring event fixes** (#7): occurrence-level delete/update with `occurrence_date`. **Swift 6 build** (#11): README updated for `make release` workflow |
@@ -544,6 +545,19 @@ CheICalMCP --setup
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Release Process (for maintainers)
+
+Version numbers live in three places with different semantics:
+
+| File | Role | When to bump |
+|------|------|--------------|
+| `Sources/CheICalMCP/Version.swift` — `AppVersion.current` | Source of truth; appears in `--version`, `help`, and MCP `serverInfo.version` | Every release |
+| `Sources/CheICalMCP/Info.plist` — `CFBundleVersion` | macOS bundle version | Every release; must match `AppVersion.current` |
+| `mcpb/manifest.json` — `version` | Claude Desktop bundle manifest shipped inside `.mcpb` | Every release; must match `AppVersion.current` |
+| `server.json` — `version` + `packages[].identifier` + `fileSha256` | **MCP Registry submission snapshot** | Only when re-submitting a new `.mcpb` to the MCP Registry (independent cadence) |
+
+`scripts/build-mcpb.sh` enforces the first three match; it will fail the build if any drifts. `server.json` is intentionally decoupled because bumping it requires a rebuilt `.mcpb`, a fresh SHA256, and a re-submission — steps that don't happen every source release.
 
 ---
 

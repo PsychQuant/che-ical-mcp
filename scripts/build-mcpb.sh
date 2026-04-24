@@ -19,7 +19,7 @@ echo ""
 # modelcontextprotocol/swift-sdk#214 is fixed.
 SWIFT_FALLBACK_FLAGS=()
 
-echo "[0/4] Checking Swift 6 strict concurrency compatibility..."
+echo "[0/5] Checking Swift 6 strict concurrency compatibility..."
 if swift build -c release --arch arm64 2>&1 | grep -q "SendingRisksDataRace"; then
     echo "  ⚠ Upstream dependency has Swift 6 concurrency errors (swift-sdk#214)"
     echo "  → Falling back to Swift 5 language mode for dependencies"
@@ -27,6 +27,39 @@ if swift build -c release --arch arm64 2>&1 | grep -q "SendingRisksDataRace"; th
 else
     echo "  ✓ Swift 6 strict concurrency OK"
 fi
+
+# Step 0.5: Version consistency check.
+# AppVersion.current (Sources/CheICalMCP/Version.swift) is the source of truth.
+# mcpb/manifest.json and Info.plist MUST match. server.json is independent — see
+# README "Release Process" — because it's a Registry snapshot that bumps only
+# when re-submitting the .mcpb bundle to MCP Registry.
+echo "[0.5/5] Checking version consistency..."
+VERSION_SWIFT="$PROJECT_DIR/Sources/CheICalMCP/Version.swift"
+MCPB_MANIFEST="$MCPB_DIR/manifest.json"
+INFO_PLIST="$PROJECT_DIR/Sources/CheICalMCP/Info.plist"
+
+SOURCE_VERSION=$(grep -E 'static let current = "' "$VERSION_SWIFT" | sed -E 's/.*"([^"]+)".*/\1/')
+MCPB_VERSION=$(grep -E '"version"' "$MCPB_MANIFEST" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+PLIST_VERSION=$(awk '/<key>CFBundleVersion<\/key>/{getline; print}' "$INFO_PLIST" | sed -E 's/.*<string>([^<]+)<\/string>.*/\1/')
+
+if [[ -z "$SOURCE_VERSION" ]]; then
+    echo "  ✗ Failed to parse AppVersion.current from Version.swift"
+    exit 1
+fi
+
+if [[ "$MCPB_VERSION" != "$SOURCE_VERSION" ]]; then
+    echo "  ✗ Version drift: Version.swift=$SOURCE_VERSION but mcpb/manifest.json=$MCPB_VERSION"
+    echo "    Bump mcpb/manifest.json \"version\" to \"$SOURCE_VERSION\" before building."
+    exit 1
+fi
+
+if [[ "$PLIST_VERSION" != "$SOURCE_VERSION" ]]; then
+    echo "  ✗ Version drift: Version.swift=$SOURCE_VERSION but Info.plist CFBundleVersion=$PLIST_VERSION"
+    echo "    Bump Sources/CheICalMCP/Info.plist CFBundleVersion to \"$SOURCE_VERSION\" before building."
+    exit 1
+fi
+
+echo "  ✓ Version.swift, Info.plist, and mcpb/manifest.json all at $SOURCE_VERSION"
 
 # Step 1: Build for both architectures
 echo "[1/4] Building for Apple Silicon (arm64)..."
