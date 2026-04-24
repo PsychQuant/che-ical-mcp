@@ -925,6 +925,21 @@ class CheICalMCPServer {
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
+
+            // Cleanup Tool
+            Tool(
+                name: "cleanup_completed_reminders",
+                description: "Delete all completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. Uses dry_run=true by default so callers can preview the scope before deleting. Note: this does not record undo — use delete_reminder for individual items you may want to restore.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Optional: scope cleanup to this reminder list only. Omit to clean across all lists.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")])
+                    ])
+                ]),
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
+            ),
         ]
     }
 
@@ -1026,6 +1041,8 @@ class CheICalMCPServer {
             return try await handleDeleteRemindersBatch(arguments: arguments)
         case "list_reminder_tags":
             return try await handleListReminderTags(arguments: arguments)
+        case "cleanup_completed_reminders":
+            return try await handleCleanupCompletedReminders(arguments: arguments)
 
         default:
             throw ToolError.unknownTool(name)
@@ -1863,6 +1880,66 @@ class CheICalMCPServer {
             "total_reminders_scanned": reminders.count,
             "include_completed": includeCompleted,
             "tags": tagList
+        ]
+        return try formatJSON(response)
+    }
+
+    private func handleCleanupCompletedReminders(arguments: [String: Value]) async throws -> String {
+        let calendarName = arguments["calendar_name"]?.stringValue
+        let calendarSource = arguments["calendar_source"]?.stringValue
+        let dryRun = arguments["dry_run"]?.boolValue ?? true
+
+        let completed = try await eventKitManager.listReminders(
+            completed: true,
+            calendarName: calendarName,
+            calendarSource: calendarSource
+        )
+
+        let total = completed.count
+
+        if dryRun {
+            let preview: [[String: Any]] = completed.map { reminder in
+                [
+                    "reminder_id": reminder.calendarItemIdentifier,
+                    "title": reminder.title ?? "",
+                    "calendar": reminder.calendar.title
+                ]
+            }
+            let response: [String: Any] = [
+                "dry_run": true,
+                "total": total,
+                "reminders_to_delete": preview,
+                "message": total == 0
+                    ? "No completed reminders match the filter."
+                    : "Set dry_run=false to execute deletion."
+            ]
+            return try formatJSON(response)
+        }
+
+        let identifiers = completed.compactMap { $0.calendarItemIdentifier }
+        if identifiers.isEmpty {
+            let response: [String: Any] = [
+                "dry_run": false,
+                "total": 0,
+                "deleted_count": 0,
+                "deleted_ids": [] as [String],
+                "failures": [] as [[String: String]],
+                "message": "No completed reminders matched."
+            ]
+            return try formatJSON(response)
+        }
+
+        let result = try await eventKitManager.deleteRemindersBatch(identifiers: identifiers)
+        let failedSet = Set(result.failures.map { $0.identifier })
+        let deletedIds = identifiers.filter { !failedSet.contains($0) }
+        let failures: [[String: String]] = result.failures.map { ["reminder_id": $0.identifier, "error": $0.error] }
+
+        let response: [String: Any] = [
+            "dry_run": false,
+            "total": total,
+            "deleted_count": result.successCount,
+            "deleted_ids": deletedIds,
+            "failures": failures
         ]
         return try formatJSON(response)
     }
