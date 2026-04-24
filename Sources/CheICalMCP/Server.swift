@@ -1888,15 +1888,23 @@ class CheICalMCPServer {
     }
 
     private func handleCleanupCompletedReminders(arguments: [String: Value]) async throws -> String {
-        let calendarName = arguments["calendar_name"]?.stringValue
-        let calendarSource = arguments["calendar_source"]?.stringValue
+        // R2-F1: parse filter keys with strict type checking BEFORE any other
+        // work. `Value.stringValue` returns nil for non-.string cases, so a
+        // naive `.stringValue` coercion on `{"calendar_source": 123}` would
+        // silently set calendarSource=nil and then slip past the F1 guard —
+        // widening a destructive tool to all accounts. Reject malformed types
+        // at the boundary.
+        let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
+        let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
         let dryRun = arguments["dry_run"]?.boolValue ?? true
         let limit = try InputValidation.requireIntIfPresent(arguments, key: "limit", default: 1000)
 
-        // F1: reject calendar_source without calendar_name. The downstream listReminders
-        // silently discards calendar_source when calendar_name is nil, which for a
-        // destructive tool means "clean iCloud only" requests silently widen to
-        // "clean all accounts". Fail loudly at the handler boundary instead.
+        // F1: reject calendar_source without (non-empty) calendar_name. The
+        // downstream listReminders silently discards calendar_source when
+        // calendar_name is nil-or-empty, which for a destructive tool means
+        // "clean iCloud only" requests silently widen to "clean all accounts".
+        // Fail loudly at the handler boundary instead. R2-F3 strengthened this
+        // to also reject empty/whitespace names.
         try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
         guard limit > 0 else {
             throw ToolError.invalidParameter("limit must be greater than zero")
@@ -1908,13 +1916,20 @@ class CheICalMCPServer {
             calendarSource: calendarSource
         )
 
-        let total = completed.count
-        // F2: dedupe identifiers. iCloud shared-list aliasing or stale-cache reads
-        // can yield the same calendarItemIdentifier twice; without dedupe the
-        // second pass hits "reminder not found" and produces deleted_count=1 /
-        // deleted_ids=[] — a mathematically inconsistent response.
-        // F7: map (not compactMap) because calendarItemIdentifier is non-optional.
+        // F2: dedupe identifiers. iCloud shared-list aliasing or stale-cache
+        // reads can yield the same calendarItemIdentifier twice; without
+        // dedupe the second pass hits "reminder not found" and produces
+        // deleted_count=1 / deleted_ids=[] — a mathematically inconsistent
+        // response.
+        // F7: map (not compactMap) because calendarItemIdentifier is
+        // non-optional.
         let uniqueIdentifiers = Array(Set(completed.map { $0.calendarItemIdentifier }))
+        // R2-F2: `total` is the count of distinct reminders the tool will act
+        // upon. Using `completed.count` (raw, pre-dedupe) made total +
+        // remaining + failures.count fail to equal deleted_count + remaining
+        // + failures.count under duplicates. The deduped count is the
+        // authoritative scope.
+        let total = uniqueIdentifiers.count
         // F4: cap blast radius. Order is not guaranteed after Set round-trip —
         // that is intentional: "deterministic slice of completed reminders" was
         // never part of the contract, and the caller must re-invoke to drain the

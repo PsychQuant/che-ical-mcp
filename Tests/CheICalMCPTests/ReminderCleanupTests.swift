@@ -1,4 +1,5 @@
 import XCTest
+import MCP
 @testable import CheICalMCP
 
 /// Unit tests for the pure argument guards used by
@@ -32,7 +33,7 @@ final class ReminderCleanupTests: XCTestCase {
                 return
             }
             XCTAssertTrue(
-                message.contains("calendar_source requires calendar_name"),
+                message.contains("calendar_source requires"),
                 "Error message should explain the requirement, got: \(message)"
             )
         }
@@ -48,6 +49,93 @@ final class ReminderCleanupTests: XCTestCase {
                 return
             }
         }
+    }
+
+    // R2-F3: the Round 1 guard accepted empty-string `calendar_name`, which
+    // only avoided disaster because `findCalendars` threw "not found"
+    // downstream — coincidental, not load-bearing. These tests pin the
+    // stricter invariant added in Round 2.
+
+    func testRejectsEmptyNameWithSource() {
+        XCTAssertThrowsError(
+            try ReminderCleanup.rejectSourceWithoutName(name: "", source: "iCloud")
+        ) { error in
+            guard case ToolError.invalidParameter(let message) = error else {
+                XCTFail("Expected ToolError.invalidParameter, got \(error)")
+                return
+            }
+            XCTAssertTrue(
+                message.contains("non-empty calendar_name"),
+                "Message should state the non-empty requirement, got: \(message)"
+            )
+        }
+    }
+
+    func testRejectsWhitespaceNameWithSource() {
+        // Trimmed whitespace is equivalent to empty — must not slip through.
+        XCTAssertThrowsError(
+            try ReminderCleanup.rejectSourceWithoutName(name: "   ", source: "iCloud")
+        )
+    }
+
+    // MARK: - requireStringIfPresent (R2-F1 Codex finding)
+
+    func testRequireStringIfPresentReturnsNilWhenAbsent() throws {
+        let args: [String: Value] = [:]
+        let result = try ReminderCleanup.requireStringIfPresent(args, key: "calendar_source")
+        XCTAssertNil(result)
+    }
+
+    func testRequireStringIfPresentReturnsString() throws {
+        let args: [String: Value] = ["calendar_source": .string("iCloud")]
+        let result = try ReminderCleanup.requireStringIfPresent(args, key: "calendar_source")
+        XCTAssertEqual(result, "iCloud")
+    }
+
+    func testRequireStringIfPresentRejectsInt() {
+        // R2-F1 attack vector: {"calendar_source": 123} previously collapsed
+        // to nil via .stringValue and bypassed the F1 guard downstream,
+        // widening the destructive tool to all accounts. Must now throw.
+        let args: [String: Value] = ["calendar_source": .int(123)]
+        XCTAssertThrowsError(
+            try ReminderCleanup.requireStringIfPresent(args, key: "calendar_source")
+        ) { error in
+            guard case ToolError.invalidParameter(let message) = error else {
+                XCTFail("Expected ToolError.invalidParameter, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("calendar_source"))
+        }
+    }
+
+    func testRequireStringIfPresentRejectsBool() {
+        let args: [String: Value] = ["calendar_name": .bool(true)]
+        XCTAssertThrowsError(
+            try ReminderCleanup.requireStringIfPresent(args, key: "calendar_name")
+        )
+    }
+
+    func testRequireStringIfPresentRejectsArray() {
+        let args: [String: Value] = ["calendar_name": .array([.string("x")])]
+        XCTAssertThrowsError(
+            try ReminderCleanup.requireStringIfPresent(args, key: "calendar_name")
+        )
+    }
+
+    // R2-F2 invariant: the response's `total` field equals the deduped count.
+    // Pinned via the stdlib semantic the handler relies on.
+
+    func testDedupedCountIsAuthoritativeForTotal() {
+        let rawIdentifiers = ["a", "a", "b", "c", "c", "c"]
+        let unique = Array(Set(rawIdentifiers))
+        // total should reflect distinct reminders, not the raw list — the
+        // response's arithmetic must balance.
+        XCTAssertEqual(unique.count, 3,
+            "total must use Array(Set(...)).count so total + failures equals the real blast radius"
+        )
+        XCTAssertNotEqual(unique.count, rawIdentifiers.count,
+            "sanity check: dedupe actually changed the count in this test case"
+        )
     }
 
     // MARK: - Dedupe semantics pin (F2)
