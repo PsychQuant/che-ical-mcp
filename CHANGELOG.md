@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7.1 security wave. To be cut as 1.7.2 on the next release.
+
+### Fixed
+- **`formatJSON` crash on invalid JSON types** (#22): `JSONSerialization.data(withJSONObject:)` raises an Objective-C `NSInvalidArgumentException` on unsupported types (raw `Date`, `NaN`, `Infinity`, non-string dict keys) — an ObjC exception that Swift `try/catch` cannot capture, crashing the process in release builds. The previous `catch { return "[]" }` never actually handled this path. Now pre-checks with `JSONSerialization.isValidJSONObject(_:)` and throws `ToolError.invalidParameter`, which `handleToolCall` converts into MCP `isError: true`. Moved `formatJSON` / `actionResult` to top-level `ResponseFormatting.swift` to match the repo's utility-function pattern.
+- **`findSimilarEvents` error swallowing in batch create** (#23): `try? await` in `handleCreateEventsBatch` was silently dropping EventKit errors during the similar-event hint lookup, so callers saw "no similar events" when the lookup had actually failed (mid-batch access revocation, predicate-breaking characters, actor reentrancy). Failures now log to stderr and surface in `response["similar_events_errors"]` so callers know the hint is incomplete; primary batch create/fail results unchanged.
+- **Silent default-masking of numeric tool arguments** (#25): `arguments["priority"]?.intValue ?? 0` and similar patterns (`interval`, `tolerance_minutes`, `limit`) conflated "key absent" with "key present but unparseable". An LLM sending `priority: "high"` got `0` silently. New `InputValidation.requireIntIfPresent` helper separates the two — absent uses default, present must parse to an integer (whole-number doubles like `5.0` accepted for JSON-parser compatibility; strings and fractional doubles throw). 27-site audit; 5 call sites fixed, 22 boolean / string-enum defaults kept as legitimate "absent means default".
+
+### Added
+- **Build-time version consistency check** (#24): `scripts/build-mcpb.sh` now fails fast if `AppVersion.current`, `Info.plist` `CFBundleVersion`, and `mcpb/manifest.json` `version` drift apart. `server.json` is intentionally outside this check — it is an MCP Registry submission snapshot with an independent cadence (see README 'Release Process').
+
+### Documentation
+- **README Release Process table** (#24): documents the four version-carrying files, which are build-time coupled (three) vs independently updated (`server.json`), eliminating the 'is this a bug?' confusion that prompted the issue.
+
+### Tests
+- 18 new cases across `ResponseFormattingTests` (11) and `InputValidationTests` (7 for `requireIntIfPresent`). Total: 123 → 141.
+
 ## [1.7.1] - 2026-04-24
 
 ### Security
