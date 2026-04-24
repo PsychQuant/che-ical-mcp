@@ -794,7 +794,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria. Use dry_run=true (default) to preview before deleting.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2413,17 +2413,22 @@ class CheICalMCPServer {
             }
 
             if dryRun {
-                // Preview mode: show what would be deleted
+                // Preview mode: show what would be deleted.
+                // #27: drop event.title and event.calendar.title from the
+                // preview — both are attacker-controllable (malicious .ics
+                // invites, shared-calendar collaborators) and the handler is
+                // excluded from UntrustedContentWrapper.readTools. Echoing
+                // those raw here would bypass the wrapper boundary just like
+                // the original #21 F3 pattern. Callers who need titles pipe
+                // through list_events (which IS wrapped).
                 var preview: [[String: Any]] = []
                 for id in eventIds {
                     do {
                         let event = try await eventKitManager.getEvent(identifier: id)
                         preview.append([
                             "event_id": id,
-                            "title": event.title ?? "",
                             "start_date_local": localDateFormatter.string(from: event.startDate),
-                            "end_date_local": localDateFormatter.string(from: event.endDate),
-                            "calendar": event.calendar.title
+                            "end_date_local": localDateFormatter.string(from: event.endDate)
                         ])
                     } catch {
                         preview.append(["event_id": id, "error": error.localizedDescription])
@@ -2434,7 +2439,7 @@ class CheICalMCPServer {
                     "mode": "by_event_ids",
                     "total": eventIds.count,
                     "events_to_delete": preview,
-                    "message": "Set dry_run=false to execute deletion"
+                    "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles/calendar names."
                 ]
                 return try formatJSON(response)
             }
@@ -2467,13 +2472,16 @@ class CheICalMCPServer {
             )
 
             if dryRun {
+                // #27: drop event.title and event.calendar.title from the
+                // preview (see Mode 1 comment for rationale). The top-level
+                // `calendar` field here is the CALLER-SUPPLIED calendarName
+                // (echoed back for confirmation), not a per-event echo, so it
+                // stays — it's already whatever the caller specified.
                 let preview = events.map { event -> [String: Any] in
                     [
                         "event_id": event.eventIdentifier ?? "",
-                        "title": event.title ?? "",
                         "start_date_local": localDateFormatter.string(from: event.startDate),
-                        "end_date_local": localDateFormatter.string(from: event.endDate),
-                        "calendar": event.calendar.title
+                        "end_date_local": localDateFormatter.string(from: event.endDate)
                     ]
                 }
                 var response: [String: Any] = [
@@ -2482,7 +2490,7 @@ class CheICalMCPServer {
                     "calendar": calendarName,
                     "total": events.count,
                     "events_to_delete": preview,
-                    "message": "Set dry_run=false to execute deletion"
+                    "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles."
                 ]
                 if let afterDate = afterDate { response["after_date"] = localDateFormatter.string(from: afterDate) }
                 if let beforeDate = beforeDate { response["before_date"] = localDateFormatter.string(from: beforeDate) }
