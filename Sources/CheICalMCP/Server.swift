@@ -1180,7 +1180,12 @@ class CheICalMCPServer {
 
         var alarmOffsets: [Int]?
         if let alarmsArray = arguments["alarms_minutes_offsets"]?.arrayValue {
-            alarmOffsets = alarmsArray.compactMap { $0.intValue }
+            alarmOffsets = try alarmsArray.enumerated().map { idx, v in
+                guard let n = v.intValue else {
+                    throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
+                }
+                return n
+            }
         }
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
@@ -1237,7 +1242,12 @@ class CheICalMCPServer {
 
         var alarmOffsets: [Int]?
         if let alarmsArray = arguments["alarms_minutes_offsets"]?.arrayValue {
-            alarmOffsets = alarmsArray.compactMap { $0.intValue }
+            alarmOffsets = try alarmsArray.enumerated().map { idx, v in
+                guard let n = v.intValue else {
+                    throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
+                }
+                return n
+            }
         }
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
@@ -2598,12 +2608,28 @@ class CheICalMCPServer {
 
         var daysOfWeek: [Int]?
         if let days = recurrenceDict["days_of_week"]?.arrayValue {
-            daysOfWeek = days.compactMap { $0.intValue }
+            daysOfWeek = try days.enumerated().map { idx, v in
+                guard let n = v.intValue else {
+                    throw ToolError.invalidParameter("recurrence.days_of_week[\(idx)] must be an integer 1-7")
+                }
+                guard (1...7).contains(n) else {
+                    throw ToolError.invalidParameter("recurrence.days_of_week[\(idx)] must be in range 1-7 (1=Sunday, 7=Saturday), got \(n)")
+                }
+                return n
+            }
         }
 
         var daysOfMonth: [Int]?
         if let days = recurrenceDict["days_of_month"]?.arrayValue {
-            daysOfMonth = days.compactMap { $0.intValue }
+            daysOfMonth = try days.enumerated().map { idx, v in
+                guard let n = v.intValue else {
+                    throw ToolError.invalidParameter("recurrence.days_of_month[\(idx)] must be an integer")
+                }
+                guard (1...31).contains(n) else {
+                    throw ToolError.invalidParameter("recurrence.days_of_month[\(idx)] must be in range 1-31, got \(n)")
+                }
+                return n
+            }
         }
 
         return RecurrenceRuleInput(

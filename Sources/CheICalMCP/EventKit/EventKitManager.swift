@@ -1344,7 +1344,7 @@ actor EventKitManager {
 
         var daysOfWeek: [EKRecurrenceDayOfWeek]?
         if let days = input.daysOfWeek {
-            daysOfWeek = days.map { EKRecurrenceDayOfWeek(EKWeekday(rawValue: $0)!) }
+            daysOfWeek = days.compactMap { EKWeekday(rawValue: $0).map { EKRecurrenceDayOfWeek($0) } }
         }
 
         var end: EKRecurrenceEnd?
