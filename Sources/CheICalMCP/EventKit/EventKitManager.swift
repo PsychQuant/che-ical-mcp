@@ -1304,7 +1304,7 @@ actor EventKitManager {
     }
 
     /// Delete multiple reminders at once
-    func deleteRemindersBatch(identifiers: [String]) async throws -> BatchDeleteResult {
+    func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false) async throws -> BatchDeleteResult {
         try await requestReminderAccess()
 
         var successCount = 0
@@ -1314,6 +1314,16 @@ actor EventKitManager {
             do {
                 guard let reminder = eventStore.calendarItem(withIdentifier: id) as? EKReminder else {
                     failures.append((id, "Reminder not found"))
+                    continue
+                }
+                // #28 F1: when the caller asks for "only completed reminders"
+                // (binding mode on cleanup_completed_reminders), honor the
+                // invariant the tool schema promises. Without this gate, a
+                // reminder un-completed between dry_run and execute would be
+                // deleted anyway — silently contradicting the schema line
+                // "Any ID that is no longer completed ... surfaces in failures[]".
+                if onlyCompleted && !reminder.isCompleted {
+                    failures.append((id, "Reminder is no longer completed"))
                     continue
                 }
                 try eventStore.remove(reminder, commit: true)

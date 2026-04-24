@@ -1688,8 +1688,14 @@ class CheICalMCPServer {
         }
 
         let matchMode = arguments["match_mode"]?.stringValue ?? "any"
-        let calendarName = arguments["calendar_name"]?.stringValue
-        let calendarSource = arguments["calendar_source"]?.stringValue
+        // #29 extension: handleSearchReminders had the same silent-widen bug
+        // as handleListReminders / handleListReminderTags — searchReminders
+        // primitive only resolves calendars when calendarName is non-nil, so
+        // calendar_source alone was silently widening the search to all lists.
+        // Apply the same ReminderCleanup guards for API consistency.
+        let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
+        let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
+        try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
         let completed = arguments["completed"]?.boolValue
 
         // If only tag filter (no keywords), pass empty to get all reminders, then filter by tag
@@ -2009,7 +2015,15 @@ class CheICalMCPServer {
             return try formatJSON(response)
         }
 
-        let result = try await eventKitManager.deleteRemindersBatch(identifiers: identifiers)
+        // #28 F1: in binding mode, enforce the "only completed" invariant the
+        // tool schema promises. Filter mode always starts from
+        // listReminders(completed: true) so every candidate is already
+        // completed when we dispatch; no need to re-check there.
+        let onlyCompleted = (mode == "binding")
+        let result = try await eventKitManager.deleteRemindersBatch(
+            identifiers: identifiers,
+            onlyCompleted: onlyCompleted
+        )
         let failedSet = Set(result.failures.map { $0.identifier })
         let deletedIds = identifiers.filter { !failedSet.contains($0) }
         let failures: [[String: String]] = result.failures.map { ["reminder_id": $0.identifier, "error": $0.error] }
