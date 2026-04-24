@@ -153,7 +153,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 </details>
 
 <details>
-<summary><b>Reminders (7)</b></summary>
+<summary><b>Reminders (8)</b></summary>
 
 | Tool | Description |
 |------|-------------|

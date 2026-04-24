@@ -80,7 +80,9 @@ class CheICalMCPServer {
 
     // MARK: - Tool Definitions
 
-    private static func defineTools() -> [Tool] {
+    // Exposed as `internal` (not `private`) so tests can enumerate the tool
+    // list and verify every declared name is dispatched in `executeToolCall`.
+    static func defineTools() -> [Tool] {
         [
             // Calendar Tools
             Tool(
@@ -929,13 +931,14 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete all completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. Uses dry_run=true by default so callers can preview the scope before deleting. Note: this does not record undo — use delete_reminder for individual items you may want to restore.",
+                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThis does not record undo — use delete_reminder for individual items you may want to restore. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Optional: scope cleanup to this reminder list only. Omit to clean across all lists.")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")])
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Optional: scope cleanup to this reminder list only. Omit to clean across all lists on all accounts.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Only meaningful together with calendar_name — used to disambiguate when multiple calendars share the same name. calendar_source alone (without calendar_name) is rejected because EventKit cannot scope cleanup to 'any calendar from this source'.")]),
+                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")]),
+                        "limit": .object(["type": .string("integer"), "description": .string("Maximum number of reminders to process in this call (default: 1000). If more completed reminders exist, the response includes remaining so callers know to re-invoke. Use to cap blast radius on large backlogs and to avoid multi-MB responses / long-running delete loops.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
@@ -1888,6 +1891,16 @@ class CheICalMCPServer {
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
         let dryRun = arguments["dry_run"]?.boolValue ?? true
+        let limit = try InputValidation.requireIntIfPresent(arguments, key: "limit", default: 1000)
+
+        // F1: reject calendar_source without calendar_name. The downstream listReminders
+        // silently discards calendar_source when calendar_name is nil, which for a
+        // destructive tool means "clean iCloud only" requests silently widen to
+        // "clean all accounts". Fail loudly at the handler boundary instead.
+        try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
+        guard limit > 0 else {
+            throw ToolError.invalidParameter("limit must be greater than zero")
+        }
 
         let completed = try await eventKitManager.listReminders(
             completed: true,
@@ -1896,27 +1909,44 @@ class CheICalMCPServer {
         )
 
         let total = completed.count
+        // F2: dedupe identifiers. iCloud shared-list aliasing or stale-cache reads
+        // can yield the same calendarItemIdentifier twice; without dedupe the
+        // second pass hits "reminder not found" and produces deleted_count=1 /
+        // deleted_ids=[] — a mathematically inconsistent response.
+        // F7: map (not compactMap) because calendarItemIdentifier is non-optional.
+        let uniqueIdentifiers = Array(Set(completed.map { $0.calendarItemIdentifier }))
+        // F4: cap blast radius. Order is not guaranteed after Set round-trip —
+        // that is intentional: "deterministic slice of completed reminders" was
+        // never part of the contract, and the caller must re-invoke to drain the
+        // queue anyway. Preview shape mirrors execute to keep F8 shape stable.
+        let identifiers = Array(uniqueIdentifiers.prefix(limit))
+        let remaining = max(0, uniqueIdentifiers.count - identifiers.count)
 
         if dryRun {
-            let preview: [[String: Any]] = completed.map { reminder in
-                [
-                    "reminder_id": reminder.calendarItemIdentifier,
-                    "title": reminder.title ?? "",
-                    "calendar": reminder.calendar.title
-                ]
-            }
-            let response: [String: Any] = [
+            // F3: only return reminder_id. Titles and calendar names are
+            // attacker-controllable (malicious .ics invites, shared-list
+            // collaborators) and the handler is intentionally excluded from
+            // UntrustedContentWrapper.readTools. Emitting those strings raw in
+            // dry_run would be a wrapper bypass. Callers who need titles pipe
+            // through list_reminders (which is wrapped).
+            let preview: [[String: Any]] = identifiers.map { ["reminder_id": $0] }
+            var response: [String: Any] = [
                 "dry_run": true,
                 "total": total,
                 "reminders_to_delete": preview,
+                "remaining": remaining,
                 "message": total == 0
                     ? "No completed reminders match the filter."
-                    : "Set dry_run=false to execute deletion."
+                    : (remaining > 0
+                        ? "Previewing first \(identifiers.count) of \(total). Re-invoke with the same filter to see the rest, or set dry_run=false to delete this batch."
+                        : "Set dry_run=false to execute deletion.")
             ]
+            response["deleted_count"] = 0
+            response["deleted_ids"] = [] as [String]
+            response["failures"] = [] as [[String: String]]
             return try formatJSON(response)
         }
 
-        let identifiers = completed.compactMap { $0.calendarItemIdentifier }
         if identifiers.isEmpty {
             let response: [String: Any] = [
                 "dry_run": false,
@@ -1924,6 +1954,7 @@ class CheICalMCPServer {
                 "deleted_count": 0,
                 "deleted_ids": [] as [String],
                 "failures": [] as [[String: String]],
+                "remaining": 0,
                 "message": "No completed reminders matched."
             ]
             return try formatJSON(response)
@@ -1939,7 +1970,8 @@ class CheICalMCPServer {
             "total": total,
             "deleted_count": result.successCount,
             "deleted_ids": deletedIds,
-            "failures": failures
+            "failures": failures,
+            "remaining": remaining
         ]
         return try formatJSON(response)
     }
