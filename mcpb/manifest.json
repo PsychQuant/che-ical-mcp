@@ -54,6 +54,7 @@
     { "name": "create_reminders_batch", "description": "Create multiple reminders at once (with tags support)" },
     { "name": "delete_reminders_batch", "description": "Delete multiple reminders at once" },
     { "name": "list_reminder_tags", "description": "List all unique tags used across reminders with usage counts" },
+    { "name": "cleanup_completed_reminders", "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list." },
     { "name": "undo", "description": "Undo the most recent calendar/reminder operation" },
     { "name": "redo", "description": "Redo the last undone operation" },
     { "name": "undo_history", "description": "List undoable operations with timestamps" }

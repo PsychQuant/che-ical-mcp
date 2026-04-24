@@ -109,7 +109,7 @@ On first use, macOS will prompt for **Calendar** and **Reminders** access - clic
 
 ### CLI Mode (No MCP Server)
 
-All 28 tools can be invoked directly from the command line without running the MCP server:
+All 29 tools can be invoked directly from the command line without running the MCP server:
 
 ```bash
 # Flag-based: --key value pairs
@@ -126,7 +126,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 
 ---
 
-## All 28 Tools
+## All 29 Tools
 
 <details>
 <summary><b>Calendars (4)</b></summary>
@@ -164,6 +164,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 | `delete_reminder` | Delete a reminder |
 | `search_reminders` | Search reminders by keyword(s) or tag (v1.3.0) |
 | `list_reminder_tags` | List all unique tags with usage counts (v1.3.0) |
+| `cleanup_completed_reminders` | Delete all completed reminders in one call, dry_run preview by default (v1.7.2) |
 
 </details>
 
@@ -510,7 +511,7 @@ CheICalMCP --setup
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
 - **Platform**: macOS 13.0+ (Ventura and later)
-- **Tools**: 28 tools for calendars, events, reminders, tags, undo/redo, and advanced operations
+- **Tools**: 29 tools for calendars, events, reminders, tags, undo/redo, cleanup, and advanced operations
 
 ---
 
