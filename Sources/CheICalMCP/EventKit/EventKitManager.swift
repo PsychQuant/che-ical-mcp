@@ -1374,7 +1374,16 @@ actor EventKitManager: EventKitManaging {
                 try eventStore.remove(reminder, commit: true)
                 successCount += 1
             } catch {
-                failures.append((id, error.localizedDescription))
+                // #32: never forward Apple-produced `localizedDescription` to
+                // the MCP client — it could in a future macOS interpolate
+                // reminder content. Route through the sanitizer so the
+                // response carries only stable codes; the raw text still
+                // reaches stderr for operator debugging.
+                let sanitized = EventKitErrorSanitizer.sanitize(error)
+                FileHandle.standardError.write(
+                    Data("deleteRemindersBatch(\(id)) failed: \(sanitized.rawLog)\n".utf8)
+                )
+                failures.append((id, sanitized.code))
             }
         }
 
@@ -1774,6 +1783,14 @@ enum EventKitError: LocalizedError {
 
 // MARK: - Batch Operation Results
 
+/// Result of a batch EventKit mutation surfaced to MCP responses.
+///
+/// `failures[].error` is forwarded verbatim into the wire response; the value
+/// is therefore part of the MCP contract. Pre-catch invariants (e.g.
+/// `"Reminder not found"`) may use literal strings authored in this file.
+/// Catch-block paths that wrap an `error.localizedDescription` MUST route
+/// through `EventKitErrorSanitizer.sanitize(_:)` so Apple-produced text
+/// never reaches the client (see #32).
 struct BatchDeleteResult {
     let successCount: Int
     let failedCount: Int

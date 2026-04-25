@@ -341,4 +341,73 @@ final class CleanupHandlerTests: XCTestCase {
         let calls = await fake.deleteRemindersBatchCalls
         XCTAssertTrue(calls.isEmpty)
     }
+
+    // MARK: - #32 sanitizer end-to-end
+
+    /// #32: a sanitized EventKit error code from `BatchDeleteResult.failures`
+    /// must reach the response unmodified. Pins the handler→manager→response
+    /// path so a future maintainer who adds error transformation in the
+    /// handler layer trips this test.
+    func testBindingModeSanitizesEventKitErrorInFailures() async throws {
+        let fake = FakeEventKitManager()
+        await fake.scriptDeleteResult(
+            BatchDeleteResult(
+                successCount: 0,
+                failedCount: 1,
+                failures: [("r1", "eventkit_error_3")]
+            )
+        )
+
+        let response = try await runCleanup(
+            fake: fake,
+            arguments: [
+                "reminder_ids": .array([.string("r1")]),
+                "dry_run": .bool(false),
+            ]
+        )
+
+        let failures = response["failures"] as? [[String: Any]] ?? []
+        XCTAssertEqual(failures.count, 1)
+        XCTAssertEqual(failures.first?["reminder_id"] as? String, "r1")
+        XCTAssertEqual(failures.first?["error"] as? String, "eventkit_error_3")
+    }
+
+    /// #32: `failures[].error` value-domain regex pin. Catches a maintainer
+    /// who reintroduces raw `localizedDescription` in any catch path that
+    /// feeds `cleanup_completed_reminders`.
+    func testFailuresErrorMatchesAllowedValueDomain() async throws {
+        let fake = FakeEventKitManager()
+        await fake.scriptDeleteResult(
+            BatchDeleteResult(
+                successCount: 0,
+                failedCount: 3,
+                failures: [
+                    ("r1", "eventkit_error_3"),
+                    ("r2", "Reminder is no longer completed"),
+                    ("r3", "error_unknown"),
+                ]
+            )
+        )
+
+        let response = try await runCleanup(
+            fake: fake,
+            arguments: [
+                "reminder_ids": .array([.string("r1"), .string("r2"), .string("r3")]),
+                "dry_run": .bool(false),
+            ]
+        )
+
+        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|Reminder not found|Reminder is no longer completed)$"#
+        let regex = try NSRegularExpression(pattern: allowed)
+        let failures = response["failures"] as? [[String: Any]] ?? []
+        XCTAssertEqual(failures.count, 3)
+        for entry in failures {
+            let value = entry["error"] as? String ?? ""
+            let range = NSRange(location: 0, length: (value as NSString).length)
+            XCTAssertNotNil(
+                regex.firstMatch(in: value, range: range),
+                "failures[].error \(value) violates allowed value-domain"
+            )
+        }
+    }
 }
