@@ -81,6 +81,36 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         }
     }
 
+    // MARK: - Negative codes (spec R4 invariant)
+
+    func testNegativeCodeProducesPositiveMagnitude() {
+        // Some Foundation domains (e.g. NSCocoaErrorDomain historically)
+        // ship negative `NSError.code` values. The spec's response-value
+        // regex `[0-9]+` doesn't admit the `-` sign, so the sanitizer
+        // must encode magnitude only.
+        let allowed = try! NSRegularExpression(
+            pattern: #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+)$"#
+        )
+        let cases: [(domain: String, code: Int, contains: String)] = [
+            (EKErrorDomain, -1, "eventkit_error_1"),
+            (EKErrorDomain, Int.min + 1, "eventkit_error_"),
+            ("NSCocoaErrorDomain", -42, "error_nscocoaerrordomain_42"),
+        ]
+        for c in cases {
+            let err = NSError(domain: c.domain, code: c.code, userInfo: nil)
+            let result = EventKitErrorSanitizer.sanitize(err)
+            XCTAssertTrue(
+                result.code.hasPrefix(c.contains),
+                "domain=\(c.domain) code=\(c.code) → \(result.code), expected prefix \(c.contains)"
+            )
+            let nsRange = NSRange(location: 0, length: (result.code as NSString).length)
+            XCTAssertNotNil(
+                allowed.firstMatch(in: result.code, range: nsRange),
+                "code \(result.code) violates spec regex"
+            )
+        }
+    }
+
     // MARK: - Non-NSError Swift Error
 
     func testNonNSErrorSwiftErrorCollapses() {

@@ -21,9 +21,15 @@ enum EventKitErrorSanitizer {
     static func sanitize(_ error: Error) -> SanitizedError {
         let nsError = error as NSError
         let rawLog = nsError.localizedDescription
+        // Spec R4 fixes the response value-domain regex to `[0-9]+`. NSError.code
+        // is a signed Int and some Foundation domains carry negative values
+        // historically; using the absolute value preserves a stable encoding
+        // (operators can still recover the magnitude) while keeping the regex
+        // an invariant of the sanitizer's output.
+        let codeMagnitude = nsError.code.magnitude
 
         if nsError.domain == EKErrorDomain {
-            return SanitizedError(code: "eventkit_error_\(nsError.code)", rawLog: rawLog)
+            return SanitizedError(code: "eventkit_error_\(codeMagnitude)", rawLog: rawLog)
         }
 
         if isSwiftBridged(error: error, nsError: nsError) {
@@ -31,7 +37,7 @@ enum EventKitErrorSanitizer {
         }
 
         let slug = slugifyDomain(nsError.domain)
-        return SanitizedError(code: "error_\(slug)_\(nsError.code)", rawLog: rawLog)
+        return SanitizedError(code: "error_\(slug)_\(codeMagnitude)", rawLog: rawLog)
     }
 
     // Swift `Error` values bridged to `NSError` by the runtime carry a domain

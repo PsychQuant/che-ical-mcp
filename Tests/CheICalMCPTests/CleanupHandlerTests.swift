@@ -344,11 +344,16 @@ final class CleanupHandlerTests: XCTestCase {
 
     // MARK: - #32 sanitizer end-to-end
 
-    /// #32: a sanitized EventKit error code from `BatchDeleteResult.failures`
-    /// must reach the response unmodified. Pins the handler→manager→response
-    /// path so a future maintainer who adds error transformation in the
-    /// handler layer trips this test.
-    func testBindingModeSanitizesEventKitErrorInFailures() async throws {
+    /// #32: pins the handler→response forwarding path — given a scripted
+    /// `BatchDeleteResult.failures` already containing sanitized codes, the
+    /// response must surface them unchanged with no extra transformation at
+    /// the handler layer.
+    ///
+    /// **Honest scope note**: this test does NOT exercise the sanitizer
+    /// itself, nor the `EventKitManager.deleteRemindersBatch` catch path.
+    /// Sanitizer wiring is covered by `EventKitErrorSanitizerTests`; the
+    /// catch-block→sanitizer integration is tracked in #33.
+    func testBindingModeForwardsScriptedFailureToResponse() async throws {
         let fake = FakeEventKitManager()
         await fake.scriptDeleteResult(
             BatchDeleteResult(
@@ -372,10 +377,12 @@ final class CleanupHandlerTests: XCTestCase {
         XCTAssertEqual(failures.first?["error"] as? String, "eventkit_error_3")
     }
 
-    /// #32: `failures[].error` value-domain regex pin. Catches a maintainer
-    /// who reintroduces raw `localizedDescription` in any catch path that
-    /// feeds `cleanup_completed_reminders`.
-    func testFailuresErrorMatchesAllowedValueDomain() async throws {
+    /// #32: spot-check that the regex value-domain accepts the three classes
+    /// of legitimate values (sanitizer-produced codes, pre-catch literals,
+    /// `error_unknown`). Does NOT prove the regex is a sanitizer invariant —
+    /// that's the unit-test responsibility (see
+    /// `EventKitErrorSanitizerTests.testNegativeCodeProducesPositiveMagnitude`).
+    func testFailuresErrorValueDomainAcceptsSanitizedAndPreCatchLiterals() async throws {
         let fake = FakeEventKitManager()
         await fake.scriptDeleteResult(
             BatchDeleteResult(
