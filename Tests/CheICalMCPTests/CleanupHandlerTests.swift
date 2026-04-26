@@ -341,4 +341,80 @@ final class CleanupHandlerTests: XCTestCase {
         let calls = await fake.deleteRemindersBatchCalls
         XCTAssertTrue(calls.isEmpty)
     }
+
+    // MARK: - #32 sanitizer end-to-end
+
+    /// #32: pins the handler→response forwarding path — given a scripted
+    /// `BatchDeleteResult.failures` already containing sanitized codes, the
+    /// response must surface them unchanged with no extra transformation at
+    /// the handler layer.
+    ///
+    /// **Honest scope note**: this test does NOT exercise the sanitizer
+    /// itself, nor the `EventKitManager.deleteRemindersBatch` catch path.
+    /// Sanitizer wiring is covered by `EventKitErrorSanitizerTests`; the
+    /// catch-block→sanitizer integration is tracked in #33.
+    func testBindingModeForwardsScriptedFailureToResponse() async throws {
+        let fake = FakeEventKitManager()
+        await fake.scriptDeleteResult(
+            BatchDeleteResult(
+                successCount: 0,
+                failedCount: 1,
+                failures: [("r1", "eventkit_error_3")]
+            )
+        )
+
+        let response = try await runCleanup(
+            fake: fake,
+            arguments: [
+                "reminder_ids": .array([.string("r1")]),
+                "dry_run": .bool(false),
+            ]
+        )
+
+        let failures = response["failures"] as? [[String: Any]] ?? []
+        XCTAssertEqual(failures.count, 1)
+        XCTAssertEqual(failures.first?["reminder_id"] as? String, "r1")
+        XCTAssertEqual(failures.first?["error"] as? String, "eventkit_error_3")
+    }
+
+    /// #32: spot-check that the regex value-domain accepts the three classes
+    /// of legitimate values (sanitizer-produced codes, pre-catch literals,
+    /// `error_unknown`). Does NOT prove the regex is a sanitizer invariant —
+    /// that's the unit-test responsibility (see
+    /// `EventKitErrorSanitizerTests.testNegativeCodeProducesPositiveMagnitude`).
+    func testFailuresErrorValueDomainAcceptsSanitizedAndPreCatchLiterals() async throws {
+        let fake = FakeEventKitManager()
+        await fake.scriptDeleteResult(
+            BatchDeleteResult(
+                successCount: 0,
+                failedCount: 3,
+                failures: [
+                    ("r1", "eventkit_error_3"),
+                    ("r2", "Reminder is no longer completed"),
+                    ("r3", "error_unknown"),
+                ]
+            )
+        )
+
+        let response = try await runCleanup(
+            fake: fake,
+            arguments: [
+                "reminder_ids": .array([.string("r1"), .string("r2"), .string("r3")]),
+                "dry_run": .bool(false),
+            ]
+        )
+
+        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|Reminder not found|Reminder is no longer completed)$"#
+        let regex = try NSRegularExpression(pattern: allowed)
+        let failures = response["failures"] as? [[String: Any]] ?? []
+        XCTAssertEqual(failures.count, 3)
+        for entry in failures {
+            let value = entry["error"] as? String ?? ""
+            let range = NSRange(location: 0, length: (value as NSString).length)
+            XCTAssertNotNil(
+                regex.firstMatch(in: value, range: range),
+                "failures[].error \(value) violates allowed value-domain"
+            )
+        }
+    }
 }

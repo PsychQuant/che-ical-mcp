@@ -4,7 +4,7 @@ import MCP
 /// Handles --cli mode: parse CLI args or stdin JSON, dispatch to tool handler, print result.
 enum CLIRunner {
 
-    enum CLIError: LocalizedError {
+    enum CLIError: LocalizedError, TrustedErrorMessage {
         case missingToolName
         case danglingKey(String)
         case missingToolField
@@ -220,23 +220,38 @@ enum CLIRunner {
             let result = try await server.executeToolCall(name: toolName, arguments: mcpArgs)
             print(result)
         } catch {
-            // Output error as JSON for machine readability
-            let errorJSON: [String: Any] = [
-                "error": true,
-                "message": error.localizedDescription,
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: errorJSON, options: [.sortedKeys]),
-               let str = String(data: data, encoding: .utf8)
-            {
-                print(str)
-            } else {
-                let escaped = error.localizedDescription
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                    .replacingOccurrences(of: "\n", with: "\\n")
-                print("{\"error\":true,\"message\":\"\(escaped)\"}")
-            }
+            let (jsonMessage, rawLog) = formatErrorForCLI(error)
+            print(jsonMessage)
+            // Raw log to stderr for operator debug.
+            FileHandle.standardError.write(
+                Data("CLIRunner failed: \(rawLog)\n".utf8)
+            )
             exit(1)
         }
+    }
+
+    /// #37 verify (Codex medium finding): route CLI errors through the same
+    /// sanitizer as the MCP wire path so EventKit-thrown NSError doesn't echo
+    /// `localizedDescription` (potentially containing reminder/event content
+    /// in future macOS) to stdout for CLI users and automation pipelines.
+    /// Returns `(jsonMessage, rawLog)` — the JSON goes to stdout (sanitized),
+    /// the raw log goes to stderr (operator debug).
+    static func formatErrorForCLI(_ error: Error) -> (jsonMessage: String, rawLog: String) {
+        let sanitized = EventKitErrorSanitizer.sanitizeForResponse(error)
+        let errorJSON: [String: Any] = [
+            "error": true,
+            "message": sanitized.code,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: errorJSON, options: [.sortedKeys]),
+           let str = String(data: data, encoding: .utf8)
+        {
+            return (str, sanitized.rawLog)
+        }
+        // Fallback string-build if JSONSerialization rejects the payload.
+        let escaped = sanitized.code
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        return ("{\"error\":true,\"message\":\"\(escaped)\"}", sanitized.rawLog)
     }
 }
