@@ -35,3 +35,4 @@ openspec/.vector-search.db*
 .remember/
 .claude/settings.local.json
 .claude/issue-driven-dev.local.md
+.claude/scheduled_tasks.lock
