@@ -4,7 +4,7 @@ import MCP
 /// Handles --cli mode: parse CLI args or stdin JSON, dispatch to tool handler, print result.
 enum CLIRunner {
 
-    enum CLIError: LocalizedError {
+    enum CLIError: LocalizedError, TrustedErrorMessage {
         case missingToolName
         case danglingKey(String)
         case missingToolField

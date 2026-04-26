@@ -16,6 +16,19 @@ import Foundation
 /// they would otherwise have used `error.localizedDescription` for debugging
 /// — dropping `rawLog` silently degrades operator visibility. Conversely, the
 /// `code` is the only field safe to embed in client-visible responses.
+
+/// Marker protocol that opts a Swift `Error` type into pass-through dispatch
+/// by `EventKitErrorSanitizer.sanitizeForResponse(_:)` — the type's author
+/// asserts that `errorDescription` (or `localizedDescription`) is hand-written
+/// and safe to forward verbatim to MCP clients without sanitization.
+///
+/// Opt in only when the description is fully author-controlled. Do NOT make
+/// Foundation types like `URLError` / `CocoaError` / `POSIXError` conform —
+/// their messages come from Apple frameworks and may carry user-content.
+/// Checking `is LocalizedError` would be too broad; this empty protocol is
+/// the explicit opt-in used by `eventkit-error-sanitization` spec R5.
+protocol TrustedErrorMessage {}
+
 enum EventKitErrorSanitizer {
 
     static func sanitize(_ error: Error) -> SanitizedError {
@@ -79,4 +92,37 @@ enum EventKitErrorSanitizer {
 struct SanitizedError: Sendable, Equatable {
     let code: String
     let rawLog: String
+}
+
+extension EventKitErrorSanitizer {
+
+    /// Type-driven dispatch for non-cleanup callers (spec R6). For author-
+    /// controlled errors marked `TrustedErrorMessage`, returns the original
+    /// `localizedDescription` so operator-friendly authored messages survive.
+    /// Otherwise delegates to `sanitize(_:)`, preserving #32's R1–R4
+    /// invariants (regex value-domain) for framework-thrown errors.
+    static func sanitizeForResponse(_ error: Error) -> SanitizedError {
+        if error is TrustedErrorMessage {
+            let text = error.localizedDescription
+            return SanitizedError(code: text, rawLog: text)
+        }
+        return sanitize(error)
+    }
+
+    /// Combines `sanitizeForResponse` with operator stderr logging in one
+    /// call (spec R7). The `handler` and `identifier` parameters tag the
+    /// stderr line with context for operator debugging. Returns the
+    /// sanitized `code` for the caller to embed into the MCP response.
+    @discardableResult
+    static func writeFailureLog(
+        handler: String,
+        identifier: String,
+        error: Error
+    ) -> String {
+        let sanitized = sanitizeForResponse(error)
+        FileHandle.standardError.write(
+            Data("\(handler)(\(identifier)) failed: \(sanitized.rawLog)\n".utf8)
+        )
+        return sanitized.code
+    }
 }

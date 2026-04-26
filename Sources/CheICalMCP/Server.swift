@@ -986,8 +986,17 @@ class CheICalMCPServer {
                 : result
             return CallTool.Result(content: [.text(content)])
         } catch {
-            return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
+            let sanitized = EventKitErrorSanitizer.sanitizeForResponse(error)
+            return CallTool.Result(content: [.text("Error: \(sanitized.code)")], isError: true)
         }
+    }
+
+    /// Test-only access to the private `handleToolCall` so #37 spec R8
+    /// (outer-catch dispatch) can be pinned end-to-end. Production callers
+    /// continue to invoke via the MCP `CallTool` handler registered in
+    /// `start()`.
+    func handleToolCallForTesting(name: String, arguments: [String: Value]) async -> CallTool.Result {
+        await handleToolCall(name: name, arguments: arguments)
     }
 
     func executeToolCall(name: String, arguments: [String: Value]) async throws -> String {
@@ -1824,7 +1833,11 @@ class CheICalMCPServer {
                 results.append([
                     "index": index,
                     "success": false,
-                    "error": error.localizedDescription
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "createRemindersBatch",
+                        identifier: "\(index)",
+                        error: error
+                    )
                 ])
             }
         }
@@ -2169,7 +2182,15 @@ class CheICalMCPServer {
             do {
                 batchTimezone = try parseTimezone(from: eventDict)
             } catch {
-                results.append(["index": index, "success": false, "error": error.localizedDescription])
+                results.append([
+                    "index": index,
+                    "success": false,
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "createEventsBatch",
+                        identifier: "\(index)",
+                        error: error
+                    )
+                ])
                 continue
             }
 
@@ -2181,7 +2202,15 @@ class CheICalMCPServer {
             do {
                 startDate = try parseFlexibleDate(startStr, defaultTimezone: batchTimezone)
             } catch {
-                results.append(["index": index, "success": false, "error": error.localizedDescription])
+                results.append([
+                    "index": index,
+                    "success": false,
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "createEventsBatch",
+                        identifier: "\(index)",
+                        error: error
+                    )
+                ])
                 continue
             }
             guard let endStr = eventDict["end_time"]?.stringValue else {
@@ -2192,7 +2221,15 @@ class CheICalMCPServer {
             do {
                 endDate = try parseFlexibleDate(endStr, defaultTimezone: batchTimezone)
             } catch {
-                results.append(["index": index, "success": false, "error": error.localizedDescription])
+                results.append([
+                    "index": index,
+                    "success": false,
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "createEventsBatch",
+                        identifier: "\(index)",
+                        error: error
+                    )
+                ])
                 continue
             }
 
@@ -2234,7 +2271,11 @@ class CheICalMCPServer {
                 results.append([
                     "index": index,
                     "success": false,
-                    "error": error.localizedDescription
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "createEventsBatch",
+                        identifier: "\(index)",
+                        error: error
+                    )
                 ])
             }
         }
@@ -2274,8 +2315,11 @@ class CheICalMCPServer {
                     ])
                 }
             } catch {
-                FileHandle.standardError.write(Data("findSimilarEvents(\(title)) failed: \(error.localizedDescription)\n".utf8))
-                similarLookupErrors[title] = error.localizedDescription
+                similarLookupErrors[title] = EventKitErrorSanitizer.writeFailureLog(
+                    handler: "findSimilarEvents",
+                    identifier: title,
+                    error: error
+                )
             }
         }
         if !similarHints.isEmpty {
@@ -2385,7 +2429,11 @@ class CheICalMCPServer {
                 results.append([
                     "event_id": eventId,
                     "success": false,
-                    "error": error.localizedDescription
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "moveEventsBatch",
+                        identifier: eventId,
+                        error: error
+                    )
                 ])
             }
         }
@@ -2421,7 +2469,14 @@ class CheICalMCPServer {
                     try await eventKitManager.deleteEventSeries(identifier: id)
                     successCount += 1
                 } catch {
-                    failures.append(["event_id": id, "error": error.localizedDescription])
+                    failures.append([
+                        "event_id": id,
+                        "error": EventKitErrorSanitizer.writeFailureLog(
+                            handler: "deleteEventsBatch",
+                            identifier: id,
+                            error: error
+                        )
+                    ])
                 }
             }
             var response: [String: Any] = [
@@ -2486,7 +2541,14 @@ class CheICalMCPServer {
                             "end_date_local": localDateFormatter.string(from: event.endDate)
                         ])
                     } catch {
-                        preview.append(["event_id": id, "error": error.localizedDescription])
+                        preview.append([
+                            "event_id": id,
+                            "error": EventKitErrorSanitizer.writeFailureLog(
+                                handler: "deleteEventsBatch",
+                                identifier: id,
+                                error: error
+                            )
+                        ])
                     }
                 }
                 let response: [String: Any] = [
@@ -3036,3 +3098,5 @@ enum ToolError: LocalizedError {
         }
     }
 }
+
+extension ToolError: TrustedErrorMessage {}

@@ -835,7 +835,12 @@ actor EventKitManager: EventKitManaging {
                 }
                 successCount += 1
             } catch {
-                failures.append((item.identifier, error.localizedDescription))
+                let code = EventKitErrorSanitizer.writeFailureLog(
+                    handler: "deleteEventsBatch",
+                    identifier: item.identifier,
+                    error: error
+                )
+                failures.append((item.identifier, code))
             }
         }
 
@@ -1780,6 +1785,8 @@ enum EventKitError: LocalizedError {
         }
     }
 }
+
+extension EventKitError: TrustedErrorMessage {}
 
 // MARK: - Batch Operation Results
 

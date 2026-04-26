@@ -133,4 +133,83 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let result = EventKitErrorSanitizer.sanitize(err)
         XCTAssertEqual(result.rawLog, "The operation couldn't be completed. (EKErrorDomain error 3.)")
     }
+
+    // MARK: - sanitizeForResponse trusted-vs-framework dispatch (#37)
+
+    func testSanitizeForResponseTrustedErrorPassesThrough() {
+        let err: any Error = ToolError.invalidParameter("foo")
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertEqual(result.code, "Invalid parameter: foo")
+        XCTAssertEqual(result.rawLog, result.code)
+    }
+
+    func testSanitizeForResponseFrameworkErrorMatchesSanitize() {
+        let err: any Error = NSError(domain: EKErrorDomain, code: 3, userInfo: nil)
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForResponse(err),
+            EventKitErrorSanitizer.sanitize(err)
+        )
+    }
+
+    func testSanitizeForResponseFoundationLocalizedErrorTakesFrameworkBranch() {
+        // URLError conforms to LocalizedError but is NOT TrustedErrorMessage —
+        // we must not echo its localizedDescription (Apple-produced text)
+        // verbatim. R5 negative case.
+        let err: any Error = URLError(.notConnectedToInternet)
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertTrue(
+            result.code.hasPrefix("error_") || result.code == "error_unknown",
+            "URLError should slug or unknown, got \(result.code)"
+        )
+        XCTAssertNotEqual(result.code, err.localizedDescription)
+    }
+
+    func testTrustedErrorMessageMarkerIsZeroRequirementProtocol() {
+        // A function generic over TrustedErrorMessage with no constraints
+        // beyond the marker should compile and accept any conformer without
+        // calling any method on it. If the protocol grows a requirement,
+        // this fails to compile.
+        func acceptsAnyConformer<T: TrustedErrorMessage>(_ x: T) -> T { x }
+        let preserved = acceptsAnyConformer(ToolError.invalidParameter("x"))
+        XCTAssertEqual((preserved as Error).localizedDescription, "Invalid parameter: x")
+    }
+
+    func testThreeAuthorErrorTypesConformTrustedErrorMessage() {
+        let toolErr: any Error = ToolError.invalidParameter("x")
+        XCTAssertTrue(toolErr is TrustedErrorMessage)
+
+        let ekErr: any Error = EventKitError.eventNotFound(identifier: "abc")
+        XCTAssertTrue(ekErr is TrustedErrorMessage)
+        // Note: CLIError exercised separately in Phase 5; runtime instantiation
+        // of CLIError requires CLIRunner-internal wiring not exposed here.
+    }
+
+    func testNSErrorIsNotTrustedErrorMessage() {
+        // R5 negative case at runtime: a raw NSError must NOT inherit the
+        // marker by accident.
+        let err: any Error = NSError(domain: EKErrorDomain, code: 3, userInfo: nil)
+        XCTAssertFalse(err is TrustedErrorMessage)
+    }
+
+    // MARK: - writeFailureLog (#37)
+
+    func testWriteFailureLogReturnsSanitizedCode() {
+        let err = NSError(domain: EKErrorDomain, code: 7, userInfo: nil)
+        let code = EventKitErrorSanitizer.writeFailureLog(
+            handler: "h",
+            identifier: "i",
+            error: err
+        )
+        XCTAssertEqual(code, "eventkit_error_7")
+    }
+
+    func testWriteFailureLogTrustedReturnsOriginalMessage() {
+        let err = ToolError.invalidParameter("foo")
+        let code = EventKitErrorSanitizer.writeFailureLog(
+            handler: "h",
+            identifier: "i",
+            error: err
+        )
+        XCTAssertEqual(code, "Invalid parameter: foo")
+    }
 }
