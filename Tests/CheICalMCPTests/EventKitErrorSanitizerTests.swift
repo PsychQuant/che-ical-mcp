@@ -180,8 +180,9 @@ final class EventKitErrorSanitizerTests: XCTestCase {
 
         let ekErr: any Error = EventKitError.eventNotFound(identifier: "abc")
         XCTAssertTrue(ekErr is TrustedErrorMessage)
-        // Note: CLIError exercised separately in Phase 5; runtime instantiation
-        // of CLIError requires CLIRunner-internal wiring not exposed here.
+
+        let cliErr: any Error = CLIRunner.CLIError.missingToolName
+        XCTAssertTrue(cliErr is TrustedErrorMessage)
     }
 
     func testNSErrorIsNotTrustedErrorMessage() {
@@ -189,6 +190,53 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         // marker by accident.
         let err: any Error = NSError(domain: EKErrorDomain, code: 3, userInfo: nil)
         XCTAssertFalse(err is TrustedErrorMessage)
+    }
+
+    // MARK: - F1 trust contract pin (#37 verify P1 fix)
+
+    func testEventKitErrorCalendarNotFoundDoesNotInterpolateAvailable() {
+        // F1: calendarNotFound's `available` parameter holds EKCalendar.title
+        // strings sourced from CalendarStore — including shared/subscribed/
+        // CalDAV calendars whose titles are set by remote publishers (#21/#27
+        // threat class). The errorDescription MUST NOT include `available[]`
+        // content, otherwise the TrustedErrorMessage conformance lies.
+        let attackerTitle = "ATTACKER_PAYLOAD_should_not_appear"
+        let err = EventKitError.calendarNotFound(
+            identifier: "Personal",
+            available: ["Personal Work", "Family", attackerTitle]
+        )
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertEqual(result.code, "Calendar not found: Personal")
+        XCTAssertFalse(
+            result.code.contains(attackerTitle),
+            "calendarNotFound trust path must NOT include available[] content; got \(result.code)"
+        )
+    }
+
+    func testEventKitErrorCalendarNotFoundWithSourceDoesNotInterpolateAvailable() {
+        let attackerTitle = "ATTACKER_PAYLOAD_should_not_appear"
+        let err = EventKitError.calendarNotFoundWithSource(
+            name: "Personal",
+            source: "iCloud",
+            available: ["Personal Work", attackerTitle]
+        )
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertEqual(result.code, "Calendar 'Personal' not found in source 'iCloud'")
+        XCTAssertFalse(result.code.contains(attackerTitle))
+    }
+
+    func testEventKitErrorMultipleCalendarsFoundDoesNotInterpolateSources() {
+        let attackerSource = "ATTACKER_SOURCE_payload"
+        let err = EventKitError.multipleCalendarsFound(
+            name: "Personal",
+            sources: "iCloud, exchange.evil.com, \(attackerSource)"
+        )
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertFalse(
+            result.code.contains(attackerSource),
+            "multipleCalendarsFound trust path must NOT include sources content; got \(result.code)"
+        )
+        XCTAssertTrue(result.code.contains("Personal"))
     }
 
     // MARK: - writeFailureLog (#37)
@@ -211,5 +259,20 @@ final class EventKitErrorSanitizerTests: XCTestCase {
             error: err
         )
         XCTAssertEqual(code, "Invalid parameter: foo")
+    }
+
+    func testWriteFailureLogReturnValueDoesNotEscapeControlChars() {
+        // Control-char escaping applies only to the stderr write — the
+        // returned `code` value is the sanitized response code, untouched.
+        // F2 fix: stderr gets escape; wire response stays as-is.
+        struct WithNewline: LocalizedError, TrustedErrorMessage {
+            var errorDescription: String? { "line1\nline2" }
+        }
+        let code = EventKitErrorSanitizer.writeFailureLog(
+            handler: "h",
+            identifier: "i",
+            error: WithNewline()
+        )
+        XCTAssertEqual(code, "line1\nline2", "wire response value preserves original text; only stderr is escaped")
     }
 }

@@ -1756,22 +1756,28 @@ enum EventKitError: LocalizedError {
             2. Enable access for the MCP server or Terminal
             3. Restart Claude Desktop/Code
             """
-        case .calendarNotFound(let id, let available):
-            if available.isEmpty {
-                return "Calendar not found: \(id)"
-            }
-            return "Calendar not found: \(id). Available: \(available.joined(separator: ", "))"
-        case .calendarNotFoundWithSource(let name, let source, let available):
-            if available.isEmpty {
-                return "Calendar '\(name)' not found in source '\(source)'"
-            }
-            return "Calendar '\(name)' not found in source '\(source)'. Available: \(available.joined(separator: ", "))"
-        case .multipleCalendarsFound(let name, let sources):
-            return """
-            Multiple calendars found with name '\(name)'.
-            Available sources: \(sources)
-            Please specify calendar_source to disambiguate.
-            """
+        case .calendarNotFound(let id, _):
+            // #37 F1: do NOT interpolate `available` into the trusted-message
+            // path. EKCalendar.title comes from CalendarStore which includes
+            // shared/subscribed/CalDAV calendars whose titles are set by remote
+            // publishers — same threat class as #21/#27 .ics attack. The
+            // operator hint that listed available calendars is preserved on
+            // stderr via the `EventKitError.calendarNotFound.operatorHint`
+            // computed property, which catch sites can write to stderr
+            // separately (untrusted channel).
+            return "Calendar not found: \(id)"
+        case .calendarNotFoundWithSource(let name, let source, _):
+            // Same reasoning as `calendarNotFound`: drop `available:` from the
+            // trusted-message body. `name` and `source` are the caller's own
+            // input echo (safe by R5).
+            return "Calendar '\(name)' not found in source '\(source)'"
+        case .multipleCalendarsFound(let name, _):
+            // Same reasoning as the calendarNotFound cases above: `sources` is
+            // a comma-joined list of EKSource.title (CalDAV-server-controllable
+            // for delegated calendars). Caller can re-derive the disambiguation
+            // hint via `list_calendars` tool, which goes through the proper
+            // UntrustedContentWrapper path.
+            return "Multiple calendars found with name '\(name)'. Please specify calendar_source to disambiguate (use list_calendars to enumerate)."
         case .eventNotFound(let id):
             return "Event not found: \(id)"
         case .reminderNotFound(let id):

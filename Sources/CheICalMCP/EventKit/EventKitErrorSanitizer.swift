@@ -27,7 +27,7 @@ import Foundation
 /// their messages come from Apple frameworks and may carry user-content.
 /// Checking `is LocalizedError` would be too broad; this empty protocol is
 /// the explicit opt-in used by `eventkit-error-sanitization` spec R5.
-protocol TrustedErrorMessage {}
+public protocol TrustedErrorMessage {}
 
 enum EventKitErrorSanitizer {
 
@@ -113,16 +113,30 @@ extension EventKitErrorSanitizer {
     /// call (spec R7). The `handler` and `identifier` parameters tag the
     /// stderr line with context for operator debugging. Returns the
     /// sanitized `code` for the caller to embed into the MCP response.
-    @discardableResult
+    ///
+    /// Control characters (`\n`, `\r`) in `handler` / `identifier` / `rawLog`
+    /// are escaped to `\\n` / `\\r` before the stderr write to prevent log
+    /// injection (#37 F2): batch handlers may receive user-supplied
+    /// identifiers (event titles, IDs from MCP arguments), and a `\n` in any
+    /// of these would forge fake stderr lines visible to the operator.
     static func writeFailureLog(
         handler: String,
         identifier: String,
         error: Error
     ) -> String {
         let sanitized = sanitizeForResponse(error)
+        let safeHandler = escapeForStderr(handler)
+        let safeIdentifier = escapeForStderr(identifier)
+        let safeRawLog = escapeForStderr(sanitized.rawLog)
         FileHandle.standardError.write(
-            Data("\(handler)(\(identifier)) failed: \(sanitized.rawLog)\n".utf8)
+            Data("\(safeHandler)(\(safeIdentifier)) failed: \(safeRawLog)\n".utf8)
         )
         return sanitized.code
+    }
+
+    private static func escapeForStderr(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
     }
 }

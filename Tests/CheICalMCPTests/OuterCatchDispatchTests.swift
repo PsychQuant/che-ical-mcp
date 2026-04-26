@@ -57,4 +57,32 @@ final class OuterCatchDispatchTests: XCTestCase {
             "outer catch must not leak Apple text; got \(text)"
         )
     }
+
+    /// #37 F3: tighter pin for the trust dispatch — proves
+    /// `sanitizeForResponse` actually inspects the marker, not just falls
+    /// through to `localizedDescription`. Two errors with IDENTICAL
+    /// localizedDescription, only one trusted: response must differ.
+    func testSanitizeForResponseDistinguishesTrustVsNonTrust() {
+        struct TwinTrusted: LocalizedError, TrustedErrorMessage {
+            var errorDescription: String? { "TWIN_PASSTHROUGH_PAYLOAD" }
+        }
+        struct TwinUntrusted: LocalizedError {
+            var errorDescription: String? { "TWIN_PASSTHROUGH_PAYLOAD" }
+        }
+
+        let trustedResult = EventKitErrorSanitizer.sanitizeForResponse(TwinTrusted())
+        let untrustedResult = EventKitErrorSanitizer.sanitizeForResponse(TwinUntrusted())
+
+        XCTAssertEqual(trustedResult.code, "TWIN_PASSTHROUGH_PAYLOAD")
+        XCTAssertNotEqual(
+            untrustedResult.code,
+            "TWIN_PASSTHROUGH_PAYLOAD",
+            "untrusted twin must NOT pass through; got \(untrustedResult.code)"
+        )
+        XCTAssertNotEqual(
+            trustedResult.code,
+            untrustedResult.code,
+            "dispatch must produce different codes for trust vs framework branch"
+        )
+    }
 }
