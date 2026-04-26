@@ -134,7 +134,11 @@ extension EventKitErrorSanitizer {
         return sanitized.code
     }
 
-    private static func escapeForStderr(_ s: String) -> String {
+    /// Escape `\\`, `\n`, `\r` for safe stderr inclusion. Promoted from
+    /// `private` to `internal static` so callers that use `sanitize(_:)`
+    /// directly (e.g. the `deleteRemindersBatch` catch path bound by spec
+    /// R3) can apply the same control-char hardening as `writeFailureLog`.
+    static func escapeForStderr(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")

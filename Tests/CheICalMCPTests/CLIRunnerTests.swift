@@ -1,3 +1,5 @@
+import EventKit
+import Foundation
 import MCP
 import XCTest
 
@@ -149,5 +151,46 @@ final class CLIRunnerTests: XCTestCase {
     func testHelpMessageIncludesCLIFlag() {
         let help = AppVersion.helpMessage
         XCTAssertTrue(help.contains("--cli"), "Help message should document the --cli flag")
+    }
+
+    // MARK: - Error sanitization (#37 verify Codex finding)
+
+    func testFormatErrorForCLISanitizesFrameworkError() {
+        // Codex medium finding: an EventKit-thrown NSError reaching CLI mode
+        // must have its localizedDescription sanitized before stdout JSON.
+        let appleErr = NSError(
+            domain: EKErrorDomain,
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "Apple-produced text MUST NOT appear on stdout"]
+        )
+        let (jsonMessage, rawLog) = CLIRunner.formatErrorForCLI(appleErr)
+
+        XCTAssertTrue(
+            jsonMessage.contains("eventkit_error_5"),
+            "stdout must carry sanitized code; got \(jsonMessage)"
+        )
+        XCTAssertFalse(
+            jsonMessage.contains("Apple-produced"),
+            "stdout must not echo Apple localizedDescription; got \(jsonMessage)"
+        )
+
+        XCTAssertTrue(
+            rawLog.contains("Apple-produced"),
+            "stderr raw log preserves original text for operator debug"
+        )
+    }
+
+    func testFormatErrorForCLIPreservesTrustedToolErrorMessage() {
+        let err = ToolError.invalidParameter("calendar_name is required")
+        let (jsonMessage, rawLog) = CLIRunner.formatErrorForCLI(err)
+
+        XCTAssertTrue(jsonMessage.contains("Invalid parameter: calendar_name is required"))
+        XCTAssertEqual(rawLog, "Invalid parameter: calendar_name is required")
+    }
+
+    func testFormatErrorForCLIPreservesTrustedCLIErrorMessage() {
+        let err = CLIRunner.CLIError.missingToolName
+        let (jsonMessage, _) = CLIRunner.formatErrorForCLI(err)
+        XCTAssertTrue(jsonMessage.contains("Missing tool name"))
     }
 }

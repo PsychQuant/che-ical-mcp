@@ -225,6 +225,25 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         XCTAssertFalse(result.code.contains(attackerTitle))
     }
 
+    func testEventKitErrorCalendarNotFoundReadOnlyEchoesUserIdentifier() {
+        // Codex high finding: pre-fix updateCalendar/copyEvent built the
+        // error from `calendar.title` (CalendarStore-sourced). Post-fix the
+        // error must echo only the caller's `identifier`, never the
+        // EventKit-supplied title. Trust path is now honest for read-only
+        // refusals.
+        let attackerTitle = "ATTACKER_CALENDAR_TITLE_should_not_appear"
+        let userIdentifier = "calendar-uuid-1234"
+        // Simulate the post-fix throw: identifier is user input + author suffix
+        let err = EventKitError.calendarNotFound(identifier: "\(userIdentifier) (read-only)")
+        let result = EventKitErrorSanitizer.sanitizeForResponse(err)
+        XCTAssertTrue(result.code.contains(userIdentifier))
+        XCTAssertTrue(result.code.contains("read-only"))
+        XCTAssertFalse(
+            result.code.contains(attackerTitle),
+            "read-only refusal must not echo CalendarStore-sourced titles; got \(result.code)"
+        )
+    }
+
     func testEventKitErrorMultipleCalendarsFoundDoesNotInterpolateSources() {
         let attackerSource = "ATTACKER_SOURCE_payload"
         let err = EventKitError.multipleCalendarsFound(

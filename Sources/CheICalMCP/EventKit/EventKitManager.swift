@@ -275,7 +275,12 @@ actor EventKitManager: EventKitManaging {
             throw EventKitError.calendarNotFound(identifier: identifier)
         }
         guard calendar.allowsContentModifications else {
-            throw EventKitError.calendarNotFound(identifier: "\(calendar.title) (read-only)")
+            // #37 verify (Codex high finding): never interpolate `calendar.title`
+            // into trusted-path errors — the title comes from CalendarStore and
+            // includes shared/subscribed calendars whose names are remote-set
+            // (#21/#27 threat class). Echo the caller's own `identifier` and
+            // mark the read-only state via author-controlled text.
+            throw EventKitError.calendarNotFound(identifier: "\(identifier) (read-only)")
         }
 
         if let t = title { calendar.title = t }
@@ -959,6 +964,9 @@ actor EventKitManager: EventKitManaging {
 
         // Check if target calendar allows modifications
         guard targetCalendar.allowsContentModifications else {
+            // #37 verify: `toCalendarName` is caller-supplied; keep it.
+            // The "(read-only)" suffix is author-controlled. Do NOT interpolate
+            // `targetCalendar.title` (CalendarStore-sourced).
             throw EventKitError.calendarNotFound(identifier: "\(toCalendarName) (read-only)")
         }
 
@@ -1384,9 +1392,18 @@ actor EventKitManager: EventKitManaging {
                 // reminder content. Route through the sanitizer so the
                 // response carries only stable codes; the raw text still
                 // reaches stderr for operator debugging.
+                //
+                // Spec R3 binds this catch to `sanitize(_:)` directly (NOT
+                // `sanitizeForResponse`) — preserves the narrow regex
+                // value-domain. #37 verify (Codex) noted the stderr write was
+                // missing the control-char escape applied by `writeFailureLog`;
+                // we share `escapeForStderr` to keep both paths consistent
+                // without violating R3.
                 let sanitized = EventKitErrorSanitizer.sanitize(error)
+                let safeId = EventKitErrorSanitizer.escapeForStderr(id)
+                let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
                 FileHandle.standardError.write(
-                    Data("deleteRemindersBatch(\(id)) failed: \(sanitized.rawLog)\n".utf8)
+                    Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
                 )
                 failures.append((id, sanitized.code))
             }
