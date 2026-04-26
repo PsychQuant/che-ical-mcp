@@ -1380,7 +1380,14 @@ actor EventKitManager: EventKitManaging {
                 // reminder un-completed between dry_run and execute would be
                 // deleted anyway — silently contradicting the schema line
                 // "Any ID that is no longer completed ... surfaces in failures[]".
-                if onlyCompleted && !reminder.isCompleted {
+                //
+                // #33: extracted to `BatchDeleteFilter.shouldSkipUncompleted`
+                // so the destructive contract has a unit-test-falsifiable
+                // surface (the inline form has no TCC-free testable seam).
+                if BatchDeleteFilter.shouldSkipUncompleted(
+                    isCompleted: reminder.isCompleted,
+                    onlyCompleted: onlyCompleted
+                ) {
                     failures.append((id, "Reminder is no longer completed"))
                     continue
                 }
