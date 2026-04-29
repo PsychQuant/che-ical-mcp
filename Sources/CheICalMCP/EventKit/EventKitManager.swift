@@ -1823,24 +1823,33 @@ extension EventKitError: TrustedErrorMessage {}
 /// Result of a batch EventKit mutation surfaced to MCP responses.
 ///
 /// `failures[].error` is forwarded verbatim into the wire response; the value
-/// is therefore part of the MCP contract. Three dispatch paths populate it,
-/// each with a different sanitization contract — pick by call site:
+/// is therefore part of the MCP contract. The `failures[].error` string is
+/// produced by **one of three paths** — two are catch-handlers, one is a
+/// raise-without-catch — pick by call site:
 ///
-/// 1. **Pre-catch literals** — author-controlled English strings (e.g.
-///    `"Reminder not found"`, `"Reminder is no longer completed"`) raised
-///    before any `do/catch` block. These are invariants, not error wraps,
-///    and are used as-is.
-/// 2. **`EventKitErrorSanitizer.sanitize(_:)`** — direct binding for the
+/// 1. **Pre-catch raise (no catch needed)** — author-controlled English
+///    strings (e.g. `"Reminder not found"`, `"Reminder is no longer
+///    completed"`) appended directly to `failures` before the catch path
+///    runs. These are guard-style invariants, not error wraps; no sanitizer
+///    is applied because no `Error` was thrown.
+/// 2. **`EventKitErrorSanitizer.sanitize(_:)`** — direct binding inside the
+///    `deleteRemindersBatch` catch (this file only) for the
 ///    `cleanup_completed_reminders` flow per spec R3 (preserves the narrow
-///    `[0-9]+` value-domain). Used in `deleteRemindersBatch` catch only.
+///    `[0-9]+` value-domain).
 /// 3. **`EventKitErrorSanitizer.writeFailureLog(handler:identifier:error:)`**
-///    — R7 helper for the 10 non-cleanup catch sites; combines
-///    `sanitizeForResponse(_:)` + stderr write + return code in one call.
+///    — spec R7 helper used at 10 non-cleanup catch sites across the
+///    project (1 in `EventKitManager.deleteEventsBatch`, 9 in `Server.swift`
+///    handlers). Combines `sanitizeForResponse(_:)` + stderr write + the
+///    response token in one call.
 ///
 /// Catch-block paths that wrap `error.localizedDescription` MUST route
-/// through one of (2) or (3) so Apple-produced text never reaches the client
-/// (see #32, #37). See [`EventKitErrorSanitizer`](EventKitErrorSanitizer.swift)
-/// for the full sanitizer surface.
+/// through (2) or (3) so Apple-produced text never reaches the client
+/// (see #32, #37). Spec R3/R7 numbering originates from the archived change
+/// proposal `2026-04-26-extend-error-sanitizer-dispatch`; current
+/// `openspec/specs/eventkit-error-sanitization/spec.md` carries the
+/// requirements as prose, not as `R<N>` anchors. See
+/// [`EventKitErrorSanitizer`](EventKitErrorSanitizer.swift) for the full
+/// sanitizer surface.
 struct BatchDeleteResult {
     let successCount: Int
     let failedCount: Int
