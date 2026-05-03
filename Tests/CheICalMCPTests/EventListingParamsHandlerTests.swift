@@ -106,4 +106,40 @@ final class EventListingParamsHandlerTests: XCTestCase {
             messageContains: "detail_level"
         )
     }
+
+    // MARK: - fields rejection (all 3 tools)
+
+    func testListEventsRejectsUnknownField() async throws {
+        try await assertInvalidParameter(
+            tool: "list_events",
+            arguments: [
+                "start_date": .string("2026-01-01"),
+                "end_date": .string("2026-01-02"),
+                "fields": .array([.string("title"), .string("bogus")])
+            ],
+            messageContains: "bogus"
+        )
+    }
+
+    func testSearchEventsRejectsEmptyFields() async throws {
+        try await assertInvalidParameter(
+            tool: "search_events",
+            arguments: [
+                "keyword": .string("test"),
+                "fields": .array([])
+            ],
+            messageContains: "empty"
+        )
+    }
+
+    func testListEventsQuickRejectsUnknownField() async throws {
+        try await assertInvalidParameter(
+            tool: "list_events_quick",
+            arguments: [
+                "range": .string("today"),
+                "fields": .array([.string("titel")])
+            ],
+            messageContains: "titel"
+        )
+    }
 }

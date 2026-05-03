@@ -130,4 +130,57 @@ final class EventListingParamsTests: XCTestCase {
             messageContains: "PST"
         )
     }
+
+    // MARK: - parseFieldsFilter — accept
+
+    func testFieldsReturnsNilWhenAbsent() throws {
+        let args: [String: Value] = [:]
+        let fields = try InputValidation.parseFieldsFilter(args)
+        XCTAssertNil(fields)
+    }
+
+    func testFieldsAcceptsSingleField() throws {
+        let args: [String: Value] = ["fields": .array([.string("title")])]
+        let fields = try InputValidation.parseFieldsFilter(args)
+        XCTAssertEqual(fields, ["title"])
+    }
+
+    func testFieldsAcceptsMultipleFields() throws {
+        let args: [String: Value] = ["fields": .array([.string("title"), .string("start_date_local"), .string("calendar")])]
+        let fields = try InputValidation.parseFieldsFilter(args)
+        XCTAssertEqual(fields, ["title", "start_date_local", "calendar"])
+    }
+
+    func testFieldsAcceptsAllValidFields() throws {
+        let allFields = InputValidation.validEventFields
+        let args: [String: Value] = ["fields": .array(allFields.sorted().map { .string($0) })]
+        let fields = try InputValidation.parseFieldsFilter(args)
+        XCTAssertEqual(fields, allFields)
+    }
+
+    // MARK: - parseFieldsFilter — reject
+
+    func testFieldsRejectsEmptyArray() {
+        let args: [String: Value] = ["fields": .array([])]
+        assertInvalidParameter(
+            try InputValidation.parseFieldsFilter(args),
+            messageContains: "empty"
+        )
+    }
+
+    func testFieldsRejectsUnknownFieldName() {
+        let args: [String: Value] = ["fields": .array([.string("title"), .string("nonexistent")])]
+        assertInvalidParameter(
+            try InputValidation.parseFieldsFilter(args),
+            messageContains: "nonexistent"
+        )
+    }
+
+    func testFieldsRejectsMisspelledField() {
+        let args: [String: Value] = ["fields": .array([.string("titel")])]
+        assertInvalidParameter(
+            try InputValidation.parseFieldsFilter(args),
+            messageContains: "titel"
+        )
+    }
 }

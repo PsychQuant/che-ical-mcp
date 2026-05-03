@@ -214,6 +214,11 @@ class CheICalMCPServer {
                         "display_timezone": .object([
                             "type": .string("string"),
                             "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
+                        ]),
+                        "fields": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -673,6 +678,11 @@ class CheICalMCPServer {
                         "display_timezone": .object([
                             "type": .string("string"),
                             "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
+                        ]),
+                        "fields": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ])
                 ]),
@@ -716,6 +726,11 @@ class CheICalMCPServer {
                         "display_timezone": .object([
                             "type": .string("string"),
                             "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
+                        ]),
+                        "fields": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("range")])
@@ -1182,6 +1197,7 @@ class CheICalMCPServer {
         let limit = arguments["limit"]?.intValue
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
+        let fields = try InputValidation.parseFieldsFilter(arguments)
 
         var events = try await eventKitManager.listEvents(
             startDate: startDate,
@@ -1219,7 +1235,7 @@ class CheICalMCPServer {
             events = Array(events.prefix(limit))
         }
 
-        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
         var metadata: [String: Any] = [
             "total_in_range": totalInRange,
@@ -2132,6 +2148,7 @@ class CheICalMCPServer {
         let limit = arguments["limit"]?.intValue
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
+        let fields = try InputValidation.parseFieldsFilter(arguments)
 
         // Compute effective search range (same defaults as EventKitManager)
         let now = Date()
@@ -2153,7 +2170,7 @@ class CheICalMCPServer {
             events = Array(events.prefix(limit))
         }
 
-        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
         var response: [String: Any] = [
             "keywords": keywords,
@@ -2188,6 +2205,7 @@ class CheICalMCPServer {
         let limit = arguments["limit"]?.intValue
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
+        let fields = try InputValidation.parseFieldsFilter(arguments)
 
         var events = try await eventKitManager.listEvents(
             startDate: startDate,
@@ -2202,7 +2220,7 @@ class CheICalMCPServer {
             events = Array(events.prefix(limit))
         }
 
-        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
         // Include the computed date range in response
         var response: [String: Any] = [
@@ -2767,7 +2785,8 @@ class CheICalMCPServer {
     private func formatEventDict(
         _ event: EKEvent,
         detailLevel: String = "standard",
-        displayTimezone: TimeZone? = nil
+        displayTimezone: TimeZone? = nil,
+        fields: Set<String>? = nil
     ) -> [String: Any] {
         let tz = displayTimezone ?? event.timeZone
         var dict: [String: Any] = [
@@ -2782,7 +2801,7 @@ class CheICalMCPServer {
             "calendar": event.calendar.title
         ]
         if let location = event.location { dict["location"] = location }
-        if detailLevel != "summary" {
+        if fields != nil || detailLevel != "summary" {
             if let notes = event.notes { dict["notes"] = notes }
             if let url = event.url { dict["url"] = url.absoluteString }
             if event.hasRecurrenceRules, let rules = event.recurrenceRules {
@@ -2805,6 +2824,10 @@ class CheICalMCPServer {
             if let organizer = organizer {
                 dict["organizer"] = organizer
             }
+        }
+        if let fields = fields {
+            let allowed = fields.union(["id"])
+            return dict.filter { allowed.contains($0.key) }
         }
         return dict
     }

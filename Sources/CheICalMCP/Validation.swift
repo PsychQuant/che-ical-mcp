@@ -65,6 +65,28 @@ enum InputValidation {
         return tz
     }
 
+    static let validEventFields: Set<String> = [
+        "id", "title", "start_date", "start_date_local", "end_date", "end_date_local",
+        "timezone", "is_all_day", "calendar", "location", "notes", "url",
+        "is_recurring", "recurrence_rules", "structured_location", "attendees", "organizer"
+    ]
+
+    static func parseFieldsFilter(_ arguments: [String: Value]) throws -> Set<String>? {
+        guard let fieldsArray = arguments["fields"]?.arrayValue else { return nil }
+        let fields = Set(fieldsArray.compactMap { $0.stringValue })
+        if fields.isEmpty {
+            throw ToolError.invalidParameter("fields array must not be empty")
+        }
+        let invalid = fields.subtracting(validEventFields)
+        if !invalid.isEmpty {
+            throw ToolError.invalidParameter(
+                "Unknown field(s): \(invalid.sorted().joined(separator: ", ")). "
+                + "Available: \(validEventFields.sorted().joined(separator: ", "))"
+            )
+        }
+        return fields
+    }
+
     // MARK: - Numeric argument coercion with loud failure
     //
     // These helpers separate "key absent -> use default" from "key present
