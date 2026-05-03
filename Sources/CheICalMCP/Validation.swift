@@ -43,6 +43,28 @@ enum InputValidation {
         if let notes { try validateLength(notes, field: "notes", max: maxNotesLength) }
     }
 
+    // MARK: - Event listing parameter validation
+
+    static let validDetailLevels: Set<String> = ["summary", "standard"]
+
+    static func validateDetailLevel(_ arguments: [String: Value]) throws -> String {
+        guard let level = arguments["detail_level"]?.stringValue else { return "standard" }
+        guard validDetailLevels.contains(level) else {
+            throw ToolError.invalidParameter("detail_level must be 'summary' or 'standard'")
+        }
+        return level
+    }
+
+    static func parseDisplayTimezone(_ arguments: [String: Value]) throws -> TimeZone? {
+        guard let tzString = arguments["display_timezone"]?.stringValue else { return nil }
+        guard let tz = TimeZone(identifier: tzString) else {
+            throw ToolError.invalidParameter(
+                "Invalid display_timezone: '\(tzString)'. Use IANA format (e.g., 'America/Los_Angeles', 'Europe/Berlin')."
+            )
+        }
+        return tz
+    }
+
     // MARK: - Numeric argument coercion with loud failure
     //
     // These helpers separate "key absent -> use default" from "key present

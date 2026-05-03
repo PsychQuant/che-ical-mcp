@@ -205,6 +205,15 @@ class CheICalMCPServer {
                         "limit": .object([
                             "type": .string("integer"),
                             "description": .string("Maximum number of events to return")
+                        ]),
+                        "detail_level": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("summary"), .string("standard")]),
+                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                        ]),
+                        "display_timezone": .object([
+                            "type": .string("string"),
+                            "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -651,7 +660,20 @@ class CheICalMCPServer {
                         "start_date": .object(["type": .string("string"), "description": .string("Optional start date in ISO8601 format with timezone (e.g., 2026-01-01T00:00:00+08:00)")]),
                         "end_date": .object(["type": .string("string"), "description": .string("Optional end date in ISO8601 format with timezone (e.g., 2026-12-31T23:59:59+08:00)")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")])
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "limit": .object([
+                            "type": .string("integer"),
+                            "description": .string("Maximum number of events to return")
+                        ]),
+                        "detail_level": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("summary"), .string("standard")]),
+                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                        ]),
+                        "display_timezone": .object([
+                            "type": .string("string"),
+                            "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
+                        ])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -681,7 +703,20 @@ class CheICalMCPServer {
                             "description": .string("First day of week for this_week/next_week calculations. 'system' uses locale settings (default), 'monday' for ISO 8601/Europe/Asia, 'sunday' for US/Japan, 'saturday' for Middle East.")
                         ]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")])
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "limit": .object([
+                            "type": .string("integer"),
+                            "description": .string("Maximum number of events to return")
+                        ]),
+                        "detail_level": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("summary"), .string("standard")]),
+                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                        ]),
+                        "display_timezone": .object([
+                            "type": .string("string"),
+                            "description": .string("IANA timezone (e.g., 'America/Los_Angeles') for *_local fields. If omitted, each event uses its own timezone.")
+                        ])
                     ]),
                     "required": .array([.string("range")])
                 ]),
@@ -1145,6 +1180,8 @@ class CheICalMCPServer {
         let filterMode = arguments["filter"]?.stringValue ?? "all"
         let sortMode = arguments["sort"]?.stringValue ?? "asc"
         let limit = arguments["limit"]?.intValue
+        let detailLevel = try InputValidation.validateDetailLevel(arguments)
+        let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
 
         var events = try await eventKitManager.listEvents(
             startDate: startDate,
@@ -1182,7 +1219,7 @@ class CheICalMCPServer {
             events = Array(events.prefix(limit))
         }
 
-        let result = events.map { formatEventDict($0) }
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
 
         var metadata: [String: Any] = [
             "total_in_range": totalInRange,
@@ -1193,10 +1230,13 @@ class CheICalMCPServer {
         ]
         if let limit = limit { metadata["limit"] = limit }
 
-        let response: [String: Any] = [
+        var response: [String: Any] = [
             "events": result,
             "metadata": metadata
         ]
+        if let displayTimezone = displayTimezone {
+            response["display_timezone"] = displayTimezone.identifier
+        }
         return try formatJSON(response)
     }
 
@@ -2089,13 +2129,16 @@ class CheICalMCPServer {
         let userEndDate: Date? = try arguments["end_date"]?.stringValue.map { try parseFlexibleDate($0) }
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let limit = arguments["limit"]?.intValue
+        let detailLevel = try InputValidation.validateDetailLevel(arguments)
+        let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
 
         // Compute effective search range (same defaults as EventKitManager)
         let now = Date()
         let effectiveStart = userStartDate ?? Calendar.current.date(byAdding: .year, value: -2, to: now)!
         let effectiveEnd = userEndDate ?? Calendar.current.date(byAdding: .year, value: 2, to: now)!
 
-        let events = try await eventKitManager.searchEvents(
+        var events = try await eventKitManager.searchEvents(
             keywords: keywords,
             matchMode: matchMode,
             startDate: effectiveStart,
@@ -2104,21 +2147,31 @@ class CheICalMCPServer {
             calendarSource: calendarSource
         )
 
-        let result = events.map { formatEventDict($0) }
+        // Apply limit
+        let totalCount = events.count
+        if let limit = limit, limit > 0 && events.count > limit {
+            events = Array(events.prefix(limit))
+        }
 
-        let response: [String: Any] = [
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
+
+        var response: [String: Any] = [
             "keywords": keywords,
             "match_mode": matchMode,
-            "result_count": events.count,
+            "result_count": totalCount,
             "searched_range": [
                 "start": dateFormatter.string(from: effectiveStart),
-                "start_local": localDateFormatter.string(from: effectiveStart),
+                "start_local": formatLocal(effectiveStart, in: displayTimezone),
                 "end": dateFormatter.string(from: effectiveEnd),
-                "end_local": localDateFormatter.string(from: effectiveEnd),
+                "end_local": formatLocal(effectiveEnd, in: displayTimezone),
                 "is_default_range": userStartDate == nil || userEndDate == nil
             ] as [String: Any],
             "events": result
         ]
+        if let limit = limit { response["limit"] = limit }
+        if let displayTimezone = displayTimezone {
+            response["display_timezone"] = displayTimezone.identifier
+        }
         return try formatJSON(response)
     }
 
@@ -2132,29 +2185,43 @@ class CheICalMCPServer {
         let (startDate, endDate, effectiveWeekStart) = getDateRange(for: range, weekStartsOn: weekStartsOn)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let limit = arguments["limit"]?.intValue
+        let detailLevel = try InputValidation.validateDetailLevel(arguments)
+        let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
 
-        let events = try await eventKitManager.listEvents(
+        var events = try await eventKitManager.listEvents(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
             calendarSource: calendarSource
         )
 
-        let result = events.map { formatEventDict($0) }
+        // Apply limit
+        let totalCount = events.count
+        if let limit = limit, limit > 0 && events.count > limit {
+            events = Array(events.prefix(limit))
+        }
+
+        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone) }
 
         // Include the computed date range in response
         var response: [String: Any] = [
             "range": range,
             "start_date": dateFormatter.string(from: startDate),
-            "start_date_local": localDateFormatter.string(from: startDate),
+            "start_date_local": formatLocal(startDate, in: displayTimezone),
             "end_date": dateFormatter.string(from: endDate),
-            "end_date_local": localDateFormatter.string(from: endDate),
+            "end_date_local": formatLocal(endDate, in: displayTimezone),
             "timezone": TimeZone.current.identifier,
+            "event_count": totalCount,
             "events": result
         ]
         // Include week_starts_on info for this_week/next_week ranges
         if range == "this_week" || range == "next_week" {
             response["week_starts_on"] = effectiveWeekStart
+        }
+        if let limit = limit { response["limit"] = limit }
+        if let displayTimezone = displayTimezone {
+            response["display_timezone"] = displayTimezone.identifier
         }
         return try formatJSON(response)
     }
@@ -2697,41 +2764,47 @@ class CheICalMCPServer {
 
     /// Shared event dict builder for all event-returning handlers.
     /// Includes attendees and organizer when present.
-    private func formatEventDict(_ event: EKEvent) -> [String: Any] {
+    private func formatEventDict(
+        _ event: EKEvent,
+        detailLevel: String = "standard",
+        displayTimezone: TimeZone? = nil
+    ) -> [String: Any] {
+        let tz = displayTimezone ?? event.timeZone
         var dict: [String: Any] = [
             "id": event.eventIdentifier ?? "",
             "title": event.title ?? "",
             "start_date": dateFormatter.string(from: event.startDate),
-            "start_date_local": formatLocal(event.startDate, in: event.timeZone),
+            "start_date_local": formatLocal(event.startDate, in: tz),
             "end_date": dateFormatter.string(from: event.endDate),
-            "end_date_local": formatLocal(event.endDate, in: event.timeZone),
+            "end_date_local": formatLocal(event.endDate, in: tz),
             "timezone": (event.timeZone ?? TimeZone.current).identifier,
             "is_all_day": event.isAllDay,
             "calendar": event.calendar.title
         ]
-        if let notes = event.notes { dict["notes"] = notes }
         if let location = event.location { dict["location"] = location }
-        if let url = event.url { dict["url"] = url.absoluteString }
-        if event.hasRecurrenceRules, let rules = event.recurrenceRules {
-            dict["is_recurring"] = true
-            dict["recurrence_rules"] = rules.map { formatRecurrenceRule($0) }
-        }
-        if let structured = event.structuredLocation {
-            var locDict: [String: Any] = ["title": structured.title ?? ""]
-            if let geo = structured.geoLocation {
-                locDict["latitude"] = geo.coordinate.latitude
-                locDict["longitude"] = geo.coordinate.longitude
+        if detailLevel != "summary" {
+            if let notes = event.notes { dict["notes"] = notes }
+            if let url = event.url { dict["url"] = url.absoluteString }
+            if event.hasRecurrenceRules, let rules = event.recurrenceRules {
+                dict["is_recurring"] = true
+                dict["recurrence_rules"] = rules.map { formatRecurrenceRule($0) }
             }
-            if structured.radius > 0 { locDict["radius"] = structured.radius }
-            dict["structured_location"] = locDict
-        }
-        // Attendees and organizer (read-only from EventKit)
-        let (attendees, organizer) = formatAttendeesInfo(event)
-        if let attendees = attendees, !attendees.isEmpty {
-            dict["attendees"] = attendees
-        }
-        if let organizer = organizer {
-            dict["organizer"] = organizer
+            if let structured = event.structuredLocation {
+                var locDict: [String: Any] = ["title": structured.title ?? ""]
+                if let geo = structured.geoLocation {
+                    locDict["latitude"] = geo.coordinate.latitude
+                    locDict["longitude"] = geo.coordinate.longitude
+                }
+                if structured.radius > 0 { locDict["radius"] = structured.radius }
+                dict["structured_location"] = locDict
+            }
+            let (attendees, organizer) = formatAttendeesInfo(event)
+            if let attendees = attendees, !attendees.isEmpty {
+                dict["attendees"] = attendees
+            }
+            if let organizer = organizer {
+                dict["organizer"] = organizer
+            }
         }
         return dict
     }
