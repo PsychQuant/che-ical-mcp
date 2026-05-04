@@ -28,7 +28,7 @@ else
     echo "  ✓ Swift 6 strict concurrency OK"
 fi
 
-# Step 0.5: Version consistency check.
+# Step 2: Version consistency check.
 # AppVersion.current (Sources/CheICalMCP/Version.swift) is the source of truth.
 # mcpb/manifest.json and Info.plist MUST match. server.json is independent — see
 # README "Release Process" — because it's a Registry snapshot that bumps only
@@ -61,7 +61,7 @@ fi
 
 echo "  ✓ Version.swift, Info.plist, and mcpb/manifest.json all at $SOURCE_VERSION"
 
-# Step 3-4: Build for both architectures
+# Steps 3-4: Build for both architectures
 echo "[3/7] Building for Apple Silicon (arm64)..."
 cd "$PROJECT_DIR"
 swift build -c release --arch arm64 "${SWIFT_FALLBACK_FLAGS[@]}"
