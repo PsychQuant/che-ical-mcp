@@ -611,8 +611,20 @@ codesign --verify --deep --strict --verbose=2 mcpb/server/CheICalMCP
 # 3. Notarization end-to-end (this is the real "Gatekeeper would accept" gate)
 spctl -a -vvv -t install mcpb/server/CheICalMCP
 # Expected: <binary>: accepted; source=Notarized Developer ID
-# Note: -t execute is wrong for raw Mach-O CLI (always rejects with "not an app");
-#       -t install is the correct assessment type.
+#
+# Note on flag choice (verified empirically on macOS 26.4.1, 2026-05-04):
+#   -t execute → rejected "code is valid but does not seem to be an app"
+#                (Apple's "execute" type expects a .app bundle structure,
+#                 not raw Mach-O CLI binaries)
+#   -t install → accepted; source=Notarized Developer ID  ← use this
+#   -t open    → rejected "Insufficient Context"
+#
+# Apple's Code Signing Guide describes -t execute as the assessment type for
+# "applications and tools", but on macOS 26 raw Mach-O binaries fall through
+# the .app bundle check. -t install is the documented assessment type for
+# software being installed (which describes how a CLI binary lands in ~/bin),
+# and is the type that returns the actual notarization verdict in practice.
+# Re-test if Apple changes this behavior in a future macOS update.
 ```
 
 **Local dev iteration** without signing latency:
@@ -632,6 +644,7 @@ The `build-mcpb.sh` script also **auto-skips signing** when `DEVELOPER_ID` is un
 | `NOTARY_PROFILE` | _(unset — fail-fast in `sign-and-notarize.sh`)_ | Signed release |
 | `ENTITLEMENTS` | `Sources/CheICalMCP/Entitlements.plist` | Custom entitlements file |
 | `SKIP_CODESIGN` | _(unset)_ | Force-skip signing even with cert present (set to `1` or `true`) |
+| `REQUIRE_CODESIGN` | _(unset)_ | Fail-fast if signing prerequisites missing (set to `1` by `make release-signed` — canonical release path must not silently produce unsigned artifacts; do not set when running `./scripts/build-mcpb.sh` directly for fork-friendly dev builds) |
 
 **Known limitation — no stapling**: `stapler staple` does not support raw Mach-O binaries (only `.app` / `.pkg` / `.dmg` bundles). After notarization, Gatekeeper will online-check the binary on first launch instead of reading a stapled ticket. End users behind air-gapped networks may see "cannot verify developer" warnings; one launch with network resolves it (Apple caches the verdict). Mitigation: `xcrun stapler staple` on a future `.pkg` wrapper if needed.
 

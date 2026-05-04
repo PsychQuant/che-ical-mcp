@@ -18,10 +18,20 @@ release:
 # Distribution release: builds universal binary, signs with Developer ID,
 # notarizes via xcrun notarytool, and packages into .mcpb.
 # Requires Developer ID Application cert in keychain + notarytool keychain
-# profile named "che-ical-mcp" (override via DEVELOPER_ID / NOTARY_PROFILE
-# env vars). See README "Signing & Notarization" for one-time setup.
+# profile (see README "Signing & Notarization" for one-time setup).
+#
+# REQUIRE_CODESIGN=1 makes signing mandatory — missing DEVELOPER_ID, missing
+# cert, or missing notarytool profile will fail-fast instead of silently
+# producing an unsigned .mcpb. This is the canonical release-cut command;
+# use plain `./scripts/build-mcpb.sh` (without the flag) for fork-friendly
+# unsigned dev builds.
 release-signed:
-	./scripts/build-mcpb.sh
+	@echo "⚠ macOS 26 TCC behavior on the resulting binary remains unverified."
+	@echo "  Manual test required before tagging v1.7.1 — see #54."
+	@echo ""
+	@: $${DEVELOPER_ID:?DEVELOPER_ID not set. See README 'Signing & Notarization' for setup.}
+	@: $${NOTARY_PROFILE:?NOTARY_PROFILE not set. See README 'Signing & Notarization' for setup.}
+	REQUIRE_CODESIGN=1 ./scripts/build-mcpb.sh
 
 # Local dev install with ad-hoc signing. Fast iteration; macOS ≤ 25 only.
 # For testing the actual distributable artifact, use `make release-signed`.

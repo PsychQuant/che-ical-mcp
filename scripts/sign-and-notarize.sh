@@ -113,23 +113,34 @@ ditto -c -k --keepParent "$BINARY" "$ZIP_PATH"
 SUBMIT_LOG="$(mktemp -t notarize-log-XXXXXXXX)"
 trap 'cleanup; rm -f "$SUBMIT_LOG"' EXIT INT TERM
 
+# Helper: extract submission UUID from notarytool log; never aborts under set -e
+# (grep returns 1 if no match → would abort; trailing || true makes it fail-soft)
+extract_submission_id() {
+    grep -m1 -E '^[[:space:]]*id:' "$1" 2>/dev/null | awk '{print $2}' || true
+}
+
 if ! xcrun notarytool submit "$ZIP_PATH" \
         --keychain-profile "$NOTARY_PROFILE" \
         --wait 2>&1 | tee "$SUBMIT_LOG"; then
-    SUBMISSION_ID="$(grep -m1 -E '^[[:space:]]*id:' "$SUBMIT_LOG" | awk '{print $2}')"
+    SUBMISSION_ID="$(extract_submission_id "$SUBMIT_LOG")"
     echo "" >&2
     echo "Error: notarization failed (or notarytool errored)." >&2
     if [[ -n "$SUBMISSION_ID" ]]; then
         echo "       To see Apple's rejection reason:" >&2
         echo "         xcrun notarytool log $SUBMISSION_ID --keychain-profile $NOTARY_PROFILE" >&2
     else
-        echo "       (no submission ID captured — likely a pre-submit error)" >&2
+        echo "       (no submission ID captured — full notarytool output above; if format changed," >&2
+        echo "        run: xcrun notarytool history --keychain-profile $NOTARY_PROFILE)" >&2
     fi
     exit 1
 fi
 
-SUBMISSION_ID="$(grep -m1 -E '^[[:space:]]*id:' "$SUBMIT_LOG" | awk '{print $2}')"
-[[ -n "$SUBMISSION_ID" ]] && echo "Submission ID: $SUBMISSION_ID"
+SUBMISSION_ID="$(extract_submission_id "$SUBMIT_LOG")"
+if [[ -n "$SUBMISSION_ID" ]]; then
+    echo "Submission ID: $SUBMISSION_ID"
+else
+    echo "(submission accepted but ID not captured — notarytool output format may have changed)"
+fi
 
 # Step 4: print final state for visual confirmation
 # || true: this is informational only; if codesign output format changes and grep
