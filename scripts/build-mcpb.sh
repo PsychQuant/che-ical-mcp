@@ -97,14 +97,34 @@ echo "Architectures:"
 lipo -info "$UNIVERSAL_BINARY"
 
 # Step 3.5: Sign + notarize for distribution.
-# Skip when SKIP_CODESIGN is set (local iteration without notarytool latency).
 # Required for releases: macOS 26 TCC rejects ad-hoc binaries; Developer ID
 # signing + hardened runtime + notarization is the only way Calendar/Reminders
 # permission dialogs appear for end users.
+#
+# Behavior:
+#   SKIP_CODESIGN=1 → skip (only "1" or "true" disable; other values run signing)
+#   No DEVELOPER_ID env or no cert in keychain → auto-skip with warning
+#     (lets contributors / CI / forks build unsigned .mcpb without manual override)
+#   Otherwise → run sign-and-notarize.sh (requires cert + notarytool profile)
 echo ""
-if [[ -n "${SKIP_CODESIGN:-}" ]]; then
-    echo "[3.5/4] Skipping codesign + notarize (SKIP_CODESIGN set)."
-    echo "  ⚠ Resulting binary is ad-hoc signed; do NOT ship."
+SHOULD_SIGN=true
+if [[ "${SKIP_CODESIGN:-}" == "1" || "${SKIP_CODESIGN:-}" == "true" ]]; then
+    SHOULD_SIGN=false
+    SKIP_REASON="SKIP_CODESIGN=$SKIP_CODESIGN"
+elif [[ -z "${DEVELOPER_ID:-}" ]]; then
+    SHOULD_SIGN=false
+    SKIP_REASON="DEVELOPER_ID env not set (set it to enable signing; see README 'Signing & Notarization')"
+elif ! security find-identity -p codesigning -v 2>/dev/null | grep -qF "$DEVELOPER_ID"; then
+    SHOULD_SIGN=false
+    SKIP_REASON="codesigning identity '$DEVELOPER_ID' not in keychain"
+fi
+
+if [[ "$SHOULD_SIGN" == "false" ]]; then
+    echo "[3.5/4] Skipping codesign + notarize."
+    echo "  Reason: $SKIP_REASON"
+    echo "  ⚠ Resulting binary is ad-hoc signed; suitable for local dev only."
+    echo "  ⚠ To produce a release-quality .mcpb on macOS 26: set DEVELOPER_ID + NOTARY_PROFILE,"
+    echo "    install Developer ID Application cert, then re-run."
 else
     echo "[3.5/4] Signing + notarizing for distribution..."
     "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"

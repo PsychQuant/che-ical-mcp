@@ -566,12 +566,23 @@ Starting v1.7.1, release binaries are signed with a Developer ID Application cer
 
 **Prerequisites** (one-time setup):
 
-- Apple Developer Program enrollment
-- Developer ID Application certificate installed in login keychain
-  - Verify with: `security find-identity -p codesigning -v` (must show `Developer ID Application: ...`)
-- `notarytool` keychain profile named `che-ical-mcp` (or whatever you set as `$NOTARY_PROFILE`)
-  - Create with: `xcrun notarytool store-credentials che-ical-mcp --apple-id <id> --team-id <team-id> --password <app-specific-password>`
-  - App-specific password: generate at <https://account.apple.com> → Sign-In and Security → App-Specific Passwords
+1. Apple Developer Program enrollment.
+2. Developer ID Application certificate installed in login keychain.
+   - Verify with: `security find-identity -p codesigning -v` (must show `Developer ID Application: <Your Name> (<TeamID>)`).
+   - Your Team ID is your own — find it at <https://developer.apple.com/account> → Membership Details. (The maintainer's `6W377FS7BS` shown anywhere in this repo is for reference only.)
+3. `notarytool` keychain profile (any name; `che-ical-mcp` is the default the build script looks for).
+   - Create interactively (recommended — keeps password out of shell history):
+     ```bash
+     xcrun notarytool store-credentials che-ical-mcp --apple-id <your-apple-id> --team-id <your-team-id>
+     # notarytool will prompt for the app-specific password
+     ```
+   - App-specific password: generate at <https://account.apple.com> → Sign-In and Security → App-Specific Passwords. Use a single-purpose password (e.g. named `che-ical-mcp`); revoke + regenerate if leaked. **Never** pass it via `--password` on the command line — it lands in `~/.zsh_history`.
+4. Export your identity for the build script:
+   ```bash
+   export DEVELOPER_ID='Developer ID Application: <Your Name> (<TeamID>)'
+   export NOTARY_PROFILE='che-ical-mcp'   # match what you set up in step 3
+   ```
+   Persist these in `~/.zshrc` or a project-local `.envrc` (gitignored). The script intentionally has **no defaults** for these, so a fresh fork doesn't fail with errors referring to the maintainer's identity.
 
 **Per-release flow**:
 
@@ -580,16 +591,28 @@ make release-signed     # builds universal binary → signs + notarizes → pack
 gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/che-ical-mcp.mcpb --notes "..."
 ```
 
-`make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
+`make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. The signing script does pre-flight checks (cert + notarytool profile) and fails fast with friendly messages if anything's missing. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
 
-**Verification** after build:
+**Verification** after build (run all three to confirm end-to-end):
 
 ```bash
+# 1. Signature properties (cert + hardened runtime + team ID)
 codesign -dv --verbose=2 mcpb/server/CheICalMCP
-# Expected: Authority=Developer ID Application: ...
-#           TeamIdentifier=<your-team-id>
-#           flags=0x10000(runtime)
-#           Signature size > 9000 bytes
+# Expected:
+#   Authority=Developer ID Application: <Your Name> (<TeamID>)
+#   TeamIdentifier=<TeamID>
+#   flags=0x10000(runtime)
+#   Signature size in the few thousand bytes range (varies by cert chain)
+
+# 2. Signature integrity
+codesign --verify --deep --strict --verbose=2 mcpb/server/CheICalMCP
+# Expected: exit 0, no warnings
+
+# 3. Notarization end-to-end (this is the real "Gatekeeper would accept" gate)
+spctl -a -vvv -t install mcpb/server/CheICalMCP
+# Expected: <binary>: accepted; source=Notarized Developer ID
+# Note: -t execute is wrong for raw Mach-O CLI (always rejects with "not an app");
+#       -t install is the correct assessment type.
 ```
 
 **Local dev iteration** without signing latency:
@@ -599,16 +622,25 @@ SKIP_CODESIGN=1 ./scripts/build-mcpb.sh   # ad-hoc signed; do NOT ship the resul
 make install                              # installs ad-hoc to ~/bin (dev only)
 ```
 
+The `build-mcpb.sh` script also **auto-skips signing** when `DEVELOPER_ID` is unset OR the cert isn't in your keychain — so contributors / CI / forks can build a working unsigned `.mcpb` for testing without manually setting `SKIP_CODESIGN`. (You'll see a clear "Skipping codesign" warning when this happens.)
+
 **Signing identity environment**:
 
-| Env var | Default | Override when |
-|---------|---------|---------------|
-| `DEVELOPER_ID` | `Developer ID Application: CHE CHENG (6W377FS7BS)` | Different signing identity |
-| `NOTARY_PROFILE` | `che-ical-mcp` | Different `notarytool` keychain profile name |
+| Env var | Default | Required for |
+|---------|---------|--------------|
+| `DEVELOPER_ID` | _(unset — auto-skip signing)_ | Signed release |
+| `NOTARY_PROFILE` | _(unset — fail-fast in `sign-and-notarize.sh`)_ | Signed release |
 | `ENTITLEMENTS` | `Sources/CheICalMCP/Entitlements.plist` | Custom entitlements file |
-| `SKIP_CODESIGN` | _(unset)_ | Set to any value to skip signing in `build-mcpb.sh` (dev only) |
+| `SKIP_CODESIGN` | _(unset)_ | Force-skip signing even with cert present (set to `1` or `true`) |
 
-**Known limitation — no stapling**: `stapler staple` does not support raw Mach-O binaries (only `.app` / `.pkg` / `.dmg` bundles). After notarization, Gatekeeper will online-check the binary on first launch instead of reading a stapled ticket. End users behind air-gapped networks may see false rejections. Mitigation: `xcrun stapler staple` on a future `.pkg` wrapper if needed.
+**Known limitation — no stapling**: `stapler staple` does not support raw Mach-O binaries (only `.app` / `.pkg` / `.dmg` bundles). After notarization, Gatekeeper will online-check the binary on first launch instead of reading a stapled ticket. End users behind air-gapped networks may see "cannot verify developer" warnings; one launch with network resolves it (Apple caches the verdict). Mitigation: `xcrun stapler staple` on a future `.pkg` wrapper if needed.
+
+**Troubleshooting**:
+
+- Notarization rejected? `xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE` shows Apple's reason. The signing script prints the submission ID on every run.
+- `codesign` complains about missing identity? `security find-identity -p codesigning -v` to confirm cert is present + valid; `xcrun notarytool history --keychain-profile $NOTARY_PROFILE` to confirm the profile works.
+- Cert expired? Re-issue at <https://developer.apple.com/account/resources/certificates>, install, re-export `DEVELOPER_ID`.
+- Security warning: don't unlock signing keychain on shared / untrusted machines. The cert + private key signing artifact is supply-chain critical.
 
 ---
 

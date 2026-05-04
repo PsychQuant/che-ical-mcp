@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7.1 security wave. To be cut as 1.7.2 on the next release.
+Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7.1 security wave. Will ride the next release after v1.7.1 (likely v1.7.2 or folded into a wider feature minor depending on cadence).
 
 ### Added
 - **`cleanup_completed_reminders` tool** (#21): single-call cleanup of all completed reminders, eliminating the external list-then-delete loop that daily-cleanup automations used to require. `dry_run=true` default surfaces the exact scope before deletion (matches `delete_events_batch` safety pattern); optional `calendar_name` + `calendar_source` scope to a single list. Implementation composes existing `listReminders(completed:)` + `deleteRemindersBatch` primitives — no `EventKitManager` change. Inherits `deleteRemindersBatch`'s no-undo behavior (separate issue candidate to backfill).
@@ -52,6 +52,15 @@ Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7
 - 18 new cases across `ResponseFormattingTests` (11) and `InputValidationTests` (7 for `requireIntIfPresent`). Total: 123 → 141.
 
 ## [1.7.1] - 2026-04-24
+
+### Distribution
+- **macOS 26 codesigning + notarization** (#44): release binary is now signed with Developer ID Application + hardened runtime + notarized via `xcrun notarytool`. macOS 26 tightened TCC such that ad-hoc signed binaries can no longer trigger Calendar / Reminders permission dialogs — Developer ID + hardened runtime + notarization is the only path that lets end users grant access without manually re-signing the binary themselves.
+  - New `scripts/sign-and-notarize.sh` wraps the codesign + ditto-zip + notarytool submit flow with pre-flight checks (cert in keychain, notarytool keychain profile configured) and friendly error messages including the submission ID for `xcrun notarytool log` post-mortem.
+  - New `scripts/build-mcpb.sh` step `[3.5/4]` calls the signing script automatically. Auto-skips when `DEVELOPER_ID` env var is unset OR cert isn't in the keychain (so contributors / CI / forks can build a working unsigned `.mcpb` for testing without manually setting `SKIP_CODESIGN=1`).
+  - New `Makefile` target `release-signed` is the canonical release-cut command.
+  - `Sources/CheICalMCP/Entitlements.plist` (empty `<dict/>`) — minimal entitlements; hardened runtime alone is what macOS 26 requires for TCC. EventKit is user-prompt-driven (no entitlement key needed for outside-MAS distribution).
+  - **Known limitation**: stapling skipped (raw Mach-O doesn't support `xcrun stapler staple`); Gatekeeper online-checks notarization on first launch, requiring one-time network access.
+  - README "Release Process" gains a "Signing & Notarization" subsection with prerequisites, per-release flow, end-to-end verification (`spctl -a -vvv -t install`), and troubleshooting.
 
 ### Security
 - **Input validation at MCP tool boundaries** (#20): `create_event`, `update_event`, `create_reminder`, `update_reminder`, and their batch counterparts now enforce length limits (title ≤ 255, notes ≤ 65535, location ≤ 1024) and a URL scheme allowlist (http / https only). Rejects `javascript:`, `file:`, `data:`, and other non-web schemes that could be rendered as clickable URIs by calendar clients.
