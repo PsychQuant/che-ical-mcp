@@ -59,6 +59,14 @@ class CheICalMCPServer {
     /// All available tools
     private let tools: [Tool]
 
+    /// Constructor with per-feature test seams.
+    ///
+    /// `reminderCleanupSource` is the canonical example of the "narrow `*Source`
+    /// protocol" DI convention (#34, see `CLAUDE.md` "Test Seam Convention"):
+    /// production code passes nothing → defaults to `EventKitManager.shared`;
+    /// `CleanupHandlerTests` passes a `FakeEventKitManager`. New handlers that
+    /// need a test fake should add their own narrow `*Source` parameter here
+    /// rather than widening `EventKitManaging`.
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
 
