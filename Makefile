@@ -33,9 +33,17 @@ release-signed:
 	@: $${NOTARY_PROFILE:?NOTARY_PROFILE not set. See README 'Signing & Notarization' for setup.}
 	REQUIRE_CODESIGN=1 ./scripts/build-mcpb.sh
 
-# Local dev install with ad-hoc signing. Fast iteration; macOS ≤ 25 only.
-# For testing the actual distributable artifact, use `make release-signed`.
+# Local dev install with ad-hoc signing. Fast iteration.
+# Note: TCC dialogs do not appear on macOS 26 with ad-hoc signing —
+#       use `make release-signed` for testing TCC flows on macOS 26.
+#
+# rm -f forces a fresh inode: if any old CheICalMCP processes are still running
+# (e.g. held by Claude Code MCP integrations or launchd), `cp` over the existing
+# file would reuse the same inode, and the macOS kernel caches code-signature
+# hashes per-inode — leading to "load code signature error 2" SIGKILL on the
+# new binary. See #62 for the upgrade-trap discovery during macOS 26 testing.
 install: release
+	rm -f ~/bin/$(BINARY_NAME)
 	cp .build/release/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
 	chmod +x ~/bin/$(BINARY_NAME)
 	codesign --force --sign - ~/bin/$(BINARY_NAME)

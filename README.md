@@ -83,6 +83,11 @@ If you only need the MCP server without plugin features:
 mkdir -p ~/bin
 
 # Download the latest release
+# Note: if upgrading from an older version, `rm -f ~/bin/CheICalMCP` first.
+# Without this, on macOS 26 the kernel may kill the new binary with a stale
+# code-signature cache from the old inode (which running MCP processes might
+# still be holding open).
+rm -f ~/bin/CheICalMCP
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 

@@ -78,6 +78,11 @@ X64_BINARY="$PROJECT_DIR/.build/x86_64-apple-macosx/release/CheICalMCP"
 UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 
 if [[ -f "$ARM64_BINARY" && -f "$X64_BINARY" ]]; then
+    # rm -f forces fresh inode (see Makefile install: target for the rationale —
+    # macOS kernel caches code-signature hashes per-inode, and reusing an inode
+    # held open by an old running CheICalMCP process triggers SIGKILL with
+    # "load code signature error 2" on subsequent execs. See #62.)
+    rm -f "$UNIVERSAL_BINARY"
     lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
     chmod +x "$UNIVERSAL_BINARY"
     echo "Created Universal Binary: $UNIVERSAL_BINARY"
