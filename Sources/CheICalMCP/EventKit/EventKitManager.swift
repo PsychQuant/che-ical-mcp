@@ -1576,9 +1576,7 @@ actor EventKitManager: EventKitManaging {
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent(_, let title):
-            // Can't perfectly redo a create without the original params.
-            // The undo of a create was a delete, so redo = error (event already gone).
-            return "Cannot redo event creation — please create the event again manually"
+            return "Cannot redo creation of event \"\(title)\" — please create it again manually"
 
         case .deleteEvent(let snapshot):
             // Redo delete = delete the restored event

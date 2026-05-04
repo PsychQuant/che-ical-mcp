@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Intentionally empty: hardened runtime alone is the macOS 26 TCC trigger.
+    EventKit (Calendar / Reminders) is user-prompt-driven and requires no
+    entitlement key for outside-MAS distribution. Add specific keys here only
+    if hardened runtime breaks a specific API at runtime.
+-->
 <plist version="1.0">
 <dict/>
 </plist>

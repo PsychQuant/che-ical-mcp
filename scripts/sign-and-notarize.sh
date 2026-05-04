@@ -27,6 +27,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENTITLEMENTS="${ENTITLEMENTS:-$PROJECT_DIR/Sources/CheICalMCP/Entitlements.plist}"
 
+# Pre-flight: xcrun must exist. Without Xcode Command Line Tools, every
+# downstream `xcrun ...` would fail with a confusing "unable to find utility"
+# error mid-flow. Surface this up-front with a fix-it message.
+if ! command -v xcrun >/dev/null 2>&1; then
+    echo "Error: xcrun not found. Install Xcode or Xcode Command Line Tools:" >&2
+    echo "         xcode-select --install" >&2
+    exit 1
+fi
+
 # Pre-flight: required env vars
 if [[ -z "${DEVELOPER_ID:-}" ]]; then
     echo "Error: DEVELOPER_ID is not set." >&2
@@ -47,6 +56,15 @@ fi
 
 if [[ ! -f "$BINARY" ]]; then
     echo "Error: binary not found at $BINARY" >&2
+    exit 1
+fi
+
+# Pre-flight: confirm $BINARY is actually a Mach-O binary. Catches the common
+# fat-finger of pointing at a wrong artifact (test fixture, source file, etc.)
+# before codesign produces a cryptic "unsupported file type" error.
+if ! file "$BINARY" 2>/dev/null | grep -q "Mach-O"; then
+    echo "Error: $BINARY does not appear to be a Mach-O binary." >&2
+    echo "       file output: $(file "$BINARY" 2>&1)" >&2
     exit 1
 fi
 
