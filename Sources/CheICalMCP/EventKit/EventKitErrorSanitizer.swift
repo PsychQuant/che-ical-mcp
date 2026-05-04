@@ -27,6 +27,18 @@ import Foundation
 /// their messages come from Apple frameworks and may carry user-content.
 /// Checking `is LocalizedError` would be too broad; this empty protocol is
 /// the explicit opt-in used by `eventkit-error-sanitization` spec R5.
+///
+/// **Canonical conformer list** (CheICalMCP module):
+///   - `ToolError` (Server.swift)
+///   - `EventKitError` (EventKit/EventKitManager.swift)
+///   - `CLIRunner.CLIError` (CLIRunner.swift)
+///
+/// Adding a new conformer MUST update both this list AND the test
+/// `testTrustedErrorMessageConformerListIsCanonical` in
+/// `Tests/CheICalMCPTests/EventKitErrorSanitizerTests.swift`. Any
+/// conformance widens the trust boundary, so PR review SHOULD verify
+/// every `errorDescription` of the new type is fully author-controlled
+/// (no string interpolation of user/Apple-framework content).
 public protocol TrustedErrorMessage {}
 
 enum EventKitErrorSanitizer {
@@ -119,18 +131,29 @@ extension EventKitErrorSanitizer {
     /// injection (#37 F2): batch handlers may receive user-supplied
     /// identifiers (event titles, IDs from MCP arguments), and a `\n` in any
     /// of these would forge fake stderr lines visible to the operator.
+    ///
+    /// **Trusted-branch carve-out (#41, spec R7 amendment)**: when `error`
+    /// conforms to `TrustedErrorMessage`, the stderr write is skipped because
+    /// `code == rawLog == localizedDescription` — the wire response already
+    /// carries the same string and stderr would just duplicate. This avoids
+    /// stderr amplification when an attacker sends N malformed batch entries
+    /// (each a `ToolError.invalidParameter`) → N redundant stderr lines.
+    /// Framework errors still write to stderr because they are the only
+    /// operator-debuggable channel for the un-sanitized `localizedDescription`.
     static func writeFailureLog(
         handler: String,
         identifier: String,
         error: Error
     ) -> String {
         let sanitized = sanitizeForResponse(error)
-        let safeHandler = escapeForStderr(handler)
-        let safeIdentifier = escapeForStderr(identifier)
-        let safeRawLog = escapeForStderr(sanitized.rawLog)
-        FileHandle.standardError.write(
-            Data("\(safeHandler)(\(safeIdentifier)) failed: \(safeRawLog)\n".utf8)
-        )
+        if !(error is TrustedErrorMessage) {
+            let safeHandler = escapeForStderr(handler)
+            let safeIdentifier = escapeForStderr(identifier)
+            let safeRawLog = escapeForStderr(sanitized.rawLog)
+            FileHandle.standardError.write(
+                Data("\(safeHandler)(\(safeIdentifier)) failed: \(safeRawLog)\n".utf8)
+            )
+        }
         return sanitized.code
     }
 

@@ -192,6 +192,49 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         XCTAssertFalse(err is TrustedErrorMessage)
     }
 
+    func testTrustedErrorMessageConformerListIsCanonical() {
+        // #40: explicit conformer registry. Any new conformance to
+        // TrustedErrorMessage MUST extend the positive list below AND the
+        // canonical list in `TrustedErrorMessage`'s doc comment. The negative
+        // blocklist captures Foundation types whose `localizedDescription`
+        // sources Apple-framework strings — these MUST NOT inherit trust.
+        //
+        // If a maintainer writes `extension URLError: TrustedErrorMessage {}`
+        // to "fix" some unrelated bug, this test fails on the URLError
+        // assertion and the failure message names the offender. "Fixing" the
+        // test would require deleting the negative assertion, which is a
+        // visible diff requiring code-review defense.
+
+        // Positive: known module conformers
+        let toolErr: any Error = ToolError.invalidParameter("x")
+        XCTAssertTrue(toolErr is TrustedErrorMessage, "ToolError must conform")
+
+        let ekErr: any Error = EventKitError.eventNotFound(identifier: "abc")
+        XCTAssertTrue(ekErr is TrustedErrorMessage, "EventKitError must conform")
+
+        let cliErr: any Error = CLIRunner.CLIError.missingToolName
+        XCTAssertTrue(cliErr is TrustedErrorMessage, "CLIRunner.CLIError must conform")
+
+        // Negative: well-known Foundation types must NOT conform — their
+        // localizedDescription sources Apple-framework strings that may
+        // interpolate user-controlled content (#21 / #27 threat class).
+        let urlErr: any Error = URLError(.notConnectedToInternet)
+        XCTAssertFalse(urlErr is TrustedErrorMessage,
+                       "URLError MUST NOT conform — Apple-framework text")
+
+        let posixErr: any Error = POSIXError(.EINVAL)
+        XCTAssertFalse(posixErr is TrustedErrorMessage,
+                       "POSIXError MUST NOT conform — Apple-framework text")
+
+        let cocoaErr: any Error = CocoaError(.fileReadNoSuchFile)
+        XCTAssertFalse(cocoaErr is TrustedErrorMessage,
+                       "CocoaError MUST NOT conform — Apple-framework text")
+
+        let nsErrCustom: any Error = NSError(domain: "com.example.foo", code: 1)
+        XCTAssertFalse(nsErrCustom is TrustedErrorMessage,
+                       "raw NSError MUST NOT conform")
+    }
+
     // MARK: - F1 trust contract pin (#37 verify P1 fix)
 
     func testEventKitErrorCalendarNotFoundDoesNotInterpolateAvailable() {

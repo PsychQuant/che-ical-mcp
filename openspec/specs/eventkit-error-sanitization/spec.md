@@ -169,8 +169,10 @@ The function SHALL NOT mutate global state, perform I/O, or read any field of th
 The system SHALL provide a static function `EventKitErrorSanitizer.writeFailureLog(handler:identifier:error:) -> String`. The function SHALL:
 
 - Compute `let sanitized = sanitizeForResponse(error)`.
-- Write the line `"<handler>(<identifier>) failed: <sanitized.rawLog>\n"` to `FileHandle.standardError`. The literal characters `(` and `)` and `:` SHALL appear as shown.
+- Write the line `"<handler>(<identifier>) failed: <sanitized.rawLog>\n"` to `FileHandle.standardError` if and only if `error` does NOT conform to `TrustedErrorMessage`. The literal characters `(` and `)` and `:` SHALL appear as shown.
 - Return `sanitized.code`.
+
+The trusted-branch carve-out (#41) exists because for `TrustedErrorMessage` conformers, `code == rawLog == localizedDescription` — the wire response already carries the same string and a stderr write would just duplicate. Skipping it prevents stderr amplification when an attacker submits N malformed batch entries (each surfaces a `ToolError.invalidParameter` whose message is already on the response). Framework errors continue to write to stderr because they are the only operator-debuggable channel for the un-sanitized `localizedDescription`.
 
 Callers SHALL use this function in any catch block that previously assigned `error.localizedDescription` directly into an MCP response field, except for the catch block specified in "deleteRemindersBatch catch block routes errors through the sanitizer", which continues to use `sanitize(_:)` directly per its own requirement.
 
@@ -186,6 +188,7 @@ Callers SHALL use this function in any catch block that previously assigned `err
 - **GIVEN** `let err = ToolError.invalidParameter("start_date is required")`
 - **WHEN** `let code = EventKitErrorSanitizer.writeFailureLog(handler: "createEventsBatch", identifier: "0", error: err)` is called
 - **THEN** the returned `code` equals `"Invalid parameter: start_date is required"`
+- **AND** stderr does NOT contain the substring `"createEventsBatch(0) failed:"` (trusted-branch carve-out, #41)
 
 ---
 ### Requirement: Outer handleToolCall catch routes through sanitizeForResponse
