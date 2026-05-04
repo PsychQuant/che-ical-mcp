@@ -96,6 +96,20 @@ echo ""
 echo "Architectures:"
 lipo -info "$UNIVERSAL_BINARY"
 
+# Step 3.5: Sign + notarize for distribution.
+# Skip when SKIP_CODESIGN is set (local iteration without notarytool latency).
+# Required for releases: macOS 26 TCC rejects ad-hoc binaries; Developer ID
+# signing + hardened runtime + notarization is the only way Calendar/Reminders
+# permission dialogs appear for end users.
+echo ""
+if [[ -n "${SKIP_CODESIGN:-}" ]]; then
+    echo "[3.5/4] Skipping codesign + notarize (SKIP_CODESIGN set)."
+    echo "  ⚠ Resulting binary is ad-hoc signed; do NOT ship."
+else
+    echo "[3.5/4] Signing + notarizing for distribution..."
+    "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"
+fi
+
 # Step 3: Check for required files
 echo ""
 echo "[4/4] Checking MCPB package contents..."

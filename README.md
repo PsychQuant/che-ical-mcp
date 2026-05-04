@@ -560,6 +560,56 @@ Version numbers live in three places with different semantics:
 
 `scripts/build-mcpb.sh` enforces the first three match; it will fail the build if any drifts. `server.json` is intentionally decoupled because bumping it requires a rebuilt `.mcpb`, a fresh SHA256, and a re-submission — steps that don't happen every source release.
 
+#### Signing & Notarization (required for macOS 26+)
+
+Starting v1.7.1, release binaries are signed with a Developer ID Application certificate and notarized via Apple's `notarytool`. This is **required** on macOS 26 — ad-hoc signed binaries cannot trigger Calendar / Reminders TCC permission dialogs there.
+
+**Prerequisites** (one-time setup):
+
+- Apple Developer Program enrollment
+- Developer ID Application certificate installed in login keychain
+  - Verify with: `security find-identity -p codesigning -v` (must show `Developer ID Application: ...`)
+- `notarytool` keychain profile named `che-ical-mcp` (or whatever you set as `$NOTARY_PROFILE`)
+  - Create with: `xcrun notarytool store-credentials che-ical-mcp --apple-id <id> --team-id <team-id> --password <app-specific-password>`
+  - App-specific password: generate at <https://account.apple.com> → Sign-In and Security → App-Specific Passwords
+
+**Per-release flow**:
+
+```bash
+make release-signed     # builds universal binary → signs + notarizes → packages .mcpb
+gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/che-ical-mcp.mcpb --notes "..."
+```
+
+`make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
+
+**Verification** after build:
+
+```bash
+codesign -dv --verbose=2 mcpb/server/CheICalMCP
+# Expected: Authority=Developer ID Application: ...
+#           TeamIdentifier=<your-team-id>
+#           flags=0x10000(runtime)
+#           Signature size > 9000 bytes
+```
+
+**Local dev iteration** without signing latency:
+
+```bash
+SKIP_CODESIGN=1 ./scripts/build-mcpb.sh   # ad-hoc signed; do NOT ship the result
+make install                              # installs ad-hoc to ~/bin (dev only)
+```
+
+**Signing identity environment**:
+
+| Env var | Default | Override when |
+|---------|---------|---------------|
+| `DEVELOPER_ID` | `Developer ID Application: CHE CHENG (6W377FS7BS)` | Different signing identity |
+| `NOTARY_PROFILE` | `che-ical-mcp` | Different `notarytool` keychain profile name |
+| `ENTITLEMENTS` | `Sources/CheICalMCP/Entitlements.plist` | Custom entitlements file |
+| `SKIP_CODESIGN` | _(unset)_ | Set to any value to skip signing in `build-mcpb.sh` (dev only) |
+
+**Known limitation — no stapling**: `stapler staple` does not support raw Mach-O binaries (only `.app` / `.pkg` / `.dmg` bundles). After notarization, Gatekeeper will online-check the binary on first launch instead of reading a stapled ticket. End users behind air-gapped networks may see false rejections. Mitigation: `xcrun stapler staple` on a future `.pkg` wrapper if needed.
+
 ---
 
 ## License
