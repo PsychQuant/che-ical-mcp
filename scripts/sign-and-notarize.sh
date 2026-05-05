@@ -103,7 +103,7 @@ echo "  Entitlements:  $ENTITLEMENTS"
 echo ""
 
 # Step 1: codesign with hardened runtime
-echo "[1/4] Signing with Developer ID + hardened runtime..."
+echo "[1/5] Signing with Developer ID + hardened runtime..."
 codesign --force \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
@@ -116,14 +116,14 @@ codesign --force \
 # write to stderr and exit non-zero, propagating up because head reads <= 5 lines and
 # closes its stdin → codesign gets SIGPIPE → pipeline exit non-zero → set -e aborts.
 echo ""
-echo "[2/4] Verifying signature..."
+echo "[2/5] Verifying signature..."
 codesign --verify --deep --strict --verbose=2 "$BINARY" 2>&1 | head -5
 
 # Step 3: notarize (requires zip wrapper for raw Mach-O)
 # Capture submission output so we can extract submission ID for post-mortem debug
 # if the wait fails. notarytool prints "  id: <UUID>" line on success and failure.
 echo ""
-echo "[3/4] Submitting for notarization (this typically takes 1-15 minutes)..."
+echo "[3/5] Submitting for notarization (this typically takes 1-15 minutes)..."
 ZIP_PATH="$(mktemp -t notarize-XXXXXXXX).zip"
 ditto -c -k --keepParent "$BINARY" "$ZIP_PATH"
 
