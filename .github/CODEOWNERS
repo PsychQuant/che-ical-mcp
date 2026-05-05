@@ -2,23 +2,39 @@
 #
 # This file documents which paths affect the binary trust chain
 # (codesign identity, notarization flow, entitlements, bundle identity,
-# version consistency checks). Any PR touching these paths should be
-# treated as a supply-chain change regardless of how minor the diff looks.
+# linker flags, swift-sdk dependency, packaged metadata). Any PR touching
+# these paths should be treated as a supply-chain change regardless of how
+# minor the diff looks.
 #
-# Single-maintainer repo: @kiki830621 entries do not generate self-review
-# requests (GitHub suppresses them on the maintainer's own PRs). Purpose:
-#   1. Explicit documentation of the signing surface.
-#   2. Auto-request readiness if a second contributor gains write access.
-#   3. Branch protection opt-in — enabling "Require review from Code Owners"
-#      under Settings > Branches activates these gates immediately.
+# Owners: @kiki830621 + @Hardy1Yang. Both have admin push access on PsychQuant
+# org and are auto-requested as reviewers when a signing-critical PR is opened
+# by anyone else. PRs authored by an owner do not generate a self-review request
+# (GitHub suppresses self-review), so a co-owner is what makes the auto-request
+# meaningfully fire on the author's own PRs.
 #
-# Intentional exclusion: Sources/CheICalMCP/Version.swift is the embedded
-# version string, not part of the trust chain. Add here only if the version
-# parsing logic itself becomes signing-relevant.
+# Purpose:
+#   1. Explicit documentation of the signing surface (doc-as-code).
+#   2. Auto-request readiness — review request fires the moment a non-owner
+#      (future contributor / bot with write access) opens a signing-critical PR.
+#   3. Branch-protection opt-in — enabling "Require review from Code Owners"
+#      under Settings > Branches turns the auto-request into an enforcement
+#      gate. Note: this also requires base "Require pull request reviews" to be
+#      enabled for the requirement to bind on merges.
+#
+# Self-protection: this file owns itself, so a PR removing or relaxing the
+# coverage list is itself flagged for code-owner review.
+#
+# Intentional exclusion: Sources/CheICalMCP/Version.swift is version-only
+# metadata, not codesign-trust-chain input. The build-mcpb.sh Step 0.5
+# consistency check between Version.swift / Info.plist / mcpb/manifest.json
+# already catches drift on the canonical release path, and Version.swift
+# changes on every release — including it would dilute the security signal.
 
-/scripts/sign-and-notarize.sh          @kiki830621
-/scripts/build-mcpb.sh                 @kiki830621
-/Makefile                              @kiki830621
-/Sources/CheICalMCP/Entitlements.plist @kiki830621
-/Sources/CheICalMCP/Info.plist         @kiki830621
-/mcpb/manifest.json                    @kiki830621
+/scripts/sign-and-notarize.sh          @kiki830621 @Hardy1Yang
+/scripts/build-mcpb.sh                 @kiki830621 @Hardy1Yang
+/Makefile                              @kiki830621 @Hardy1Yang
+/Sources/CheICalMCP/Entitlements.plist @kiki830621 @Hardy1Yang
+/Sources/CheICalMCP/Info.plist         @kiki830621 @Hardy1Yang
+/mcpb/manifest.json                    @kiki830621 @Hardy1Yang
+/Package.swift                         @kiki830621 @Hardy1Yang
+/.github/CODEOWNERS                    @kiki830621 @Hardy1Yang
