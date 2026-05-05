@@ -6,7 +6,32 @@ BINARY_NAME := CheICalMCP
 # Remove FALLBACK_FLAGS once the upstream issue is fixed.
 FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && echo "-Xswiftc -swift-version -Xswiftc 5")
 
-.PHONY: build release release-signed install clean test
+.PHONY: build release release-signed verify-release-ready install clean test
+
+# Detect drift between AppVersion.current and the latest release tag.
+# AppVersion.current ahead of git tag = unreleased work-in-progress (warning).
+# AppVersion.current behind git tag = downgrade or merge mistake (error).
+# Equal = ready to tag without a version bump (informational).
+#
+# This is a soft pre-flight: release-signed depends on it (warns only,
+# never aborts), so a maintainer doing genuine pre-release work isn't
+# blocked. Surfaces the case where Info.plist / mcpb/manifest.json got
+# bumped on main without ever cutting a tag (cf. #48).
+verify-release-ready:
+	@SOURCE_VERSION=$$(grep -E 'static let current = "' Sources/CheICalMCP/Version.swift | sed -E 's/.*"([^"]+)".*/\1/'); \
+	LATEST_TAG=$$(git tag --sort=-creatordate | head -1); \
+	if [ -z "$$SOURCE_VERSION" ]; then \
+	    echo "✗ Could not parse AppVersion.current from Version.swift" >&2; \
+	    exit 1; \
+	fi; \
+	if [ -z "$$LATEST_TAG" ]; then \
+	    echo "ℹ No git tags yet — version drift check skipped (first release?)"; \
+	elif [ "v$${SOURCE_VERSION}" = "$$LATEST_TAG" ]; then \
+	    echo "ℹ AppVersion.current ($$SOURCE_VERSION) matches latest tag ($$LATEST_TAG) — no version bump needed for next release"; \
+	else \
+	    echo "⚠ Version drift: AppVersion.current=$$SOURCE_VERSION, latest tag=$$LATEST_TAG"; \
+	    echo "  Either tag v$${SOURCE_VERSION} now, or revert the version bump if it was premature."; \
+	fi
 
 build:
 	swift build $(FALLBACK_FLAGS)
@@ -28,7 +53,8 @@ release:
 # Must be run from the repo root: this target invokes ./scripts/build-mcpb.sh
 # via a relative path. `make -f /abs/path/Makefile release-signed` from a
 # different cwd would fail to find the script.
-release-signed:
+release-signed: verify-release-ready
+	@echo ""
 	@echo "⚠ macOS 26 TCC behavior on the resulting binary remains unverified."
 	@echo "  Manual test required before tagging v1.7.1 — see #54."
 	@echo ""

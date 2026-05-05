@@ -149,6 +149,22 @@ else
     "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"
 fi
 
+# Defensive re-check: when REQUIRE_CODESIGN forced signing, the binary at
+# $UNIVERSAL_BINARY MUST now be Developer-ID-signed. This catches the case
+# where sign-and-notarize.sh exit code was lost (e.g. piped to a log without
+# pipefail in calling environment) — refuses to pack a half-signed artifact
+# into the .mcpb (cf. #53).
+if [[ "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ]]; then
+    if ! codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -q "Authority=Developer ID"; then
+        echo ""
+        echo "[7/7] ✗ REQUIRE_CODESIGN was set but $UNIVERSAL_BINARY is NOT Developer-ID-signed." >&2
+        echo "        sign-and-notarize.sh likely failed silently — refusing to pack" >&2
+        echo "        an unsigned/ad-hoc artifact into the .mcpb." >&2
+        codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | sed 's/^/        /' >&2
+        exit 1
+    fi
+fi
+
 # Step 7: Check for required files
 echo ""
 echo "[7/7] Checking MCPB package contents..."
