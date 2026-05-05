@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7.1 security wave. Will ride the next release after v1.7.1 (likely v1.7.2 or folded into a wider feature minor depending on cadence).
 
+### Changed (post-v1.7.1 polish cluster — PR #63)
+
+- **`scripts/build-mcpb.sh` step renumbering** (#57): seven script steps now use uniform `[1/7]` … `[7/7]` denominators instead of the mixed `[0/5]` / `[0.5/5]` / `[N/4]` / `[3.5/4]` pattern that PR #52 left behind when it inserted the sign + notarize step. Pure echo-string change; no behavior modification.
+- **Redo error for `.createEvent` interpolates event title** (#46): `EventKitManager.executeRedo` for the `.createEvent` case now interpolates the original event title into the user-facing message ("Cannot redo creation of event '<title>' — please create it again manually"), using the same title-interpolation strategy as the sibling `.createReminder` arm. Also silences the SourceKit "immutable value 'title' was never used" warning on `main`.
+- **`Sources/CheICalMCP/Entitlements.plist` documentation comment** (#58 item 5): adds an XML comment explaining intentional emptiness — hardened runtime alone is the macOS 26 TCC trigger, EventKit is user-prompt-driven and requires no entitlement key for outside-MAS distribution. Prevents future maintainers from over-claiming entitlements.
+- **`Makefile release-signed:` cwd note** (#60 item 1): adds a comment on the `release-signed:` target noting it must be run from the repo root because it invokes `./scripts/build-mcpb.sh` via a relative path. Documents the `make -f /abs/path/Makefile release-signed` edge case identified during PR #52 verify.
+
+### Hardening (post-v1.7.1 polish cluster — PR #63)
+
+- **`scripts/sign-and-notarize.sh` pre-flight checks** (#59 items 1+3): adds two pre-flight checks — `xcrun` availability (clearer error than mid-flow `xcrun: error: unable to find utility "notarytool"` when Xcode Command Line Tools are missing) and Mach-O sanity check on `$BINARY` via `file ... | grep -q "Mach-O"` (catches fat-finger paths before `codesign` produces a cryptic "unsupported file type" error). Items 2+4 from #59 (idempotency optimization, cross-reviewer disagreement log) are deferred — see PR #63 description for rationale.
+
 ### Added
 - **`cleanup_completed_reminders` tool** (#21): single-call cleanup of all completed reminders, eliminating the external list-then-delete loop that daily-cleanup automations used to require. `dry_run=true` default surfaces the exact scope before deletion (matches `delete_events_batch` safety pattern); optional `calendar_name` + `calendar_source` scope to a single list. Implementation composes existing `listReminders(completed:)` + `deleteRemindersBatch` primitives — no `EventKitManager` change. Inherits `deleteRemindersBatch`'s no-undo behavior (separate issue candidate to backfill).
   - `calendar_source` alone (without `calendar_name`) is rejected — EventKit cannot scope to "all lists on this account" and silently falling back to "all lists on all accounts" would be a destructive silent failure.

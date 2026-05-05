@@ -25,6 +25,9 @@ release:
 # producing an unsigned .mcpb. This is the canonical release-cut command;
 # use plain `./scripts/build-mcpb.sh` (without the flag) for fork-friendly
 # unsigned dev builds.
+# Must be run from the repo root: this target invokes ./scripts/build-mcpb.sh
+# via a relative path. `make -f /abs/path/Makefile release-signed` from a
+# different cwd would fail to find the script.
 release-signed:
 	@echo "⚠ macOS 26 TCC behavior on the resulting binary remains unverified."
 	@echo "  Manual test required before tagging v1.7.1 — see #54."

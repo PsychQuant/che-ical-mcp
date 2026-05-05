@@ -19,7 +19,7 @@ echo ""
 # modelcontextprotocol/swift-sdk#214 is fixed.
 SWIFT_FALLBACK_FLAGS=()
 
-echo "[0/5] Checking Swift 6 strict concurrency compatibility..."
+echo "[1/7] Checking Swift 6 strict concurrency compatibility..."
 if swift build -c release --arch arm64 2>&1 | grep -q "SendingRisksDataRace"; then
     echo "  ⚠ Upstream dependency has Swift 6 concurrency errors (swift-sdk#214)"
     echo "  → Falling back to Swift 5 language mode for dependencies"
@@ -28,12 +28,12 @@ else
     echo "  ✓ Swift 6 strict concurrency OK"
 fi
 
-# Step 0.5: Version consistency check.
+# Step 2: Version consistency check.
 # AppVersion.current (Sources/CheICalMCP/Version.swift) is the source of truth.
 # mcpb/manifest.json and Info.plist MUST match. server.json is independent — see
 # README "Release Process" — because it's a Registry snapshot that bumps only
 # when re-submitting the .mcpb bundle to MCP Registry.
-echo "[0.5/5] Checking version consistency..."
+echo "[2/7] Checking version consistency..."
 VERSION_SWIFT="$PROJECT_DIR/Sources/CheICalMCP/Version.swift"
 MCPB_MANIFEST="$MCPB_DIR/manifest.json"
 INFO_PLIST="$PROJECT_DIR/Sources/CheICalMCP/Info.plist"
@@ -61,16 +61,16 @@ fi
 
 echo "  ✓ Version.swift, Info.plist, and mcpb/manifest.json all at $SOURCE_VERSION"
 
-# Step 1: Build for both architectures
-echo "[1/4] Building for Apple Silicon (arm64)..."
+# Steps 3-4: Build for both architectures
+echo "[3/7] Building for Apple Silicon (arm64)..."
 cd "$PROJECT_DIR"
 swift build -c release --arch arm64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
-echo "[2/4] Building for Intel (x86_64)..."
+echo "[4/7] Building for Intel (x86_64)..."
 swift build -c release --arch x86_64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
-# Step 2: Create Universal Binary
-echo "[3/4] Creating Universal Binary..."
+# Step 5: Create Universal Binary
+echo "[5/7] Creating Universal Binary..."
 mkdir -p "$SERVER_DIR"
 
 ARM64_BINARY="$PROJECT_DIR/.build/arm64-apple-macosx/release/CheICalMCP"
@@ -101,7 +101,7 @@ echo ""
 echo "Architectures:"
 lipo -info "$UNIVERSAL_BINARY"
 
-# Step 3.5: Sign + notarize for distribution.
+# Step 6: Sign + notarize for distribution.
 # Required for releases: macOS 26 TCC rejects ad-hoc binaries; Developer ID
 # signing + hardened runtime + notarization is the only way Calendar/Reminders
 # permission dialogs appear for end users.
@@ -131,7 +131,7 @@ fi
 if [[ "$SHOULD_SIGN" == "false" ]]; then
     if [[ "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ]]; then
         # Canonical release path — refuse to produce unsigned artifact silently
-        echo "[3.5/4] ✗ Refusing to skip signing: REQUIRE_CODESIGN=$REQUIRE_CODESIGN" >&2
+        echo "[6/7] ✗ Refusing to skip signing: REQUIRE_CODESIGN=$REQUIRE_CODESIGN" >&2
         echo "        Reason: $SKIP_REASON" >&2
         echo "        Fix: set DEVELOPER_ID + NOTARY_PROFILE, install Developer ID Application" >&2
         echo "             cert, and ensure cert is in your login keychain." >&2
@@ -139,19 +139,19 @@ if [[ "$SHOULD_SIGN" == "false" ]]; then
         exit 1
     fi
     # Fork-friendly auto-skip: warn + continue with unsigned binary
-    echo "[3.5/4] Skipping codesign + notarize."
+    echo "[6/7] Skipping codesign + notarize."
     echo "  Reason: $SKIP_REASON"
     echo "  ⚠ Resulting binary is ad-hoc signed; suitable for local dev only."
     echo "  ⚠ To produce a release-quality .mcpb on macOS 26: set DEVELOPER_ID + NOTARY_PROFILE,"
     echo "    install Developer ID Application cert, then run \`make release-signed\`."
 else
-    echo "[3.5/4] Signing + notarizing for distribution..."
+    echo "[6/7] Signing + notarizing for distribution..."
     "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"
 fi
 
-# Step 3: Check for required files
+# Step 7: Check for required files
 echo ""
-echo "[4/4] Checking MCPB package contents..."
+echo "[7/7] Checking MCPB package contents..."
 
 REQUIRED_FILES=(
     "$MCPB_DIR/manifest.json"
@@ -182,7 +182,7 @@ if [[ $MISSING -eq 1 ]]; then
     exit 1
 fi
 
-# Step 4: Pack MCPB (if mcpb CLI is available)
+# Final: Pack MCPB (if mcpb CLI is available)
 echo ""
 if command -v mcpb &> /dev/null; then
     echo "Packing MCPB bundle..."
