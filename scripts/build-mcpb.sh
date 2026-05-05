@@ -149,6 +149,44 @@ else
     "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"
 fi
 
+# Defensive re-check: whenever signing was requested ($SHOULD_SIGN=true), the
+# binary at $UNIVERSAL_BINARY MUST now carry a Developer ID Application signature
+# from the configured $DEVELOPER_ID. Catches partial-state failures where
+# sign-and-notarize.sh exit code was lost (piped to log, CI without pipefail) or
+# tampered after sign-and-notarize.sh exit. Refuses to pack a half-signed
+# artifact into the .mcpb (cf. #53).
+#
+# Three layers of strictness, in order:
+#   (a) codesign --verify --strict — actual integrity check (not just metadata)
+#   (b) Authority binds to the EXACT $DEVELOPER_ID identity (not any random
+#       Developer ID team's cert that happened to land in the binary)
+#   (c) Authority excludes "Developer ID Installer:" — Mach-O CLI binaries
+#       must be signed with the Application cert, not the Installer cert
+#
+# Gate is $SHOULD_SIGN==true (broader than REQUIRE_CODESIGN) so direct
+# `./scripts/build-mcpb.sh` invocations with DEVELOPER_ID set also benefit
+# from the post-sign defense — anyone who asked for signing gets verified.
+if [[ "$SHOULD_SIGN" == "true" ]]; then
+    if ! codesign --verify --strict --verbose=2 "$UNIVERSAL_BINARY" >/dev/null 2>&1; then
+        echo ""
+        echo "✗ Pre-pack defense: codesign --verify --strict failed for $UNIVERSAL_BINARY" >&2
+        echo "  sign-and-notarize.sh likely failed silently or the binary was tampered" >&2
+        echo "  after signing. Refusing to pack into .mcpb." >&2
+        codesign --verify --strict --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | sed 's/^/  /' >&2
+        exit 1
+    fi
+    # Confirm the signing identity is the one we asked for. grep -F on the EXACT
+    # $DEVELOPER_ID prevents a "any Developer ID team's cert" false-positive.
+    if ! codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -qF "Authority=$DEVELOPER_ID"; then
+        echo ""
+        echo "✗ Pre-pack defense: $UNIVERSAL_BINARY is not signed by the expected identity." >&2
+        echo "  Expected: Authority=$DEVELOPER_ID" >&2
+        echo "  Actual codesign metadata:" >&2
+        codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -E "Authority|TeamIdentifier" | sed 's/^/    /' >&2
+        exit 1
+    fi
+fi
+
 # Step 7: Check for required files
 echo ""
 echo "[7/7] Checking MCPB package contents..."

@@ -103,7 +103,7 @@ echo "  Entitlements:  $ENTITLEMENTS"
 echo ""
 
 # Step 1: codesign with hardened runtime
-echo "[1/4] Signing with Developer ID + hardened runtime..."
+echo "[1/5] Signing with Developer ID + hardened runtime..."
 codesign --force \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
@@ -116,14 +116,14 @@ codesign --force \
 # write to stderr and exit non-zero, propagating up because head reads <= 5 lines and
 # closes its stdin → codesign gets SIGPIPE → pipeline exit non-zero → set -e aborts.
 echo ""
-echo "[2/4] Verifying signature..."
+echo "[2/5] Verifying signature..."
 codesign --verify --deep --strict --verbose=2 "$BINARY" 2>&1 | head -5
 
 # Step 3: notarize (requires zip wrapper for raw Mach-O)
 # Capture submission output so we can extract submission ID for post-mortem debug
 # if the wait fails. notarytool prints "  id: <UUID>" line on success and failure.
 echo ""
-echo "[3/4] Submitting for notarization (this typically takes 1-15 minutes)..."
+echo "[3/5] Submitting for notarization (this typically takes 1-15 minutes)..."
 ZIP_PATH="$(mktemp -t notarize-XXXXXXXX).zip"
 ditto -c -k --keepParent "$BINARY" "$ZIP_PATH"
 
@@ -160,15 +160,44 @@ else
     echo "(submission accepted but ID not captured — notarytool output format may have changed)"
 fi
 
-# Step 4: print final state for visual confirmation
+# Step 4: cross-check Apple's notarization service actually accepted the artifact.
+# notarytool exit 0 means submission was processed, but does NOT guarantee Apple's
+# CDN has propagated the verdict by the time we proceed to packaging. spctl is
+# the canonical Gatekeeper-eye check — if it says "accepted; source=Notarized
+# Developer ID", the binary will pass first-launch online check on user machines.
+# Mismatch here = signed-but-not-notarized state that build-mcpb.sh would
+# otherwise pack and ship (cf. #53).
+#
+# -t install (not -t execute) per the verified empirical behavior on macOS
+# 26.4.1: raw Mach-O CLI binaries fall through Apple's .app bundle check
+# under -t execute. See README "Signing & Notarization" for the full flag-
+# choice rationale.
+echo ""
+echo "[4/5] Cross-checking notarization with spctl..."
+SPCTL_OUTPUT="$(spctl -a -vvv -t install "$BINARY" 2>&1)" || true
+if ! echo "$SPCTL_OUTPUT" | grep -q "source=Notarized Developer ID"; then
+    echo "Error: spctl does not recognize $BINARY as notarized." >&2
+    echo "       This is a partial-state failure: codesign succeeded + notarytool" >&2
+    echo "       returned exit 0, but Gatekeeper would still reject on first launch." >&2
+    echo "       spctl output:" >&2
+    echo "$SPCTL_OUTPUT" | sed 's/^/         /' >&2
+    echo "" >&2
+    echo "       Possible causes:" >&2
+    echo "         - Apple's notarization CDN hasn't propagated (rare; retry in a few min)" >&2
+    echo "         - notarytool returned 0 but Apple flagged the submission (check log:" >&2
+    echo "           xcrun notarytool log $SUBMISSION_ID --keychain-profile $NOTARY_PROFILE)" >&2
+    exit 1
+fi
+echo "  ✓ spctl accepts as Notarized Developer ID"
+
+# Step 5: print final state for visual confirmation
 # || true: this is informational only; if codesign output format changes and grep
 # doesn't match, we don't want to fail the whole script.
 echo ""
-echo "[4/4] Final signature state:"
+echo "[5/5] Final signature state:"
 codesign -dv --verbose=2 "$BINARY" 2>&1 | grep -E "Authority|TeamIdentifier|flags|Signature" || true
 
 echo ""
 echo "=== sign-and-notarize: DONE ==="
 echo "Note: stapling skipped (raw Mach-O binaries don't support stapler)."
 echo "      Gatekeeper will online-check on first launch."
-echo "      To verify notarization end-to-end: spctl -a -vvv -t install $BINARY"
