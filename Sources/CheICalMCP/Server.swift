@@ -59,6 +59,14 @@ class CheICalMCPServer {
     /// All available tools
     private let tools: [Tool]
 
+    /// Constructor with per-feature test seams.
+    ///
+    /// `reminderCleanupSource` is the canonical example of the "narrow `*Source`
+    /// protocol" DI convention (#34, see `CLAUDE.md` "Test Seam Convention"):
+    /// production code passes nothing → defaults to `EventKitManager.shared`;
+    /// `CleanupHandlerTests` passes a `FakeEventKitManager`. New handlers that
+    /// need a test fake should add their own narrow `*Source` parameter here
+    /// rather than widening `EventKitManaging`.
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
 
@@ -986,7 +994,21 @@ class CheICalMCPServer {
                 : result
             return CallTool.Result(content: [.text(content)])
         } catch {
+            // Outer catch (#37 spec R8). Per-batch handlers route their own
+            // catches through writeFailureLog; this catch fires only when an
+            // error escapes ALL inner handling — so a framework error here
+            // means the operator's last debug channel is stderr. #39 carve-out:
+            // only write stderr for non-trusted errors. Trusted errors carry
+            // identical text on the wire (`code == rawLog`) so duplicating to
+            // stderr would just amplify noise; framework errors hide their
+            // localizedDescription from the wire (sanitized to a code) so
+            // stderr is the only place to surface it.
             let sanitized = EventKitErrorSanitizer.sanitizeForResponse(error)
+            if !(error is TrustedErrorMessage) {
+                FileHandle.standardError.write(
+                    Data("handleToolCall(\(EventKitErrorSanitizer.escapeForStderr(name))) failed: \(EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog))\n".utf8)
+                )
+            }
             return CallTool.Result(content: [.text("Error: \(sanitized.code)")], isError: true)
         }
     }
