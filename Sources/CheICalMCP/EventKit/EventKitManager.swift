@@ -1407,15 +1407,17 @@ actor EventKitManager: EventKitManaging {
                 // we share `escapeForStderr` to keep both paths consistent
                 // without violating R3.
                 //
-                // #69: mirror R7's trusted-branch carve-out — skip the stderr
-                // write when `error` conforms to `TrustedErrorMessage`. The
-                // wire response already carries `code == rawLog == localized
-                // description` for trusted errors, so duplicating to stderr
-                // would just amplify noise (DoS surface for an attacker who
-                // submits N malformed identifiers). Framework errors still
-                // write to stderr because their `localizedDescription` is
-                // sanitized off the wire and stderr is the only operator-
-                // debuggable channel.
+                // #69: defensive symmetry with R7's trusted-branch carve-out
+                // at writeFailureLog. Note the rationale differs here: R3
+                // binds to `sanitize(_:)` directly (NOT `sanitizeForResponse`)
+                // so trusted errors at this site receive a framework-style
+                // code (e.g. "error_unknown") that does NOT equal `rawLog`.
+                // The gate is therefore forward-compat hardening — if a
+                // future caller of `deleteRemindersBatch` propagates a
+                // `TrustedErrorMessage` conformer through this path, the
+                // stderr-amplification window stays closed by construction.
+                // In practice today, `eventStore.remove(reminder:commit:)`
+                // only throws NSError, so the gate doesn't fire on hot paths.
                 let sanitized = EventKitErrorSanitizer.sanitize(error)
                 if !(error is TrustedErrorMessage) {
                     let safeId = EventKitErrorSanitizer.escapeForStderr(id)

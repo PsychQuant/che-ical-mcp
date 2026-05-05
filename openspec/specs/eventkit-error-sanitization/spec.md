@@ -64,7 +64,7 @@ The `rawLog` value is intended only for stderr logging on the server process and
 
 `EventKitManager.deleteRemindersBatch(identifiers:onlyCompleted:)` SHALL, in its `catch` block that handles `eventStore.remove(reminder:commit:)` failures, invoke `EventKitErrorSanitizer.sanitize(_:)` on the caught error. The method SHALL append the returned `code` as the second element of the `failures` tuple, and SHALL NOT append `error.localizedDescription` or any substring derived from it.
 
-The method SHALL write the returned `rawLog` value to `FileHandle.standardError` in a single line of the form `"deleteRemindersBatch(<identifier>) failed: <rawLog>\n"` before appending to `failures`, **if and only if** `error` does NOT conform to `TrustedErrorMessage`. (Mirrors the writeFailureLog carve-out — same rationale: trusted errors carry `code == rawLog` on the wire, so duplicating to stderr would just amplify noise; framework errors hide their `localizedDescription` from the wire and need stderr as the only operator-debuggable channel.)
+The method SHALL write the returned `rawLog` value to `FileHandle.standardError` in a single line of the form `"deleteRemindersBatch(<identifier>) failed: <rawLog>\n"` before appending to `failures`, **if and only if** `error` does NOT conform to `TrustedErrorMessage`. (Defensive symmetry with the writeFailureLog carve-out at R7. Note the rationale differs slightly here: R3 binds to `sanitize(_:)` directly — not `sanitizeForResponse(_:)` — so trusted errors at this site receive a framework-style code (e.g. `"error_unknown"`) that does NOT equal `rawLog`. The carve-out is therefore not "the wire response already carries the same string" — instead, it's a forward-compat hardening: if a future caller of `deleteRemindersBatch` propagates a `TrustedErrorMessage` conformer through this path, the stderr-amplification window stays closed by construction. In practice today, `eventStore.remove(reminder:commit:)` only throws `NSError`, so the gate doesn't fire on hot paths.)
 
 Pre-catch failure strings (`"Reminder not found"`, `"Reminder is no longer completed"`) are not affected by this requirement and SHALL continue to be appended literally.
 
@@ -199,7 +199,7 @@ Callers SHALL use this function in any catch block that previously assigned `err
 - **AND** stderr does NOT contain the substring `"createEventsBatch(0) failed:"` (trusted-branch carve-out, #41)
 
 ---
-### Requirement: Outer handleToolCall catch routes through sanitizeForResponse
+### Requirement: Outer handleToolCall catch delegates to writeFailureLog
 
 The outer `catch` block of `CheICalMCPServer.handleToolCall` (located at `Sources/CheICalMCP/Server.swift` line 989 at the time of this requirement) SHALL produce its `CallTool.Result` by delegating to `EventKitErrorSanitizer.writeFailureLog(handler: "handleToolCall", identifier: name, error: error)` and returning `CallTool.Result(content: [.text("Error: \(returnedCode)")], isError: true)` where `returnedCode` is the function's return value.
 

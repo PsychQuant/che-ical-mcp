@@ -186,9 +186,22 @@ echo "[4/5] Cross-checking notarization with spctl..."
 # Override via SPCTL_TIMEOUT_SECONDS env var if 60s is too short for slow
 # corporate links.
 SPCTL_TIMEOUT_SECONDS="${SPCTL_TIMEOUT_SECONDS:-60}"
+# Validate as positive integer — guards against silently disabled timeouts
+# (alarm 0 = no alarm; non-numeric → 0; negative → perl interprets as flag
+# without `--` separator). Surface a clear error rather than letting the
+# script regress to pre-#77 hang behavior.
+if ! [[ "$SPCTL_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: SPCTL_TIMEOUT_SECONDS must be a positive integer (got '$SPCTL_TIMEOUT_SECONDS')." >&2
+    echo "       0 / negative / non-integer values would silently disable the timeout" >&2
+    echo "       and re-introduce the indefinite-hang behavior #77 fixed." >&2
+    exit 1
+fi
 SPCTL_EXIT=0
-SPCTL_OUTPUT="$(perl -e 'alarm shift; exec @ARGV' "$SPCTL_TIMEOUT_SECONDS" \
-    spctl -a -vvv -t install "$BINARY" 2>&1)" || SPCTL_EXIT=$?
+# Use `--` separator before timeout value so a bash-passed negative or
+# leading-dash value cannot be interpreted as a perl flag (defense-in-depth
+# even though the regex above already rejects non-positive-integer values).
+SPCTL_OUTPUT="$(perl -e 'my $t=shift; alarm $t; exec @ARGV or die "exec failed: $!"' \
+    -- "$SPCTL_TIMEOUT_SECONDS" spctl -a -vvv -t install "$BINARY" 2>&1)" || SPCTL_EXIT=$?
 if [ "$SPCTL_EXIT" -eq 142 ]; then
     # perl alarm exit code: 128 + SIGALRM (14) = 142
     echo "Error: spctl timed out after ${SPCTL_TIMEOUT_SECONDS}s." >&2
