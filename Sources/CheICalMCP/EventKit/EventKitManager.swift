@@ -1406,12 +1406,26 @@ actor EventKitManager: EventKitManaging {
                 // missing the control-char escape applied by `writeFailureLog`;
                 // we share `escapeForStderr` to keep both paths consistent
                 // without violating R3.
+                //
+                // #69: defensive symmetry with R7's trusted-branch carve-out
+                // at writeFailureLog. Note the rationale differs here: R3
+                // binds to `sanitize(_:)` directly (NOT `sanitizeForResponse`)
+                // so trusted errors at this site receive a framework-style
+                // code (e.g. "error_unknown") that does NOT equal `rawLog`.
+                // The gate is therefore forward-compat hardening — if a
+                // future caller of `deleteRemindersBatch` propagates a
+                // `TrustedErrorMessage` conformer through this path, the
+                // stderr-amplification window stays closed by construction.
+                // In practice today, `eventStore.remove(reminder:commit:)`
+                // only throws NSError, so the gate doesn't fire on hot paths.
                 let sanitized = EventKitErrorSanitizer.sanitize(error)
-                let safeId = EventKitErrorSanitizer.escapeForStderr(id)
-                let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
-                FileHandle.standardError.write(
-                    Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
-                )
+                if !(error is TrustedErrorMessage) {
+                    let safeId = EventKitErrorSanitizer.escapeForStderr(id)
+                    let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                    FileHandle.standardError.write(
+                        Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
+                    )
+                }
                 failures.append((id, sanitized.code))
             }
         }
