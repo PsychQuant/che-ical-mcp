@@ -1,0 +1,24 @@
+# CODEOWNERS — signing-critical artifact map
+#
+# This file documents which paths affect the binary trust chain
+# (codesign identity, notarization flow, entitlements, bundle identity,
+# version consistency checks). Any PR touching these paths should be
+# treated as a supply-chain change regardless of how minor the diff looks.
+#
+# Single-maintainer repo: @kiki830621 entries do not generate self-review
+# requests (GitHub suppresses them on the maintainer's own PRs). Purpose:
+#   1. Explicit documentation of the signing surface.
+#   2. Auto-request readiness if a second contributor gains write access.
+#   3. Branch protection opt-in — enabling "Require review from Code Owners"
+#      under Settings > Branches activates these gates immediately.
+#
+# Intentional exclusion: Sources/CheICalMCP/Version.swift is the embedded
+# version string, not part of the trust chain. Add here only if the version
+# parsing logic itself becomes signing-relevant.
+
+/scripts/sign-and-notarize.sh          @kiki830621
+/scripts/build-mcpb.sh                 @kiki830621
+/Makefile                              @kiki830621
+/Sources/CheICalMCP/Entitlements.plist @kiki830621
+/Sources/CheICalMCP/Info.plist         @kiki830621
+/mcpb/manifest.json                    @kiki830621
