@@ -174,7 +174,36 @@ fi
 # choice rationale.
 echo ""
 echo "[4/5] Cross-checking notarization with spctl..."
-SPCTL_OUTPUT="$(spctl -a -vvv -t install "$BINARY" 2>&1)" || true
+# spctl makes a network call to Apple's OCSP servers (ocsp.apple.com,
+# valid.apple.com) to verify the notarization stamp. If OCSP is slow or
+# unreachable (corporate proxy filter, captive portal, transient outage),
+# spctl can hang indefinitely without surfacing a useful error. Wrap in a
+# timeout so a stalled call exits with a clear diagnostic instead of
+# silently stalling `make release-signed`. (#77 hardening)
+#
+# perl alarm is portable on macOS (perl is always present); GNU `timeout`
+# requires `brew install coreutils` and isn't guaranteed in CI environments.
+# Override via SPCTL_TIMEOUT_SECONDS env var if 60s is too short for slow
+# corporate links.
+SPCTL_TIMEOUT_SECONDS="${SPCTL_TIMEOUT_SECONDS:-60}"
+SPCTL_EXIT=0
+SPCTL_OUTPUT="$(perl -e 'alarm shift; exec @ARGV' "$SPCTL_TIMEOUT_SECONDS" \
+    spctl -a -vvv -t install "$BINARY" 2>&1)" || SPCTL_EXIT=$?
+if [ "$SPCTL_EXIT" -eq 142 ]; then
+    # perl alarm exit code: 128 + SIGALRM (14) = 142
+    echo "Error: spctl timed out after ${SPCTL_TIMEOUT_SECONDS}s." >&2
+    echo "       Apple's OCSP infrastructure (ocsp.apple.com, valid.apple.com)" >&2
+    echo "       is likely unreachable or slow." >&2
+    echo "       Possible causes:" >&2
+    echo "         - Corporate VPN / proxy filtering OCSP endpoints" >&2
+    echo "         - Captive portal not yet authenticated" >&2
+    echo "         - Apple OCSP transient outage" >&2
+    echo "         - DNS resolution stalling" >&2
+    echo "" >&2
+    echo "       Workaround: set SPCTL_TIMEOUT_SECONDS=N for slower links," >&2
+    echo "       or re-run after network connectivity is restored." >&2
+    exit 1
+fi
 if ! echo "$SPCTL_OUTPUT" | grep -q "source=Notarized Developer ID"; then
     echo "Error: spctl does not recognize $BINARY as notarized." >&2
     echo "       This is a partial-state failure: codesign succeeded + notarytool" >&2
