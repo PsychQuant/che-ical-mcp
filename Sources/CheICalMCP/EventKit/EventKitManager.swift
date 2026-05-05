@@ -1406,12 +1406,24 @@ actor EventKitManager: EventKitManaging {
                 // missing the control-char escape applied by `writeFailureLog`;
                 // we share `escapeForStderr` to keep both paths consistent
                 // without violating R3.
+                //
+                // #69: mirror R7's trusted-branch carve-out — skip the stderr
+                // write when `error` conforms to `TrustedErrorMessage`. The
+                // wire response already carries `code == rawLog == localized
+                // description` for trusted errors, so duplicating to stderr
+                // would just amplify noise (DoS surface for an attacker who
+                // submits N malformed identifiers). Framework errors still
+                // write to stderr because their `localizedDescription` is
+                // sanitized off the wire and stderr is the only operator-
+                // debuggable channel.
                 let sanitized = EventKitErrorSanitizer.sanitize(error)
-                let safeId = EventKitErrorSanitizer.escapeForStderr(id)
-                let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
-                FileHandle.standardError.write(
-                    Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
-                )
+                if !(error is TrustedErrorMessage) {
+                    let safeId = EventKitErrorSanitizer.escapeForStderr(id)
+                    let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                    FileHandle.standardError.write(
+                        Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
+                    )
+                }
                 failures.append((id, sanitized.code))
             }
         }
