@@ -385,23 +385,14 @@ final class EventKitErrorSanitizerTests: XCTestCase {
             userInfo: [NSLocalizedDescriptionKey: oversize]
         )
 
-        // Capture stderr the same way CLIRunnerStderrTests does (#80).
-        let pipe = Pipe()
-        let savedStderrFD = dup(STDERR_FILENO)
-        dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-
-        _ = EventKitErrorSanitizer.writeFailureLog(
-            handler: "TestHandler",
-            identifier: "id",
-            error: evilError
-        )
-
-        // Restore stderr BEFORE reading (FD 2 dup deadlock fix per #80).
-        dup2(savedStderrFD, STDERR_FILENO)
-        close(savedStderrFD)
-        pipe.fileHandleForWriting.closeFile()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let captured = String(data: data, encoding: .utf8) ?? ""
+        // #83 — migrated to shared withCapturedStderr helper.
+        let captured = capturedStderr {
+            _ = EventKitErrorSanitizer.writeFailureLog(
+                handler: "TestHandler",
+                identifier: "id",
+                error: evilError
+            )
+        }
 
         XCTAssertFalse(captured.isEmpty, "untrusted NSError must write a stderr line")
         XCTAssertTrue(
@@ -431,37 +422,31 @@ final class EventKitErrorSanitizerTests: XCTestCase {
     func testWriteFailureLogTruncationBoundary() {
         let cap = EventKitErrorSanitizer.maxRawLogChars
 
-        // Case 1: count == cap → no truncation
+        // Case 1: count == cap → no truncation. #83 — migrated to harness.
         let exactCap = String(repeating: "B", count: cap)
         let exactCapError = NSError(
             domain: EKErrorDomain,
             code: 7,
             userInfo: [NSLocalizedDescriptionKey: exactCap]
         )
-        let p1 = Pipe()
-        let s1 = dup(STDERR_FILENO)
-        dup2(p1.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-        _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: exactCapError)
-        dup2(s1, STDERR_FILENO); close(s1); p1.fileHandleForWriting.closeFile()
-        let cap1 = String(data: p1.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let cap1 = capturedStderr {
+            _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: exactCapError)
+        }
         XCTAssertFalse(
             cap1.contains("[truncated"),
             "rawLog of exactly cap chars must NOT trigger truncation; got: \(cap1.prefix(80))..."
         )
 
-        // Case 2: count == cap + 1 → truncation by exactly 1 char
+        // Case 2: count == cap + 1 → truncation by exactly 1 char.
         let capPlusOne = String(repeating: "C", count: cap + 1)
         let capPlusOneError = NSError(
             domain: EKErrorDomain,
             code: 8,
             userInfo: [NSLocalizedDescriptionKey: capPlusOne]
         )
-        let p2 = Pipe()
-        let s2 = dup(STDERR_FILENO)
-        dup2(p2.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-        _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: capPlusOneError)
-        dup2(s2, STDERR_FILENO); close(s2); p2.fileHandleForWriting.closeFile()
-        let cap2 = String(data: p2.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let cap2 = capturedStderr {
+            _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: capPlusOneError)
+        }
         XCTAssertTrue(
             cap2.contains("[truncated 1 chars]"),
             "rawLog of cap+1 chars must trigger truncation by exactly 1 char; got: \(cap2.prefix(80))..."
@@ -470,26 +455,20 @@ final class EventKitErrorSanitizerTests: XCTestCase {
 
     func testWriteFailureLogDoesNotTruncateShortRawLog() {
         // Sanity: short rawLog passes through unchanged (no spurious truncation).
+        // #83 — migrated to harness.
         let shortError = NSError(
             domain: EKErrorDomain,
             code: 5,
             userInfo: [NSLocalizedDescriptionKey: "small error"]
         )
 
-        let pipe = Pipe()
-        let savedStderrFD = dup(STDERR_FILENO)
-        dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-
-        _ = EventKitErrorSanitizer.writeFailureLog(
-            handler: "TestHandler",
-            identifier: "id",
-            error: shortError
-        )
-
-        dup2(savedStderrFD, STDERR_FILENO)
-        close(savedStderrFD)
-        pipe.fileHandleForWriting.closeFile()
-        let captured = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let captured = capturedStderr {
+            _ = EventKitErrorSanitizer.writeFailureLog(
+                handler: "TestHandler",
+                identifier: "id",
+                error: shortError
+            )
+        }
 
         XCTAssertFalse(
             captured.contains("[truncated"),
