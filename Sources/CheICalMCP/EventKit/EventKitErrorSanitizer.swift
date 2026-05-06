@@ -186,6 +186,45 @@ extension EventKitErrorSanitizer {
         return sanitized.code
     }
 
+    /// Strip control characters that could enable log-injection (CWE-117)
+    /// when an interpolated string is consumed by a non-escaping log writer.
+    /// Removes (silent strip — empty replacement, no visible artifact):
+    /// `\x00..\x1F` (C0 controls including LF/CR/TAB) + `\x7F` (DEL).
+    /// Other Unicode scalars pass through unchanged.
+    ///
+    /// **When to use**: any user-controlled string interpolated into a
+    /// response message that may be consumed by a downstream non-escaping
+    /// log writer (e.g. an MCP host writing the wire `message` field to
+    /// syslog without further escaping). Today's `executeUndo` /
+    /// `executeRedo` arms interpolate event/reminder titles into prose
+    /// like `"Undone: removed created event '\(title)'"` — the wire is
+    /// safe (JSON-encoded), but the host's logging discipline is not under
+    /// our control. Stripping at the server-side gives a defensive layer.
+    ///
+    /// **Why "strip" not "escape"**: this is the response-prose boundary
+    /// (visible to humans reading the message). Stripping is silent —
+    /// `"event 'foo\nbar'"` becomes `"event 'foobar'"`, no visual artifact.
+    /// Escape (`escapeForStderr`) is for the *stderr* boundary where the
+    /// operator must SEE the control char to debug. Different audiences,
+    /// different policies — see #73 / #74 cluster Plan for the rationale.
+    ///
+    /// **Future-contributor guard**: future undo/redo arms (or any
+    /// user-content-interpolating message construction) MUST call this
+    /// helper. Audit via `grep -n "executeUndo\|executeRedo\|case \." Sources/`
+    /// before adding a new arm.
+    public static func sanitizeForInterpolation(_ s: String) -> String {
+        var result = ""
+        result.reserveCapacity(s.unicodeScalars.count)
+        for scalar in s.unicodeScalars {
+            let v = scalar.value
+            if v < 0x20 || v == 0x7F {
+                continue   // strip C0 + DEL
+            }
+            result.unicodeScalars.append(scalar)
+        }
+        return result
+    }
+
     /// Escape control characters for safe stderr inclusion. Returns a
     /// version of `s` with: backslash → `\\`, LF → `\n`, CR → `\r`, and
     /// **all other C0 controls (`\x00..\x1F`) plus DEL (`\x7F`)** → `\xHH`

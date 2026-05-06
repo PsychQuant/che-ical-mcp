@@ -578,4 +578,87 @@ final class EventKitErrorSanitizerTests: XCTestCase {
             "mixed legacy chars preserve order and individual escapes"
         )
     }
+
+    // MARK: - sanitizeForInterpolation (#74) — strip C0 + DEL
+
+    /// Pin LF/CR strip (the canonical CWE-117 attack vector — newline-injection
+    /// into log lines). `"foo\n[ERROR] FORGED"` becomes `"foo[ERROR] FORGED"`
+    /// — still readable, but the host's plain-text log writer can no longer
+    /// be tricked into a forged log entry.
+    func testSanitizeForInterpolationStripsLFAndCR() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("foo\nbar"),
+            "foobar"
+        )
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("foo\rbar"),
+            "foobar"
+        )
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("foo\n[ERROR] FORGED"),
+            "foo[ERROR] FORGED",
+            "newline-injection attack neutralized via strip"
+        )
+    }
+
+    /// Pin NUL strip — important for downstream log writers using
+    /// C-string termination semantics (e.g. some syslog backends).
+    func testSanitizeForInterpolationStripsNull() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("foo\u{0000}bar"),
+            "foobar"
+        )
+    }
+
+    /// Pin full C0 + DEL strip. All bytes `0x00..0x1F` and `0x7F`
+    /// must be removed (no visible artifact). Other ASCII passes through.
+    func testSanitizeForInterpolationStripsAllC0AndDEL() {
+        // Sample across the C0 range
+        for v: UInt32 in 0x00...0x1F {
+            let s = "a\(Unicode.Scalar(v)!)b"
+            XCTAssertEqual(
+                EventKitErrorSanitizer.sanitizeForInterpolation(s),
+                "ab",
+                "C0 byte 0x\(String(v, radix: 16, uppercase: false)) must strip"
+            )
+        }
+        // DEL
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("a\u{007F}b"),
+            "ab"
+        )
+    }
+
+    /// Pin Unicode passthrough: CJK, accents, emoji, printable ASCII
+    /// boundary scalars must NOT be stripped. `0x20` (space) and `~`
+    /// (last printable ASCII) survive; `0x80+` always survives.
+    func testSanitizeForInterpolationPreservesUnicodeAndPrintableAscii() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("café 中文 日本語 🎉"),
+            "café 中文 日本語 🎉"
+        )
+        XCTAssertEqual(EventKitErrorSanitizer.sanitizeForInterpolation(" "), " ")
+        XCTAssertEqual(EventKitErrorSanitizer.sanitizeForInterpolation("~"), "~")
+        // C1 (0x80..0x9F) explicitly NOT stripped — out of scope per #74
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("a\u{0080}b"),
+            "a\u{0080}b",
+            "C1 controls are out of #74 scope; NOT stripped"
+        )
+    }
+
+    /// Pin empty + already-clean inputs (idempotence-like guarantee).
+    func testSanitizeForInterpolationHandlesEmptyAndCleanInputs() {
+        XCTAssertEqual(EventKitErrorSanitizer.sanitizeForInterpolation(""), "")
+        XCTAssertEqual(
+            EventKitErrorSanitizer.sanitizeForInterpolation("hello world"),
+            "hello world"
+        )
+        // Idempotent: sanitize(sanitize(x)) == sanitize(x)
+        let dirty = "evil\n\rtitle\u{0000}"
+        let once = EventKitErrorSanitizer.sanitizeForInterpolation(dirty)
+        let twice = EventKitErrorSanitizer.sanitizeForInterpolation(once)
+        XCTAssertEqual(once, twice, "sanitize must be idempotent")
+        XCTAssertEqual(once, "eviltitle")
+    }
 }
