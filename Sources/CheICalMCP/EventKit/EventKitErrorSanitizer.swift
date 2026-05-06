@@ -160,24 +160,34 @@ extension EventKitErrorSanitizer {
     /// suffix preserving the original size signal for operator debug.
     ///
     /// **Concurrency / thread-safety (#70)**: `FileHandle.standardError.write`
-    /// itself is **not documented to be atomic** by Swift. Empirically:
-    /// macOS POSIX `write(2)` is atomic for byte counts ≤ `PIPE_BUF`
-    /// (4096 on macOS); typical failure-line emission from this helper is
-    /// `<handler>(<identifier>) failed: <safeRawLog>\n` which post-cap +
-    /// post-escape stays well under 4096 bytes (handler/identifier are
-    /// short tags; `safeRawLog` is bounded by `maxRawLogChars` ≈ 1024
-    /// chars × ~3 bytes/char worst-case for escape-inflated UTF-8).
-    /// Therefore concurrent calls from `async` contexts (multiple failing
-    /// `handleToolCall` invocations racing) **do not interleave at the
-    /// kernel level under normal failure-line shapes**. A serial actor
-    /// (`StderrLogger.shared`) was considered (`#70` Option A) but
-    /// deferred — at this server's concurrency profile the empirical
-    /// guarantee is sufficient. **Trigger to revisit**: if any
-    /// future-line shape exceeds ~3KB (e.g. structured stderr output,
-    /// stack traces, or a periodic-summary mechanism per `#66`), the
-    /// PIPE_BUF safety net no longer holds and Option A becomes
-    /// load-bearing. See `#70` closing summary for the full deferral
-    /// rationale.
+    /// is **not documented to be atomic** by Swift. POSIX `write(2)` only
+    /// guarantees atomicity for byte counts ≤ `PIPE_BUF`, which on macOS
+    /// is **512 bytes** (`getconf PIPE_BUF .` → 512; `<sys/syslimits.h>`
+    /// `#define PIPE_BUF 512`). This helper's failure-line emission shape
+    /// `<handler>(<identifier>) failed: <safeRawLog>\n` can easily exceed
+    /// 512 bytes whenever `safeRawLog` is non-trivial: `maxRawLogChars`
+    /// alone is 1024 chars (escape-inflated may grow further), so under
+    /// concurrent `async` failing-tool-call races (multiple
+    /// `handleToolCall` invocations failing in parallel) **stderr lines
+    /// CAN interleave at the kernel level** for non-trivial error
+    /// payloads. Therefore: operators must NOT assume that
+    /// `tail -f stderr | parse-by-line` produces perfectly framed records
+    /// — interleaving is possible under load.
+    ///
+    /// Maintainer chose this best-effort posture (Option C) per `#70`
+    /// rather than Option A (`StderrLogger.shared` actor that serializes
+    /// all 11 sanitizer-cluster stderr writes through a single async
+    /// boundary). Rationale: at this MCP server's concurrency profile
+    /// (single client, mostly serial tool calls), the contention window
+    /// is narrow enough that the implementation cost of Option A
+    /// (touching every catch handler, propagating `await`) exceeds the
+    /// observability value. **Trigger to revisit Option A**: any of
+    ///   1. Multi-tenant deployment with elevated concurrent-failure rates
+    ///   2. SRE / operator surfaces an interleaving-related parsing complaint
+    ///   3. Structured stderr output / stack traces that are themselves
+    ///      load-bearing (today they're best-effort debug, not contracts)
+    ///   4. `#66` periodic-summary mechanism lands (5th writer)
+    /// See `#70` closing summary for the full deferral context.
     static func writeFailureLog(
         handler: String,
         identifier: String,
