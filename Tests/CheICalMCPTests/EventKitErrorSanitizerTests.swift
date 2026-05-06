@@ -500,4 +500,82 @@ final class EventKitErrorSanitizerTests: XCTestCase {
             "short rawLog should appear verbatim (after escape); got: \(captured.debugDescription)"
         )
     }
+
+    // MARK: - escapeForStderr full C0+DEL coverage (#73)
+
+    /// Pin ESC `\x1b` (ANSI escape introducer) → `\x1b` literal.
+    /// Pre-#73 escape only handled `\\` `\n` `\r`; ESC passed verbatim,
+    /// allowing terminal-control injection via `\x1b[2J\x1b[H` (clear screen
+    /// + home cursor) when an attacker controls `localizedDescription`
+    /// (e.g. via event title surfacing in EKError text).
+    func testEscapeForStderrEscapesEscapeChar() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.escapeForStderr("\u{001B}"),
+            "\\x1b",
+            "ESC must escape to literal \\x1b"
+        )
+    }
+
+    /// Pin NUL `\x00` → `\x00`. NUL truncates C-string log readers
+    /// (e.g. `tail` writing to `syslog`), so unescaped NUL hides
+    /// subsequent legit output even before reaching a terminal.
+    func testEscapeForStderrEscapesNull() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.escapeForStderr("foo\u{0000}bar"),
+            "foo\\x00bar"
+        )
+    }
+
+    /// Pin BS `\x08` (backspace), DEL `\x7f`, BEL `\x07` — all C0
+    /// controls + DEL must be hex-escaped.
+    func testEscapeForStderrEscapesC0AndDEL() {
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{0008}"), "\\x08")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{0007}"), "\\x07")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{007F}"), "\\x7f")
+        // VT, FF, SO, SI — sample mid-range C0
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{000B}"), "\\x0b")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{000C}"), "\\x0c")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{000E}"), "\\x0e")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{001F}"), "\\x1f")
+    }
+
+    /// Pin the canonical ANSI clear-screen + home-cursor attack:
+    /// `"foo\x1b[2J\x1b[Hbar"` must escape to `"foo\x1b[2J\x1b[Hbar"`
+    /// (literal ESC bytes neutralized; `[2J` etc. are printable ASCII
+    /// and pass through unchanged — only the leading `\x1b` neutralizes
+    /// the sequence).
+    func testEscapeForStderrNeutralizesAnsiClearScreen() {
+        let attack = "foo\u{001B}[2J\u{001B}[Hbar"
+        let safe = EventKitErrorSanitizer.escapeForStderr(attack)
+        XCTAssertFalse(safe.contains("\u{001B}"),
+            "no raw ESC bytes may survive escape; got: \(safe.debugDescription)")
+        XCTAssertEqual(safe, "foo\\x1b[2J\\x1b[Hbar")
+    }
+
+    /// Pin Unicode passthrough: CJK, accents, emoji must traverse
+    /// `escapeForStderr` unchanged. Boundary check at `0x20` — anything
+    /// `>= 0x20` that's not DEL or backslash passes through as-is.
+    func testEscapeForStderrPreservesUnicodeAndPrintableAscii() {
+        XCTAssertEqual(
+            EventKitErrorSanitizer.escapeForStderr("café 中文 日本語 🎉"),
+            "café 中文 日本語 🎉",
+            "all Unicode scalars >= 0x20 must pass through unchanged"
+        )
+        // Printable ASCII boundary
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr(" "), " ")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("~"), "~")
+    }
+
+    /// Pin pre-#73 invariants still hold: backslash, LF, CR escape to
+    /// the SAME multi-char escape sequences as before (no semantic break).
+    func testEscapeForStderrPreservesLegacyBackslashLFCREscapes() {
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\\"), "\\\\")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\n"), "\\n")
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\r"), "\\r")
+        XCTAssertEqual(
+            EventKitErrorSanitizer.escapeForStderr("a\\b\nc\rd"),
+            "a\\\\b\\nc\\rd",
+            "mixed legacy chars preserve order and individual escapes"
+        )
+    }
 }
