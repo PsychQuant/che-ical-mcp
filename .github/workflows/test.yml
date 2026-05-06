@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Show toolchain version
         run: |
@@ -54,7 +54,7 @@ jobs:
       # bulk of the runtime. Keyed on Package.resolved so cache invalidates
       # automatically on dependency upgrade.
       - name: Cache SPM .build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .build
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
