@@ -423,6 +423,51 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         )
     }
 
+    /// Pin the off-by-one boundary: `count == cap` must NOT trigger
+    /// truncation; `count == cap + 1` MUST trigger it. Existing tests
+    /// (long: cap+1000, short: ~11) prove the operator works "somewhere
+    /// between"; this test pins the equality boundary so a future refactor
+    /// flipping `>` → `>=` (or vice versa) gets caught (#86 verify DA2).
+    func testWriteFailureLogTruncationBoundary() {
+        let cap = EventKitErrorSanitizer.maxRawLogChars
+
+        // Case 1: count == cap → no truncation
+        let exactCap = String(repeating: "B", count: cap)
+        let exactCapError = NSError(
+            domain: EKErrorDomain,
+            code: 7,
+            userInfo: [NSLocalizedDescriptionKey: exactCap]
+        )
+        let p1 = Pipe()
+        let s1 = dup(STDERR_FILENO)
+        dup2(p1.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: exactCapError)
+        dup2(s1, STDERR_FILENO); close(s1); p1.fileHandleForWriting.closeFile()
+        let cap1 = String(data: p1.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        XCTAssertFalse(
+            cap1.contains("[truncated"),
+            "rawLog of exactly cap chars must NOT trigger truncation; got: \(cap1.prefix(80))..."
+        )
+
+        // Case 2: count == cap + 1 → truncation by exactly 1 char
+        let capPlusOne = String(repeating: "C", count: cap + 1)
+        let capPlusOneError = NSError(
+            domain: EKErrorDomain,
+            code: 8,
+            userInfo: [NSLocalizedDescriptionKey: capPlusOne]
+        )
+        let p2 = Pipe()
+        let s2 = dup(STDERR_FILENO)
+        dup2(p2.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "h", identifier: "i", error: capPlusOneError)
+        dup2(s2, STDERR_FILENO); close(s2); p2.fileHandleForWriting.closeFile()
+        let cap2 = String(data: p2.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        XCTAssertTrue(
+            cap2.contains("[truncated 1 chars]"),
+            "rawLog of cap+1 chars must trigger truncation by exactly 1 char; got: \(cap2.prefix(80))..."
+        )
+    }
+
     func testWriteFailureLogDoesNotTruncateShortRawLog() {
         // Sanity: short rawLog passes through unchanged (no spurious truncation).
         let shortError = NSError(

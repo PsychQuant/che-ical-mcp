@@ -121,6 +121,19 @@ extension EventKitErrorSanitizer {
         return sanitize(error)
     }
 
+    /// Per-line cap on `rawLog` written to stderr by `writeFailureLog`.
+    /// Framework `NSError.localizedDescription` is theoretically unbounded;
+    /// without a cap, batch handlers that fan out per malformed entry can
+    /// amplify a single oversize Apple error into MB-scale stderr volume
+    /// (#86 — DoS amplification residual closure). 1024 *characters* (Swift
+    /// `String.count`, i.e. extended grapheme clusters — not UTF-8 bytes) is
+    /// well above all Apple-emitted EKError descriptions observed empirically
+    /// while still bounding the per-line cost. Pathological multi-byte
+    /// graphemes (compound emoji etc.) can expand the post-escape byte count
+    /// well beyond the cap; treat the bound as ~kilobytes per line, not exact
+    /// byte budget. Internal so tests can pin the value. See #86 for tuning.
+    static let maxRawLogChars = 1024
+
     /// Combines `sanitizeForResponse` with operator stderr logging in one
     /// call (spec R7). The `handler` and `identifier` parameters tag the
     /// stderr line with context for operator debugging. Returns the
@@ -140,16 +153,11 @@ extension EventKitErrorSanitizer {
     /// (each a `ToolError.invalidParameter`) → N redundant stderr lines.
     /// Framework errors still write to stderr because they are the only
     /// operator-debuggable channel for the un-sanitized `localizedDescription`.
-    /// Per-line cap on `rawLog` written to stderr. Framework
-    /// `NSError.localizedDescription` is theoretically unbounded; without a
-    /// cap, batch handlers that fan out per malformed entry can amplify a
-    /// single oversize Apple error into MB-scale stderr volume (#86 — DoS
-    /// amplification residual closure). 1024 chars is well above all
-    /// Apple-emitted EKError descriptions observed empirically while still
-    /// bounding the per-line cost. Internal so tests can pin the value.
-    /// See #86 for tuning rationale.
-    static let maxRawLogChars = 1024
-
+    ///
+    /// **Length cap (#86)**: `rawLog` is truncated to `maxRawLogChars`
+    /// characters before `escapeForStderr` (so escape inflation cannot
+    /// expand the budget). Truncated lines carry a `…[truncated N chars]`
+    /// suffix preserving the original size signal for operator debug.
     static func writeFailureLog(
         handler: String,
         identifier: String,
