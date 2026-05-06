@@ -79,23 +79,28 @@ enum UndoOperation {
     case completeReminder(id: String, wasCompleted: Bool, title: String)
     case batch([UndoOperation])
 
-    /// Human-readable description of this operation.
+    /// Human-readable description of this operation. **Surfaces verbatim
+    /// through the `undo_history` MCP tool's response field**, so any
+    /// user-controlled title here flows through the same wire path as
+    /// `executeUndo`/`executeRedo` arms — and shares the same CWE-117
+    /// log-injection surface. Each title interpolation must go through
+    /// `EventKitErrorSanitizer.sanitizeForInterpolation` (#74 verify DA1).
     var description: String {
         switch self {
         case .createEvent(_, let title):
-            return "Created event: \(title)"
+            return "Created event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(snapshot.title)"
+            return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateEvent(_, let old):
-            return "Updated event: \(old.title)"
+            return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
         case .createReminder(_, let title):
-            return "Created reminder: \(title)"
+            return "Created reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .deleteReminder(let snapshot):
-            return "Deleted reminder: \(snapshot.title)"
+            return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateReminder(_, let old):
-            return "Updated reminder: \(old.title)"
+            return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
         case .completeReminder(_, _, let title):
-            return "Completed reminder: \(title)"
+            return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .batch(let ops):
             return "Batch (\(ops.count) operations)"
         }

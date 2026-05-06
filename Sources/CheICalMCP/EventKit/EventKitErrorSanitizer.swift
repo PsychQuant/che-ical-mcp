@@ -186,13 +186,85 @@ extension EventKitErrorSanitizer {
         return sanitized.code
     }
 
-    /// Escape `\\`, `\n`, `\r` for safe stderr inclusion. Promoted from
-    /// `private` to `internal static` so callers that use `sanitize(_:)`
-    /// directly (e.g. the `deleteRemindersBatch` catch path bound by spec
-    /// R3) can apply the same control-char hardening as `writeFailureLog`.
+    /// Strip control characters that could enable log-injection (CWE-117)
+    /// when an interpolated string is consumed by a non-escaping log writer.
+    /// Removes (silent strip — empty replacement, no visible artifact):
+    /// `\x00..\x1F` (C0 controls including LF/CR/TAB) + `\x7F` (DEL).
+    /// Other Unicode scalars pass through unchanged.
+    ///
+    /// **When to use**: any user-controlled string interpolated into a
+    /// response message that may be consumed by a downstream non-escaping
+    /// log writer (e.g. an MCP host writing the wire `message` field to
+    /// syslog without further escaping). Today's `executeUndo` /
+    /// `executeRedo` arms interpolate event/reminder titles into prose
+    /// like `"Undone: removed created event '\(title)'"` — the wire is
+    /// safe (JSON-encoded), but the host's logging discipline is not under
+    /// our control. Stripping at the server-side gives a defensive layer.
+    ///
+    /// **Why "strip" not "escape"**: this is the response-prose boundary
+    /// (visible to humans reading the message). Stripping is silent —
+    /// `"event 'foo\nbar'"` becomes `"event 'foobar'"`, no visual artifact.
+    /// Escape (`escapeForStderr`) is for the *stderr* boundary where the
+    /// operator must SEE the control char to debug. Different audiences,
+    /// different policies — see #73 / #74 cluster Plan for the rationale.
+    ///
+    /// **Future-contributor guard**: future undo/redo arms (or any
+    /// user-content-interpolating message construction) MUST call this
+    /// helper. Audit via `grep -n "executeUndo\|executeRedo\|case \." Sources/`
+    /// before adding a new arm.
+    public static func sanitizeForInterpolation(_ s: String) -> String {
+        var result = ""
+        result.reserveCapacity(s.unicodeScalars.count)
+        for scalar in s.unicodeScalars {
+            let v = scalar.value
+            if v < 0x20 || v == 0x7F {
+                continue   // strip C0 + DEL
+            }
+            result.unicodeScalars.append(scalar)
+        }
+        return result
+    }
+
+    /// Escape control characters for safe stderr inclusion. Returns a
+    /// version of `s` with: backslash → `\\`, LF → `\n`, CR → `\r`, and
+    /// **all other C0 controls (`\x00..\x1F`) plus DEL (`\x7F`)** → `\xHH`
+    /// hex escape. Other Unicode scalars (printable ASCII, accents, CJK,
+    /// emoji) pass through unchanged.
+    ///
+    /// **Pre-#73 behavior** (3-char fast-path for backslash/LF/CR only) was
+    /// a known gap: ESC `\x1b` reached stderr verbatim, allowing an
+    /// attacker who controls `localizedDescription` (e.g. via event title
+    /// surfaced in EKError text) to inject ANSI sequences like
+    /// `\x1b[2J\x1b[H` (clear screen + home cursor) that hijack the
+    /// operator's terminal — denial-of-visibility / log forgery class.
+    /// `\x00` was a similar gap (truncates C-string log readers like
+    /// `tail` writing to `syslog`). Closing both via full C0+DEL coverage.
+    ///
+    /// Promoted from `private` to `internal static` per #37 so callers that
+    /// use `sanitize(_:)` directly (e.g. the `deleteRemindersBatch` catch
+    /// path bound by spec R3) share the same control-char hardening.
+    ///
+    /// **C1 controls (`\x80..\x9F`)** are deferred — separate issue if
+    /// terminal hijacking via the C1 alternate forms (e.g. `\xC2\x9B` ≡
+    /// CSI) becomes an observed concern.
     static func escapeForStderr(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
+        var result = ""
+        result.reserveCapacity(s.unicodeScalars.count)
+        for scalar in s.unicodeScalars {
+            let v = scalar.value
+            switch v {
+            case 0x5C:   // backslash
+                result.append("\\\\")
+            case 0x0A:   // LF
+                result.append("\\n")
+            case 0x0D:   // CR
+                result.append("\\r")
+            case 0x00...0x1F, 0x7F:   // C0 + DEL
+                result.append(String(format: "\\x%02x", v))
+            default:
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        return result
     }
 }
