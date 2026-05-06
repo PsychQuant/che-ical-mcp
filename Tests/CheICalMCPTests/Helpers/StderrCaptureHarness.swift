@@ -28,10 +28,13 @@ import Foundation
 /// XCTAssertTrue(captured.contains("h(i) failed:"))
 /// ```
 ///
-/// `rethrows` — closure may throw; the captured stderr up to the throw
-/// point is still returned via the rethrown error path is NOT supported
-/// (you'd need a do/catch around the helper for that). For the common
-/// "drive a non-throwing call and assert stderr" case, this is a 1-liner.
+/// `rethrows` — closure may throw. On the throw path, stderr is restored
+/// + the pipe is closed before the error is rethrown (so test runner
+/// stderr stays clean). The closure's stderr writes up to the throw point
+/// are NOT returned to the caller via the error — if you need both the
+/// captured stderr AND the error, wrap the call in your own `do/catch`.
+/// For the common "drive a non-throwing call and assert stderr" case,
+/// this is a 1-liner via `capturedStderr(of:)`.
 ///
 /// **Test isolation**: each call allocates a fresh `Pipe`. After the
 /// helper returns, `STDERR_FILENO` is fully restored — subsequent tests
