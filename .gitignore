@@ -35,5 +35,7 @@ openspec/.vector-search.db*
 .remember/
 .claude/settings.local.json
 .claude/issue-driven-dev.local.md
+.claude/issue-driven-dev.local.json
+.claude/ralph-loop.local.md
 .claude/scheduled_tasks.lock
 .claude/worktrees/

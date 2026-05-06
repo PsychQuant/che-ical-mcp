@@ -158,6 +158,36 @@ extension EventKitErrorSanitizer {
     /// characters before `escapeForStderr` (so escape inflation cannot
     /// expand the budget). Truncated lines carry a `…[truncated N chars]`
     /// suffix preserving the original size signal for operator debug.
+    ///
+    /// **Concurrency / thread-safety (#70)**: `FileHandle.standardError.write`
+    /// is **not documented to be atomic** by Swift. POSIX `write(2)` only
+    /// guarantees atomicity for byte counts ≤ `PIPE_BUF`, which on macOS
+    /// is **512 bytes** (`getconf PIPE_BUF .` → 512; `<sys/syslimits.h>`
+    /// `#define PIPE_BUF 512`). This helper's failure-line emission shape
+    /// `<handler>(<identifier>) failed: <safeRawLog>\n` can easily exceed
+    /// 512 bytes whenever `safeRawLog` is non-trivial: `maxRawLogChars`
+    /// alone is 1024 chars (escape-inflated may grow further), so under
+    /// concurrent `async` failing-tool-call races (multiple
+    /// `handleToolCall` invocations failing in parallel) **stderr lines
+    /// CAN interleave at the kernel level** for non-trivial error
+    /// payloads. Therefore: operators must NOT assume that
+    /// `tail -f stderr | parse-by-line` produces perfectly framed records
+    /// — interleaving is possible under load.
+    ///
+    /// Maintainer chose this best-effort posture (Option C) per `#70`
+    /// rather than Option A (`StderrLogger.shared` actor that serializes
+    /// all 11 sanitizer-cluster stderr writes through a single async
+    /// boundary). Rationale: at this MCP server's concurrency profile
+    /// (single client, mostly serial tool calls), the contention window
+    /// is narrow enough that the implementation cost of Option A
+    /// (touching every catch handler, propagating `await`) exceeds the
+    /// observability value. **Trigger to revisit Option A**: any of
+    ///   1. Multi-tenant deployment with elevated concurrent-failure rates
+    ///   2. SRE / operator surfaces an interleaving-related parsing complaint
+    ///   3. Structured stderr output / stack traces that are themselves
+    ///      load-bearing (today they're best-effort debug, not contracts)
+    ///   4. `#66` periodic-summary mechanism lands (5th writer)
+    /// See `#70` closing summary for the full deferral context.
     static func writeFailureLog(
         handler: String,
         identifier: String,

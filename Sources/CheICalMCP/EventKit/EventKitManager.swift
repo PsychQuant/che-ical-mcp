@@ -1422,6 +1422,17 @@ actor EventKitManager: EventKitManaging {
                 if !(error is TrustedErrorMessage) {
                     let safeId = EventKitErrorSanitizer.escapeForStderr(id)
                     let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                    // #70 thread-safety note: this stderr write site shares
+                    // the same best-effort posture documented on
+                    // `writeFailureLog` — POSIX `write(2)` atomicity holds
+                    // only for byte counts ≤ macOS `PIPE_BUF` (512 bytes),
+                    // and a `deleteRemindersBatch(<id>) failed: <rawLog>\n`
+                    // line can easily exceed 512 bytes when `rawLog` carries
+                    // a non-trivial `NSError` description. Concurrent batch
+                    // failures CAN interleave on stderr; operators relying
+                    // on per-line parsing should use a structured logger
+                    // instead. See `writeFailureLog` doc for the full
+                    // deferral rationale on the StderrLogger actor option.
                     FileHandle.standardError.write(
                         Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
                     )
