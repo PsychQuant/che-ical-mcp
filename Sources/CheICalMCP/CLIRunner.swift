@@ -8,6 +8,13 @@ enum CLIRunner {
         case missingToolName
         case danglingKey(String)
         case missingToolField
+        /// JSON parse failure detail. **MUST be an author-controlled literal**
+        /// — do NOT interpolate framework error text (`error.localizedDescription`).
+        /// Violating this routes the raw text through the `TrustedErrorMessage`
+        /// carve-out unescaped (#41), which would re-open the CWE-117 window
+        /// that #80 closed for the framework-error path. Today's call sites
+        /// pass only static literals; future contributors please grep
+        /// `CLIRunner.CLIError.invalidJSON\b` before adding a new caller (#85).
         case invalidJSON(String)
 
         var errorDescription: String? {
