@@ -1422,6 +1422,12 @@ actor EventKitManager: EventKitManaging {
                 if !(error is TrustedErrorMessage) {
                     let safeId = EventKitErrorSanitizer.escapeForStderr(id)
                     let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                    // #70 thread-safety note: this stderr write site shares
+                    // the same PIPE_BUF=4096 atomicity guarantee documented
+                    // on `writeFailureLog`. `id` (calendarItemIdentifier) +
+                    // sanitized rawLog (NSError text) stay well under 4KB
+                    // in practice. See `writeFailureLog` doc for the full
+                    // deferral rationale on the StderrLogger actor option.
                     FileHandle.standardError.write(
                         Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
                     )

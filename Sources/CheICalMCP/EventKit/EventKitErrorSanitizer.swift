@@ -158,6 +158,26 @@ extension EventKitErrorSanitizer {
     /// characters before `escapeForStderr` (so escape inflation cannot
     /// expand the budget). Truncated lines carry a `…[truncated N chars]`
     /// suffix preserving the original size signal for operator debug.
+    ///
+    /// **Concurrency / thread-safety (#70)**: `FileHandle.standardError.write`
+    /// itself is **not documented to be atomic** by Swift. Empirically:
+    /// macOS POSIX `write(2)` is atomic for byte counts ≤ `PIPE_BUF`
+    /// (4096 on macOS); typical failure-line emission from this helper is
+    /// `<handler>(<identifier>) failed: <safeRawLog>\n` which post-cap +
+    /// post-escape stays well under 4096 bytes (handler/identifier are
+    /// short tags; `safeRawLog` is bounded by `maxRawLogChars` ≈ 1024
+    /// chars × ~3 bytes/char worst-case for escape-inflated UTF-8).
+    /// Therefore concurrent calls from `async` contexts (multiple failing
+    /// `handleToolCall` invocations racing) **do not interleave at the
+    /// kernel level under normal failure-line shapes**. A serial actor
+    /// (`StderrLogger.shared`) was considered (`#70` Option A) but
+    /// deferred — at this server's concurrency profile the empirical
+    /// guarantee is sufficient. **Trigger to revisit**: if any
+    /// future-line shape exceeds ~3KB (e.g. structured stderr output,
+    /// stack traces, or a periodic-summary mechanism per `#66`), the
+    /// PIPE_BUF safety net no longer holds and Option A becomes
+    /// load-bearing. See `#70` closing summary for the full deferral
+    /// rationale.
     static func writeFailureLog(
         handler: String,
         identifier: String,
