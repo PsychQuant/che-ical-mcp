@@ -364,4 +364,95 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         )
         XCTAssertEqual(code, "line1\nline2", "wire response value preserves original text verbatim for trusted errors")
     }
+
+    // MARK: - Length cap on rawLog (#86)
+
+    /// Pin the cap at `EventKitErrorSanitizer.maxRawLogChars`. A framework
+    /// `NSError.localizedDescription` of arbitrary length must not write the
+    /// full text to stderr — the cap fires before `escapeForStderr` (escape
+    /// inflation can't expand the budget) and a `…[truncated N chars]` suffix
+    /// tells operators the original size. DoS-amplification residual closure
+    /// for batch handlers (Server.swift sites) per #86.
+    func testWriteFailureLogTruncatesLongRawLog() {
+        let cap = EventKitErrorSanitizer.maxRawLogChars
+        // Build a payload well above the cap. Use a non-special-char repeating
+        // body so escape doesn't change the length and the assertion stays
+        // comparable to the cap value itself.
+        let oversize = String(repeating: "A", count: cap + 1000)
+        let evilError = NSError(
+            domain: EKErrorDomain,
+            code: 99,
+            userInfo: [NSLocalizedDescriptionKey: oversize]
+        )
+
+        // Capture stderr the same way CLIRunnerStderrTests does (#80).
+        let pipe = Pipe()
+        let savedStderrFD = dup(STDERR_FILENO)
+        dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+        _ = EventKitErrorSanitizer.writeFailureLog(
+            handler: "TestHandler",
+            identifier: "id",
+            error: evilError
+        )
+
+        // Restore stderr BEFORE reading (FD 2 dup deadlock fix per #80).
+        dup2(savedStderrFD, STDERR_FILENO)
+        close(savedStderrFD)
+        pipe.fileHandleForWriting.closeFile()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let captured = String(data: data, encoding: .utf8) ?? ""
+
+        XCTAssertFalse(captured.isEmpty, "untrusted NSError must write a stderr line")
+        XCTAssertTrue(
+            captured.hasPrefix("TestHandler(id) failed:"),
+            "stderr line must use canonical (handler)(identifier) failed: shape; got: \(captured.debugDescription)"
+        )
+        // Cap fires: the full oversize text must NOT appear; instead we see
+        // the truncation marker.
+        XCTAssertTrue(
+            captured.contains("[truncated"),
+            "captured stderr must contain '[truncated N chars]' suffix when rawLog exceeds cap; got: \(captured.debugDescription)"
+        )
+        // The line itself should be cap + a small fixed overhead (handler
+        // prefix + suffix annotation + terminator). Cap of 1024 → line ≤ ~1100.
+        XCTAssertLessThanOrEqual(
+            captured.count,
+            cap + 200,
+            "captured stderr line length \(captured.count) exceeds expected envelope (cap=\(cap) + ~200 char overhead for prefix/suffix)"
+        )
+    }
+
+    func testWriteFailureLogDoesNotTruncateShortRawLog() {
+        // Sanity: short rawLog passes through unchanged (no spurious truncation).
+        let shortError = NSError(
+            domain: EKErrorDomain,
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "small error"]
+        )
+
+        let pipe = Pipe()
+        let savedStderrFD = dup(STDERR_FILENO)
+        dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+        _ = EventKitErrorSanitizer.writeFailureLog(
+            handler: "TestHandler",
+            identifier: "id",
+            error: shortError
+        )
+
+        dup2(savedStderrFD, STDERR_FILENO)
+        close(savedStderrFD)
+        pipe.fileHandleForWriting.closeFile()
+        let captured = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+
+        XCTAssertFalse(
+            captured.contains("[truncated"),
+            "short rawLog must not trigger truncation marker; got: \(captured.debugDescription)"
+        )
+        XCTAssertTrue(
+            captured.contains("small error"),
+            "short rawLog should appear verbatim (after escape); got: \(captured.debugDescription)"
+        )
+    }
 }

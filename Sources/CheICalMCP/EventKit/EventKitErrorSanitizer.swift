@@ -140,6 +140,16 @@ extension EventKitErrorSanitizer {
     /// (each a `ToolError.invalidParameter`) → N redundant stderr lines.
     /// Framework errors still write to stderr because they are the only
     /// operator-debuggable channel for the un-sanitized `localizedDescription`.
+    /// Per-line cap on `rawLog` written to stderr. Framework
+    /// `NSError.localizedDescription` is theoretically unbounded; without a
+    /// cap, batch handlers that fan out per malformed entry can amplify a
+    /// single oversize Apple error into MB-scale stderr volume (#86 — DoS
+    /// amplification residual closure). 1024 chars is well above all
+    /// Apple-emitted EKError descriptions observed empirically while still
+    /// bounding the per-line cost. Internal so tests can pin the value.
+    /// See #86 for tuning rationale.
+    static let maxRawLogChars = 1024
+
     static func writeFailureLog(
         handler: String,
         identifier: String,
@@ -149,7 +159,18 @@ extension EventKitErrorSanitizer {
         if !(error is TrustedErrorMessage) {
             let safeHandler = escapeForStderr(handler)
             let safeIdentifier = escapeForStderr(identifier)
-            let safeRawLog = escapeForStderr(sanitized.rawLog)
+            // Cap fires BEFORE escapeForStderr so escape inflation
+            // (`\n` → `\\n`, etc.) cannot expand the budget. Suffix
+            // annotation tells operators the original payload size.
+            let truncated: String
+            if sanitized.rawLog.count > maxRawLogChars {
+                let omitted = sanitized.rawLog.count - maxRawLogChars
+                truncated = String(sanitized.rawLog.prefix(maxRawLogChars))
+                    + "…[truncated \(omitted) chars]"
+            } else {
+                truncated = sanitized.rawLog
+            }
+            let safeRawLog = escapeForStderr(truncated)
             FileHandle.standardError.write(
                 Data("\(safeHandler)(\(safeIdentifier)) failed: \(safeRawLog)\n".utf8)
             )
