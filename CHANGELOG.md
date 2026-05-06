@@ -49,6 +49,9 @@ Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7
 ### Known follow-up (tracked separately)
 - #32 _**(landed in this Unreleased window — see Security below)**_
 
+### Added
+- **`.github/workflows/test.yml` — PR-time test gate (#51 Layer 1)**: minimal CI workflow that runs `swift build` + `swift test` on every push/PR against `main`. Catches "PR breaks the test suite" before reviewer manual `swift test`. Runner pinned to `macos-latest` (EventKit is macOS-only). SPM `.build` cache keyed on `Package.resolved` for dependency-upgrade-aware invalidation. Concurrency group cancels in-progress runs on rapid push sequences. Layers 2 (lint workflows) + 3 (release automation with `.p12` cert in GH Secrets) deferred per #51 Strategy — see closing summary for trigger conditions.
+
 ### Documentation
 - **`writeFailureLog` + R3 inline-write thread-safety best-effort posture (#70)**: documented the actual concurrency property of the 11 `FileHandle.standardError.write` sites — POSIX `write(2)` only guarantees atomicity for byte counts ≤ macOS `PIPE_BUF` (**512 bytes**, NOT 4096; that's Linux). Failure-line shape `<handler>(<identifier>) failed: <safeRawLog>\n` exceeds 512 bytes for any non-trivial `NSError.localizedDescription` (`maxRawLogChars` is 1024 chars alone). Concurrent `async` failing-tool-call races therefore CAN interleave on stderr; operators must NOT rely on `tail -f stderr | parse-by-line` producing perfectly framed records. Serial actor option (Option A — `StderrLogger.shared`) deferred — at this server's single-client concurrency profile, the contention window is narrow enough that touching every catch handler with `await` propagation exceeds the observability value. **Trigger to revisit Option A**: multi-tenant deployment / SRE interleaving complaint / structured stderr becoming load-bearing / `#66` periodic-summary mechanism. See `#70` closing summary for full deferral rationale.
 
