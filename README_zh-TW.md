@@ -83,6 +83,11 @@ claude plugin install che-ical-mcp@psychquant-claude-plugins
 mkdir -p ~/bin
 
 # 下載最新版本
+# 注意：升級時請先 `rm -f ~/bin/CheICalMCP`。沒做這步的話，
+# macOS 26 kernel 可能會拿舊 inode 的 stale code-signature
+# cache 殺掉新 binary（執行中的舊 MCP server processes 可能還
+# 持有那個 inode）— 這是 #62 修的升級陷阱。
+rm -f ~/bin/CheICalMCP
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
@@ -198,6 +203,8 @@ make release && make install
 
 1. 下載執行檔：
    ```bash
+   # 升級時先 rm -f 舊 binary（macOS 26 inode-reuse 簽章雜湊錯位陷阱，#62）
+   rm -f /usr/local/bin/che-ical-mcp
    curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
    chmod +x /usr/local/bin/che-ical-mcp
    ```
@@ -222,6 +229,8 @@ make release && make install
 mkdir -p ~/bin
 
 # 下載執行檔
+# 升級時先 rm -f 舊 binary（macOS 26 inode-reuse 簽章雜湊錯位陷阱，#62）
+rm -f ~/bin/CheICalMCP
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
