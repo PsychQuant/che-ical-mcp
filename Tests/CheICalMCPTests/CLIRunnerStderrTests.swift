@@ -6,73 +6,22 @@ import XCTest
 
 /// Stderr-capture tests for `CLIRunner.handleRunError(_:toolName:)` (#80).
 ///
-/// These tests pin the cluster invariants `CLIRunner` inherited when its
-/// catch was migrated from inline `FileHandle.standardError.write` to
+/// Pins the cluster invariants `CLIRunner` inherited when its catch was
+/// migrated from inline `FileHandle.standardError.write` to
 /// `EventKitErrorSanitizer.writeFailureLog`:
 ///
 /// 1. **Trusted-branch carve-out (#41)** — `TrustedErrorMessage` conformers
 ///    (e.g. `CLIError`, `ToolError`) skip stderr entirely to avoid the
 ///    DoS-amplification window the R3/R7/R8 carve-outs close.
 /// 2. **`escapeForStderr` (#37 F2)** — control chars in untrusted error
-///    `localizedDescription` are neutralized (CWE-117 log injection
+///    `localizedDescription` are neutralized (CWE-117 log-injection
 ///    defense) before reaching stderr.
 ///
-/// **Stderr-capture pattern** (first instance in this repo): use a
-/// `Pipe` + `dup2(STDERR_FILENO, ...)` to redirect stderr writes during
-/// the test, restore in `tearDown`. If #83 (cluster-wide stderr-capture
-/// harness) lands later, this pattern should be extracted into a shared
-/// `Tests/CheICalMCPTests/Helpers/StderrCapture.swift`.
+/// **Migrated to shared `withCapturedStderr` helper (#83)**: previously
+/// inlined the 50-line `setUp`/`tearDown`/`readCapturedStderr` dup2-pipe
+/// pattern; now uses `Tests/CheICalMCPTests/Helpers/StderrCaptureHarness.swift`.
+/// The dup2-deadlock fix is centralized in the helper.
 final class CLIRunnerStderrTests: XCTestCase {
-
-    private var savedStderrFD: Int32 = -1
-    private var capturePipe: Pipe?
-
-    override func setUp() {
-        super.setUp()
-        let pipe = Pipe()
-        // Save current stderr so we can restore in tearDown.
-        savedStderrFD = dup(STDERR_FILENO)
-        // Redirect stderr writes into the pipe's write end.
-        dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-        capturePipe = pipe
-    }
-
-    override func tearDown() {
-        // If a test didn't drain the pipe (e.g. assertion failure aborted
-        // early), still clean up: restore stderr first (so any FD 2 dup
-        // pointing at the write end is closed), then close the explicit
-        // FileHandle write end too.
-        if savedStderrFD >= 0 {
-            dup2(savedStderrFD, STDERR_FILENO)
-            close(savedStderrFD)
-            savedStderrFD = -1
-        }
-        capturePipe?.fileHandleForWriting.closeFile()
-        capturePipe = nil
-        super.tearDown()
-    }
-
-    /// Read whatever has been written to stderr since `setUp`. Restores
-    /// `STDERR_FILENO` *before* reading because `dup2` made FD 2 a copy
-    /// of the pipe's write-end FD — closing only the explicit FileHandle
-    /// would leave FD 2 still pointing at the write end, and
-    /// `readDataToEndOfFile` would block waiting for EOF that never comes.
-    /// Restoring stderr closes FD 2's reference to the pipe, the explicit
-    /// write-end close drops the last reference, and the read gets EOF.
-    private func readCapturedStderr() -> String {
-        guard let pipe = capturePipe else { return "" }
-        // 1. Restore real stderr — also closes FD 2's dup of the write end.
-        if savedStderrFD >= 0 {
-            dup2(savedStderrFD, STDERR_FILENO)
-            close(savedStderrFD)
-            savedStderrFD = -1
-        }
-        // 2. Drop the last writer reference so the reader sees EOF.
-        pipe.fileHandleForWriting.closeFile()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        capturePipe = nil
-        return String(data: data, encoding: .utf8) ?? ""
-    }
 
     // MARK: - Trusted-branch carve-out (#41 inheritance)
 
@@ -80,12 +29,12 @@ final class CLIRunnerStderrTests: XCTestCase {
         // CLIError conforms to TrustedErrorMessage (CLIRunner.swift:7).
         // The wire response (stdout JSON) carries the same string, so
         // stderr would be a duplicate — writeFailureLog skips it.
-        CLIRunner.handleRunError(
-            CLIRunner.CLIError.missingToolName,
-            toolName: nil
-        )
-
-        let stderr = readCapturedStderr()
+        let stderr = capturedStderr {
+            CLIRunner.handleRunError(
+                CLIRunner.CLIError.missingToolName,
+                toolName: nil
+            )
+        }
         XCTAssertTrue(
             stderr.isEmpty,
             "CLIError (TrustedErrorMessage) must NOT write stderr; got: \(stderr.debugDescription)"
@@ -94,12 +43,12 @@ final class CLIRunnerStderrTests: XCTestCase {
 
     func testToolErrorCarveOutSuppressesStderr() {
         // ToolError also conforms to TrustedErrorMessage. Same carve-out.
-        CLIRunner.handleRunError(
-            ToolError.invalidParameter("calendar_name is required"),
-            toolName: "list_events"
-        )
-
-        let stderr = readCapturedStderr()
+        let stderr = capturedStderr {
+            CLIRunner.handleRunError(
+                ToolError.invalidParameter("calendar_name is required"),
+                toolName: "list_events"
+            )
+        }
         XCTAssertTrue(
             stderr.isEmpty,
             "ToolError (TrustedErrorMessage) must NOT write stderr; got: \(stderr.debugDescription)"
@@ -119,9 +68,10 @@ final class CLIRunnerStderrTests: XCTestCase {
             userInfo: [NSLocalizedDescriptionKey: "evil\nlog\rline"]
         )
 
-        CLIRunner.handleRunError(evilError, toolName: "list_events")
+        let stderr = capturedStderr {
+            CLIRunner.handleRunError(evilError, toolName: "list_events")
+        }
 
-        let stderr = readCapturedStderr()
         XCTAssertFalse(
             stderr.isEmpty,
             "untrusted NSError must write a single stderr line"
@@ -160,9 +110,10 @@ final class CLIRunnerStderrTests: XCTestCase {
             userInfo: [NSLocalizedDescriptionKey: "framework error"]
         )
 
-        CLIRunner.handleRunError(untrusted, toolName: nil)
+        let stderr = capturedStderr {
+            CLIRunner.handleRunError(untrusted, toolName: nil)
+        }
 
-        let stderr = readCapturedStderr()
         XCTAssertTrue(
             stderr.hasPrefix("CLIRunner(<no-tool>) failed:"),
             "nil toolName must fall back to the literal <no-tool> identifier; got: \(stderr.debugDescription)"
