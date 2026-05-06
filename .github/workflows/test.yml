@@ -1,0 +1,68 @@
+# PR-time test gate (#51 Layer 1)
+#
+# Runs `swift build` and `swift test` on every push and PR against main.
+# This is the minimum viable CI: catches "PR breaks the test suite" before
+# the maintainer manually runs `swift test` locally.
+#
+# Layer 2 (lint workflows: version-drift check #48, markdown lint, swift-format)
+# and Layer 3 (release automation: signing + notarization in CI requiring
+# .p12 cert export to GH Secrets — security trade-off) are deliberately
+# deferred per #51 Strategy. See #51 closing summary for trigger conditions
+# to expand this workflow.
+#
+# Runner: macos-latest is required because the test suite uses EventKit
+# (macOS-only Apple framework). Linux runners cannot satisfy `import EventKit`.
+# This pins the workflow's Apple-platform-only nature; cross-platform CI is
+# explicitly out of scope per #51 Out-of-scope clause.
+#
+# Security note: this workflow uses ONLY safe context expressions:
+# `github.workflow`, `github.ref`, `runner.os`, `hashFiles('Package.resolved')`.
+# It deliberately does NOT consume any untrusted input (issue/PR titles,
+# commit messages, branch names) in `run:` blocks — the per-blog-post
+# command-injection vector is closed by construction.
+
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on the same ref when a new commit lands. Saves
+# CI minutes on rapid push sequences (typical in IDD verify-fix loops).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: swift build + swift test
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain version
+        run: |
+          swift --version
+          xcodebuild -version
+
+      # Cache .build/ — SPM dependency resolution + compilation is the
+      # bulk of the runtime. Keyed on Package.resolved so cache invalidates
+      # automatically on dependency upgrade.
+      - name: Cache SPM .build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
