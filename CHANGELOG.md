@@ -50,6 +50,7 @@ Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7
 - #32 _**(landed in this Unreleased window — see Security below)**_
 
 ### Added
+- **`make install-signed` Makefile target (#50)**: Developer ID + hardened runtime signature WITHOUT notarization for fast maintainer dev iteration. Solves the macOS 26 TCC dogfood gap — ad-hoc signed binaries (`make install`) can't trigger Calendar / Reminders permission dialogs on macOS 26, breaking the maintainer's `--setup` flow verification. Trade-offs vs `release-signed`: signed-but-not-notarized → Gatekeeper online-checks on first launch (one-time stutter), suitable for maintainer dogfood / TCC flow verification on macOS 26, NOT for distribution to other users. Pre-condition: `DEVELOPER_ID` exported (`NOTARY_PROFILE` unused — no notarytool step).
 - **`.github/workflows/test.yml` — PR-time test gate (#51 Layer 1)**: minimal CI workflow that runs `swift build` + `swift test` on every push/PR against `main`. Catches "PR breaks the test suite" before reviewer manual `swift test`. Runner pinned to `macos-latest` (EventKit is macOS-only). SPM `.build` cache keyed on `Package.resolved` for dependency-upgrade-aware invalidation. Concurrency group cancels in-progress runs on rapid push sequences. Layers 2 (lint workflows) + 3 (release automation with `.p12` cert in GH Secrets) deferred per #51 Strategy — see closing summary for trigger conditions.
 
 ### Documentation

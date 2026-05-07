@@ -6,7 +6,7 @@ BINARY_NAME := CheICalMCP
 # Remove FALLBACK_FLAGS once the upstream issue is fixed.
 FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && echo "-Xswiftc -swift-version -Xswiftc 5")
 
-.PHONY: build release release-signed verify-release-ready install clean test
+.PHONY: build release release-signed verify-release-ready install install-signed clean test
 
 # Detect drift between AppVersion.current and the latest release tag.
 # Soft pre-flight: warns on drift, never aborts on the drift case (a maintainer
@@ -85,6 +85,42 @@ install: release
 	chmod +x ~/bin/$(BINARY_NAME)
 	codesign --force --sign - ~/bin/$(BINARY_NAME)
 	@echo "Installed: ~/bin/$(BINARY_NAME) (ad-hoc signed — dev only)"
+
+# Dev install with Developer ID signature (no notarization). Slower than
+# `make install` (Developer ID round-trip vs ad-hoc), but **fast enough for
+# dev iteration**: skips the notarytool submit step (1-15 min waits) that
+# `make release-signed` adds for distribution.
+#
+# Why this target exists (#50): on macOS 26, ad-hoc signed binaries cannot
+# trigger TCC permission dialogs (Calendar / Reminders). Maintainers
+# dogfooding `--setup` flows on their own machine need a Developer ID
+# signature to test the macOS 26 TCC interaction. `make install` (ad-hoc)
+# is too weak; `make release-signed` (full notarization, distribution-ready)
+# is overkill — this target is the middle ground.
+#
+# Trade-offs vs release-signed:
+#   - SIGNED with Developer ID + hardened runtime → TCC dialogs work
+#   - NOT notarized → Gatekeeper online-checks on first launch may stutter
+#     (one-time network hit), but the binary IS launchable on the dev machine
+#   - Suitable for: maintainer dogfood, TCC flow verification on macOS 26
+#   - NOT suitable for: distribution to other users (notarization required)
+#
+# Pre-condition: same as `release-signed` — `DEVELOPER_ID` exported in env.
+# `NOTARY_PROFILE` is NOT required (no notarization step).
+install-signed: release
+	@: $${DEVELOPER_ID:?DEVELOPER_ID not set. See README 'Signing & Notarization' for setup. \
+	   For dev install on macOS 26 you only need DEVELOPER_ID — NOTARY_PROFILE is unused here.}
+	rm -f ~/bin/$(BINARY_NAME)
+	cp .build/release/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
+	chmod +x ~/bin/$(BINARY_NAME)
+	codesign --force \
+	         --sign "$$DEVELOPER_ID" \
+	         --options runtime \
+	         --entitlements Sources/CheICalMCP/Entitlements.plist \
+	         ~/bin/$(BINARY_NAME)
+	@echo "Installed: ~/bin/$(BINARY_NAME) (Developer ID signed, NOT notarized — dev only)"
+	@echo "ℹ macOS 26 TCC dialogs WILL trigger because the binary has Developer ID + hardened runtime."
+	@echo "ℹ For distribution to other users, use 'make release-signed' instead (adds notarization)."
 
 test:
 	swift test $(FALLBACK_FLAGS)
