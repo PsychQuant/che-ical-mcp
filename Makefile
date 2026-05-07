@@ -6,7 +6,7 @@ BINARY_NAME := CheICalMCP
 # Remove FALLBACK_FLAGS once the upstream issue is fixed.
 FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && echo "-Xswiftc -swift-version -Xswiftc 5")
 
-.PHONY: build release release-signed verify-release-ready install install-signed clean test
+.PHONY: build release release-signed verify-release-ready verify-developer-id install install-signed clean test
 
 # Detect drift between AppVersion.current and the latest release tag.
 # Soft pre-flight: warns on drift, never aborts on the drift case (a maintainer
@@ -107,9 +107,21 @@ install: release
 #
 # Pre-condition: same as `release-signed` — `DEVELOPER_ID` exported in env.
 # `NOTARY_PROFILE` is NOT required (no notarization step).
-install-signed: release
+#
+# `verify-developer-id` runs FIRST (before `release`) so a missing
+# DEVELOPER_ID env var aborts BEFORE the ~30-second `swift build -c release`
+# (#50 verify Codex caught: original placement let the DEVELOPER_ID check
+# fire only after build, wasting the user's iteration time on a guaranteed
+# failure).
+
+# Internal helper target: hard-fail early if DEVELOPER_ID env var is missing.
+# Listed in .PHONY since it produces no file. Used as a left-most dep on
+# `install-signed` so make resolves it before the `release` build dep.
+verify-developer-id:
 	@: $${DEVELOPER_ID:?DEVELOPER_ID not set. See README 'Signing & Notarization' for setup. \
 	   For dev install on macOS 26 you only need DEVELOPER_ID — NOTARY_PROFILE is unused here.}
+
+install-signed: verify-developer-id release
 	rm -f ~/bin/$(BINARY_NAME)
 	cp .build/release/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
 	chmod +x ~/bin/$(BINARY_NAME)
