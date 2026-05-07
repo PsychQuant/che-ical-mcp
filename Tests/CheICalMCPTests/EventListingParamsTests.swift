@@ -131,6 +131,34 @@ final class EventListingParamsTests: XCTestCase {
         )
     }
 
+    func testDisplayTimezoneRejectsESTAbbreviation() {
+        // East-coast abbreviation. Foundation accepts "EST" but its semantics
+        // (always GMT-5, no DST) differ from "America/New_York" (DST-aware).
+        // Reject so consumers can't be silently surprised by DST behavior.
+        let args: [String: Value] = ["display_timezone": .string("EST")]
+        assertInvalidParameter(
+            try InputValidation.parseDisplayTimezone(args),
+            messageContains: "EST"
+        )
+    }
+
+    func testDisplayTimezoneRejectsPosixStyleOffset() {
+        // POSIX-style offset like "GMT+08:00" — Foundation accepts this but
+        // it has no DST awareness and behaves differently than a city zone.
+        let args: [String: Value] = ["display_timezone": .string("GMT+08:00")]
+        assertInvalidParameter(
+            try InputValidation.parseDisplayTimezone(args),
+            messageContains: "GMT+08:00"
+        )
+    }
+
+    func testDisplayTimezoneAcceptsAsiaTaipei() throws {
+        // Region/City form is the canonical IANA shape — must always work.
+        let args: [String: Value] = ["display_timezone": .string("Asia/Taipei")]
+        let tz = try InputValidation.parseDisplayTimezone(args)
+        XCTAssertEqual(tz?.identifier, "Asia/Taipei")
+    }
+
     // MARK: - parseFieldsFilter — accept
 
     func testFieldsReturnsNilWhenAbsent() throws {

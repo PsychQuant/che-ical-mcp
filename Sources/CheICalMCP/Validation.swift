@@ -55,11 +55,28 @@ enum InputValidation {
         return level
     }
 
+    /// Accept IANA Region/City identifiers (`Asia/Taipei`) plus `UTC`.
+    /// Reject everything else — abbreviations (`PST`, `EST`), POSIX-style offsets
+    /// (`GMT+08:00`), unknown identifiers — to keep `*_local` rendering predictable.
+    ///
+    /// Foundation's `TimeZone(identifier:)` is permissive on macOS: it accepts
+    /// abbreviations and POSIX-style strings whose semantics differ between hosts
+    /// and across DST boundaries. `TimeZone.knownTimeZoneIdentifiers` is the
+    /// canonical IANA list (~440 entries) — strict membership eliminates that
+    /// ambiguity. `UTC` is treated as a named alias because it is universally
+    /// understood and `TimeZone(identifier: "UTC")` is well-defined, even though
+    /// `knownTimeZoneIdentifiers` only carries `GMT`.
     static func parseDisplayTimezone(_ arguments: [String: Value]) throws -> TimeZone? {
         guard let tzString = arguments["display_timezone"]?.stringValue else { return nil }
-        guard let tz = TimeZone(identifier: tzString) else {
+        let isCanonicalIANA = TimeZone.knownTimeZoneIdentifiers.contains(tzString)
+        let isAcceptedAlias = tzString == "UTC"
+        guard isCanonicalIANA || isAcceptedAlias,
+              let tz = TimeZone(identifier: tzString)
+        else {
             throw ToolError.invalidParameter(
-                "Invalid display_timezone: '\(tzString)'. Use IANA format (e.g., 'America/Los_Angeles', 'Europe/Berlin')."
+                "Invalid display_timezone: '\(tzString)'. Use IANA Region/City format "
+                + "(e.g., 'America/Los_Angeles', 'Europe/Berlin', 'Asia/Taipei') or 'UTC'. "
+                + "Abbreviations like 'PST'/'EST' and POSIX-style offsets like 'GMT+08:00' are not supported."
             )
         }
         return tz
