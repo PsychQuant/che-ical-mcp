@@ -603,7 +603,7 @@ Starting v1.7.1, release binaries are signed with a Developer ID Application cer
 
 ```bash
 make release-signed     # builds universal binary → signs + notarizes → packages .mcpb
-gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/che-ical-mcp.mcpb --notes "..."
+gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/server/CheICalMCP.sha256 mcpb/che-ical-mcp.mcpb --notes "..."
 ```
 
 `make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. The signing script does pre-flight checks (cert + notarytool profile) and fails fast with friendly messages if anything's missing. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
