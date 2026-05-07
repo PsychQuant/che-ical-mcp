@@ -2195,7 +2195,7 @@ class CheICalMCPServer {
         var response: [String: Any] = [
             "keywords": keywords,
             "match_mode": matchMode,
-            "result_count": totalCount,
+            "event_count": totalCount,
             "searched_range": [
                 "start": dateFormatter.string(from: effectiveStart),
                 "start_local": formatLocal(effectiveStart, in: displayTimezone),
