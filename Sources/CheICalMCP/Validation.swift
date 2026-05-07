@@ -48,7 +48,13 @@ enum InputValidation {
     static let validDetailLevels: Set<String> = ["summary", "standard"]
 
     static func validateDetailLevel(_ arguments: [String: Value]) throws -> String {
-        guard let level = arguments["detail_level"]?.stringValue else { return "standard" }
+        guard let raw = arguments["detail_level"] else { return "standard" }
+        // F2 (#101): distinguish absent (return default) from present-but-non-string
+        // (throw). Pre-fix `?.stringValue` collapsed both into nil → silent default,
+        // which is the same #28 R2-F1 type-coerce-bypass class the B1/B2 fixes closed.
+        guard let level = raw.stringValue else {
+            throw ToolError.invalidParameter("detail_level must be a string ('summary' or 'standard')")
+        }
         guard validDetailLevels.contains(level) else {
             throw ToolError.invalidParameter("detail_level must be 'summary' or 'standard'")
         }
@@ -67,7 +73,15 @@ enum InputValidation {
     /// understood and `TimeZone(identifier: "UTC")` is well-defined, even though
     /// `knownTimeZoneIdentifiers` only carries `GMT`.
     static func parseDisplayTimezone(_ arguments: [String: Value]) throws -> TimeZone? {
-        guard let tzString = arguments["display_timezone"]?.stringValue else { return nil }
+        guard let raw = arguments["display_timezone"] else { return nil }
+        // F2 (#101): distinguish absent (return nil) from present-but-non-string
+        // (throw). Pre-fix `?.stringValue` collapsed both into nil → silent disable
+        // of conversion, same #28 R2-F1 class the B1/B2 fixes closed.
+        guard let tzString = raw.stringValue else {
+            throw ToolError.invalidParameter(
+                "display_timezone must be a string (IANA Region/City like 'America/Los_Angeles' or 'UTC')"
+            )
+        }
         let isCanonicalIANA = TimeZone.knownTimeZoneIdentifiers.contains(tzString)
         let isAcceptedAlias = tzString == "UTC"
         guard isCanonicalIANA || isAcceptedAlias,
@@ -148,11 +162,19 @@ enum InputValidation {
         // Some JSON clients lift integer literals to Double to avoid precision
         // loss. Accept whole-number doubles (5.0 -> 5) but reject fractional
         // (5.5 stays an error — it's clearly not an integer intent).
+        //
+        // F1 (#101): use `Int(exactly:)` instead of `Int(_:)`. The naive
+        // `d <= Double(Int.max)` bound check is a tautology at the boundary —
+        // `Double(Int.max)` rounds UP to 2^63 (Int.max=2^63-1 is not exactly
+        // representable as Double), so a payload like `9223372036854776000`
+        // passes the bound check but `Int(d)` traps. `Int(exactly:)` returns
+        // nil cleanly and is the canonical Swift idiom for "is this Double
+        // a value Int can losslessly hold."
         if let d = raw.doubleValue,
            d.truncatingRemainder(dividingBy: 1) == 0,
-           d >= Double(Int.min), d <= Double(Int.max)
+           let n = Int(exactly: d)
         {
-            return Int(d)
+            return n
         }
         throw ToolError.invalidParameter("\(key) must be an integer")
     }
@@ -161,15 +183,15 @@ enum InputValidation {
     /// downstream signal (no-limit / take-all) rather than "use default".
     /// Returns nil only when the key is missing; throws on type-mismatch
     /// (string `"5"`, fractional `5.5`, bool, etc.) — same loud-failure
-    /// discipline as `requireIntIfPresent`.
+    /// discipline as `requireIntIfPresent`. Same F1 boundary defense.
     static func requireOptionalInt(_ arguments: [String: Value], key: String) throws -> Int? {
         guard let raw = arguments[key] else { return nil }
         if let n = raw.intValue { return n }
         if let d = raw.doubleValue,
            d.truncatingRemainder(dividingBy: 1) == 0,
-           d >= Double(Int.min), d <= Double(Int.max)
+           let n = Int(exactly: d)
         {
-            return Int(d)
+            return n
         }
         throw ToolError.invalidParameter("\(key) must be an integer")
     }
@@ -190,13 +212,22 @@ enum InputValidation {
         return n
     }
 
-    /// M4: pick the identifier to echo in `list_events_quick`'s envelope
-    /// `timezone` field. When `display_timezone` is set, that's the zone
-    /// `*_local` fields rendered in — echoing system tz instead would be
-    /// internally inconsistent. Pure helper so the choice is unit-testable
-    /// without spinning up an `EKEventStore`.
-    static func envelopeTimezoneIdentifier(displayTimezone: TimeZone?) -> String {
-        return displayTimezone?.identifier ?? TimeZone.current.identifier
+    /// M4 + F3 (#101): pick the identifier to echo in response envelopes
+    /// (`list_events_quick.timezone`, top-level `display_timezone` echoes).
+    ///
+    /// Takes the user's RAW `display_timezone` input rather than a `TimeZone`
+    /// because Foundation normalizes `TimeZone(identifier: "UTC").identifier`
+    /// to `"GMT"` — passing the resolved TimeZone would echo `GMT` for a
+    /// requested `UTC`, which is wrong-by-spec. The raw string preserves
+    /// what the user asked for verbatim.
+    ///
+    /// When the user did NOT pass `display_timezone`, falls back to
+    /// `TimeZone.current.identifier` (system tz, original M4 contract).
+    ///
+    /// **Caller responsibility**: pre-validate via `parseDisplayTimezone(...)`
+    /// before reading raw input — this helper does not re-validate.
+    static func envelopeTimezoneIdentifier(requestedDisplayTimezone: String?) -> String {
+        return requestedDisplayTimezone ?? TimeZone.current.identifier
     }
 }
 

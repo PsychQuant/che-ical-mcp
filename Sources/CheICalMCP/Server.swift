@@ -1270,8 +1270,11 @@ class CheICalMCPServer {
             "events": result,
             "metadata": metadata
         ]
-        if let displayTimezone = displayTimezone {
-            response["display_timezone"] = displayTimezone.identifier
+        // F3 (#101): echo the raw user input ("UTC" stays "UTC") rather than
+        // displayTimezone.identifier (Foundation normalizes UTC to GMT).
+        if displayTimezone != nil,
+           let raw = arguments["display_timezone"]?.stringValue {
+            response["display_timezone"] = raw
         }
         return try formatJSON(response)
     }
@@ -2206,8 +2209,11 @@ class CheICalMCPServer {
             "events": result
         ]
         if let limit = limit { response["limit"] = limit }
-        if let displayTimezone = displayTimezone {
-            response["display_timezone"] = displayTimezone.identifier
+        // F3 (#101): echo the raw user input ("UTC" stays "UTC") rather than
+        // displayTimezone.identifier (Foundation normalizes UTC to GMT).
+        if displayTimezone != nil,
+           let raw = arguments["display_timezone"]?.stringValue {
+            response["display_timezone"] = raw
         }
         return try formatJSON(response)
     }
@@ -2253,7 +2259,9 @@ class CheICalMCPServer {
             "start_date_local": formatLocal(startDate, in: displayTimezone),
             "end_date": dateFormatter.string(from: endDate),
             "end_date_local": formatLocal(endDate, in: displayTimezone),
-            "timezone": InputValidation.envelopeTimezoneIdentifier(displayTimezone: displayTimezone),
+            "timezone": InputValidation.envelopeTimezoneIdentifier(
+                requestedDisplayTimezone: displayTimezone != nil ? arguments["display_timezone"]?.stringValue : nil
+            ),
             "event_count": totalCount,
             "events": result
         ]
@@ -2262,8 +2270,11 @@ class CheICalMCPServer {
             response["week_starts_on"] = effectiveWeekStart
         }
         if let limit = limit { response["limit"] = limit }
-        if let displayTimezone = displayTimezone {
-            response["display_timezone"] = displayTimezone.identifier
+        // F3 (#101): echo the raw user input ("UTC" stays "UTC") rather than
+        // displayTimezone.identifier (Foundation normalizes UTC to GMT).
+        if displayTimezone != nil,
+           let raw = arguments["display_timezone"]?.stringValue {
+            response["display_timezone"] = raw
         }
         return try formatJSON(response)
     }

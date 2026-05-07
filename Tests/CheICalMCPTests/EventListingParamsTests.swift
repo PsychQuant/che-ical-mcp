@@ -314,21 +314,85 @@ final class EventListingParamsTests: XCTestCase {
         )
     }
 
-    // MARK: - envelopeTimezoneIdentifier (M4)
+    // MARK: - envelopeTimezoneIdentifier (M4 + F3)
+    // (See `testEnvelopeTimezoneEchoes*` and `testEnvelopeTimezoneFalls*`
+    // below — they cover M4's envelope-echo invariant + F3's UTC raw-input
+    // preservation. The old M4 API took `displayTimezone: TimeZone?` — this
+    // refactor (#101 F3) switched to `requestedDisplayTimezone: String?` so
+    // the helper preserves the user's raw token before Foundation's UTC→GMT
+    // normalization.)
 
-    func testEnvelopeTimezoneEchoesDisplayTimezoneWhenSet() {
-        // M4: when display_timezone is set, list_events_quick's envelope
-        // `timezone` field must echo the requested zone — otherwise readers
-        // see system tz while *_local fields render in the requested zone
-        // (internally contradictory).
-        let displayTz = TimeZone(identifier: "America/Los_Angeles")
-        let envelope = InputValidation.envelopeTimezoneIdentifier(displayTimezone: displayTz)
+    // MARK: - F1 (#101): Int.max boundary trap defense
+
+    func testLimitRejectsAboveIntMaxBoundary() {
+        // F1 (verify-fix): Pre-fix, `Int(d)` on a Double just above Int.max
+        // would TRAP the process. The bound check `d <= Double(Int.max)` is a
+        // tautology because Double(Int.max) rounds UP to 2^63 (Int.max=2^63-1
+        // is not exactly representable). Now uses Int(exactly:) which returns
+        // nil cleanly, throwing as invalidParameter.
+        //
+        // Reproducer payload: 9223372036854776000 (≈ Int.max + 1, decoded as
+        // .double by Value.init(from:) when Int.self decode fails).
+        let args: [String: Value] = ["limit": .double(9.223372036854776e18)]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "integer"
+        )
+    }
+
+    // (No symmetric below-Int.min test: Double(Int.min) IS exactly
+    // representable as -2^63, so Int(exactly:) succeeds at the lower
+    // boundary. The trap is asymmetric — only the upper boundary needs
+    // defense because Double(Int.max) rounds UP to 2^63. Values below
+    // Int.min that aren't representable are extremely rare in practice
+    // and any conversion failure simply throws "limit must be an integer.")
+
+    // MARK: - F2 (#101): non-string fallback rejection on detail_level / display_timezone
+
+    func testDetailLevelRejectsNonString() {
+        // F2 (verify-fix): pre-fix `arguments["detail_level"]?.stringValue`
+        // returned nil for any non-string input (e.g. detail_level=123),
+        // silently defaulting to "standard". Same #28 R2-F1 type-coerce-bypass
+        // class as B1/B2 fix; #25 loud-failure invariant must apply here too.
+        let args: [String: Value] = ["detail_level": .int(123)]
+        assertInvalidParameter(
+            try InputValidation.validateDetailLevel(args),
+            messageContains: "string"
+        )
+    }
+
+    func testDisplayTimezoneRejectsNonString() {
+        // F2 (verify-fix): pre-fix `?.stringValue` collapse silently disabled
+        // conversion when display_timezone was non-string. Now distinguishes
+        // absent (nil) from present-but-wrong-type (throw).
+        let args: [String: Value] = ["display_timezone": .int(123)]
+        assertInvalidParameter(
+            try InputValidation.parseDisplayTimezone(args),
+            messageContains: "string"
+        )
+    }
+
+    // MARK: - F3 (#101): UTC echo preservation
+
+    func testEnvelopeTimezoneEchoesRawUTC() {
+        // F3 (verify-fix): TimeZone(identifier: "UTC").identifier returns "GMT"
+        // on macOS Foundation. Echoing the resolved TimeZone gives "GMT" for
+        // a requested "UTC" — wrong-by-spec. The helper now takes the raw
+        // user input string; "UTC" stays "UTC".
+        let envelope = InputValidation.envelopeTimezoneIdentifier(requestedDisplayTimezone: "UTC")
+        XCTAssertEqual(envelope, "UTC", "Raw 'UTC' must round-trip without Foundation normalization")
+    }
+
+    func testEnvelopeTimezoneEchoesRegionCity() {
+        // Region/City zones don't have the normalization quirk — but confirm
+        // the new API still echoes them correctly.
+        let envelope = InputValidation.envelopeTimezoneIdentifier(requestedDisplayTimezone: "America/Los_Angeles")
         XCTAssertEqual(envelope, "America/Los_Angeles")
     }
 
-    func testEnvelopeTimezoneFallsBackToSystemWhenNil() {
-        // Pre-fix behavior preserved when display_timezone is absent.
-        let envelope = InputValidation.envelopeTimezoneIdentifier(displayTimezone: nil)
+    func testEnvelopeTimezoneFallsBackToSystemWhenAbsent() {
+        // No raw input → system tz fallback (M4's original contract).
+        let envelope = InputValidation.envelopeTimezoneIdentifier(requestedDisplayTimezone: nil)
         XCTAssertEqual(envelope, TimeZone.current.identifier)
     }
 
