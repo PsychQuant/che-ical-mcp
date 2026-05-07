@@ -211,4 +211,82 @@ final class EventListingParamsTests: XCTestCase {
             messageContains: "titel"
         )
     }
+
+    // MARK: - requireOptionalInt + requireOptionalLimit — accept
+
+    func testLimitReturnsNilWhenAbsent() throws {
+        let args: [String: Value] = [:]
+        let limit = try InputValidation.requireOptionalLimit(args)
+        XCTAssertNil(limit)
+    }
+
+    func testLimitAcceptsPositiveInt() throws {
+        let args: [String: Value] = ["limit": .int(50)]
+        let limit = try InputValidation.requireOptionalLimit(args)
+        XCTAssertEqual(limit, 50)
+    }
+
+    func testLimitAcceptsWholeDouble() throws {
+        // JSON clients sometimes promote integer literals to Double to avoid
+        // precision loss. Whole-number doubles (5.0) should pass through.
+        let args: [String: Value] = ["limit": .double(5.0)]
+        let limit = try InputValidation.requireOptionalLimit(args)
+        XCTAssertEqual(limit, 5)
+    }
+
+    func testLimitAcceptsCapBoundary() throws {
+        let args: [String: Value] = ["limit": .int(10000)]
+        let limit = try InputValidation.requireOptionalLimit(args)
+        XCTAssertEqual(limit, 10000)
+    }
+
+    // MARK: - requireOptionalLimit — reject (loud-failure invariant #25)
+
+    func testLimitRejectsString() {
+        // Pre-fix the raw `arguments["limit"]?.intValue` extraction silently
+        // dropped non-int inputs. This is the #25 loud-failure invariant: type
+        // mismatch must throw, not coerce-to-nil-then-default.
+        let args: [String: Value] = ["limit": .string("5")]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "limit"
+        )
+    }
+
+    func testLimitRejectsFractional() {
+        // 5.5 is clearly not an integer — reject rather than truncate.
+        let args: [String: Value] = ["limit": .double(5.5)]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "integer"
+        )
+    }
+
+    func testLimitRejectsZero() {
+        // limit=0 means "give me zero events" — never a useful intent;
+        // most likely an off-by-one bug. Reject rather than silently
+        // returning empty results.
+        let args: [String: Value] = ["limit": .int(0)]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "> 0"
+        )
+    }
+
+    func testLimitRejectsNegative() {
+        let args: [String: Value] = ["limit": .int(-1)]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "> 0"
+        )
+    }
+
+    func testLimitRejectsAboveCap() {
+        // Defense-in-depth against accidentally-massive responses.
+        let args: [String: Value] = ["limit": .int(10001)]
+        assertInvalidParameter(
+            try InputValidation.requireOptionalLimit(args),
+            messageContains: "10000"
+        )
+    }
 }

@@ -1214,7 +1214,7 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let filterMode = arguments["filter"]?.stringValue ?? "all"
         let sortMode = arguments["sort"]?.stringValue ?? "asc"
-        let limit = arguments["limit"]?.intValue
+        let limit = try InputValidation.requireOptionalLimit(arguments)
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)
@@ -1476,7 +1476,7 @@ class CheICalMCPServer {
     private func handleListReminders(arguments: [String: Value]) async throws -> String {
         let filterMode = arguments["filter"]?.stringValue
         let sortMode = arguments["sort"]?.stringValue ?? "due_date"
-        let limit = arguments["limit"]?.intValue
+        let limit = try InputValidation.requireOptionalLimit(arguments)
         // #29: enforce scope invariant consistent with cleanup_completed_reminders.
         // listReminders silently discards calendar_source when calendar_name is
         // nil — read-only so not destructive, but the API asymmetry is confusing
@@ -2165,7 +2165,7 @@ class CheICalMCPServer {
         let userEndDate: Date? = try arguments["end_date"]?.stringValue.map { try parseFlexibleDate($0) }
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let limit = arguments["limit"]?.intValue
+        let limit = try InputValidation.requireOptionalLimit(arguments)
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)
@@ -2222,7 +2222,7 @@ class CheICalMCPServer {
         let (startDate, endDate, effectiveWeekStart) = getDateRange(for: range, weekStartsOn: weekStartsOn)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let limit = arguments["limit"]?.intValue
+        let limit = try InputValidation.requireOptionalLimit(arguments)
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)

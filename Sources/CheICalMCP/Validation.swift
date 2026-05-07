@@ -125,6 +125,39 @@ enum InputValidation {
         }
         throw ToolError.invalidParameter("\(key) must be an integer")
     }
+
+    /// Optional-Int variant for arguments where "absent" is a legitimate
+    /// downstream signal (no-limit / take-all) rather than "use default".
+    /// Returns nil only when the key is missing; throws on type-mismatch
+    /// (string `"5"`, fractional `5.5`, bool, etc.) — same loud-failure
+    /// discipline as `requireIntIfPresent`.
+    static func requireOptionalInt(_ arguments: [String: Value], key: String) throws -> Int? {
+        guard let raw = arguments[key] else { return nil }
+        if let n = raw.intValue { return n }
+        if let d = raw.doubleValue,
+           d.truncatingRemainder(dividingBy: 1) == 0,
+           d >= Double(Int.min), d <= Double(Int.max)
+        {
+            return Int(d)
+        }
+        throw ToolError.invalidParameter("\(key) must be an integer")
+    }
+
+    /// `limit`-flavored wrapper around `requireOptionalInt` that adds bounds
+    /// validation. Rejects `limit ≤ 0` (zero events back is never a useful
+    /// caller intent — most likely an off-by-one bug) and caps the upper
+    /// bound at 10000 (defense-in-depth against accidentally-massive
+    /// responses). Absence still returns nil = no limit.
+    static func requireOptionalLimit(_ arguments: [String: Value], cap: Int = 10000) throws -> Int? {
+        guard let n = try requireOptionalInt(arguments, key: "limit") else { return nil }
+        if n <= 0 {
+            throw ToolError.invalidParameter("limit must be > 0 (omit the parameter for no limit)")
+        }
+        if n > cap {
+            throw ToolError.invalidParameter("limit must be ≤ \(cap)")
+        }
+        return n
+    }
 }
 
 /// Wraps MCP tool responses that echo external calendar/reminder content so
