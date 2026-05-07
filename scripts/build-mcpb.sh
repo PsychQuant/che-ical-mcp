@@ -101,6 +101,20 @@ echo ""
 echo "Architectures:"
 lipo -info "$UNIVERSAL_BINARY"
 
+# SHA-256 companion file (#98 self-update verification).
+# Written next to the binary so `gh release create` can upload both as assets;
+# `--self-update` (SelfUpdate.swift) downloads BOTH and verifies before install.
+# Format: single-line hex hash (matches `shasum -a 256` / `sha256sum` output).
+# We hash the SIGNED + NOTARIZED universal binary, so the .sha256 file
+# is generated AFTER signing — see post-Step-6 SHA write below for the
+# canonical artifact. This early write covers SKIP_CODESIGN=1 paths so
+# unsigned dev builds still get a checksum companion (handy for testing).
+SHA256_FILE="${UNIVERSAL_BINARY}.sha256"
+shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
+echo ""
+echo "SHA-256: $(cat "$SHA256_FILE")"
+echo "  written to: $SHA256_FILE"
+
 # Step 6: Sign + notarize for distribution.
 # Required for releases: macOS 26 TCC rejects ad-hoc binaries; Developer ID
 # signing + hardened runtime + notarization is the only way Calendar/Reminders
@@ -185,6 +199,17 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
         codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -E "Authority|TeamIdentifier" | sed 's/^/    /' >&2
         exit 1
     fi
+
+    # Re-compute SHA-256 of the signed + notarized binary (#98).
+    # The hash from before signing is now stale — codesign embeds the
+    # cert chain into the Mach-O Code Signing section, changing the
+    # binary's bytes. The .sha256 companion uploaded to the GitHub
+    # Release MUST match the binary that --self-update will download
+    # post-notarization, so we overwrite it here.
+    shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
+    echo ""
+    echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
+    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ...\`"
 fi
 
 # Step 7: Check for required files

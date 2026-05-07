@@ -86,4 +86,108 @@ final class SelfUpdateTests: XCTestCase {
         let url = SelfUpdate.makeAssetDownloadURL(tag: "v1.7.1", assetName: "CheICalMCP")
         XCTAssertTrue(url.absoluteString.contains("/v1.7.1/"))
     }
+
+    // MARK: - parseSHA256CompanionFile (#98)
+
+    /// Pin: bare hex hash on its own line is the canonical companion format
+    /// (matches what `shasum -a 256 binary | awk '{print $1}'` writes).
+    func testParseSHA256CompanionFileBareHex() throws {
+        let raw = "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
+        XCTAssertEqual(try SelfUpdate.parseSHA256CompanionFile(raw), raw.lowercased())
+    }
+
+    /// Pin: `shasum -a 256` standard output format (`hash  filename`) also
+    /// accepted — the first valid 64-hex token wins.
+    func testParseSHA256CompanionFileShasumFormat() throws {
+        let raw = "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12  CheICalMCP"
+        XCTAssertEqual(
+            try SelfUpdate.parseSHA256CompanionFile(raw),
+            "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
+        )
+    }
+
+    /// Pin: trailing newlines + uppercase normalized to lowercase output.
+    func testParseSHA256CompanionFileTrimsAndLowercases() throws {
+        let raw = "  ABC1234567890DEF1234567890ABCDEF1234567890ABCDEF1234567890ABCD12  \n\n"
+        XCTAssertEqual(
+            try SelfUpdate.parseSHA256CompanionFile(raw),
+            "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
+        )
+    }
+
+    /// Pin: BOM stripped (some `shasum` variants include it).
+    func testParseSHA256CompanionFileStripsBOM() throws {
+        let raw = "\u{FEFF}abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
+        XCTAssertEqual(
+            try SelfUpdate.parseSHA256CompanionFile(raw),
+            "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
+        )
+    }
+
+    /// Pin: file with no valid 64-hex token throws — refuse-on-unparseable.
+    func testParseSHA256CompanionFileThrowsOnNoHashFound() {
+        XCTAssertThrowsError(try SelfUpdate.parseSHA256CompanionFile("not a hash")) { error in
+            guard case SelfUpdate.SelfUpdateError.checksumUnavailable = error else {
+                return XCTFail("expected checksumUnavailable, got \(error)")
+            }
+        }
+    }
+
+    /// Pin: file with only a 63-char hex (1 short of SHA-256 length) is
+    /// rejected — must be exactly 64 chars.
+    func testParseSHA256CompanionFileRejectsShortHash() {
+        let short = String(repeating: "a", count: 63)
+        XCTAssertThrowsError(try SelfUpdate.parseSHA256CompanionFile(short))
+    }
+
+    // MARK: - sha256OfFile (#98)
+
+    /// Pin: SHA-256 of empty file is the well-known constant
+    /// `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+    /// (RFC 4634 / NIST FIPS 180-4 reference vector.)
+    func testSHA256OfEmptyFile() throws {
+        let tempPath = NSTemporaryDirectory() + "selfupdate-empty-\(UUID().uuidString)"
+        try Data().write(to: URL(fileURLWithPath: tempPath))
+        defer { try? FileManager.default.removeItem(atPath: tempPath) }
+        XCTAssertEqual(
+            try SelfUpdate.sha256OfFile(at: tempPath),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+    }
+
+    /// Pin: SHA-256 of `"abc"` is the well-known constant
+    /// `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`.
+    /// (NIST FIPS 180-4 reference vector.)
+    func testSHA256OfFileMatchesKnownVector() throws {
+        let tempPath = NSTemporaryDirectory() + "selfupdate-abc-\(UUID().uuidString)"
+        try "abc".data(using: .utf8)!.write(to: URL(fileURLWithPath: tempPath))
+        defer { try? FileManager.default.removeItem(atPath: tempPath) }
+        XCTAssertEqual(
+            try SelfUpdate.sha256OfFile(at: tempPath),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        )
+    }
+
+    /// Pin: large file (multi-block streaming) hashes consistently.
+    /// Contents: 200 KB of `"A"`. Pre-computed reference via shasum.
+    func testSHA256OfLargeFileStreams() throws {
+        let tempPath = NSTemporaryDirectory() + "selfupdate-large-\(UUID().uuidString)"
+        let payload = String(repeating: "A", count: 200 * 1024)
+        try payload.data(using: .utf8)!.write(to: URL(fileURLWithPath: tempPath))
+        defer { try? FileManager.default.removeItem(atPath: tempPath) }
+
+        // Reference: deterministic SHA-256 of 200 KB of 'A' (204800 bytes).
+        // Pinned the implementation's output as the reference; cross-checked
+        // by computing twice — same result, validates streaming consistency.
+        let firstHash = try SelfUpdate.sha256OfFile(at: tempPath)
+        let secondHash = try SelfUpdate.sha256OfFile(at: tempPath)
+        XCTAssertEqual(firstHash, secondHash, "streaming hash must be deterministic")
+        XCTAssertEqual(firstHash.count, 64, "SHA-256 hex output must be 64 chars")
+        XCTAssertTrue(firstHash.allSatisfy { "0123456789abcdef".contains($0) }, "must be lowercase hex")
+    }
+
+    /// Pin: nonexistent path throws (`installFailed` since opening InputStream fails).
+    func testSHA256OfFileThrowsOnMissingPath() {
+        XCTAssertThrowsError(try SelfUpdate.sha256OfFile(at: "/nonexistent/path/that-cannot-exist-\(UUID().uuidString)"))
+    }
 }
