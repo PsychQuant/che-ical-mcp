@@ -2242,14 +2242,18 @@ class CheICalMCPServer {
 
         let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
-        // Include the computed date range in response
+        // Include the computed date range in response.
+        //
+        // M4: envelope `timezone` field echoes display_timezone when set
+        // — `*_local` fields are rendered in *that* zone, not system tz, so
+        // the envelope must agree. Pure helper to keep choice unit-testable.
         var response: [String: Any] = [
             "range": range,
             "start_date": dateFormatter.string(from: startDate),
             "start_date_local": formatLocal(startDate, in: displayTimezone),
             "end_date": dateFormatter.string(from: endDate),
             "end_date_local": formatLocal(endDate, in: displayTimezone),
-            "timezone": TimeZone.current.identifier,
+            "timezone": InputValidation.envelopeTimezoneIdentifier(displayTimezone: displayTimezone),
             "event_count": totalCount,
             "events": result
         ]

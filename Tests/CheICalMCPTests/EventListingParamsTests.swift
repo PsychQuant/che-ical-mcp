@@ -313,4 +313,22 @@ final class EventListingParamsTests: XCTestCase {
             messageContains: "10000"
         )
     }
+
+    // MARK: - envelopeTimezoneIdentifier (M4)
+
+    func testEnvelopeTimezoneEchoesDisplayTimezoneWhenSet() {
+        // M4: when display_timezone is set, list_events_quick's envelope
+        // `timezone` field must echo the requested zone — otherwise readers
+        // see system tz while *_local fields render in the requested zone
+        // (internally contradictory).
+        let displayTz = TimeZone(identifier: "America/Los_Angeles")
+        let envelope = InputValidation.envelopeTimezoneIdentifier(displayTimezone: displayTz)
+        XCTAssertEqual(envelope, "America/Los_Angeles")
+    }
+
+    func testEnvelopeTimezoneFallsBackToSystemWhenNil() {
+        // Pre-fix behavior preserved when display_timezone is absent.
+        let envelope = InputValidation.envelopeTimezoneIdentifier(displayTimezone: nil)
+        XCTAssertEqual(envelope, TimeZone.current.identifier)
+    }
 }

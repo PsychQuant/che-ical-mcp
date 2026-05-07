@@ -172,6 +172,15 @@ enum InputValidation {
         }
         return n
     }
+
+    /// M4: pick the identifier to echo in `list_events_quick`'s envelope
+    /// `timezone` field. When `display_timezone` is set, that's the zone
+    /// `*_local` fields rendered in — echoing system tz instead would be
+    /// internally inconsistent. Pure helper so the choice is unit-testable
+    /// without spinning up an `EKEventStore`.
+    static func envelopeTimezoneIdentifier(displayTimezone: TimeZone?) -> String {
+        return displayTimezone?.identifier ?? TimeZone.current.identifier
+    }
 }
 
 /// Wraps MCP tool responses that echo external calendar/reminder content so
