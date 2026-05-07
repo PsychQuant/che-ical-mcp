@@ -18,11 +18,16 @@ if CommandLine.arguments.contains("--self-update") {
         try await SelfUpdate.run()
         exit(0)
     } catch {
-        // SelfUpdateError conforms to TrustedErrorMessage — its
-        // localizedDescription is hand-written and safe to print.
+        // #49 verify Finding 4: SelfUpdateError does NOT conform to
+        // TrustedErrorMessage because its detail strings come from
+        // URLSession / FileManager localizedDescription (framework-
+        // controlled, not author-controlled). Route through
+        // escapeForStderr to defend against CWE-117 control-char
+        // injection on the stderr path.
         let message = (error as? LocalizedError)?.errorDescription
                       ?? error.localizedDescription
-        FileHandle.standardError.write(Data("Self-update failed: \(message)\n".utf8))
+        let safe = EventKitErrorSanitizer.escapeForStderr(message)
+        FileHandle.standardError.write(Data("Self-update failed: \(safe)\n".utf8))
         exit(1)
     }
 }
