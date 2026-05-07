@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Event listing response-shape parameters** (#101, originally PR #47 by @fabiocarvalho777, taken over with `Co-authored-by` after 6-AI verify FAIL): four optional parameters on `list_events`, `search_events`, and `list_events_quick`:
+  - `detail_level` (string, `"summary"` | `"standard"`, default `"standard"`): preset response-verbosity tiers. `summary` returns 10 core fields (id/title/dates/timezone/is_all_day/calendar/location); `standard` returns all fields. Cuts token usage substantially when LLM consumers don't need notes/url/recurrence/attendees.
+  - `fields` (string array): fine-grained field selection — overrides `detail_level` when both supplied. Unknown field names rejected with `invalidParameter` listing all available options. Non-array input or non-string elements throw with the offending index, not silently dropped (#28 R2-F1 type-coerce-bypass class).
+  - `display_timezone` (string, IANA Region/City or `UTC`): converts `*_local` timestamp fields to specified zone. Strict membership check via `TimeZone.knownTimeZoneIdentifiers` rejects abbreviations (`PST`/`EST`) and POSIX-style offsets (`GMT+08:00`) that have ambiguous DST semantics. Per-event `timezone` field continues to report event's own zone. `list_events_quick` envelope `timezone` echoes the requested zone instead of system tz so renders are internally consistent (M4).
+  - `limit` (integer): added to `search_events` and `list_events_quick` (was already on `list_events`). Loud-failure on type mismatch (per #25) — string `"5"`, fractional `5.5`, etc. throw rather than silent-coerce. Bounds: must be `> 0` and `≤ 10000` (defense-in-depth against accidentally-massive responses).
+
+### Fixed
+
+- **`search_events.result_count` → `event_count`** (#101 M1): unifies the count-field name across all three event-listing tools (`list_events_quick.event_count` was already canonical; `list_events.metadata.returned` keeps post-limit semantics). LLM consumers no longer mis-interpret the same conceptual value under three names.
+
+### Changed
+
+- **`InputValidation.parseDisplayTimezone` strictness** (#101 B3): rejects Foundation-accepted abbreviations and POSIX offsets that varied semantics across hosts. Region/City IANA identifiers + `UTC` alias accepted; everything else rejected with `invalidParameter` listing examples. Adds determinism to `*_local` rendering at the cost of accepting a narrower input set.
+- **`summary` detail_level description** (#101 LO1): tool schema now lists all 10 emitted fields (was misleadingly described as "title, times, calendar, location only").
+- **`InputValidation.validEventFields` ↔ `formatEventDictKeys` drift detection** (#101 M3): mirror constant + bidirectional drift test catches forgotten updates when `formatEventDict`'s emission set changes.
+
+### Security
+
+- **`Int.max` boundary trap closed** (#101 F1, verify-fix from re-verify FAIL): `requireOptionalInt` and `requireIntIfPresent` now use `Int(exactly: d)` instead of `Int(d)`. Previously, a JSON payload `{"limit": 9223372036854776000}` (just above `Int.max`) decoded as `.double`, passed the bound check `d <= Double(Int.max)` (a tautology — `Double(Int.max)` rounds UP to 2^63 because `Int.max=2^63-1` is not exactly representable as `Double`), then `Int(d)` trapped the MCP server process. The cap at 10000 did not help — the trap fired inside `requireOptionalInt` BEFORE `requireOptionalLimit`'s cap check. Root-caused by 3-reviewer convergence (Logic + Security + Codex). DoS class; closed at root.
+- **Validator-contract uniformity for `detail_level` + `display_timezone`** (#101 F2, verify-fix): both helpers previously used `arguments[K]?.stringValue` which returns `nil` for any non-string input, silently coercing to default. Same #28 R2-F1 type-coerce-bypass class as the B1/B2 fixes for `limit` + `fields`. Now distinguish absent (return default/nil) from present-but-non-string (throw `invalidParameter`). Restores the validator contract `Validation.swift:4-8` claims ("never silently drop or coerce").
+- **`UTC` echo lossy fix** (#101 F3, verify-fix): `TimeZone(identifier: "UTC").identifier` returns `"GMT"` on Foundation/macOS (Foundation normalizes `UTC` to `GMT` internally). Previously the response `display_timezone` echo + envelope `timezone` field showed `"GMT"` for a requested `"UTC"`, lossy-by-spec. Helper signature changed from `displayTimezone: TimeZone?` to `requestedDisplayTimezone: String?`; all 4 echo sites in `Server.swift` now read raw user input via `arguments["display_timezone"]?.stringValue` so requested tokens round-trip verbatim.
+
 ## [1.7.2] - 2026-05-07
 
 Hardening + features wave following the v1.7.1 security baseline. This release lands the post-merge sanitizer-hardening cluster (#73 #74 #80 #85 #86 #94), the install / CI / distribution infrastructure cluster (#49 #50 #51 #98), zh-TW docs sync (#75 #90), and post-v1.7.1 polish (#46 #57 #58 #60). 30+ commits since v1.7.1, all with `Refs #N` IDD discipline and 6-AI parallel verify before merge.
