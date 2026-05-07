@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Event listing response-shape parameters** (#101, originally PR #47 by @fabiocarvalho777, taken over with `Co-authored-by` after 6-AI verify FAIL): four optional parameters on `list_events`, `search_events`, and `list_events_quick`:
+  - `detail_level` (string, `"summary"` | `"standard"`, default `"standard"`): preset response-verbosity tiers. `summary` returns 10 core fields (id/title/dates/timezone/is_all_day/calendar/location); `standard` returns all fields. Cuts token usage substantially when LLM consumers don't need notes/url/recurrence/attendees.
+  - `fields` (string array): fine-grained field selection — overrides `detail_level` when both supplied. Unknown field names rejected with `invalidParameter` listing all available options. Non-array input or non-string elements throw with the offending index, not silently dropped (#28 R2-F1 type-coerce-bypass class).
+  - `display_timezone` (string, IANA Region/City or `UTC`): converts `*_local` timestamp fields to specified zone. Strict membership check via `TimeZone.knownTimeZoneIdentifiers` rejects abbreviations (`PST`/`EST`) and POSIX-style offsets (`GMT+08:00`) that have ambiguous DST semantics. Per-event `timezone` field continues to report event's own zone. `list_events_quick` envelope `timezone` echoes the requested zone instead of system tz so renders are internally consistent (M4).
+  - `limit` (integer): added to `search_events` and `list_events_quick` (was already on `list_events`). Loud-failure on type mismatch (per #25) — string `"5"`, fractional `5.5`, etc. throw rather than silent-coerce. Bounds: must be `> 0` and `≤ 10000` (defense-in-depth against accidentally-massive responses).
+
+### Fixed
+
+- **`search_events.result_count` → `event_count`** (#101 M1): unifies the count-field name across all three event-listing tools (`list_events_quick.event_count` was already canonical; `list_events.metadata.returned` keeps post-limit semantics). LLM consumers no longer mis-interpret the same conceptual value under three names.
+
+### Changed
+
+- **`InputValidation.parseDisplayTimezone` strictness** (#101 B3): rejects Foundation-accepted abbreviations and POSIX offsets that varied semantics across hosts. Region/City IANA identifiers + `UTC` alias accepted; everything else rejected with `invalidParameter` listing examples. Adds determinism to `*_local` rendering at the cost of accepting a narrower input set.
+- **`summary` detail_level description** (#101 LO1): tool schema now lists all 10 emitted fields (was misleadingly described as "title, times, calendar, location only").
+- **`InputValidation.validEventFields` ↔ `formatEventDictKeys` drift detection** (#101 M3): mirror constant + bidirectional drift test catches forgotten updates when `formatEventDict`'s emission set changes.
+
 ## [1.7.2] - 2026-05-07
 
 Hardening + features wave following the v1.7.1 security baseline. This release lands the post-merge sanitizer-hardening cluster (#73 #74 #80 #85 #86 #94), the install / CI / distribution infrastructure cluster (#49 #50 #51 #98), zh-TW docs sync (#75 #90), and post-v1.7.1 polish (#46 #57 #58 #60). 30+ commits since v1.7.1, all with `Refs #N` IDD discipline and 6-AI parallel verify before merge.
