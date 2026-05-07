@@ -217,7 +217,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
@@ -681,7 +681,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
@@ -729,7 +729,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (title, times, calendar, location only) or 'standard' (all fields, default). Use 'summary' to reduce token usage.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
