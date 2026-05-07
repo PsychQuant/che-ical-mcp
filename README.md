@@ -129,6 +129,16 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer subprocess over MCP protocol. TCC permissions still required — run `CheICalMCP --setup` first if needed.
 
+### Upgrading an existing install
+
+The plugin wrapper auto-downloads on **fresh** installs, but does NOT replace an existing binary. To upgrade in place:
+
+```bash
+~/bin/CheICalMCP --self-update
+```
+
+This queries GitHub Releases for the latest tag, downloads the new binary, and atomically replaces the current one. If the binary is currently running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual alternative if `--self-update` is unavailable: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
+
 ---
 
 ## All 29 Tools

@@ -110,6 +110,16 @@ make release && make install
 
 首次使用時，macOS 會詢問**行事曆**和**提醒事項**存取權限 - 請點選「允許」。
 
+### 升級既有安裝
+
+Plugin wrapper 在**全新安裝**時會自動下載，但**不會**取代既有 binary。就地升級：
+
+```bash
+~/bin/CheICalMCP --self-update
+```
+
+會查詢 GitHub Releases 最新 tag、下載新 binary、原子地取代舊版。若 binary 正在當 MCP server 跑，升級後請重啟 MCP host（Claude Desktop / Claude Code）讓新版本生效。手動替代方案：`rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`。
+
 ---
 
 ## 全部 28 個工具
