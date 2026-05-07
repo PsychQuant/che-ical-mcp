@@ -13,6 +13,25 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
     exit(0)
 }
 
+if CommandLine.arguments.contains("--self-update") {
+    do {
+        try await SelfUpdate.run()
+        exit(0)
+    } catch {
+        // #49 verify Finding 4: SelfUpdateError does NOT conform to
+        // TrustedErrorMessage because its detail strings come from
+        // URLSession / FileManager localizedDescription (framework-
+        // controlled, not author-controlled). Route through
+        // escapeForStderr to defend against CWE-117 control-char
+        // injection on the stderr path.
+        let message = (error as? LocalizedError)?.errorDescription
+                      ?? error.localizedDescription
+        let safe = EventKitErrorSanitizer.escapeForStderr(message)
+        FileHandle.standardError.write(Data("Self-update failed: \(safe)\n".utf8))
+        exit(1)
+    }
+}
+
 if CommandLine.arguments.contains("--setup") {
     // Warn if running in a non-interactive environment where TCC dialogs cannot appear
     if ProcessInfo.processInfo.environment["TERM"] == nil || getppid() == 1 {

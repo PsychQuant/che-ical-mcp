@@ -64,7 +64,7 @@ The `rawLog` value is intended only for stderr logging on the server process and
 
 `EventKitManager.deleteRemindersBatch(identifiers:onlyCompleted:)` SHALL, in its `catch` block that handles `eventStore.remove(reminder:commit:)` failures, invoke `EventKitErrorSanitizer.sanitize(_:)` on the caught error. The method SHALL append the returned `code` as the second element of the `failures` tuple, and SHALL NOT append `error.localizedDescription` or any substring derived from it.
 
-The method SHALL write the returned `rawLog` value to `FileHandle.standardError` in a single line of the form `"deleteRemindersBatch(<identifier>) failed: <rawLog>\n"` before appending to `failures`.
+The method SHALL write the returned `rawLog` value to `FileHandle.standardError` in a single line of the form `"deleteRemindersBatch(<identifier>) failed: <rawLog>\n"` before appending to `failures`, **if and only if** `error` does NOT conform to `TrustedErrorMessage`. (Defensive symmetry with the writeFailureLog carve-out at R7. Note the rationale differs slightly here: R3 binds to `sanitize(_:)` directly — not `sanitizeForResponse(_:)` — so trusted errors at this site receive a framework-style code (e.g. `"error_unknown"`) that does NOT equal `rawLog`. The carve-out is therefore not "the wire response already carries the same string" — instead, it's a forward-compat hardening: if a future caller of `deleteRemindersBatch` propagates a `TrustedErrorMessage` conformer through this path, the stderr-amplification window stays closed by construction. In practice today, `eventStore.remove(reminder:commit:)` only throws `NSError`, so the gate doesn't fire on hot paths.)
 
 Pre-catch failure strings (`"Reminder not found"`, `"Reminder is no longer completed"`) are not affected by this requirement and SHALL continue to be appended literally.
 
@@ -73,6 +73,14 @@ Pre-catch failure strings (`"Reminder not found"`, `"Reminder is no longer compl
 - **GIVEN** `deleteRemindersBatch(identifiers: ["r1"], onlyCompleted: false)` where `eventStore.remove` throws `NSError(domain: EKErrorDomain, code: 3)`
 - **WHEN** the method returns
 - **THEN** the returned `BatchDeleteResult.failures` contains exactly one entry `(identifier: "r1", error: "eventkit_error_3")`
+- **AND** stderr contains the substring `"deleteRemindersBatch(r1) failed:"`
+
+#### Scenario: Trusted error in deleteRemindersBatch skips stderr
+
+- **GIVEN** `deleteRemindersBatch(identifiers: ["r1"], onlyCompleted: false)` where the catch block receives a `TrustedErrorMessage` conformer (e.g. `ToolError.invalidParameter("bogus id")`)
+- **WHEN** the method returns
+- **THEN** the returned `BatchDeleteResult.failures` contains an entry whose error equals the sanitized code
+- **AND** stderr does NOT contain the substring `"deleteRemindersBatch(r1) failed:"`
 
 #### Scenario: Pre-catch invariants still use literal strings
 
@@ -169,8 +177,10 @@ The function SHALL NOT mutate global state, perform I/O, or read any field of th
 The system SHALL provide a static function `EventKitErrorSanitizer.writeFailureLog(handler:identifier:error:) -> String`. The function SHALL:
 
 - Compute `let sanitized = sanitizeForResponse(error)`.
-- Write the line `"<handler>(<identifier>) failed: <sanitized.rawLog>\n"` to `FileHandle.standardError`. The literal characters `(` and `)` and `:` SHALL appear as shown.
+- Write the line `"<handler>(<identifier>) failed: <sanitized.rawLog>\n"` to `FileHandle.standardError` if and only if `error` does NOT conform to `TrustedErrorMessage`. The literal characters `(` and `)` and `:` SHALL appear as shown.
 - Return `sanitized.code`.
+
+The trusted-branch carve-out (#41) exists because for `TrustedErrorMessage` conformers, `code == rawLog == localizedDescription` — the wire response already carries the same string and a stderr write would just duplicate. Skipping it prevents stderr amplification when an attacker submits N malformed batch entries (each surfaces a `ToolError.invalidParameter` whose message is already on the response). Framework errors continue to write to stderr because they are the only operator-debuggable channel for the un-sanitized `localizedDescription`.
 
 Callers SHALL use this function in any catch block that previously assigned `error.localizedDescription` directly into an MCP response field, except for the catch block specified in "deleteRemindersBatch catch block routes errors through the sanitizer", which continues to use `sanitize(_:)` directly per its own requirement.
 
@@ -186,16 +196,19 @@ Callers SHALL use this function in any catch block that previously assigned `err
 - **GIVEN** `let err = ToolError.invalidParameter("start_date is required")`
 - **WHEN** `let code = EventKitErrorSanitizer.writeFailureLog(handler: "createEventsBatch", identifier: "0", error: err)` is called
 - **THEN** the returned `code` equals `"Invalid parameter: start_date is required"`
+- **AND** stderr does NOT contain the substring `"createEventsBatch(0) failed:"` (trusted-branch carve-out, #41)
 
 ---
-### Requirement: Outer handleToolCall catch routes through sanitizeForResponse
+### Requirement: Outer handleToolCall catch delegates to writeFailureLog
 
-The outer `catch` block of `CheICalMCPServer.handleToolCall` (located at `Sources/CheICalMCP/Server.swift` line 989 at the time of this requirement) SHALL produce its `CallTool.Result` by:
+The outer `catch` block of `CheICalMCPServer.handleToolCall` (located at `Sources/CheICalMCP/Server.swift` line 989 at the time of this requirement) SHALL produce its `CallTool.Result` by delegating to `EventKitErrorSanitizer.writeFailureLog(handler: "handleToolCall", identifier: name, error: error)` and returning `CallTool.Result(content: [.text("Error: \(returnedCode)")], isError: true)` where `returnedCode` is the function's return value.
 
-- Calling `EventKitErrorSanitizer.sanitizeForResponse(error)` on the caught error.
-- Returning `CallTool.Result(content: [.text("Error: \(sanitized.code)")], isError: true)`.
+By construction (per the `writeFailureLog` requirement below), this delegation:
 
-The block SHALL NOT pass `error.localizedDescription` (or any substring derived from it) directly into the returned `text` content, except via the trusted-pass-through branch of `sanitizeForResponse`.
+- Sanitizes the error via `sanitizeForResponse(error)` for the wire `code`.
+- Writes the line `"handleToolCall(<name>) failed: <sanitized.rawLog>\n"` to `FileHandle.standardError` **if and only if** `error` does NOT conform to `TrustedErrorMessage`. (Mirrors the R3 / R7 carve-outs — same rationale: trusted errors carry `code == rawLog` on the wire; framework errors hide their `localizedDescription` from the wire and need stderr as the only operator-debuggable channel.)
+
+The block SHALL NOT pass `error.localizedDescription` (or any substring derived from it) directly into the returned `text` content, except via the trusted-pass-through branch of `sanitizeForResponse` (which `writeFailureLog` invokes internally).
 
 The wire shape `"Error: <text>"` SHALL remain unchanged from prior behavior to avoid a breaking change for MCP clients that display the text verbatim.
 
@@ -212,6 +225,14 @@ The wire shape `"Error: <text>"` SHALL remain unchanged from prior behavior to a
 - **WHEN** the outer catch block runs
 - **THEN** the returned `CallTool.Result.content` contains exactly one `.text` element with content `"Error: eventkit_error_3"`
 - **AND** `CallTool.Result.isError` equals `true`
+- **AND** stderr contains the substring `"handleToolCall(<name>) failed:"`
+
+#### Scenario: Trusted error at outer catch skips stderr
+
+- **GIVEN** an MCP tool invocation `bogus` that causes `handleToolCall` to throw `ToolError.unknownTool("bogus")`
+- **WHEN** the outer catch block runs
+- **THEN** the returned `CallTool.Result.content[0].text` equals `"Error: Unknown tool: bogus"`
+- **AND** stderr does NOT contain the substring `"handleToolCall(bogus) failed:"`
 
 ---
 ### Requirement: Affected non-cleanup catch blocks dispatch via writeFailureLog

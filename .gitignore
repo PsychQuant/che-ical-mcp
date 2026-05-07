@@ -1,7 +1,11 @@
 # Swift
 .build/
 .swiftpm/
-Package.resolved
+# Package.resolved IS tracked (executable target — Apple recommends
+# committing the lockfile so CI / contributors see the same transitive
+# dependency versions; untracked previously, restored 2026-05-07 per #51
+# verify which caught that GH Actions cache key hashing this file would
+# always hash an absent file → cache never invalidates on dep upgrade).
 
 # Python (legacy)
 __pycache__/
@@ -35,4 +39,7 @@ openspec/.vector-search.db*
 .remember/
 .claude/settings.local.json
 .claude/issue-driven-dev.local.md
+.claude/issue-driven-dev.local.json
+.claude/ralph-loop.local.md
 .claude/scheduled_tasks.lock
+.claude/worktrees/

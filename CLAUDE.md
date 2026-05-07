@@ -38,4 +38,23 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 Helper files (e.g., `FakeEventKitManager.swift`) carry no `*Tests` suffix.
 
-When adding a test, ask: am I exercising a pure function (→ `*Tests`), the handler boundary (→ `*HandlerTests`), or the outer dispatch shell (→ `*DispatchTests`)? Mismatched suffix is a `idd-verify` finding worth flagging.
+**Helpers/ subdirectory** (`Tests/CheICalMCPTests/Helpers/`, #83): shared test infrastructure that is NOT a test class is exempt from the `*Tests.swift` naming convention. Files here provide cross-test utilities (e.g. `StderrCaptureHarness.swift` centralizing the `dup2`/`Pipe` stderr-capture pattern that the sanitizer cluster's carve-out tests share). The subdirectory's existence signals "library code for tests, not tests itself" — auditors looking for tests should search the parent directory; auditors looking for shared utilities should look here.
+
+When adding a test, ask: am I exercising a pure function (→ `*Tests`), the handler boundary (→ `*HandlerTests`), or the outer dispatch shell (→ `*DispatchTests`)? Mismatched suffix is a `idd-verify` finding worth flagging. Helpers go in `Helpers/` regardless of suffix.
+
+## Test Seam Convention (DI for handlers)
+
+`CheICalMCPServer` exposes EventKit primitives via two concurrent paths:
+
+1. **Concrete singleton** — `eventKitManager: EventKitManager` (used by 30+ handlers). Production behavior. Not unit-testable in isolation.
+2. **Per-feature narrow protocol** — e.g. `reminderCleanupSource: any EventKitManaging` (#31), used only by `handleCleanupCompletedReminders`. Defaults to `EventKitManager.shared` so production callers don't see the seam; tests inject a fake.
+
+When a handler needs a test fake, **introduce a new narrow `*Source` protocol scoped to that handler's surface area** (1–3 methods is typical). Do NOT widen `EventKitManaging` to cover the new handler's needs — #31 D1 deliberately keeps that protocol tight to avoid forcing every fake to stub unrelated methods.
+
+**Naming**: `<Domain>Source` (e.g. `EventBatchDeletionSource`, `ReminderTagSource`). The naming guidance applies to **new** protocols going forward; the existing `EventKitManaging` (#31, scoped narrow per its origin) keeps its name for compatibility — the protocol-typed parameter name (`reminderCleanupSource`) need not match the protocol's name (`EventKitManaging`). When introducing a new test seam, name the new protocol per `<Domain>Source` rather than reusing `EventKitManaging`.
+
+**Injection point**: add a constructor parameter with `EventKitManager.shared` as the default. The concrete `eventKitManager` property stays — these coexist.
+
+**Canonical example**: `reminderCleanupSource` in `CheICalMCPServer.init` + `Tests/CheICalMCPTests/CleanupHandlerTests.swift`. New handler tests should mirror that structure (the *injection pattern* — narrow protocol, default to shared singleton, inject in tests). The protocol *name* `EventKitManaging` is grandfathered; new protocols should use `<Domain>Source`.
+
+This convention is **per-handler doc**, not a refactor: existing 30+ handlers continue to use `eventKitManager` directly — no migration debt. The seam appears only when a handler graduates into the test surface.

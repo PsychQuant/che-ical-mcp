@@ -3,7 +3,7 @@ import Foundation
 /// Centralized version management
 enum AppVersion {
     /// Current version - update this when releasing
-    static let current = "1.7.1"
+    static let current = "1.7.2"
 
     /// App name
     static let name = "CheICalMCP"
@@ -31,6 +31,10 @@ enum AppVersion {
           --setup          Request Calendar & Reminders permissions and exit.
                            Run this once from Terminal before using with launchd
                            or other non-interactive environments.
+          --self-update    Check GitHub Releases for a newer binary, download
+                           and install it at the current binary's path. Use
+                           when an existing install needs to upgrade — wrapper
+                           auto-download covers fresh-install only (#49).
           --cli <tool>     Run a tool directly without MCP server.
                            Pass arguments as --key value pairs, or pipe JSON via stdin.
 

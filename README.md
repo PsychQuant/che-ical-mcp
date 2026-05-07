@@ -83,6 +83,11 @@ If you only need the MCP server without plugin features:
 mkdir -p ~/bin
 
 # Download the latest release
+# Note: if upgrading from an older version, `rm -f ~/bin/CheICalMCP` first.
+# Without this, on macOS 26 the kernel may kill the new binary with a stale
+# code-signature cache from the old inode (which running MCP processes might
+# still be holding open).
+rm -f ~/bin/CheICalMCP
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
@@ -123,6 +128,16 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 ```
 
 Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer subprocess over MCP protocol. TCC permissions still required — run `CheICalMCP --setup` first if needed.
+
+### Upgrading an existing install
+
+The plugin wrapper auto-downloads on **fresh** installs, but does NOT replace an existing binary. To upgrade in place:
+
+```bash
+~/bin/CheICalMCP --self-update
+```
+
+This queries GitHub Releases for the latest tag, downloads the new binary, and atomically replaces the current one. If the binary is currently running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual alternative if `--self-update` is unavailable: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
 
 ---
 
@@ -506,7 +521,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.7.1
+- **Current Version**: v1.7.2
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -519,6 +534,7 @@ CheICalMCP --setup
 
 | Version | Changes |
 |---------|---------|
+| v1.7.2 | **Hardening + features wave** (30+ commits over v1.7.1, all `Refs #N` IDD with 6-AI verify). **`--self-update`** (#49) + **SHA-256 binary verify** (#98): existing-install upgrade path with cryptographic guarantee against corrupted releases. **`make install-signed`** (#50): maintainer dev TCC flow on macOS 26 — fail-fast on missing Developer ID + force codesign verification. **CI test workflow** (#51): PR-time `swift build` + `swift test` on macos-latest. **Sanitizer hardening cluster**: `escapeForStderr` full C0+DEL coverage (#73), `sanitizeForInterpolation` for executeUndo/executeRedo title interpolation (#74), CLIRunner stderr delegated to `writeFailureLog` for trusted-branch carve-out (#80), `writeFailureLog` 1024-char DoS cap (#86), `CLIError.invalidJSON` author-controlled-only contract doc (#85), `FileHandle.standardError.write` thread-safety + macOS PIPE_BUF=512 documented (#70 / #94). **Distribution polish**: stale-codesign-cache install snippets get `rm -f` preamble (#90 zh-TW parity for #62). **Post-v1.7.1 polish** (#46 #57 #58 #60): redo error interpolation parity, `build-mcpb.sh` step renumbering, `Entitlements.plist` documentation, `Makefile release-signed:` cwd note. **`cleanup_completed_reminders` tool** (#21): single-call cleanup of all completed reminders, `dry_run=true` default. |
 | v1.7.1 | **Security hardening** (#20 #26): input validation (length limits + URL scheme allowlist) at all event/reminder entry points, prompt-injection wrapper on MCP read responses, parse-boundary validation for `days_of_week` / `days_of_month` / `alarms_minutes_offsets` (throws instead of silent-dropping invalid values), `Info.plist` catch-up, 42 new regression tests. |
 | v1.7.0 | **Attendee & organizer info** (#17): read-only `attendees` array and `organizer` object in event responses. Refactored shared `formatEventDict` method. |
 | v1.6.0 | **`--setup` flag** (#13): pre-authorize TCC permissions for launchd/automation. Non-interactive session detection (TERM + ppid). Combined SSH+launchd error messages. **`--cli` mode** (#14): invoke all 28 tools directly from command line without MCP server. Flag-based (`--key value`) and JSON stdin modes. Smart type inference for bool/int/double/array params. MCP Swift SDK 0.12.0 (Swift 6.3 compat). |
@@ -559,6 +575,101 @@ Version numbers live in three places with different semantics:
 | `server.json` — `version` + `packages[].identifier` + `fileSha256` | **MCP Registry submission snapshot** | Only when re-submitting a new `.mcpb` to the MCP Registry (independent cadence) |
 
 `scripts/build-mcpb.sh` enforces the first three match; it will fail the build if any drifts. `server.json` is intentionally decoupled because bumping it requires a rebuilt `.mcpb`, a fresh SHA256, and a re-submission — steps that don't happen every source release.
+
+#### Signing & Notarization (required for macOS 26+)
+
+Starting v1.7.1, release binaries are signed with a Developer ID Application certificate and notarized via Apple's `notarytool`. This is **required** on macOS 26 — ad-hoc signed binaries cannot trigger Calendar / Reminders TCC permission dialogs there.
+
+**Prerequisites** (one-time setup):
+
+1. Apple Developer Program enrollment.
+2. Developer ID Application certificate installed in login keychain.
+   - Verify with: `security find-identity -p codesigning -v` (must show `Developer ID Application: <Your Name> (<TeamID>)`).
+   - Your Team ID is your own — find it at <https://developer.apple.com/account> → Membership Details. (The maintainer's `6W377FS7BS` shown anywhere in this repo is for reference only.)
+3. `notarytool` keychain profile (any name; `che-ical-mcp` is the default the build script looks for).
+   - Create interactively (recommended — keeps password out of shell history):
+     ```bash
+     xcrun notarytool store-credentials che-ical-mcp --apple-id <your-apple-id> --team-id <your-team-id>
+     # notarytool will prompt for the app-specific password
+     ```
+   - App-specific password: generate at <https://account.apple.com> → Sign-In and Security → App-Specific Passwords. Use a single-purpose password (e.g. named `che-ical-mcp`); revoke + regenerate if leaked. **Never** pass it via `--password` on the command line — it lands in `~/.zsh_history`.
+4. Export your identity for the build script:
+   ```bash
+   export DEVELOPER_ID='Developer ID Application: <Your Name> (<TeamID>)'
+   export NOTARY_PROFILE='che-ical-mcp'   # match what you set up in step 3
+   ```
+   Persist these in `~/.zshrc` or a project-local `.envrc` (gitignored). The script intentionally has **no defaults** for these, so a fresh fork doesn't fail with errors referring to the maintainer's identity.
+
+**Per-release flow**:
+
+```bash
+make release-signed     # builds universal binary → signs + notarizes → packages .mcpb
+gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/server/CheICalMCP.sha256 mcpb/che-ical-mcp.mcpb --notes "..."
+```
+
+`make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. The signing script does pre-flight checks (cert + notarytool profile) and fails fast with friendly messages if anything's missing. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
+
+**Verification** after build (run all three to confirm end-to-end):
+
+```bash
+# 1. Signature properties (cert + hardened runtime + team ID)
+codesign -dv --verbose=2 mcpb/server/CheICalMCP
+# Expected:
+#   Authority=Developer ID Application: <Your Name> (<TeamID>)
+#   TeamIdentifier=<TeamID>
+#   flags=0x10000(runtime)
+#   Signature size in the few thousand bytes range (varies by cert chain)
+
+# 2. Signature integrity
+codesign --verify --deep --strict --verbose=2 mcpb/server/CheICalMCP
+# Expected: exit 0, no warnings
+
+# 3. Notarization end-to-end (this is the real "Gatekeeper would accept" gate)
+spctl -a -vvv -t install mcpb/server/CheICalMCP
+# Expected: <binary>: accepted; source=Notarized Developer ID
+#
+# Note on flag choice (verified empirically on macOS 26.4.1, 2026-05-04):
+#   -t execute → rejected "code is valid but does not seem to be an app"
+#                (Apple's "execute" type expects a .app bundle structure,
+#                 not raw Mach-O CLI binaries)
+#   -t install → accepted; source=Notarized Developer ID  ← use this
+#   -t open    → rejected "Insufficient Context"
+#
+# Apple's Code Signing Guide describes -t execute as the assessment type for
+# "applications and tools", but on macOS 26 raw Mach-O binaries fall through
+# the .app bundle check. -t install is the documented assessment type for
+# software being installed (which describes how a CLI binary lands in ~/bin),
+# and is the type that returns the actual notarization verdict in practice.
+# Re-test if Apple changes this behavior in a future macOS update.
+```
+
+**Local dev iteration** without signing latency:
+
+```bash
+SKIP_CODESIGN=1 ./scripts/build-mcpb.sh   # ad-hoc signed; do NOT ship the result
+make install                              # installs ad-hoc to ~/bin (dev only)
+```
+
+The `build-mcpb.sh` script also **auto-skips signing** when `DEVELOPER_ID` is unset OR the cert isn't in your keychain — so contributors / CI / forks can build a working unsigned `.mcpb` for testing without manually setting `SKIP_CODESIGN`. (You'll see a clear "Skipping codesign" warning when this happens.)
+
+**Signing identity environment**:
+
+| Env var | Default | Required for |
+|---------|---------|--------------|
+| `DEVELOPER_ID` | _(unset — auto-skip signing)_ | Signed release |
+| `NOTARY_PROFILE` | _(unset — fail-fast in `sign-and-notarize.sh`)_ | Signed release |
+| `ENTITLEMENTS` | `Sources/CheICalMCP/Entitlements.plist` | Custom entitlements file |
+| `SKIP_CODESIGN` | _(unset)_ | Force-skip signing even with cert present (set to `1` or `true`) |
+| `REQUIRE_CODESIGN` | _(unset)_ | Fail-fast if signing prerequisites missing (set to `1` by `make release-signed` — canonical release path must not silently produce unsigned artifacts; do not set when running `./scripts/build-mcpb.sh` directly for fork-friendly dev builds) |
+
+**Known limitation — no stapling**: `stapler staple` does not support raw Mach-O binaries (only `.app` / `.pkg` / `.dmg` bundles). After notarization, Gatekeeper will online-check the binary on first launch instead of reading a stapled ticket. End users behind air-gapped networks may see "cannot verify developer" warnings; one launch with network resolves it (Apple caches the verdict). Mitigation: `xcrun stapler staple` on a future `.pkg` wrapper if needed.
+
+**Troubleshooting**:
+
+- Notarization rejected? `xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE` shows Apple's reason. The signing script prints the submission ID on every run.
+- `codesign` complains about missing identity? `security find-identity -p codesigning -v` to confirm cert is present + valid; `xcrun notarytool history --keychain-profile $NOTARY_PROFILE` to confirm the profile works.
+- Cert expired? Re-issue at <https://developer.apple.com/account/resources/certificates>, install, re-export `DEVELOPER_ID`.
+- Security warning: don't unlock signing keychain on shared / untrusted machines. The cert + private key signing artifact is supply-chain critical.
 
 ---
 

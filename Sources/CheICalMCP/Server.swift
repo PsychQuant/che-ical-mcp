@@ -59,6 +59,14 @@ class CheICalMCPServer {
     /// All available tools
     private let tools: [Tool]
 
+    /// Constructor with per-feature test seams.
+    ///
+    /// `reminderCleanupSource` is the canonical example of the "narrow `*Source`
+    /// protocol" DI convention (#34, see `CLAUDE.md` "Test Seam Convention"):
+    /// production code passes nothing → defaults to `EventKitManager.shared`;
+    /// `CleanupHandlerTests` passes a `FakeEventKitManager`. New handlers that
+    /// need a test fake should add their own narrow `*Source` parameter here
+    /// rather than widening `EventKitManaging`.
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
 
@@ -1036,8 +1044,20 @@ class CheICalMCPServer {
                 : result
             return CallTool.Result(content: [.text(content)])
         } catch {
-            let sanitized = EventKitErrorSanitizer.sanitizeForResponse(error)
-            return CallTool.Result(content: [.text("Error: \(sanitized.code)")], isError: true)
+            // Outer catch (#37 spec R8). Per-batch handlers route their own
+            // catches through writeFailureLog; this catch fires only when an
+            // error escapes ALL inner handling — so a framework error here
+            // means the operator's last debug channel is stderr. Delegates to
+            // `writeFailureLog` (#72) so the #41 / R7 trusted-branch carve-out,
+            // `escapeForStderr`, and any future hardening (#73 ANSI/NUL,
+            // thread-safety) are inherited from a single site instead of
+            // duplicated here.
+            let code = EventKitErrorSanitizer.writeFailureLog(
+                handler: "handleToolCall",
+                identifier: name,
+                error: error
+            )
+            return CallTool.Result(content: [.text("Error: \(code)")], isError: true)
         }
     }
 

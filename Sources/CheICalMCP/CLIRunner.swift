@@ -8,6 +8,13 @@ enum CLIRunner {
         case missingToolName
         case danglingKey(String)
         case missingToolField
+        /// JSON parse failure detail. **MUST be an author-controlled literal**
+        /// — do NOT interpolate framework error text (`error.localizedDescription`).
+        /// Violating this routes the raw text through the `TrustedErrorMessage`
+        /// carve-out unescaped (#41), which would re-open the CWE-117 window
+        /// that #80 closed for the framework-error path. Today's call sites
+        /// pass only static literals; future contributors please grep
+        /// `CLIRunner.CLIError.invalidJSON\b` before adding a new caller (#85).
         case invalidJSON(String)
 
         var errorDescription: String? {
@@ -193,8 +200,11 @@ enum CLIRunner {
 
     /// Run CLI mode: detect input source, parse, dispatch, print result.
     static func run(server: CheICalMCPServer, args: [String]) async {
+        // Hoisted so the catch block can pass it as the writeFailureLog identifier.
+        // `nil` covers the case where parsing throws before tool name is known
+        // (e.g. CLIError.missingToolName); falls back to "<no-tool>" in handleRunError.
+        var toolName: String? = nil
         do {
-            let toolName: String
             let mcpArgs: [String: Value]
 
             // Priority: if argv has a tool name, always use flag parsing.
@@ -212,22 +222,41 @@ enum CLIRunner {
                 else {
                     throw CLIError.missingToolName
                 }
-                (toolName, mcpArgs) = try parseJSONInputToValues(input)
+                let (tool, parsedArgs) = try parseJSONInputToValues(input)
+                toolName = tool
+                mcpArgs = parsedArgs
             } else {
                 throw CLIError.missingToolName
             }
 
-            let result = try await server.executeToolCall(name: toolName, arguments: mcpArgs)
+            // Statically unreachable: every branch above either assigns toolName
+            // or throws. The guard keeps the unwrap type-safe.
+            guard let unwrappedToolName = toolName else {
+                throw CLIError.missingToolName
+            }
+            let result = try await server.executeToolCall(name: unwrappedToolName, arguments: mcpArgs)
             print(result)
         } catch {
-            let (jsonMessage, rawLog) = formatErrorForCLI(error)
-            print(jsonMessage)
-            // Raw log to stderr for operator debug.
-            FileHandle.standardError.write(
-                Data("CLIRunner failed: \(rawLog)\n".utf8)
-            )
+            handleRunError(error, toolName: toolName)
             exit(1)
         }
+    }
+
+    /// Internal-for-test helper extracted from `run()`'s catch (#80).
+    /// Writes the sanitized JSON to stdout and (if `error` is not a
+    /// `TrustedErrorMessage`) the raw log to stderr via `writeFailureLog`,
+    /// inheriting the trusted-branch carve-out (#41) and `escapeForStderr`
+    /// (#37 F2) that the MCP cluster (R3/R7/R8) already enforces.
+    /// Does NOT call `exit()`; the caller is responsible for that so this
+    /// helper stays unit-testable without subprocess invocation.
+    static func handleRunError(_ error: Error, toolName: String?) {
+        let (jsonMessage, _) = formatErrorForCLI(error)
+        print(jsonMessage)
+        _ = EventKitErrorSanitizer.writeFailureLog(
+            handler: "CLIRunner",
+            identifier: toolName ?? "<no-tool>",
+            error: error
+        )
     }
 
     /// #37 verify (Codex medium finding): route CLI errors through the same

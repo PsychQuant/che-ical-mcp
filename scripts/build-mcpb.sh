@@ -19,7 +19,7 @@ echo ""
 # modelcontextprotocol/swift-sdk#214 is fixed.
 SWIFT_FALLBACK_FLAGS=()
 
-echo "[0/5] Checking Swift 6 strict concurrency compatibility..."
+echo "[1/7] Checking Swift 6 strict concurrency compatibility..."
 if swift build -c release --arch arm64 2>&1 | grep -q "SendingRisksDataRace"; then
     echo "  ⚠ Upstream dependency has Swift 6 concurrency errors (swift-sdk#214)"
     echo "  → Falling back to Swift 5 language mode for dependencies"
@@ -28,12 +28,12 @@ else
     echo "  ✓ Swift 6 strict concurrency OK"
 fi
 
-# Step 0.5: Version consistency check.
+# Step 2: Version consistency check.
 # AppVersion.current (Sources/CheICalMCP/Version.swift) is the source of truth.
 # mcpb/manifest.json and Info.plist MUST match. server.json is independent — see
 # README "Release Process" — because it's a Registry snapshot that bumps only
 # when re-submitting the .mcpb bundle to MCP Registry.
-echo "[0.5/5] Checking version consistency..."
+echo "[2/7] Checking version consistency..."
 VERSION_SWIFT="$PROJECT_DIR/Sources/CheICalMCP/Version.swift"
 MCPB_MANIFEST="$MCPB_DIR/manifest.json"
 INFO_PLIST="$PROJECT_DIR/Sources/CheICalMCP/Info.plist"
@@ -61,16 +61,16 @@ fi
 
 echo "  ✓ Version.swift, Info.plist, and mcpb/manifest.json all at $SOURCE_VERSION"
 
-# Step 1: Build for both architectures
-echo "[1/4] Building for Apple Silicon (arm64)..."
+# Steps 3-4: Build for both architectures
+echo "[3/7] Building for Apple Silicon (arm64)..."
 cd "$PROJECT_DIR"
 swift build -c release --arch arm64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
-echo "[2/4] Building for Intel (x86_64)..."
+echo "[4/7] Building for Intel (x86_64)..."
 swift build -c release --arch x86_64 "${SWIFT_FALLBACK_FLAGS[@]}"
 
-# Step 2: Create Universal Binary
-echo "[3/4] Creating Universal Binary..."
+# Step 5: Create Universal Binary
+echo "[5/7] Creating Universal Binary..."
 mkdir -p "$SERVER_DIR"
 
 ARM64_BINARY="$PROJECT_DIR/.build/arm64-apple-macosx/release/CheICalMCP"
@@ -78,6 +78,11 @@ X64_BINARY="$PROJECT_DIR/.build/x86_64-apple-macosx/release/CheICalMCP"
 UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 
 if [[ -f "$ARM64_BINARY" && -f "$X64_BINARY" ]]; then
+    # rm -f forces fresh inode (see Makefile install: target for the rationale —
+    # macOS kernel caches code-signature hashes per-inode, and reusing an inode
+    # held open by an old running CheICalMCP process triggers SIGKILL with
+    # "load code signature error 2" on subsequent execs. See #62.)
+    rm -f "$UNIVERSAL_BINARY"
     lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
     chmod +x "$UNIVERSAL_BINARY"
     echo "Created Universal Binary: $UNIVERSAL_BINARY"
@@ -96,9 +101,120 @@ echo ""
 echo "Architectures:"
 lipo -info "$UNIVERSAL_BINARY"
 
-# Step 3: Check for required files
+# SHA-256 companion file (#98 self-update verification).
+# Written next to the binary so `gh release create` can upload both as assets;
+# `--self-update` (SelfUpdate.swift) downloads BOTH and verifies before install.
+# Format: single-line hex hash (matches `shasum -a 256` / `sha256sum` output).
+# We hash the SIGNED + NOTARIZED universal binary, so the .sha256 file
+# is generated AFTER signing — see post-Step-6 SHA write below for the
+# canonical artifact. This early write covers SKIP_CODESIGN=1 paths so
+# unsigned dev builds still get a checksum companion (handy for testing).
+SHA256_FILE="${UNIVERSAL_BINARY}.sha256"
+shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
 echo ""
-echo "[4/4] Checking MCPB package contents..."
+echo "SHA-256: $(cat "$SHA256_FILE")"
+echo "  written to: $SHA256_FILE"
+
+# Step 6: Sign + notarize for distribution.
+# Required for releases: macOS 26 TCC rejects ad-hoc binaries; Developer ID
+# signing + hardened runtime + notarization is the only way Calendar/Reminders
+# permission dialogs appear for end users.
+#
+# Behavior:
+#   SKIP_CODESIGN=1 (or "true") → skip unconditionally (local iteration override)
+#   REQUIRE_CODESIGN=1 → fail-fast if signing prerequisites missing
+#     (used by `make release-signed` — canonical release path must not
+#      silently produce unsigned artifacts)
+#   No DEVELOPER_ID env or no cert in keychain → auto-skip with warning
+#     (default fork-friendly behavior for direct `./scripts/build-mcpb.sh`)
+#   Otherwise → run sign-and-notarize.sh
+echo ""
+SHOULD_SIGN=true
+SKIP_REASON=""
+if [[ "${SKIP_CODESIGN:-}" == "1" || "${SKIP_CODESIGN:-}" == "true" ]]; then
+    SHOULD_SIGN=false
+    SKIP_REASON="SKIP_CODESIGN=$SKIP_CODESIGN"
+elif [[ -z "${DEVELOPER_ID:-}" ]]; then
+    SHOULD_SIGN=false
+    SKIP_REASON="DEVELOPER_ID env not set"
+elif ! security find-identity -p codesigning -v 2>/dev/null | grep -qF "$DEVELOPER_ID"; then
+    SHOULD_SIGN=false
+    SKIP_REASON="codesigning identity '$DEVELOPER_ID' not in keychain"
+fi
+
+if [[ "$SHOULD_SIGN" == "false" ]]; then
+    if [[ "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ]]; then
+        # Canonical release path — refuse to produce unsigned artifact silently
+        echo "[6/7] ✗ Refusing to skip signing: REQUIRE_CODESIGN=$REQUIRE_CODESIGN" >&2
+        echo "        Reason: $SKIP_REASON" >&2
+        echo "        Fix: set DEVELOPER_ID + NOTARY_PROFILE, install Developer ID Application" >&2
+        echo "             cert, and ensure cert is in your login keychain." >&2
+        echo "        See README 'Signing & Notarization' for one-time setup." >&2
+        exit 1
+    fi
+    # Fork-friendly auto-skip: warn + continue with unsigned binary
+    echo "[6/7] Skipping codesign + notarize."
+    echo "  Reason: $SKIP_REASON"
+    echo "  ⚠ Resulting binary is ad-hoc signed; suitable for local dev only."
+    echo "  ⚠ To produce a release-quality .mcpb on macOS 26: set DEVELOPER_ID + NOTARY_PROFILE,"
+    echo "    install Developer ID Application cert, then run \`make release-signed\`."
+else
+    echo "[6/7] Signing + notarizing for distribution..."
+    "$SCRIPT_DIR/sign-and-notarize.sh" "$UNIVERSAL_BINARY"
+fi
+
+# Defensive re-check: whenever signing was requested ($SHOULD_SIGN=true), the
+# binary at $UNIVERSAL_BINARY MUST now carry a Developer ID Application signature
+# from the configured $DEVELOPER_ID. Catches partial-state failures where
+# sign-and-notarize.sh exit code was lost (piped to log, CI without pipefail) or
+# tampered after sign-and-notarize.sh exit. Refuses to pack a half-signed
+# artifact into the .mcpb (cf. #53).
+#
+# Three layers of strictness, in order:
+#   (a) codesign --verify --strict — actual integrity check (not just metadata)
+#   (b) Authority binds to the EXACT $DEVELOPER_ID identity (not any random
+#       Developer ID team's cert that happened to land in the binary)
+#   (c) Authority excludes "Developer ID Installer:" — Mach-O CLI binaries
+#       must be signed with the Application cert, not the Installer cert
+#
+# Gate is $SHOULD_SIGN==true (broader than REQUIRE_CODESIGN) so direct
+# `./scripts/build-mcpb.sh` invocations with DEVELOPER_ID set also benefit
+# from the post-sign defense — anyone who asked for signing gets verified.
+if [[ "$SHOULD_SIGN" == "true" ]]; then
+    if ! codesign --verify --strict --verbose=2 "$UNIVERSAL_BINARY" >/dev/null 2>&1; then
+        echo ""
+        echo "✗ Pre-pack defense: codesign --verify --strict failed for $UNIVERSAL_BINARY" >&2
+        echo "  sign-and-notarize.sh likely failed silently or the binary was tampered" >&2
+        echo "  after signing. Refusing to pack into .mcpb." >&2
+        codesign --verify --strict --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | sed 's/^/  /' >&2
+        exit 1
+    fi
+    # Confirm the signing identity is the one we asked for. grep -F on the EXACT
+    # $DEVELOPER_ID prevents a "any Developer ID team's cert" false-positive.
+    if ! codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -qF "Authority=$DEVELOPER_ID"; then
+        echo ""
+        echo "✗ Pre-pack defense: $UNIVERSAL_BINARY is not signed by the expected identity." >&2
+        echo "  Expected: Authority=$DEVELOPER_ID" >&2
+        echo "  Actual codesign metadata:" >&2
+        codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -E "Authority|TeamIdentifier" | sed 's/^/    /' >&2
+        exit 1
+    fi
+
+    # Re-compute SHA-256 of the signed + notarized binary (#98).
+    # The hash from before signing is now stale — codesign embeds the
+    # cert chain into the Mach-O Code Signing section, changing the
+    # binary's bytes. The .sha256 companion uploaded to the GitHub
+    # Release MUST match the binary that --self-update will download
+    # post-notarization, so we overwrite it here.
+    shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
+    echo ""
+    echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
+    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ...\`"
+fi
+
+# Step 7: Check for required files
+echo ""
+echo "[7/7] Checking MCPB package contents..."
 
 REQUIRED_FILES=(
     "$MCPB_DIR/manifest.json"
@@ -129,7 +245,7 @@ if [[ $MISSING -eq 1 ]]; then
     exit 1
 fi
 
-# Step 4: Pack MCPB (if mcpb CLI is available)
+# Final: Pack MCPB (if mcpb CLI is available)
 echo ""
 if command -v mcpb &> /dev/null; then
     echo "Packing MCPB bundle..."

@@ -1406,12 +1406,37 @@ actor EventKitManager: EventKitManaging {
                 // missing the control-char escape applied by `writeFailureLog`;
                 // we share `escapeForStderr` to keep both paths consistent
                 // without violating R3.
+                //
+                // #69: defensive symmetry with R7's trusted-branch carve-out
+                // at writeFailureLog. Note the rationale differs here: R3
+                // binds to `sanitize(_:)` directly (NOT `sanitizeForResponse`)
+                // so trusted errors at this site receive a framework-style
+                // code (e.g. "error_unknown") that does NOT equal `rawLog`.
+                // The gate is therefore forward-compat hardening — if a
+                // future caller of `deleteRemindersBatch` propagates a
+                // `TrustedErrorMessage` conformer through this path, the
+                // stderr-amplification window stays closed by construction.
+                // In practice today, `eventStore.remove(reminder:commit:)`
+                // only throws NSError, so the gate doesn't fire on hot paths.
                 let sanitized = EventKitErrorSanitizer.sanitize(error)
-                let safeId = EventKitErrorSanitizer.escapeForStderr(id)
-                let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
-                FileHandle.standardError.write(
-                    Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
-                )
+                if !(error is TrustedErrorMessage) {
+                    let safeId = EventKitErrorSanitizer.escapeForStderr(id)
+                    let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                    // #70 thread-safety note: this stderr write site shares
+                    // the same best-effort posture documented on
+                    // `writeFailureLog` — POSIX `write(2)` atomicity holds
+                    // only for byte counts ≤ macOS `PIPE_BUF` (512 bytes),
+                    // and a `deleteRemindersBatch(<id>) failed: <rawLog>\n`
+                    // line can easily exceed 512 bytes when `rawLog` carries
+                    // a non-trivial `NSError` description. Concurrent batch
+                    // failures CAN interleave on stderr; operators relying
+                    // on per-line parsing should use a structured logger
+                    // instead. See `writeFailureLog` doc for the full
+                    // deferral rationale on the StderrLogger actor option.
+                    FileHandle.standardError.write(
+                        Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
+                    )
+                }
                 failures.append((id, sanitized.code))
             }
         }
@@ -1485,7 +1510,7 @@ actor EventKitManager: EventKitManaging {
                 try eventStore.remove(event, span: .thisEvent)
                 markNeedsRefresh()
             }
-            return "Undone: removed created event '\(title)'"
+            return "Undone: removed created event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))'"
 
         case .deleteEvent(let snapshot):
             // Undo delete = recreate from snapshot
@@ -1493,7 +1518,7 @@ actor EventKitManager: EventKitManaging {
             applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return "Undone: restored event '\(snapshot.title)' (new ID: \(event.eventIdentifier ?? "unknown"))"
+            return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
         case .updateEvent(let id, let oldSnapshot):
             // Undo update = restore old values
@@ -1503,7 +1528,7 @@ actor EventKitManager: EventKitManaging {
             applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return "Undone: restored event '\(oldSnapshot.title)' to previous state"
+            return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
         case .createReminder(let id, let title):
             // Undo create = delete
@@ -1518,7 +1543,7 @@ actor EventKitManager: EventKitManaging {
                 try eventStore.remove(reminder, commit: true)
                 markNeedsRefresh()
             }
-            return "Undone: removed created reminder '\(title)'"
+            return "Undone: removed created reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))'"
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate
@@ -1527,7 +1552,7 @@ actor EventKitManager: EventKitManaging {
             applyReminderSnapshot(snapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: restored reminder '\(snapshot.title)'"
+            return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
         case .updateReminder(let id, let oldSnapshot):
             // Undo update = restore old values
@@ -1544,7 +1569,7 @@ actor EventKitManager: EventKitManaging {
             applyReminderSnapshot(oldSnapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: restored reminder '\(oldSnapshot.title)' to previous state"
+            return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
         case .completeReminder(let id, let wasCompleted, let title):
             try await requestReminderAccess()
@@ -1560,7 +1585,7 @@ actor EventKitManager: EventKitManaging {
             reminder.isCompleted = wasCompleted
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: set reminder '\(title)' completion to \(wasCompleted)"
+            return "Undone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(wasCompleted)"
 
         case .batch(let ops):
             var results: [String] = []
@@ -1576,23 +1601,21 @@ actor EventKitManager: EventKitManaging {
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent(_, let title):
-            // Can't perfectly redo a create without the original params.
-            // The undo of a create was a delete, so redo = error (event already gone).
-            return "Cannot redo event creation — please create the event again manually"
+            return "Cannot redo creation of event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' — please create it again manually"
 
         case .deleteEvent(let snapshot):
             // Redo delete = delete the restored event
             // The restored event's ID was stored via updateLastRedoEventId
-            return "Redo delete: please use delete_event to remove '\(snapshot.title)'"
+            return "Redo delete: please use delete_event to remove '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
         case .updateEvent(let id, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
 
         case .createReminder(_, let title):
-            return "Cannot redo reminder creation — please create '\(title)' again manually"
+            return "Cannot redo reminder creation — please create '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again manually"
 
         case .deleteReminder(let snapshot):
-            return "Redo delete: please use delete_reminder to remove '\(snapshot.title)'"
+            return "Redo delete: please use delete_reminder to remove '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
         case .updateReminder(let id, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
@@ -1612,7 +1635,7 @@ actor EventKitManager: EventKitManaging {
             reminder.isCompleted = !wasCompleted
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Redone: set reminder '\(title)' completion to \(!wasCompleted)"
+            return "Redone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(!wasCompleted)"
 
         case .batch(let ops):
             var results: [String] = []
