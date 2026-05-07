@@ -212,6 +212,30 @@ final class EventListingParamsTests: XCTestCase {
         )
     }
 
+    func testFieldsRejectsNonStringElement() {
+        // Pre-fix the Set(fieldsArray.compactMap { $0.stringValue }) silently
+        // dropped non-string elements. This is the #28 R2-F1 type-coerce-bypass
+        // class — must throw with the offending index, not silently drop.
+        let args: [String: Value] = [
+            "fields": .array([.string("title"), .int(123), .string("location")])
+        ]
+        assertInvalidParameter(
+            try InputValidation.parseFieldsFilter(args),
+            messageContains: "fields[1]"
+        )
+    }
+
+    func testFieldsRejectsNonArray() {
+        // M5: pre-fix `arguments["fields"]?.arrayValue` returned nil for
+        // non-array inputs (e.g. `fields="title"` string), silently disabling
+        // the filter. Must throw to surface the type confusion.
+        let args: [String: Value] = ["fields": .string("title")]
+        assertInvalidParameter(
+            try InputValidation.parseFieldsFilter(args),
+            messageContains: "array of strings"
+        )
+    }
+
     // MARK: - requireOptionalInt + requireOptionalLimit — accept
 
     func testLimitReturnsNilWhenAbsent() throws {

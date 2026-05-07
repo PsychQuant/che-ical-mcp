@@ -88,9 +88,23 @@ enum InputValidation {
         "is_recurring", "recurrence_rules", "structured_location", "attendees", "organizer"
     ]
 
+    /// Distinguish three cases at the type-of-`fields` boundary:
+    ///   - absent (key missing) → return nil (caller uses detail_level / default)
+    ///   - present but non-array → throw (M5: was silently disabled pre-fix)
+    ///   - present array with non-string element → throw on first offender,
+    ///     not silently drop (B2: same class as #28 R2-F1 type-coerce bypass)
     static func parseFieldsFilter(_ arguments: [String: Value]) throws -> Set<String>? {
-        guard let fieldsArray = arguments["fields"]?.arrayValue else { return nil }
-        let fields = Set(fieldsArray.compactMap { $0.stringValue })
+        guard let raw = arguments["fields"] else { return nil }
+        guard let fieldsArray = raw.arrayValue else {
+            throw ToolError.invalidParameter("fields must be an array of strings")
+        }
+        var fields: Set<String> = []
+        for (idx, element) in fieldsArray.enumerated() {
+            guard let s = element.stringValue else {
+                throw ToolError.invalidParameter("fields[\(idx)] must be a string")
+            }
+            fields.insert(s)
+        }
         if fields.isEmpty {
             throw ToolError.invalidParameter("fields array must not be empty")
         }
