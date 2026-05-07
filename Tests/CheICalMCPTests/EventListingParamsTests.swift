@@ -331,4 +331,32 @@ final class EventListingParamsTests: XCTestCase {
         let envelope = InputValidation.envelopeTimezoneIdentifier(displayTimezone: nil)
         XCTAssertEqual(envelope, TimeZone.current.identifier)
     }
+
+    // MARK: - validEventFields ↔ formatEventDictKeys drift detection (M3)
+
+    func testValidEventFieldsMatchesFormatEventDictKeys() {
+        // M3: bidirectional drift detection.
+        //
+        // (a) `validEventFields ⊇ formatEventDictKeys` — fields advertised as
+        //     valid for the `fields[]` filter must all actually be emitted by
+        //     formatEventDict. If formatEventDict gains a key without this set
+        //     being updated, callers can't filter for the new field.
+        //
+        // (b) `formatEventDictKeys ⊇ validEventFields` — every "valid" field
+        //     must actually appear in some response. A field claimed valid but
+        //     never emitted would silently filter every result to empty.
+        //
+        // Maintenance: when modifying formatEventDict, update BOTH sets in
+        // Validation.swift. This test catches forgotten updates either way.
+        let missingFromValid = InputValidation.formatEventDictKeys.subtracting(InputValidation.validEventFields)
+        XCTAssertTrue(
+            missingFromValid.isEmpty,
+            "validEventFields missing keys that formatEventDict can emit: \(missingFromValid.sorted())"
+        )
+        let missingFromEmitted = InputValidation.validEventFields.subtracting(InputValidation.formatEventDictKeys)
+        XCTAssertTrue(
+            missingFromEmitted.isEmpty,
+            "formatEventDictKeys missing keys that validEventFields claims: \(missingFromEmitted.sorted())"
+        )
+    }
 }
