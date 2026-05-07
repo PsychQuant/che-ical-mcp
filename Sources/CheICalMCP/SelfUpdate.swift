@@ -1,3 +1,4 @@
+import CommonCrypto
 import Foundation
 
 // MARK: - Self-update (#49 Option 3)
@@ -48,6 +49,8 @@ enum SelfUpdate {
         case downloadFailed(String)
         case installFailed(String)
         case binaryPathUnresolvable
+        case checksumUnavailable(String)
+        case checksumMismatch(expected: String, actual: String)
 
         var errorDescription: String? {
             switch self {
@@ -61,6 +64,15 @@ enum SelfUpdate {
                 return "Could not install new binary: \(EventKitErrorSanitizer.sanitizeForInterpolation(detail))"
             case .binaryPathUnresolvable:
                 return "Could not resolve current binary path. Run as `~/bin/CheICalMCP --self-update` so the binary path is unambiguous."
+            case .checksumUnavailable(let detail):
+                return "Could not fetch SHA-256 checksum companion file: \(EventKitErrorSanitizer.sanitizeForInterpolation(detail)). " +
+                       "If this release predates the SHA-256 publication policy (post-#98), the asset may legitimately lack a .sha256 file. " +
+                       "Falling back is unsafe — refusing install. Verify manually via codesign + spctl, or re-run --self-update against a newer release."
+            case .checksumMismatch(let expected, let actual):
+                return "SHA-256 verification FAILED. Refusing to install. " +
+                       "Expected: \(expected)  Actual: \(actual). " +
+                       "This indicates the downloaded binary does not match the maintainer-published hash. Possible causes: in-flight tampering, " +
+                       "corrupted download, or compromised mirror. Do NOT install. If reproducible against a fresh release, file an issue."
             }
         }
     }
@@ -106,8 +118,12 @@ enum SelfUpdate {
         print("Will install to: \(currentBinaryPath)")
 
         let downloadURL = makeAssetDownloadURL(tag: latestTag, assetName: assetName)
-        print("Downloading \(assetName) from \(downloadURL.absoluteString) ...")
+        let sha256URL = makeAssetDownloadURL(tag: latestTag, assetName: assetName + ".sha256")
+        print("Fetching SHA-256 companion (#98 verification): \(sha256URL.absoluteString)")
+        let expectedHash = try await fetchExpectedSHA256(from: sha256URL)
+        print("Expected SHA-256: \(expectedHash)")
 
+        print("Downloading \(assetName) from \(downloadURL.absoluteString) ...")
         // Stage temp in target's parent directory so installBinary's
         // POSIX rename(2) is guaranteed same-FS atomic (#49 verify F2).
         let tempPath = try await downloadBinary(from: downloadURL, targetPath: currentBinaryPath)
@@ -121,6 +137,15 @@ enum SelfUpdate {
                 try? FileManager.default.removeItem(atPath: tempPath)
             }
         }
+
+        // Verify SHA-256 BEFORE install (#98). Refuses install on mismatch.
+        let actualHash = try sha256OfFile(at: tempPath)
+        print("Actual SHA-256:   \(actualHash)")
+        guard actualHash.lowercased() == expectedHash.lowercased() else {
+            throw SelfUpdateError.checksumMismatch(expected: expectedHash, actual: actualHash)
+        }
+        print("✓ SHA-256 verification passed")
+
         try installBinary(from: tempPath, to: currentBinaryPath)
         installSucceeded = true
         print("✓ Installed \(latestVersion) to \(currentBinaryPath)")
@@ -209,6 +234,93 @@ enum SelfUpdate {
             }
         }
         throw SelfUpdateError.binaryPathUnresolvable
+    }
+
+    /// Fetch the SHA-256 companion file from a release asset URL (#98).
+    /// Companion file format: single-line lowercase hex digest (matching
+    /// `shasum -a 256` / `sha256sum` standard output, first column).
+    /// Returns the parsed hex string. Throws `checksumUnavailable` on
+    /// network failure or file-format issues.
+    private static func fetchExpectedSHA256(from url: URL) async throws -> String {
+        var request = URLRequest(url: url)
+        request.setValue("CheICalMCP/\(AppVersion.current) (self-update)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 30
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw SelfUpdateError.checksumUnavailable("network: \(error.localizedDescription)")
+        }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw SelfUpdateError.checksumUnavailable("HTTP \(code) from \(url.absoluteString)")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw SelfUpdateError.checksumUnavailable("companion file is not UTF-8 text")
+        }
+        return try parseSHA256CompanionFile(text)
+    }
+
+    /// Parse the SHA-256 companion file content. Accepts:
+    /// - bare hex hash on its own line: `abc123...`
+    /// - `shasum -a 256` style with filename: `abc123  binary-path`
+    /// First valid 64-char hex token wins; trims whitespace; returns lowercase.
+    /// Internal so tests can pin the parser without network mocking.
+    static func parseSHA256CompanionFile(_ raw: String) throws -> String {
+        // Strip BOM + whitespace; split into tokens.
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{FEFF}", with: "")
+        for line in normalized.split(separator: "\n") {
+            for token in line.split(whereSeparator: { $0.isWhitespace }) {
+                let lower = token.lowercased()
+                if lower.count == 64 && lower.allSatisfy({ "0123456789abcdef".contains($0) }) {
+                    return lower
+                }
+            }
+        }
+        throw SelfUpdateError.checksumUnavailable("no 64-char hex SHA-256 token found in companion file content")
+    }
+
+    /// Compute SHA-256 of a file on disk. Uses CommonCrypto via a manual
+    /// streamed hash so we don't pull CryptoKit into the test target's
+    /// transitive surface.
+    /// Internal so tests can pin the implementation against known fixtures.
+    static func sha256OfFile(at path: String) throws -> String {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw SelfUpdateError.installFailed("file does not exist at \(path) — cannot hash")
+        }
+        guard let stream = InputStream(fileAtPath: path) else {
+            throw SelfUpdateError.installFailed("could not open \(path) for hashing")
+        }
+        stream.open()
+        defer { stream.close() }
+        if let openError = stream.streamError {
+            throw SelfUpdateError.installFailed("could not open \(path) for hashing: \(openError.localizedDescription)")
+        }
+
+        var ctx = CC_SHA256_CTX()
+        CC_SHA256_Init(&ctx)
+
+        let bufferSize = 65536
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let bytesRead = buffer.withUnsafeMutableBufferPointer { bufPtr -> Int in
+                guard let baseAddr = bufPtr.baseAddress else { return 0 }
+                return stream.read(baseAddr, maxLength: bufferSize)
+            }
+            if bytesRead < 0 {
+                throw SelfUpdateError.installFailed("error reading \(path) for hashing: \(stream.streamError?.localizedDescription ?? "unknown")")
+            }
+            if bytesRead == 0 { break }
+            _ = buffer.withUnsafeBufferPointer { bufPtr in
+                CC_SHA256_Update(&ctx, bufPtr.baseAddress, CC_LONG(bytesRead))
+            }
+        }
+
+        var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        digest.withUnsafeMutableBufferPointer { _ = CC_SHA256_Final($0.baseAddress, &ctx) }
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     /// Fetch the `tag_name` field from GitHub Releases API.
