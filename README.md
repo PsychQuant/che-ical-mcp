@@ -521,7 +521,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.7.1
+- **Current Version**: v1.7.2
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -534,6 +534,7 @@ CheICalMCP --setup
 
 | Version | Changes |
 |---------|---------|
+| v1.7.2 | **Hardening + features wave** (30+ commits over v1.7.1, all `Refs #N` IDD with 6-AI verify). **`--self-update`** (#49) + **SHA-256 binary verify** (#98): existing-install upgrade path with cryptographic guarantee against corrupted releases. **`make install-signed`** (#50): maintainer dev TCC flow on macOS 26 — fail-fast on missing Developer ID + force codesign verification. **CI test workflow** (#51): PR-time `swift build` + `swift test` on macos-latest. **Sanitizer hardening cluster**: `escapeForStderr` full C0+DEL coverage (#73), `sanitizeForInterpolation` for executeUndo/executeRedo title interpolation (#74), CLIRunner stderr delegated to `writeFailureLog` for trusted-branch carve-out (#80), `writeFailureLog` 1024-char DoS cap (#86), `CLIError.invalidJSON` author-controlled-only contract doc (#85), `FileHandle.standardError.write` thread-safety + macOS PIPE_BUF=512 documented (#70 / #94). **Distribution polish**: stale-codesign-cache install snippets get `rm -f` preamble (#90 zh-TW parity for #62). **Post-v1.7.1 polish** (#46 #57 #58 #60): redo error interpolation parity, `build-mcpb.sh` step renumbering, `Entitlements.plist` documentation, `Makefile release-signed:` cwd note. **`cleanup_completed_reminders` tool** (#21): single-call cleanup of all completed reminders, `dry_run=true` default. |
 | v1.7.1 | **Security hardening** (#20 #26): input validation (length limits + URL scheme allowlist) at all event/reminder entry points, prompt-injection wrapper on MCP read responses, parse-boundary validation for `days_of_week` / `days_of_month` / `alarms_minutes_offsets` (throws instead of silent-dropping invalid values), `Info.plist` catch-up, 42 new regression tests. |
 | v1.7.0 | **Attendee & organizer info** (#17): read-only `attendees` array and `organizer` object in event responses. Refactored shared `formatEventDict` method. |
 | v1.6.0 | **`--setup` flag** (#13): pre-authorize TCC permissions for launchd/automation. Non-interactive session detection (TERM + ppid). Combined SSH+launchd error messages. **`--cli` mode** (#14): invoke all 28 tools directly from command line without MCP server. Flag-based (`--key value`) and JSON stdin modes. Smart type inference for bool/int/double/array params. MCP Swift SDK 0.12.0 (Swift 6.3 compat). |

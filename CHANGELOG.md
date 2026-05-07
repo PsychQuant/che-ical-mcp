@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Follow-ups from the PR #26 multi-agent review — hardening that extends the 1.7.1 security wave. Will ride the next release after v1.7.1 (likely v1.7.2 or folded into a wider feature minor depending on cadence).
+## [1.7.2] - 2026-05-07
+
+Hardening + features wave following the v1.7.1 security baseline. This release lands the post-merge sanitizer-hardening cluster (#73 #74 #80 #85 #86 #94), the install / CI / distribution infrastructure cluster (#49 #50 #51 #98), zh-TW docs sync (#75 #90), and post-v1.7.1 polish (#46 #57 #58 #60). 30+ commits since v1.7.1, all with `Refs #N` IDD discipline and 6-AI parallel verify before merge.
 
 ### Changed (post-v1.7.1 polish cluster — PR #63)
 
