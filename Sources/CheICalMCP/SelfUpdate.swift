@@ -12,12 +12,19 @@ import Foundation
 // and break running sessions. Explicit `--self-update` flag is
 // listed in `--help` and README so users find it on demand.
 //
-// **Why atomic replace via rm -f + mv**: matches the #62 upgrade-trap
-// fix — copying over an existing inode while old MCP processes still
-// hold it causes macOS 26 kernel to kill the new binary with a stale
-// code-signature cache (`load code signature error 2 / SIGKILL`).
-// `rm -f` first guarantees a fresh inode for the new binary; `mv`
-// (rename(2)) is atomic on the same filesystem.
+// **Why atomic replace via POSIX `rename(2)` (#49 verify Finding 2)**:
+// the temp file is staged in the target's PARENT directory so that
+// `rename(targetPath_temp → targetPath)` is guaranteed same-filesystem
+// and atomic. POSIX rename(2) semantics: target either points at the
+// new file or the old file at all times — never absent. This fixes
+// the original (rm -f + mv) approach which had a window where the
+// target didn't exist and could brick the install if mv failed.
+//
+// Per #62 upgrade-trap discovery: rename(2) ALSO swaps the directory
+// entry (not the inode), so running MCP processes that hold the old
+// inode keep their reference until exit; the new binary gets a fresh
+// inode by construction (the temp file's). No stale code-signature
+// cache hazard.
 
 enum SelfUpdate {
 
