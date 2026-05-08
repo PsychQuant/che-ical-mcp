@@ -1251,7 +1251,7 @@ class CheICalMCPServer {
         }
 
         // Apply limit
-        if let limit = limit, limit > 0 && events.count > limit {
+        if let limit = limit, events.count > limit {
             events = Array(events.prefix(limit))
         }
 
@@ -1545,7 +1545,7 @@ class CheICalMCPServer {
         }
 
         // Apply limit
-        if let limit = limit, limit > 0 && reminders.count > limit {
+        if let limit = limit, reminders.count > limit {
             reminders = Array(reminders.prefix(limit))
         }
 
@@ -2189,7 +2189,7 @@ class CheICalMCPServer {
 
         // Apply limit
         let totalCount = events.count
-        if let limit = limit, limit > 0 && events.count > limit {
+        if let limit = limit, events.count > limit {
             events = Array(events.prefix(limit))
         }
 
@@ -2242,7 +2242,7 @@ class CheICalMCPServer {
 
         // Apply limit
         let totalCount = events.count
-        if let limit = limit, limit > 0 && events.count > limit {
+        if let limit = limit, events.count > limit {
             events = Array(events.prefix(limit))
         }
 
