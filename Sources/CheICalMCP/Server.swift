@@ -1857,7 +1857,7 @@ class CheICalMCPServer {
 
         var response: [String: Any] = [
             "match_mode": matchMode,
-            "result_count": reminders.count,
+            "reminder_count": reminders.count,
             "reminders": result
         ]
         if !keywords.isEmpty { response["keywords"] = keywords }

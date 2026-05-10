@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **`search_events.result_count` → `event_count`** (#101 M1): unifies the count-field name across all three event-listing tools (`list_events_quick.event_count` was already canonical; `list_events.metadata.returned` keeps post-limit semantics). LLM consumers no longer mis-interpret the same conceptual value under three names.
+- **`search_reminders.result_count` → `reminder_count`** (#102): unifies count-field naming on the reminder side, mirroring #101 M1 for the event side. The reminder tool family now matches the event family's `<entity>_count` convention. Wire-format change parallel to M1.
 
 ### Changed
 
