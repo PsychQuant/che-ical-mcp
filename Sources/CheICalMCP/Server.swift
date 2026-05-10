@@ -2817,46 +2817,44 @@ class CheICalMCPServer {
 
     /// Shared event dict builder for all event-returning handlers.
     /// Includes attendees and organizer when present.
-    private func formatEventDict(
-        _ event: EKEvent,
+    ///
+    /// Generic over `EventFormattingSource` (#103) — accepts both real `EKEvent`
+    /// and test `FakeFormattableEvent`. Emission rules unchanged (key set + conditional
+    /// branches preserved); only the type signature changed for runtime-anchored
+    /// drift detection. Wire format is identical.
+    func formatEventDict(
+        _ event: some EventFormattingSource,
         detailLevel: String = "standard",
         displayTimezone: TimeZone? = nil,
         fields: Set<String>? = nil
     ) -> [String: Any] {
-        let tz = displayTimezone ?? event.timeZone
+        let tz = displayTimezone ?? event.formatSourceTimeZone
         var dict: [String: Any] = [
-            "id": event.eventIdentifier ?? "",
-            "title": event.title ?? "",
-            "start_date": dateFormatter.string(from: event.startDate),
-            "start_date_local": formatLocal(event.startDate, in: tz),
-            "end_date": dateFormatter.string(from: event.endDate),
-            "end_date_local": formatLocal(event.endDate, in: tz),
-            "timezone": (event.timeZone ?? TimeZone.current).identifier,
-            "is_all_day": event.isAllDay,
-            "calendar": event.calendar.title
+            "id": event.formatID ?? "",
+            "title": event.formatTitle ?? "",
+            "start_date": dateFormatter.string(from: event.formatStartDate),
+            "start_date_local": formatLocal(event.formatStartDate, in: tz),
+            "end_date": dateFormatter.string(from: event.formatEndDate),
+            "end_date_local": formatLocal(event.formatEndDate, in: tz),
+            "timezone": (event.formatSourceTimeZone ?? TimeZone.current).identifier,
+            "is_all_day": event.formatIsAllDay,
+            "calendar": event.formatCalendarTitle
         ]
-        if let location = event.location { dict["location"] = location }
+        if let location = event.formatLocation { dict["location"] = location }
         if fields != nil || detailLevel != "summary" {
-            if let notes = event.notes { dict["notes"] = notes }
-            if let url = event.url { dict["url"] = url.absoluteString }
-            if event.hasRecurrenceRules, let rules = event.recurrenceRules {
+            if let notes = event.formatNotes { dict["notes"] = notes }
+            if let url = event.formatURL { dict["url"] = url.absoluteString }
+            if let rulesFragment = event.recurrenceRulesFragment {
                 dict["is_recurring"] = true
-                dict["recurrence_rules"] = rules.map { formatRecurrenceRule($0) }
+                dict["recurrence_rules"] = rulesFragment
             }
-            if let structured = event.structuredLocation {
-                var locDict: [String: Any] = ["title": structured.title ?? ""]
-                if let geo = structured.geoLocation {
-                    locDict["latitude"] = geo.coordinate.latitude
-                    locDict["longitude"] = geo.coordinate.longitude
-                }
-                if structured.radius > 0 { locDict["radius"] = structured.radius }
-                dict["structured_location"] = locDict
+            if let structuredFragment = event.structuredLocationFragment {
+                dict["structured_location"] = structuredFragment
             }
-            let (attendees, organizer) = formatAttendeesInfo(event)
-            if let attendees = attendees, !attendees.isEmpty {
+            if let attendees = event.attendeesFragment, !attendees.isEmpty {
                 dict["attendees"] = attendees
             }
-            if let organizer = organizer {
+            if let organizer = event.organizerFragment {
                 dict["organizer"] = organizer
             }
         }
@@ -3098,26 +3096,10 @@ class CheICalMCPServer {
         )
     }
 
-    private func formatRecurrenceRule(_ rule: EKRecurrenceRule) -> [String: Any] {
-        var dict: [String: Any] = [
-            "frequency": ["daily", "weekly", "monthly", "yearly"][rule.frequency.rawValue],
-            "interval": rule.interval
-        ]
-        if let end = rule.recurrenceEnd {
-            if let endDate = end.endDate {
-                dict["end_date"] = localDateFormatter.string(from: endDate)
-            } else if end.occurrenceCount > 0 {
-                dict["occurrence_count"] = end.occurrenceCount
-            }
-        }
-        if let days = rule.daysOfTheWeek {
-            dict["days_of_week"] = days.map { $0.dayOfTheWeek.rawValue }
-        }
-        if let days = rule.daysOfTheMonth {
-            dict["days_of_month"] = days.map { $0.intValue }
-        }
-        return dict
-    }
+    // (#103 D4) `formatRecurrenceRule` moved to free function in
+    // `EventFormattingSource.swift` so EKEvent extension's
+    // `recurrenceRulesFragment` accessor can call it without needing access
+    // to a Server instance method.
 
     // MARK: - Tag Utilities
 
