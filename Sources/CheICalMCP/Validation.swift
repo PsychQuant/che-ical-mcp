@@ -102,22 +102,12 @@ enum InputValidation {
         "is_recurring", "recurrence_rules", "structured_location", "attendees", "organizer"
     ]
 
-    /// M3: Every key `Server.formatEventDict` may emit. Mirrors
-    /// `validEventFields` — both sets must remain equal. The
-    /// `testValidEventFieldsMatchesFormatEventDictKeys` drift test fails
-    /// the build if either drifts.
-    ///
-    /// **Maintenance contract**: when adding a new emission key to
-    /// `formatEventDict`, add it here AND to `validEventFields`. The
-    /// drift test catches forgotten updates in either direction.
-    static let formatEventDictKeys: Set<String> = [
-        // Always emitted
-        "id", "title", "start_date", "start_date_local", "end_date", "end_date_local",
-        "timezone", "is_all_day", "calendar",
-        // Conditionally emitted (still in the universe of possible keys)
-        "location", "notes", "url", "is_recurring", "recurrence_rules",
-        "structured_location", "attendees", "organizer"
-    ]
+    // (#103) `formatEventDictKeys` manual mirror removed — drift detection is now
+    // anchored to runtime emission via the EventFormattingSource test seam (see
+    // testValidEventFieldsMatchesFormatEventDictKeys in EventListingParamsTests).
+    // FakeFormattableEvent drives formatEventDict through every conditional path,
+    // collected dict.keys becomes the source-of-truth compared bidirectionally
+    // against validEventFields. Maintainer no longer needs to update a mirror set.
 
     /// Distinguish three cases at the type-of-`fields` boundary:
     ///   - absent (key missing) → return nil (caller uses detail_level / default)
