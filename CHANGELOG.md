@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`InputValidation.parseDisplayTimezone` strictness** (#101 B3): rejects Foundation-accepted abbreviations and POSIX offsets that varied semantics across hosts. Region/City IANA identifiers + `UTC` alias accepted; everything else rejected with `invalidParameter` listing examples. Adds determinism to `*_local` rendering at the cost of accepting a narrower input set.
 - **`summary` detail_level description** (#101 LO1): tool schema now lists all 10 emitted fields (was misleadingly described as "title, times, calendar, location only").
-- **`InputValidation.validEventFields` ↔ `formatEventDictKeys` drift detection** (#101 M3): mirror constant + bidirectional drift test catches forgotten updates when `formatEventDict`'s emission set changes.
+- **`InputValidation.validEventFields` runtime-anchored drift detection** (#101 M3, strengthened by #103): bidirectional drift test catches forgotten updates when `formatEventDict`'s emission set changes. Initially landed (#101 M3) as a `validEventFields` ↔ `formatEventDictKeys` mirror-pair check (documentation-only contract, drift detection only when maintainer remembered to touch `Validation.swift`); strengthened in #103 to anchor against actual runtime emission via `EventFormattingSource` test seam — fake event drives `formatEventDict` through every conditional path, dict.keys becomes the source-of-truth compared bidirectionally with `validEventFields`. Manual mirror constant deleted.
 
 ### Security
 
