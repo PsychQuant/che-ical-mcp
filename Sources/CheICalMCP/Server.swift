@@ -644,7 +644,11 @@ class CheICalMCPServer {
                         "tag": .object(["type": .string("string"), "description": .string("Filter by tag (without # prefix). Example: \"grocery\"")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional reminder list name to filter by")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
-                        "completed": .object(["type": .string("boolean"), "description": .string("Filter: true=completed, false=incomplete, omit=all")])
+                        "completed": .object(["type": .string("boolean"), "description": .string("Filter: true=completed, false=incomplete, omit=all")]),
+                        "limit": .object([
+                            "type": .string("integer"),
+                            "description": .string("Maximum number of reminders to return")
+                        ])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -1260,13 +1264,17 @@ class CheICalMCPServer {
         var metadata: [String: Any] = [
             "total_in_range": totalInRange,
             "total_after_filter": totalAfterFilter,
-            "returned": result.count,
             "filter": filterMode,
             "sort": sortMode
         ]
         if let limit = limit { metadata["limit"] = limit }
 
+        // #107: unified top-level <entity>_count semantic — pre-limit total
+        // (taken from totalAfterFilter, before any prefix truncation).
+        // Callers compute truncation via `event_count - len(events)` per
+        // search_events existing pattern.
         var response: [String: Any] = [
+            "event_count": totalAfterFilter,
             "events": result,
             "metadata": metadata
         ]
@@ -1600,13 +1608,14 @@ class CheICalMCPServer {
         var metadata: [String: Any] = [
             "total_fetched": totalFetched,
             "total_after_filter": totalAfterFilter,
-            "returned": result.count,
             "filter": filterMode ?? "all",
             "sort": sortMode
         ]
         if let limit = limit { metadata["limit"] = limit }
 
+        // #107: unified top-level <entity>_count semantic — pre-limit total.
         let response: [String: Any] = [
+            "reminder_count": totalAfterFilter,
             "reminders": result,
             "metadata": metadata
         ]
@@ -1793,6 +1802,9 @@ class CheICalMCPServer {
         let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
         try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
         let completed = arguments["completed"]?.boolValue
+        // #107 B1: add limit parameter to align search_reminders with search_events.
+        // Uses requireOptionalLimit (cap=10000) — same defense-in-depth as search_events.
+        let limit = try InputValidation.requireOptionalLimit(arguments)
 
         // If only tag filter (no keywords), pass empty to get all reminders, then filter by tag
         var reminders = try await eventKitManager.searchReminders(
@@ -1810,6 +1822,13 @@ class CheICalMCPServer {
                 let (_, tags) = extractTags(from: reminder.notes)
                 return tags.contains(where: { $0.caseInsensitiveCompare(normalizedTag) == .orderedSame })
             }
+        }
+
+        // #107: capture pre-limit total BEFORE prefix truncation.
+        // reminder_count semantic = pre-limit total (aligned with search_events).
+        let totalCount = reminders.count
+        if let limit = limit, reminders.count > limit {
+            reminders = Array(reminders.prefix(limit))
         }
 
         let result = reminders.map { [self] reminder -> [String: Any] in
@@ -1857,11 +1876,13 @@ class CheICalMCPServer {
 
         var response: [String: Any] = [
             "match_mode": matchMode,
-            "reminder_count": reminders.count,
+            "reminder_count": totalCount,
             "reminders": result
         ]
         if !keywords.isEmpty { response["keywords"] = keywords }
         if let tagFilter = tagFilter { response["tag_filter"] = tagFilter }
+        // #107: echo back limit when caller specified one (mirror search_events L2211).
+        if let limit = limit { response["limit"] = limit }
         return try formatJSON(response)
     }
 
