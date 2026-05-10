@@ -396,31 +396,43 @@ final class EventListingParamsTests: XCTestCase {
         XCTAssertEqual(envelope, TimeZone.current.identifier)
     }
 
-    // MARK: - validEventFields ↔ formatEventDictKeys drift detection (M3)
+    // MARK: - validEventFields ↔ formatEventDict runtime emission drift detection (M3, #103)
 
-    func testValidEventFieldsMatchesFormatEventDictKeys() {
-        // M3: bidirectional drift detection.
-        //
-        // (a) `validEventFields ⊇ formatEventDictKeys` — fields advertised as
-        //     valid for the `fields[]` filter must all actually be emitted by
-        //     formatEventDict. If formatEventDict gains a key without this set
-        //     being updated, callers can't filter for the new field.
-        //
-        // (b) `formatEventDictKeys ⊇ validEventFields` — every "valid" field
-        //     must actually appear in some response. A field claimed valid but
-        //     never emitted would silently filter every result to empty.
-        //
-        // Maintenance: when modifying formatEventDict, update BOTH sets in
-        // Validation.swift. This test catches forgotten updates either way.
-        let missingFromValid = InputValidation.formatEventDictKeys.subtracting(InputValidation.validEventFields)
+    /// **Runtime-anchored M3 drift detection** (#103).
+    ///
+    /// Original M3 (PR #47 commit `3445129`) compared two manually-maintained
+    /// sibling sets in Validation.swift (`validEventFields` ↔ `formatEventDictKeys`).
+    /// That made M3 a documentation-only contract: maintainer adds emission key
+    /// in `formatEventDict` but forgets to sync EITHER set → drift test still
+    /// passes (both sets equal each other, not actual emission).
+    ///
+    /// This rewrite anchors the test to **runtime emission** via the
+    /// `EventFormattingSource` test seam. A `FakeFormattableEvent` with kitchen-sink
+    /// defaults drives `formatEventDict` through every conditional emission path,
+    /// and we assert bidirectional equivalence with `validEventFields`:
+    ///
+    /// (a) Every key actually emitted is in `validEventFields` (no surprise emission)
+    /// (b) Every claimed-valid field actually appears in emission (no dead allowlist entry)
+    ///
+    /// Now if a maintainer adds `dict["new_field"] = ...` in `formatEventDict`
+    /// without updating `validEventFields`, this test fails immediately — drift
+    /// detection no longer relies on maintainer discipline.
+    func testValidEventFieldsMatchesFormatEventDictKeys() async throws {
+        let server = try await CheICalMCPServer()
+        let fake = FakeFormattableEvent()  // kitchen-sink defaults trigger every conditional path
+        let dict = server.formatEventDict(fake, detailLevel: "standard", displayTimezone: nil, fields: nil)
+        let emittedKeys = Set(dict.keys)
+
+        let surplusEmitted = emittedKeys.subtracting(InputValidation.validEventFields)
         XCTAssertTrue(
-            missingFromValid.isEmpty,
-            "validEventFields missing keys that formatEventDict can emit: \(missingFromValid.sorted())"
+            surplusEmitted.isEmpty,
+            "validEventFields missing keys that formatEventDict actually emits: \(surplusEmitted.sorted())"
         )
-        let missingFromEmitted = InputValidation.validEventFields.subtracting(InputValidation.formatEventDictKeys)
+
+        let unusedAllowlist = InputValidation.validEventFields.subtracting(emittedKeys)
         XCTAssertTrue(
-            missingFromEmitted.isEmpty,
-            "formatEventDictKeys missing keys that validEventFields claims: \(missingFromEmitted.sorted())"
+            unusedAllowlist.isEmpty,
+            "validEventFields claims keys that formatEventDict does not emit: \(unusedAllowlist.sorted())"
         )
     }
 }
