@@ -189,12 +189,27 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
         codesign --verify --strict --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | sed 's/^/  /' >&2
         exit 1
     fi
-    # Confirm the signing identity is the one we asked for. grep -F on the EXACT
-    # $DEVELOPER_ID prevents a "any Developer ID team's cert" false-positive.
-    if ! codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -qF "Authority=$DEVELOPER_ID"; then
+    # Confirm the signing identity is the one we asked for.
+    # DEVELOPER_ID is a SHA-1 cert fingerprint, but `codesign -dv` prints
+    # `Authority=<cert CN>` (human-readable), never the SHA — so we reverse-lookup
+    # the Team ID from the keychain via `security find-identity` and verify
+    # against `TeamIdentifier=` instead. Team ID is the cert's stable unique
+    # identifier and avoids hardcoding the CN ("Developer ID Application: ...").
+    IDENTITY_LINE=$(security find-identity -p codesigning -v 2>/dev/null | grep -F "$DEVELOPER_ID" | head -1)
+    EXPECTED_TEAM_ID=""
+    if [[ "$IDENTITY_LINE" =~ \(([A-Z0-9]+)\)\" ]]; then
+        EXPECTED_TEAM_ID="${BASH_REMATCH[1]}"
+    fi
+    if [[ -z "$EXPECTED_TEAM_ID" ]]; then
         echo ""
-        echo "✗ Pre-pack defense: $UNIVERSAL_BINARY is not signed by the expected identity." >&2
-        echo "  Expected: Authority=$DEVELOPER_ID" >&2
+        echo "✗ Pre-pack defense: cannot derive Team ID from DEVELOPER_ID cert." >&2
+        echo "  DEVELOPER_ID=$DEVELOPER_ID not found in keychain or cert CN missing Team ID suffix." >&2
+        exit 1
+    fi
+    if ! codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -qE "^TeamIdentifier=${EXPECTED_TEAM_ID}\$"; then
+        echo ""
+        echo "✗ Pre-pack defense: $UNIVERSAL_BINARY is not signed by the expected team." >&2
+        echo "  Expected: TeamIdentifier=$EXPECTED_TEAM_ID (derived from DEVELOPER_ID $DEVELOPER_ID)" >&2
         echo "  Actual codesign metadata:" >&2
         codesign -dv --verbose=2 "$UNIVERSAL_BINARY" 2>&1 | grep -E "Authority|TeamIdentifier" | sed 's/^/    /' >&2
         exit 1

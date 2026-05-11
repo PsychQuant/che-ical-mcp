@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-11
+
+Wire-format consistency wave + response-shape parameters. Completes the #101 cluster (5 closed issues across 3 days) — event listing tools gain `detail_level` / `fields` / `display_timezone` / `limit` for LLM-friendly verbosity tuning, and all 5 list/search envelopes converge on top-level `<entity>_count` with pre-limit semantics. Two breaking wire-format changes (#102, #107) — MCP clients reading `metadata.returned` or `result_count` must update. Validator hardening (#101 F1-F3) closes a `Int.max` DoS trap and the type-coerce-bypass class on 2 more helpers. Runtime-anchored drift detection (#103) prevents `formatEventDict` ↔ `validEventFields` divergence.
+
 ### Added
 
 - **Event listing response-shape parameters** (#101, originally PR #47 by @fabiocarvalho777, taken over with `Co-authored-by` after 6-AI verify FAIL): four optional parameters on `list_events`, `search_events`, and `list_events_quick`:
