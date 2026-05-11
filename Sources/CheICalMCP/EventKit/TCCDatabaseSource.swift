@@ -92,18 +92,24 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return TCCQueryResult(entries: [], failureReason: "sqlite3 spawn failed: \(error.localizedDescription)")
         }
 
+        // Read pipes BEFORE waitUntilExit to avoid deadlock if output exceeds the OS
+        // pipe buffer. sqlite3 with this filter typically returns <1KB so the issue
+        // doesn't surface in practice, but we mirror ProcessInventorySource for
+        // consistency — both subprocess helpers should share the same read pattern.
+        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         guard process.terminationStatus == 0 else {
-            let errOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            let errOutput = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
             return TCCQueryResult(entries: [], failureReason: "sqlite3 exit \(process.terminationStatus): \(errOutput)")
         }
 
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: outputData, encoding: .utf8) else {
             return TCCQueryResult(entries: [], failureReason: "sqlite3 output not UTF-8")
         }

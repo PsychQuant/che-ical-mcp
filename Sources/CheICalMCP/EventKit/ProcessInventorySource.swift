@@ -72,7 +72,6 @@ struct LiveProcessInventorySource: ProcessInventorySource {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return ProcessInventoryResult(
                 processes: [],
@@ -80,8 +79,17 @@ struct LiveProcessInventorySource: ProcessInventorySource {
             )
         }
 
+        // Read pipes BEFORE waitUntilExit: `ps -A` output is large (one line per process
+        // on the host, often >64KB), and the OS pipe buffer is ~64KB. If we wait for the
+        // child first, it blocks on stdout write once the buffer fills, and waitUntilExit
+        // deadlocks. readDataToEndOfFile reads until EOF (child closes its stdout on
+        // exit), so the child can drain naturally as we read.
+        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         guard process.terminationStatus == 0 else {
-            let errOutput = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            let errOutput = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
             return ProcessInventoryResult(
                 processes: [],
@@ -89,7 +97,6 @@ struct LiveProcessInventorySource: ProcessInventorySource {
             )
         }
 
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: outputData, encoding: .utf8) else {
             return ProcessInventoryResult(processes: [], failureReason: "ps output not UTF-8")
         }

@@ -152,6 +152,64 @@ if CommandLine.arguments.contains("--cli") {
     exit(0)
 }
 
-// MCP server mode (default)
+// MCP server mode (default) — emit a startup banner with drift signals first
+// (#122). Wrapped in do/catch so a banner failure never blocks the server: every
+// drift signal is advisory and the banner is opt-out via CHE_ICAL_MCP_NO_BANNER.
+emitStartupBanner()
+
 let server = try await CheICalMCPServer()
 try await server.run()
+
+/// #122 — drift detector banner. Single-shot at startup, stderr only, non-blocking.
+///
+/// Skip conditions: env `CHE_ICAL_MCP_NO_BANNER` set, or any internal failure (banner
+/// degrades gracefully rather than aborting). CLI side-channels (`--version` /
+/// `--help` / `--setup` / `--print-tcc-path` / `--self-update` / `--cli`) all exit
+/// before reaching this function — no need to re-check.
+func emitStartupBanner() {
+    let env = ProcessInfo.processInfo.environment
+    if let v = env["CHE_ICAL_MCP_NO_BANNER"], !v.isEmpty {
+        return
+    }
+
+    do {
+        let argv0 = CommandLine.arguments.first ?? ""
+        let resolvedPath: String = {
+            // Real path resolution mirrors `--print-tcc-path` behavior.
+            if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: argv0) {
+                return URL(fileURLWithPath: dest).standardizedFileURL.path
+            }
+            return URL(fileURLWithPath: argv0).standardizedFileURL.path
+        }()
+
+        let mtime: Date? = {
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
+                return nil
+            }
+            return attrs[.modificationDate] as? Date
+        }()
+
+        let detector = TCCDriftDetector(
+            tcc: LiveTCCDatabaseSource(),
+            processes: LiveProcessInventorySource(),
+            runningBinaryPath: resolvedPath,
+            diskBinaryMtime: mtime
+        )
+        let report = detector.detect()
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
+        let banner = TCCDriftDetector.formatBanner(
+            report: report,
+            version: AppVersion.current,
+            runningBinaryPath: resolvedPath,
+            pid: ProcessInfo.processInfo.processIdentifier,
+            bundleID: bundleID
+        )
+        FileHandle.standardError.write(Data(banner.utf8))
+    } catch {
+        // Defensive: if anything in banner emission unexpectedly throws (none of the
+        // calls above throw today, but future maintenance could add a throwing path),
+        // swallow + emit a single-line warning rather than aborting startup.
+        let safe = EventKitErrorSanitizer.escapeForStderr(error.localizedDescription)
+        FileHandle.standardError.write(Data("[banner] startup banner emission failed: \(safe)\n".utf8))
+    }
+}
