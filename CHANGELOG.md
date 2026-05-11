@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-05-11
+
+Documentation-only release. Adds the post-install / upgrade TCC permission setup guide for `.mcpb` installation path (#108 Phase 1). Diagnoses the silent-failure mode where reinstalling `.mcpb` invalidates the existing TCC grant (cdhash changed) and the MCP subprocess context cannot surface a re-authorization dialog. Provides verified workaround (run `--setup` from Terminal once after install / upgrade) until the v1.9.0 structural fix (per-call `authorizationStatus` gate, Phase 2) ships.
+
+### Fixed
+
+- **`.mcpb` post-install / upgrade TCC permission workflow documented** (#108 Phase 1): new `mcpb/README.md` covers verify-current-state (TCC db SQL query), locate-extracted-binary (`find` snippet), run-`--setup`-from-Terminal, and troubleshooting (`tccutil reset` + manual System Settings toggle). Closes the documentation gap that left `.mcpb` upgrade-path users facing silent calendar tool failures without an obvious remediation path. Phase 2 (v1.9.0) will land the structural fix that removes the actor-private `hasCalendarAccess` / `hasReminderAccess` caches so future TCC state changes surface as immediate `accessDenied` errors instead of silent failures.
+
 ## [1.8.0] - 2026-05-11
 
 Wire-format consistency wave + response-shape parameters. Completes the #101 cluster (5 closed issues across 3 days) — event listing tools gain `detail_level` / `fields` / `display_timezone` / `limit` for LLM-friendly verbosity tuning, and all 5 list/search envelopes converge on top-level `<entity>_count` with pre-limit semantics. Two breaking wire-format changes (#102, #107) — MCP clients reading `metadata.returned` or `result_count` must update. Validator hardening (#101 F1-F3) closes a `Int.max` DoS trap and the type-coerce-bypass class on 2 more helpers. Runtime-anchored drift detection (#103) prevents `formatEventDict` ↔ `validEventFields` divergence.
