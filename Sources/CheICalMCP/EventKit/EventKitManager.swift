@@ -31,16 +31,23 @@ protocol EventKitManaging: Sendable {
 
 /// EventKit wrapper for Calendar and Reminders operations
 actor EventKitManager: EventKitManaging {
-    private let eventStore = EKEventStore()
-    private var hasCalendarAccess = false
-    private var hasReminderAccess = false
+    private let eventStore: EKEventStore
+    private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
 
     static let shared = EventKitManager()
 
-    private init() {}
+    /// - Parameter authorizationSource: Probe for TCC state reads + access requests.
+    ///   Default wires `LiveAuthorizationStatusSource` sharing the same `EKEventStore`
+    ///   instance so request attribution matches data-ops. Tests inject a mock probe
+    ///   to exercise the `AuthorizationGate` switch without real EventKit access.
+    init(authorizationSource: AuthorizationStatusSource? = nil) {
+        let store = EKEventStore()
+        self.eventStore = store
+        self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
+    }
 
-    // MARK: - Access Request
+    // MARK: - Access Gate (#108 Phase 2)
 
     private static let isSSHSession: Bool =
         ProcessInfo.processInfo.environment["SSH_CLIENT"] != nil
@@ -57,44 +64,24 @@ actor EventKitManager: EventKitManaging {
     /// Test-accessible wrapper
     static var isNonInteractive: Bool { isNonInteractiveSession }
 
-    func requestCalendarAccess() async throws {
-        if hasCalendarAccess { return }
-
-        if #available(macOS 14.0, *) {
-            let granted = try await eventStore.requestFullAccessToEvents()
-            hasCalendarAccess = granted
-            if !granted {
-                throw EventKitError.accessDenied(
-                    type: "Calendar", isSSH: Self.isSSHSession, isLaunchd: Self.isNonInteractiveSession)
-            }
-        } else {
-            let granted = try await eventStore.requestAccess(to: .event)
-            hasCalendarAccess = granted
-            if !granted {
-                throw EventKitError.accessDenied(
-                    type: "Calendar", isSSH: Self.isSSHSession, isLaunchd: Self.isNonInteractiveSession)
-            }
-        }
+    /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
+    /// which cached the granted state in `hasCalendarAccess` and silently failed on
+    /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
+    func ensureCalendarAccess() async throws {
+        try await AuthorizationGate.ensureAccess(
+            for: .event,
+            typeName: "Calendar",
+            probe: authorizationSource
+        )
     }
 
-    func requestReminderAccess() async throws {
-        if hasReminderAccess { return }
-
-        if #available(macOS 14.0, *) {
-            let granted = try await eventStore.requestFullAccessToReminders()
-            hasReminderAccess = granted
-            if !granted {
-                throw EventKitError.accessDenied(
-                    type: "Reminders", isSSH: Self.isSSHSession, isLaunchd: Self.isNonInteractiveSession)
-            }
-        } else {
-            let granted = try await eventStore.requestAccess(to: .reminder)
-            hasReminderAccess = granted
-            if !granted {
-                throw EventKitError.accessDenied(
-                    type: "Reminders", isSSH: Self.isSSHSession, isLaunchd: Self.isNonInteractiveSession)
-            }
-        }
+    /// Per-call TCC status check for Reminders. Counterpart of `ensureCalendarAccess()`.
+    func ensureReminderAccess() async throws {
+        try await AuthorizationGate.ensureAccess(
+            for: .reminder,
+            typeName: "Reminders",
+            probe: authorizationSource
+        )
     }
 
     // MARK: - Refresh Management
@@ -209,10 +196,10 @@ actor EventKitManager: EventKitManaging {
 
     func listCalendars(for entityType: EKEntityType? = nil) async throws -> [EKCalendar] {
         if entityType == .event || entityType == nil {
-            try await requestCalendarAccess()
+            try await ensureCalendarAccess()
         }
         if entityType == .reminder || entityType == nil {
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
         }
         refreshIfNeeded()
 
@@ -232,9 +219,9 @@ actor EventKitManager: EventKitManaging {
 
     func createCalendar(title: String, entityType: EKEntityType, color: String? = nil) async throws -> CreateCalendarResult {
         if entityType == .event {
-            try await requestCalendarAccess()
+            try await ensureCalendarAccess()
         } else {
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
         }
 
         // Idempotency: check for existing calendar with same title and type
@@ -268,8 +255,8 @@ actor EventKitManager: EventKitManaging {
         title: String? = nil,
         color: String? = nil
     ) async throws -> EKCalendar {
-        try await requestCalendarAccess()
-        try await requestReminderAccess()
+        try await ensureCalendarAccess()
+        try await ensureReminderAccess()
 
         guard let calendar = eventStore.calendar(withIdentifier: identifier) else {
             throw EventKitError.calendarNotFound(identifier: identifier)
@@ -292,8 +279,8 @@ actor EventKitManager: EventKitManaging {
     }
 
     func deleteCalendar(identifier: String) async throws {
-        try await requestCalendarAccess()
-        try await requestReminderAccess()
+        try await ensureCalendarAccess()
+        try await ensureReminderAccess()
 
         guard let calendar = eventStore.calendar(withIdentifier: identifier) else {
             throw EventKitError.calendarNotFound(identifier: identifier)
@@ -335,7 +322,7 @@ actor EventKitManager: EventKitManaging {
         calendarName: String? = nil,
         calendarSource: String? = nil
     ) async throws -> [EKEvent] {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
@@ -362,7 +349,7 @@ actor EventKitManager: EventKitManaging {
         structuredLocation: StructuredLocationInput? = nil,
         timezone: TimeZone? = nil
     ) async throws -> CreateEventResult {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         // Resolve calendar first (required for both duplicate check and creation)
         guard let name = calendarName else {
@@ -462,7 +449,7 @@ actor EventKitManager: EventKitManaging {
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
     ) async throws -> EKEvent {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         guard let masterEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
@@ -631,7 +618,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         guard let masterEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
@@ -661,7 +648,7 @@ actor EventKitManager: EventKitManaging {
     /// Delete an entire recurring event series by removing from the earliest occurrence.
     /// Uses .futureEvents on the master event to delete all occurrences.
     func deleteEventSeries(identifier: String) async throws {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         guard let event = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
@@ -681,7 +668,7 @@ actor EventKitManager: EventKitManaging {
 
     /// Get a single event by identifier
     func getEvent(identifier: String) async throws -> EKEvent {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         guard let event = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
@@ -706,7 +693,7 @@ actor EventKitManager: EventKitManaging {
         calendarName: String? = nil,
         calendarSource: String? = nil
     ) async throws -> [EKEvent] {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         refreshIfNeeded()
 
         // Default to ±2 years from now. EventKit's predicateForEvents can return
@@ -769,7 +756,7 @@ actor EventKitManager: EventKitManaging {
     ///   - limit: Maximum number of results (default 5)
     /// - Returns: Array of matching events, sorted by start date descending (most recent first)
     func findSimilarEvents(title: String, limit: Int = 5) async throws -> [EKEvent] {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         refreshIfNeeded()
 
         let now = Date()
@@ -814,7 +801,7 @@ actor EventKitManager: EventKitManaging {
         items: [(identifier: String, occurrenceDate: Date?)],
         span: EKSpan = .thisEvent
     ) async throws -> BatchDeleteResult {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         var successCount = 0
         var failures: [(String, String)] = []
@@ -864,7 +851,7 @@ actor EventKitManager: EventKitManaging {
         endDate: Date,
         toleranceMinutes: Int = 5
     ) async throws -> [DuplicatePair] {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         refreshIfNeeded()
 
         // Get specified calendars or all
@@ -923,7 +910,7 @@ actor EventKitManager: EventKitManaging {
         calendarSource: String? = nil,
         excludeEventId: String? = nil
     ) async throws -> [EKEvent] {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
@@ -952,7 +939,7 @@ actor EventKitManager: EventKitManaging {
         toCalendarSource: String? = nil,
         deleteOriginal: Bool = false
     ) async throws -> EKEvent {
-        try await requestCalendarAccess()
+        try await ensureCalendarAccess()
 
         // Find the source event
         guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
@@ -1022,7 +1009,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     func listReminders(completed: Bool? = nil, calendarName: String? = nil, calendarSource: String? = nil) async throws -> [EKReminder] {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
@@ -1112,7 +1099,7 @@ actor EventKitManager: EventKitManaging {
         recurrenceRule: RecurrenceRuleInput? = nil,
         locationTrigger: LocationTriggerInput? = nil
     ) async throws -> CreateReminderResult {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         // Resolve calendar first (required for both duplicate check and creation)
         guard let name = calendarName else {
@@ -1181,7 +1168,7 @@ actor EventKitManager: EventKitManaging {
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false
     ) async throws -> EKReminder {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
@@ -1251,7 +1238,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     func getReminder(identifier: String) async throws -> EKReminder {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
@@ -1261,7 +1248,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     func completeReminder(identifier: String, completed: Bool = true) async throws -> EKReminder {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
@@ -1283,7 +1270,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     func deleteReminder(identifier: String) async throws {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
@@ -1305,7 +1292,7 @@ actor EventKitManager: EventKitManaging {
         calendarSource: String? = nil,
         completed: Bool? = nil
     ) async throws -> [EKReminder] {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
@@ -1363,7 +1350,7 @@ actor EventKitManager: EventKitManaging {
 
     /// Delete multiple reminders at once
     func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false) async throws -> BatchDeleteResult {
-        try await requestReminderAccess()
+        try await ensureReminderAccess()
 
         var successCount = 0
         var failures: [(String, String)] = []
@@ -1532,7 +1519,7 @@ actor EventKitManager: EventKitManaging {
 
         case .createReminder(let id, let title):
             // Undo create = delete
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
                 eventStore.fetchReminders(matching: predicate) { reminders in
@@ -1547,7 +1534,7 @@ actor EventKitManager: EventKitManaging {
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
             let reminder = EKReminder(eventStore: eventStore)
             applyReminderSnapshot(snapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
@@ -1556,7 +1543,7 @@ actor EventKitManager: EventKitManaging {
 
         case .updateReminder(let id, let oldSnapshot):
             // Undo update = restore old values
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
                 eventStore.fetchReminders(matching: predicate) { reminders in
@@ -1572,7 +1559,7 @@ actor EventKitManager: EventKitManaging {
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
         case .completeReminder(let id, let wasCompleted, let title):
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
                 eventStore.fetchReminders(matching: predicate) { reminders in
@@ -1622,7 +1609,7 @@ actor EventKitManager: EventKitManaging {
 
         case .completeReminder(let id, let wasCompleted, let title):
             // Redo = set back to the new state (opposite of wasCompleted)
-            try await requestReminderAccess()
+            try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
                 eventStore.fetchReminders(matching: predicate) { reminders in
@@ -1752,6 +1739,11 @@ struct LocationTriggerInput {
 
 enum EventKitError: LocalizedError {
     case accessDenied(type: String, isSSH: Bool = false, isLaunchd: Bool = false)
+    /// `.writeOnly` partial-access state (macOS 14+). User granted write-only but a read operation was attempted.
+    /// Not silently downgradable — caller must surface so user can upgrade in System Settings.
+    case insufficientAccess(type: String)
+    /// `@unknown default` in the TCC authorization-status switch — guards against future EKAuthorizationStatus enum cases that this build doesn't recognize.
+    case unknownAuthState(type: String, statusValue: Int)
     case calendarNotFound(identifier: String, available: [String] = [])
     case calendarNotFoundWithSource(name: String, source: String, available: [String] = [])
     case multipleCalendarsFound(name: String, sources: String)
@@ -1802,6 +1794,21 @@ enum EventKitError: LocalizedError {
             1. Open System Settings → Privacy & Security → \(type)
             2. Enable access for the MCP server or Terminal
             3. Restart Claude Desktop/Code
+            """
+        case .insufficientAccess(let type):
+            return """
+            \(type) access is write-only — read operations need full access. To upgrade:
+            1. Open System Settings → Privacy & Security → \(type)
+            2. Find CheICalMCP and switch from "Write only" to "Full access"
+            3. Restart Claude Desktop/Code
+            (write-only access is a macOS 14+ partial-grant state introduced for privacy-conscious workflows; read operations explicitly cannot fall back silently)
+            """
+        case .unknownAuthState(let type, let statusValue):
+            return """
+            \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
+            1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
+            2. Or 'tccutil reset Calendar com.checheng.CheICalMCP' (and same for Reminders) then re-grant
+            3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .calendarNotFound(let id, _):
             // #37 F1: do NOT interpolate `available` into the trusted-message

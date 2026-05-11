@@ -3,7 +3,7 @@ import Foundation
 /// Centralized version management
 enum AppVersion {
     /// Current version - update this when releasing
-    static let current = "1.8.1"
+    static let current = "1.9.0"
 
     /// App name
     static let name = "CheICalMCP"
@@ -31,6 +31,10 @@ enum AppVersion {
           --setup          Request Calendar & Reminders permissions and exit.
                            Run this once from Terminal before using with launchd
                            or other non-interactive environments.
+          --print-tcc-path Print binary's runtime path, bundle ID, current TCC
+                           authorization status, and ready-to-paste tccutil/sqlite3
+                           commands. Diagnostic helper for .mcpb-installed users
+                           who need to locate the extracted binary for --setup.
           --self-update    Check GitHub Releases for a newer binary, download
                            and install it at the current binary's path. Use
                            when an existing install needs to upgrade — wrapper

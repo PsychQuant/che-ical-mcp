@@ -32,6 +32,75 @@ if CommandLine.arguments.contains("--self-update") {
     }
 }
 
+if CommandLine.arguments.contains("--print-tcc-path") {
+    // #109: TCC diagnostic flag — prints the runtime binary's path + bundle ID +
+    // current EventKit authorization status + ready-to-paste tccutil reset / sqlite3
+    // commands. Designed for the .mcpb-installed scenario where users can't easily
+    // find the extracted binary path on their own.
+
+    let argv0 = CommandLine.arguments[0]
+    let resolved = (try? FileManager.default.destinationOfSymbolicLink(atPath: argv0)) ?? argv0
+    let absolute = URL(fileURLWithPath: resolved).standardizedFileURL.path
+
+    let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
+
+    func statusString(_ s: EKAuthorizationStatus) -> String {
+        if #available(macOS 14.0, *) {
+            switch s {
+            case .notDetermined: return "notDetermined (never asked / TCC db has no entry)"
+            case .restricted:    return "restricted (system policy denies — Screen Time / MDM / etc.)"
+            case .denied:        return "denied (user explicitly denied)"
+            case .fullAccess:    return "fullAccess (granted)"
+            case .writeOnly:     return "writeOnly (partial — can create but not read)"
+            @unknown default:    return "unknown (raw value \(s.rawValue))"
+            }
+        } else {
+            switch s {
+            case .notDetermined: return "notDetermined"
+            case .restricted:    return "restricted"
+            case .denied:        return "denied"
+            case .authorized:    return "authorized (legacy full-access on pre-macOS 14)"
+            @unknown default:    return "unknown (raw value \(s.rawValue))"
+            }
+        }
+    }
+
+    let calStatus = EKEventStore.authorizationStatus(for: .event)
+    let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+
+    print("""
+        CheICalMCP TCC diagnostic info (\(AppVersion.current))
+
+        Binary path:
+          \(absolute)
+
+        Bundle identifier:
+          \(bundleID)
+
+        Current EventKit authorization status:
+          Calendar:   \(statusString(calStatus))
+          Reminders:  \(statusString(remStatus))
+
+        Reset TCC + re-prompt (run from Terminal, NOT over SSH):
+          tccutil reset Calendar \(bundleID)
+          tccutil reset Reminders \(bundleID)
+          "\(absolute)" --setup
+
+        Inspect TCC database directly:
+          sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
+            "SELECT service, client, auth_value, datetime(last_modified,'unixepoch','localtime') FROM access WHERE client LIKE '%CheICalMCP%'"
+          (auth_value: 0=denied, 1=unknown, 2=granted, 3=limited)
+
+        System Settings (manual toggle):
+          System Settings → Privacy & Security → Calendar
+          System Settings → Privacy & Security → Reminders
+
+        Additional signing info:
+          codesign -dv "\(absolute)"
+        """)
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--setup") {
     // Warn if running in a non-interactive environment where TCC dialogs cannot appear
     if ProcessInfo.processInfo.environment["TERM"] == nil || getppid() == 1 {
