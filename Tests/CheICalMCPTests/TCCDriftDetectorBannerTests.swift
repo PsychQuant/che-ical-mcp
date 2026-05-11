@@ -1,0 +1,166 @@
+import XCTest
+@testable import CheICalMCP
+
+/// Subprocess-based integration tests for the startup banner emitted by `emitStartupBanner()`
+/// in `main.swift`. These tests spawn the built `CheICalMCP` binary, read its stderr, and
+/// assert banner-format invariants. They are intentionally tolerant of host-specific state:
+/// TCC.db / ps output vary between machines, so we only check banner-shape contracts here.
+/// Pure drift-detection logic lives in `TCCDriftDetectorTests.swift`.
+final class TCCDriftDetectorBannerTests: XCTestCase {
+
+    // MARK: - Setup
+
+    /// Locate the built binary. SwiftPM tests run from the package root, so debug
+    /// builds live at `.build/debug/CheICalMCP`. Release builds at `.build/release/`.
+    /// We prefer debug since `swift test` always builds debug.
+    private func locateBuiltBinary() throws -> URL {
+        let cwd = FileManager.default.currentDirectoryPath
+        let candidates = [
+            "\(cwd)/.build/debug/CheICalMCP",
+            "\(cwd)/.build/release/CheICalMCP"
+        ]
+        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        throw XCTSkip("CheICalMCP binary not found at \(candidates). Run `swift build` first.")
+    }
+
+    /// Spawn the binary, give it up to `maxWait` seconds to emit a banner, then terminate.
+    /// Returns (stderr_text, exit_status). Stdin is wired to `/dev/null` so the MCP server
+    /// loop has no JSON-RPC to read; we don't expect graceful shutdown, just the banner
+    /// to land on stderr before we kill.
+    private func spawnAndCaptureStderr(
+        binary: URL,
+        arguments: [String] = [],
+        environment: [String: String]? = nil,
+        maxWait: TimeInterval = 1.0
+    ) throws -> (stderr: String, terminationStatus: Int32) {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = arguments
+        if let env = environment {
+            process.environment = env
+        }
+
+        let stderr = Pipe()
+        let stdin = Pipe()
+        process.standardError = stderr
+        process.standardInput = stdin
+        process.standardOutput = Pipe()  // discard stdout — JSON-RPC noise
+
+        try process.run()
+
+        // Close stdin immediately so the MCP loop has no data, then wait briefly for
+        // the banner to flush. If the process exits on its own (--version / --help),
+        // we drop out of the loop early via isRunning check.
+        try stdin.fileHandleForWriting.close()
+
+        let deadline = Date().addingTimeInterval(maxWait)
+        while process.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+        }
+        process.waitUntilExit()
+
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        return (stderrText, process.terminationStatus)
+    }
+
+    // MARK: - Tests
+
+    /// In default MCP server mode (no flags), the banner header line must appear on
+    /// stderr within the wait window. We don't assert specific drift signals because
+    /// host state varies.
+    func testBannerAppearsInDefaultMCPServerMode() throws {
+        let binary = try locateBuiltBinary()
+        let (stderr, _) = try spawnAndCaptureStderr(binary: binary)
+
+        XCTAssertTrue(
+            stderr.contains("[banner] che-ical-mcp"),
+            "Default startup should emit banner. Got stderr: \(stderr.prefix(200))"
+        )
+        XCTAssertTrue(
+            stderr.contains(binary.path),
+            "Banner should include the running binary path. Got stderr: \(stderr.prefix(200))"
+        )
+    }
+
+    /// Setting `CHE_ICAL_MCP_NO_BANNER=1` must completely suppress banner output.
+    func testBannerSuppressedByEnvironmentVariable() throws {
+        let binary = try locateBuiltBinary()
+        var env = ProcessInfo.processInfo.environment
+        env["CHE_ICAL_MCP_NO_BANNER"] = "1"
+
+        let (stderr, _) = try spawnAndCaptureStderr(binary: binary, environment: env)
+
+        XCTAssertFalse(
+            stderr.contains("[banner]"),
+            "Env-var should fully suppress banner. Got stderr: \(stderr)"
+        )
+        XCTAssertFalse(
+            stderr.contains("[drift]"),
+            "Env-var should also suppress drift signals. Got stderr: \(stderr)"
+        )
+    }
+
+    /// `--version` exits before the MCP-server-mode code path, so no banner.
+    func testNoBannerForVersionFlag() throws {
+        let binary = try locateBuiltBinary()
+        let (stderr, status) = try spawnAndCaptureStderr(
+            binary: binary,
+            arguments: ["--version"]
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertFalse(
+            stderr.contains("[banner]"),
+            "--version path should not emit banner. Got stderr: \(stderr)"
+        )
+    }
+
+    /// `--help` exits before banner too. Same path as `--version`, separate test to
+    /// document the contract explicitly.
+    func testNoBannerForHelpFlag() throws {
+        let binary = try locateBuiltBinary()
+        let (stderr, status) = try spawnAndCaptureStderr(
+            binary: binary,
+            arguments: ["--help"]
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertFalse(
+            stderr.contains("[banner]"),
+            "--help path should not emit banner. Got stderr: \(stderr)"
+        )
+    }
+
+    /// Spawn the binary from a path not present in TCC.db — typically forces a
+    /// path-mismatch drift signal (or skip-reason if sqlite3 unavailable). This is the
+    /// "mcpb 怎麼 test" answer per the Plan tier discussion: we don't actually install
+    /// to the mcpb path, we just run from any arbitrary path and assert the banner
+    /// recognizes the alternate path.
+    func testBannerHandlesArbitraryBinaryPath() throws {
+        let builtBinary = try locateBuiltBinary()
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("CheICalMCP-banner-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let tempBinary = tempDir.appendingPathComponent("CheICalMCP")
+        try FileManager.default.copyItem(at: builtBinary, to: tempBinary)
+
+        let (stderr, _) = try spawnAndCaptureStderr(binary: tempBinary)
+
+        XCTAssertTrue(
+            stderr.contains("[banner] che-ical-mcp"),
+            "Banner should appear even from arbitrary path. Got stderr: \(stderr.prefix(200))"
+        )
+        XCTAssertTrue(
+            stderr.contains(tempBinary.path),
+            "Banner should print the temp path we spawned from. Got: \(stderr.prefix(400))"
+        )
+    }
+}
