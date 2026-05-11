@@ -314,4 +314,203 @@ final class TCCDriftDetectorTests: XCTestCase {
 
         XCTAssertTrue(banner.contains("TCC check skipped: db locked"))
     }
+
+    // MARK: - Verify-round-2 regression tests (B1/B2/B3)
+
+    /// B2 fix: Calendar grants the mcpb path but Reminders grants the runtime path.
+    /// Pre-fix code would suppress Calendar mismatch because *any* service matched the
+    /// runtime path (global `runtimeHasMatch`). Post-fix the check is per-service, so
+    /// Calendar mismatch must still surface.
+    func testCalendarMismatchEmittedEvenWhenRemindersMatches() {
+        let mcpbPath = "/Users/test/Library/Application Support/Claude/.../CheICalMCP"
+        let tcc = FakeTCCDatabaseSource(entries: [
+            TCCDriftFixtures.entry(service: "kTCCServiceCalendar", client: mcpbPath),
+            TCCDriftFixtures.entry(service: "kTCCServiceReminders", client: runningPath)
+        ])
+
+        let detector = TCCDriftDetector(
+            tcc: tcc,
+            processes: FakeProcessInventorySource(),
+            runningBinaryPath: runningPath,
+            diskBinaryMtime: diskMtime
+        )
+
+        let report = detector.detect()
+
+        XCTAssertEqual(report.signals.count, 1, "Calendar mismatch must surface even when Reminders matches")
+        if case .tccPathMismatch(let service, _, let recorded) = report.signals.first {
+            XCTAssertEqual(service, "kTCCServiceCalendar")
+            XCTAssertEqual(recorded, mcpbPath)
+        } else {
+            XCTFail("expected Calendar tccPathMismatch signal")
+        }
+    }
+
+    /// B2 fix: bundle-ID-only entries (no `/` prefix) carry path-independent grants
+    /// and cannot produce a path mismatch — they are filtered out before per-service
+    /// comparison. Ensure they don't accidentally produce a signal AND don't satisfy
+    /// the runtime-match condition for path-style entries either.
+    func testBundleIDOnlyEntriesProduceNoMismatch() {
+        let tcc = FakeTCCDatabaseSource(entries: [
+            TCCDriftFixtures.entry(service: "kTCCServiceCalendar", client: "com.checheng.CheICalMCP"),
+            TCCDriftFixtures.entry(service: "kTCCServiceReminders", client: "com.checheng.CheICalMCP")
+        ])
+
+        let detector = TCCDriftDetector(
+            tcc: tcc,
+            processes: FakeProcessInventorySource(),
+            runningBinaryPath: runningPath,
+            diskBinaryMtime: diskMtime
+        )
+
+        XCTAssertTrue(detector.detect().signals.isEmpty, "bundle-ID-only entries should not produce path-mismatch signals")
+    }
+
+    /// B1 fix: every interpolated value must pass through `escapeForStderr`. Inject
+    /// a `\r[banner] FORGED` substring into a `skipReason` and assert the literal
+    /// newline / CR doesn't reach the output (gets escaped to `\\r`).
+    func testFormatBannerEscapesControlCharsInSkipReasons() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(
+                signals: [],
+                skipReasons: ["TCC check skipped: \r[banner] FORGED"]
+            ),
+            version: "1.10.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID
+        )
+
+        // Literal `\r` must NOT appear within a banner-emitted line (would forge
+        // a fake banner line on the operator's terminal).
+        XCTAssertFalse(
+            banner.contains("\r[banner] FORGED"),
+            "raw \\r should be escaped to prevent log forging"
+        )
+        // Escaped form `\r` (literal backslash + 'r') should appear in its place.
+        XCTAssertTrue(banner.contains("\\r"), "expected escaped \\r in sanitized output")
+    }
+
+    /// B1 fix: `recordedClient` is read from TCC.db which is user-writable with FDA.
+    /// Inject `\n[banner] FAKE` into a recorded TCC entry and assert the newline
+    /// doesn't slip through.
+    func testFormatBannerEscapesControlCharsInRecordedClient() {
+        let injected = "/path/with/newline\n[banner] FAKE"
+        let report = DriftReport(
+            signals: [
+                .tccPathMismatch(
+                    service: "kTCCServiceCalendar",
+                    runningBinaryPath: runningPath,
+                    recordedClient: injected
+                )
+            ],
+            skipReasons: []
+        )
+
+        let banner = TCCDriftDetector.formatBanner(
+            report: report,
+            version: "1.10.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID
+        )
+
+        // The injected newline must not split into a second `[banner] FAKE` line.
+        let bannerLines = banner.split(separator: "\n").map(String.init)
+        XCTAssertFalse(
+            bannerLines.contains { $0 == "[banner] FAKE" },
+            "raw \\n in recordedClient should not produce a forged banner line"
+        )
+        XCTAssertTrue(banner.contains("\\n"), "expected escaped \\n in sanitized output")
+    }
+
+    /// B3 fix: actionable command lines must use shell-safe single-quote escaping
+    /// for paths that could contain shell-special characters.
+    func testShellSingleQuoteEscapesEmbeddedQuotes() {
+        XCTAssertEqual(TCCDriftDetector.shellSingleQuote("/usr/bin/foo"), "'/usr/bin/foo'")
+        XCTAssertEqual(
+            TCCDriftDetector.shellSingleQuote("/Users/O'Hara/CheICalMCP"),
+            "'/Users/O'\\''Hara/CheICalMCP'"
+        )
+        // Paths with $ / ` / \\ / " are all safe inside single quotes — only ' needs escape
+        XCTAssertEqual(
+            TCCDriftDetector.shellSingleQuote("/path/with\"double$quote/CheICalMCP"),
+            "'/path/with\"double$quote/CheICalMCP'"
+        )
+    }
+
+    /// B3 fix: when TCC.db service column has an unknown value, no copy-pasteable
+    /// `tccutil reset` command should be emitted (would either fail with bad service
+    /// name, or worse, become a social-engineering vector if `service` is poisoned).
+    /// Instead the banner emits a manual-remediation hint.
+    func testFormatBannerSuppressesActionableCommandForUnknownService() {
+        let report = DriftReport(
+            signals: [
+                .tccPathMismatch(
+                    service: "kTCCServiceContacts",  // not in whitelist
+                    runningBinaryPath: runningPath,
+                    recordedClient: "/some/other/path"
+                )
+            ],
+            skipReasons: []
+        )
+
+        let banner = TCCDriftDetector.formatBanner(
+            report: report,
+            version: "1.10.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID
+        )
+
+        XCTAssertFalse(
+            banner.contains("tccutil reset"),
+            "must not emit `tccutil reset` for non-whitelisted service"
+        )
+        XCTAssertTrue(
+            banner.contains("unrecognized TCC service"),
+            "must emit manual-remediation hint instead"
+        )
+    }
+
+    /// B3 fix: paths with shell-special characters in the runtime path land in the
+    /// banner's actionable command via `shellSingleQuote`, not raw double-quote
+    /// concatenation. Verify the banner emits the quoted form.
+    func testFormatBannerUsesSingleQuotesForActionableCommand() {
+        let pathWithQuote = "/Users/test/O'Hara/CheICalMCP"
+        let report = DriftReport(
+            signals: [
+                .tccPathMismatch(
+                    service: "kTCCServiceCalendar",
+                    runningBinaryPath: pathWithQuote,
+                    recordedClient: "/other/path"
+                ),
+                .staleProcesses(
+                    count: 1,
+                    oldestStartedAt: TCCDriftFixtures.lstartDate("Wed May 6 15:32:14 2026"),
+                    samplePIDs: [99100]
+                )
+            ],
+            skipReasons: []
+        )
+
+        let banner = TCCDriftDetector.formatBanner(
+            report: report,
+            version: "1.10.0",
+            runningBinaryPath: pathWithQuote,
+            pid: 12345,
+            bundleID: bundleID
+        )
+
+        // tccutil command should single-quote the path
+        XCTAssertTrue(
+            banner.contains("'/Users/test/O'\\''Hara/CheICalMCP'"),
+            "tccutil actionable command must use single-quote escaping. Got: \(banner)"
+        )
+        // pkill command should single-quote the path
+        XCTAssertTrue(
+            banner.contains("pkill -f '/Users/test/O'\\''Hara/CheICalMCP'"),
+            "pkill actionable command must use single-quote escaping. Got: \(banner)"
+        )
+    }
 }

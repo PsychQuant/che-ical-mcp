@@ -111,10 +111,16 @@ struct LiveProcessInventorySource: ProcessInventorySource {
 
     /// `lstart` format on macOS is e.g. `Mon May 11 22:36:52 2026` (POSIX C locale).
     /// We pin a formatter with that locale so we don't pick up the user's regional
-    /// override.
+    /// override. Timezone is explicitly pinned to `TimeZone.current` (verify finding
+    /// F8): without an explicit pin, the formatter falls back to the system default
+    /// which is normally `TimeZone.current` but can be affected by mid-process
+    /// time-zone changes (e.g. DST transitions); we want the comparison against
+    /// `attrs[.modificationDate]` (which is wall-clock `Date`) to be on the same
+    /// reference frame as the wall-clock `ps lstart` output that produced it.
     static let lstartFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
         formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
         return formatter
     }()
@@ -140,6 +146,12 @@ enum ProcessInventoryParser {
         // Remainder is the command (preserve internal spaces)
         let commPath = parts[6...].joined(separator: " ")
 
+        // Defensive: an empty/whitespace-only commPath would slip past the
+        // substring test and produce a `RunningProcess` with no executable path
+        // (verify finding F6). The token count is already `>= 7` but pathological
+        // ps rows (e.g. zombie / kernel-thread with stripped comm) can yield 6
+        // valid lstart tokens plus an empty 7th.
+        guard !commPath.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         guard commPath.contains(nameSubstring) else { return nil }
 
         return RunningProcess(pid: pid, executablePath: commPath, startedAt: startedAt)

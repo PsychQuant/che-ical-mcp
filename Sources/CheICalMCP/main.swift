@@ -162,54 +162,52 @@ try await server.run()
 
 /// #122 — drift detector banner. Single-shot at startup, stderr only, non-blocking.
 ///
-/// Skip conditions: env `CHE_ICAL_MCP_NO_BANNER` set, or any internal failure (banner
-/// degrades gracefully rather than aborting). CLI side-channels (`--version` /
+/// Skip conditions: env `CHE_ICAL_MCP_NO_BANNER` set. CLI side-channels (`--version` /
 /// `--help` / `--setup` / `--print-tcc-path` / `--self-update` / `--cli`) all exit
 /// before reaching this function — no need to re-check.
+///
+/// All call sites below use `try?` to swallow underlying failures (symlink resolution,
+/// attribute fetch); the inner detector calls are non-throwing by design (subprocess
+/// failures surface as `failureReason` skip-reasons in the banner). No `do/catch` is
+/// needed — verify finding F1 (#122) removed the prior dead-catch wrapper.
 func emitStartupBanner() {
     let env = ProcessInfo.processInfo.environment
     if let v = env["CHE_ICAL_MCP_NO_BANNER"], !v.isEmpty {
         return
     }
 
-    do {
-        let argv0 = CommandLine.arguments.first ?? ""
-        let resolvedPath: String = {
-            // Real path resolution mirrors `--print-tcc-path` behavior.
-            if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: argv0) {
-                return URL(fileURLWithPath: dest).standardizedFileURL.path
-            }
-            return URL(fileURLWithPath: argv0).standardizedFileURL.path
-        }()
+    let argv0 = CommandLine.arguments.first ?? ""
+    let resolvedPath: String = {
+        // Real path resolution mirrors `--print-tcc-path` behavior. See verify F5 /
+        // F7 for the known follow-up about unifying `realpath(3)` across all three
+        // diagnostic entry points (banner, --print-tcc-path, --self-update).
+        if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: argv0) {
+            return URL(fileURLWithPath: dest).standardizedFileURL.path
+        }
+        return URL(fileURLWithPath: argv0).standardizedFileURL.path
+    }()
 
-        let mtime: Date? = {
-            guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
-                return nil
-            }
-            return attrs[.modificationDate] as? Date
-        }()
+    let mtime: Date? = {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
+            return nil
+        }
+        return attrs[.modificationDate] as? Date
+    }()
 
-        let detector = TCCDriftDetector(
-            tcc: LiveTCCDatabaseSource(),
-            processes: LiveProcessInventorySource(),
-            runningBinaryPath: resolvedPath,
-            diskBinaryMtime: mtime
-        )
-        let report = detector.detect()
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
-        let banner = TCCDriftDetector.formatBanner(
-            report: report,
-            version: AppVersion.current,
-            runningBinaryPath: resolvedPath,
-            pid: ProcessInfo.processInfo.processIdentifier,
-            bundleID: bundleID
-        )
-        FileHandle.standardError.write(Data(banner.utf8))
-    } catch {
-        // Defensive: if anything in banner emission unexpectedly throws (none of the
-        // calls above throw today, but future maintenance could add a throwing path),
-        // swallow + emit a single-line warning rather than aborting startup.
-        let safe = EventKitErrorSanitizer.escapeForStderr(error.localizedDescription)
-        FileHandle.standardError.write(Data("[banner] startup banner emission failed: \(safe)\n".utf8))
-    }
+    let detector = TCCDriftDetector(
+        tcc: LiveTCCDatabaseSource(),
+        processes: LiveProcessInventorySource(),
+        runningBinaryPath: resolvedPath,
+        diskBinaryMtime: mtime
+    )
+    let report = detector.detect()
+    let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
+    let banner = TCCDriftDetector.formatBanner(
+        report: report,
+        version: AppVersion.current,
+        runningBinaryPath: resolvedPath,
+        pid: ProcessInfo.processInfo.processIdentifier,
+        bundleID: bundleID
+    )
+    FileHandle.standardError.write(Data(banner.utf8))
 }
