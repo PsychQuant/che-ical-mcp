@@ -11,6 +11,22 @@
 
 ---
 
+> ## ⚠️ Claude Desktop `.mcpb` 安裝路徑暫時無法使用（2026-05-12）
+>
+> Claude Desktop 從 **1.6608.2** 版起（約 2026-05-09 釋出），`.mcpb` extension 安裝路徑**無法寫入行事曆與提醒事項**。所有 write 工具（`create_event` / `update_event` / `create_reminder` 等）會回傳 `Calendar access denied`。讀取工具（`list_events`、`search_events`）仍可運作。
+>
+> **建議改用以下任一方式**，直到 Anthropic 修復為止：
+>
+> | 路徑 | 狀態 |
+> |------|------|
+> | **Claude Code plugin**（`claude plugin install che-ical-mcp@psychquant-claude-plugins`） | ✓ 可用 |
+> | Legacy `claude_desktop_config.json`（直接指向 binary 路徑） | ⚠ 未測試、可能繞過壞掉的 wrapper |
+> | Google Calendar API + 手動搬到目標行事曆 | ✓ 可用 |
+>
+> **追蹤**：上游 [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239)、本地 [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132)。完整證據與結構性診斷見該兩串。一旦 Anthropic 恢復 `.mcpb` Calendar 寫入能力，本警告區塊即移除。
+
+---
+
 ## 為什麼選擇 che-ical-mcp？
 
 | 功能 | 其他行事曆 MCP | che-ical-mcp |

@@ -11,6 +11,22 @@
 
 ---
 
+> ## ⚠️ Claude Desktop `.mcpb` install is temporarily broken (2026-05-12)
+>
+> The `.mcpb` extension install for Claude Desktop **cannot write to Calendar / Reminders** on Claude Desktop **1.6608.2 and later** (released ~2026-05-09). Write tools return `Calendar access denied`; read tools still work.
+>
+> **Use one of these instead** until Anthropic ships a fix:
+>
+> | Path | Status |
+> |------|--------|
+> | **Claude Code plugin** (`claude plugin install che-ical-mcp@psychquant-claude-plugins`) | ✓ Works |
+> | Legacy `claude_desktop_config.json` (point Claude Desktop at the binary directly) | ⚠ Untested, may bypass the broken wrapper |
+> | Google Calendar API + manual move to target calendar | ✓ Works |
+>
+> **Tracking**: upstream [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239), local [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132). Detailed evidence + structural diagnosis in those threads. This banner will be removed once Anthropic restores `.mcpb` Calendar access.
+
+---
+
 ## Why che-ical-mcp?
 
 | Feature | Other Calendar MCPs | che-ical-mcp |

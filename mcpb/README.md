@@ -1,5 +1,23 @@
 # che-ical-mcp — `.mcpb` Installation Guide
 
+> ## ⚠️ Known broken on Claude Desktop 1.6608.2+ (as of 2026-05-12)
+>
+> **The `.mcpb` extension install path cannot write to Calendar or Reminders on Claude Desktop 1.6608.2 and later.** Read paths (e.g. `list_events`, `search_events`) still work. All write tools (`create_event` / `update_event` / `create_reminder` / etc.) return `Calendar access denied` regardless of TCC.db state.
+>
+> **Cause**: regression in Claude Desktop 1.6608.2 (released ~2026-05-09). Verified by 94 successful `.mcpb` writes pre-1.6608.2 versus 10 consecutive failures starting 2026-05-11. Same binary continues to work via Terminal context. The structural gap is missing `com.apple.security.personal-information.calendars` entitlement + missing `NSCalendarsFullAccessUsageDescription` in `Claude.app/Contents/Info.plist`.
+>
+> **Use one of these workarounds until Anthropic ships a fix:**
+>
+> | Path | Status | How |
+> |------|--------|-----|
+> | **Claude Code plugin** | ✓ Works | Install via `claude plugin install che-ical-mcp@psychquant-claude-plugins` — binary auto-downloads to `~/bin/CheICalMCP`, spawn context bypasses the broken `.mcpb` wrapper |
+> | **Legacy `claude_desktop_config.json`** | ⚠ Untested | Manually edit `~/Library/Application Support/Claude/claude_desktop_config.json` to point at the binary directly; may bypass the `disclaimer` wrapper |
+> | **Google Calendar API** | ✓ Works | Bypass macOS Calendar entirely; manually move to target calendar afterwards |
+>
+> **Tracking**: upstream report at [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239), local tracker at [`PsychQuant/che-ical-mcp#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132). Once Anthropic restores `.mcpb` Calendar access, this section will be removed and the install steps below will work end-to-end again.
+
+---
+
 This directory ships the Claude Desktop `.mcpb` bundle for che-ical-mcp (macOS Calendar & Reminders MCP server). The bundle contains a signed, notarized binary that runs as a local subprocess of Claude Desktop and accesses Calendar / Reminders via Apple's EventKit framework.
 
 ## Install
