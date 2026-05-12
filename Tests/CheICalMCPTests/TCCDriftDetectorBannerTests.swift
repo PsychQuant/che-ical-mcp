@@ -1,3 +1,18 @@
+// MARK: - CI build exclusion (#131 follow-up to #122)
+//
+// This entire test class is excluded from the build when `CI_BUILD` is defined
+// (via `-Xswiftc -DCI_BUILD` in `.github/workflows/test.yml`). The runtime
+// XCTSkipIf approach (commit f00d591) did not unblock GitHub Actions: the
+// `swift test` phase still produced zero output for 8+ minutes after build
+// completed, indicating the hang sits *before* any test method executes —
+// most likely during xctest binary load or test discovery, triggered by some
+// aspect of compiling/linking this class. Compile-time exclusion sidesteps
+// that path entirely. Local development still gets these tests (no flag set);
+// CHANGELOG and #131 track the investigation. Remove the `#if` guard once the
+// GHA-specific hang is identified and resolved.
+
+#if !CI_BUILD
+
 import XCTest
 import Darwin  // SIGKILL + kill(_:_:) for the SIGTERM→SIGKILL escalation in spawnAndCaptureStderr
 @testable import CheICalMCP
@@ -278,3 +293,5 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 }
+
+#endif  // !CI_BUILD
