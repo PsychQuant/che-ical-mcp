@@ -1,4 +1,5 @@
 import XCTest
+import Darwin  // SIGKILL + kill(_:_:) for the SIGTERM→SIGKILL escalation in spawnAndCaptureStderr
 @testable import CheICalMCP
 
 /// Subprocess-based integration tests for the startup banner emitted by `emitStartupBanner()`
@@ -29,11 +30,18 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// Returns (stderr_text, exit_status). Stdin is wired to `/dev/null` so the MCP server
     /// loop has no JSON-RPC to read; we don't expect graceful shutdown, just the banner
     /// to land on stderr before we kill.
+    ///
+    /// CI hang note (#122 R3): the GitHub Actions macos-latest runner can leave the MCP
+    /// loop in a state where SIGTERM is ignored (ad-hoc-signed binary + TCC sandbox quirks),
+    /// causing `waitUntilExit()` to block past the 20m job timeout. We therefore escalate
+    /// SIGTERM → SIGKILL after a short grace window, and read stderr off a background queue
+    /// so the read can't deadlock on a child that hasn't closed its fds yet.
     private func spawnAndCaptureStderr(
         binary: URL,
         arguments: [String] = [],
         environment: [String: String]? = nil,
-        maxWait: TimeInterval = 1.0
+        maxWait: TimeInterval = 1.0,
+        sigtermGrace: TimeInterval = 0.5
     ) throws -> (stderr: String, terminationStatus: Int32) {
         let process = Process()
         process.executableURL = binary
@@ -48,6 +56,26 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         process.standardInput = stdin
         process.standardOutput = Pipe()  // discard stdout — JSON-RPC noise
 
+        // Drain stderr off a background queue. `readDataToEndOfFile()` on the calling
+        // thread can deadlock if the child fills the pipe buffer (>64KB on macOS) before
+        // we read, and waiting for EOF post-terminate requires the child to actually
+        // release its fds. The async drain decouples both concerns.
+        let stderrHandle = stderr.fileHandleForReading
+        let stderrQueue = DispatchQueue(label: "spawnAndCaptureStderr.drain")
+        let stderrLock = NSLock()
+        var stderrBuffer = Data()
+        let drainDone = DispatchSemaphore(value: 0)
+        stderrQueue.async {
+            while true {
+                let chunk = stderrHandle.availableData
+                if chunk.isEmpty { break }  // EOF
+                stderrLock.lock()
+                stderrBuffer.append(chunk)
+                stderrLock.unlock()
+            }
+            drainDone.signal()
+        }
+
         try process.run()
 
         // Close stdin immediately so the MCP loop has no data, then wait briefly for
@@ -59,13 +87,32 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         while process.isRunning, Date() < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
+
+        // Two-stage shutdown: SIGTERM first, then escalate to SIGKILL if the child
+        // ignores it. POSIX `kill(_:_:)` from Darwin is uncatchable on SIGKILL, so this
+        // is a guaranteed exit path even when the MCP loop has a misbehaving signal
+        // handler (or no handler at all).
         if process.isRunning {
-            process.terminate()
+            process.terminate()  // SIGTERM
+            let killDeadline = Date().addingTimeInterval(sigtermGrace)
+            while process.isRunning, Date() < killDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
         }
         process.waitUntilExit()
 
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        // Wait for the drain queue to see EOF (child fds released after exit). Bounded
+        // by 1s so we never block indefinitely if EOF doesn't arrive — partial output
+        // is preferable to a hang.
+        _ = drainDone.wait(timeout: .now() + 1.0)
+        try? stderrHandle.close()
+
+        stderrLock.lock()
+        let stderrText = String(data: stderrBuffer, encoding: .utf8) ?? ""
+        stderrLock.unlock()
         return (stderrText, process.terminationStatus)
     }
 
