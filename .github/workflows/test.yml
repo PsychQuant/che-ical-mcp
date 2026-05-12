@@ -70,4 +70,16 @@ jobs:
         # method runs on macos-latest (zero output until 20m job timeout).
         # Tracked in #131; banner format invariants stay covered by the 13
         # mocked-source unit tests in TCCDriftDetectorTests.swift.
-        run: swift test -Xswiftc -DCI_BUILD
+        #
+        # --verbose + tee to make xctest output unbuffered: the hang
+        # signature is build-then-silence even after compile-time excluding
+        # the binary-spawn tests, so we instrument to see whether xctest
+        # ever prints its "Test Suite started" banner. If yes, the hang is
+        # in a specific test. If no, the hang is at xctest load / Swift
+        # module init time. swift-testing's CIO buffering on non-TTY can
+        # also delay output; `script` forces a PTY so we see live output.
+        run: |
+          script -q /dev/null swift test -Xswiftc -DCI_BUILD --verbose 2>&1 | tee /tmp/swift-test.log
+          STATUS=${PIPESTATUS[0]}
+          echo "Exit status: $STATUS"
+          exit $STATUS
