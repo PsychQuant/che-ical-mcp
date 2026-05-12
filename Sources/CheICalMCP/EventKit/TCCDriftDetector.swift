@@ -166,12 +166,21 @@ struct TCCDriftDetector {
                 lines.append("[drift]   this binary: \(safePath)")
                 lines.append("[drift]   TCC entry:   \(safeRecorded)")
                 if let tccutilName = tccutilShortName(forService: service) {
-                    // Whitelist hit — emit the copy-pasteable command. Path is single-quote
-                    // escaped to survive any shell-special chars (`"`, `$`, `` ` ``, `\`,
-                    // newline, etc.) per B3 finding. Bundle ID is author-controlled; we
-                    // still escape it but it shouldn't need shell-quoting.
-                    let quoted = shellSingleQuote(runningPath)
-                    lines.append("[drift]   → tccutil reset \(tccutilName) \(safeBundle) && \(quoted) --setup")
+                    // Whitelist hit. Two cases:
+                    //   (a) path has no control chars → emit a copy-paste-ready POSIX
+                    //       command via `shellSingleQuote` (B3). The result is safe on
+                    //       both stderr (no newlines/CR can split the banner) and shell
+                    //       (single quotes neutralise `"`, `$`, `` ` ``, `\`).
+                    //   (b) path has control chars → DO NOT emit a copy-paste command.
+                    //       Stderr-safety requires escaping which would invalidate the
+                    //       shell quoting (`\` inside `'\''` would double — round-2 R1).
+                    //       Surface the path safely via `safePath` (already escaped) and
+                    //       a manual-remediation hint instead.
+                    if pathHasControlChars(runningPath) {
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation required: tccutil reset \(tccutilName) \(safeBundle) for binary at \(safePath))")
+                    } else {
+                        lines.append("[drift]   → tccutil reset \(tccutilName) \(safeBundle) && \(shellSingleQuote(runningPath)) --setup")
+                    }
                 } else {
                     // Unknown service: don't emit a copy-pasteable command (avoid
                     // `tccutil: bad service name` for the operator and avoid being a
@@ -187,8 +196,13 @@ struct TCCDriftDetector {
                 lines.append("[drift] \(count) stale CheICalMCP process\(count == 1 ? "" : "es") running")
                 lines.append("[drift]   oldest started: \(mtimeStr)")
                 lines.append("[drift]   sample PIDs: \(pidList)\(suffix)")
-                let quoted = shellSingleQuote(runningBinaryPath)
-                lines.append("[drift]   → pkill -f \(quoted) && fully restart your Claude Code / Desktop host")
+                // Same branching as tccutil case above: emit copy-paste command only
+                // when path has no control chars; otherwise emit safe-display hint.
+                if pathHasControlChars(runningBinaryPath) {
+                    lines.append("[drift]   → (binary path contains control chars; manual remediation: pkill the stale processes for binary at \(safePath), then fully restart your Claude Code / Desktop host)")
+                } else {
+                    lines.append("[drift]   → pkill -f \(shellSingleQuote(runningBinaryPath)) && fully restart your Claude Code / Desktop host")
+                }
             }
         }
 
@@ -232,15 +246,33 @@ struct TCCDriftDetector {
     /// POSIX shell single-quote escape. Wraps the input in `'…'` and replaces every
     /// internal `'` with `'\''` (close, escaped-quote, open). The result is safe to
     /// paste inside a shell command line without further escaping (`"`, `$`, `` ` ``,
-    /// `\`, newline, semicolon, etc. are all literal inside single quotes).
+    /// `\`, semicolon, etc. are all literal inside single quotes).
     ///
     /// Verify finding B3 (logic L3 + security M2 + DA F4): the prior `"\(path)"`
     /// pattern broke on paths containing `"`, `\`, `$`, `` ` ``. Single-quote escaping
     /// is the standard POSIX-shell-safe quoting and works for all printable bytes;
     /// the only special case is `'` itself which we splice with `'\''`.
+    ///
+    /// **Pre-condition**: caller MUST verify the input contains no control characters
+    /// (LF/CR/etc.) via `pathHasControlChars` before passing here. Single-quoted
+    /// strings preserve newlines verbatim, which would split the banner line on stderr
+    /// (verify round-2 R1). The caller branches on `pathHasControlChars` and emits
+    /// a manual-remediation hint instead of a copy-paste command when control chars
+    /// are present.
     static func shellSingleQuote(_ s: String) -> String {
         let escaped = s.replacingOccurrences(of: "'", with: "'\\''")
         return "'\(escaped)'"
+    }
+
+    /// Returns true if the input contains any C0 control character (`\x00..\x1F`,
+    /// `\x7F` DEL). Used to gate the copy-paste actionable command (verify round-2
+    /// R1) — control chars inside single-quoted shell strings would split the
+    /// banner line on stderr, regardless of POSIX shell quoting semantics.
+    static func pathHasControlChars(_ s: String) -> Bool {
+        for scalar in s.unicodeScalars where scalar.value < 0x20 || scalar.value == 0x7F {
+            return true
+        }
+        return false
     }
 
     /// Process-wide cached ISO-8601 formatter for banner timestamps (verify finding

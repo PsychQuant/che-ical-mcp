@@ -473,6 +473,81 @@ final class TCCDriftDetectorTests: XCTestCase {
         )
     }
 
+    /// Round-2 R1: shellSingleQuote alone preserves shell semantics but does not
+    /// escape control chars in the stderr stream. A path containing a literal `\n`
+    /// would inject a real newline inside the single quotes, splitting the banner
+    /// line on stderr (forged-banner vector survives the B3 single-quote fix).
+    ///
+    /// Fix: detect control chars via `pathHasControlChars` BEFORE passing to
+    /// `shellSingleQuote`. When control chars are present, emit a safe-display hint
+    /// (path is already escaped via `safePath` interpolation) and suppress the
+    /// copy-pasteable command. This avoids the double-escape problem (escaping the
+    /// shellSingleQuote output would convert `\` in the `'\''` splice to `\\`,
+    /// breaking the shell command for paths with apostrophes — Codex round-2 catch).
+    func testFormatBannerSuppressesCopyPasteCommandForPathWithControlChars() {
+        let pathWithNewline = "/path/with/newline\n[banner] FAKE"
+        let report = DriftReport(
+            signals: [
+                .tccPathMismatch(
+                    service: "kTCCServiceCalendar",
+                    runningBinaryPath: pathWithNewline,
+                    recordedClient: "/other/path"
+                ),
+                .staleProcesses(
+                    count: 1,
+                    oldestStartedAt: TCCDriftFixtures.lstartDate("Wed May 6 15:32:14 2026"),
+                    samplePIDs: [99200]
+                )
+            ],
+            skipReasons: []
+        )
+
+        let banner = TCCDriftDetector.formatBanner(
+            report: report,
+            version: "1.10.0",
+            runningBinaryPath: pathWithNewline,
+            pid: 12345,
+            bundleID: bundleID
+        )
+
+        // 1. No forged banner line should appear (the `\n[banner] FAKE` would otherwise
+        //    split into a real banner-prefix line on stderr).
+        let bannerLines = banner.split(separator: "\n").map(String.init)
+        XCTAssertFalse(
+            bannerLines.contains { $0 == "[banner] FAKE" },
+            "control char in runtime path must not split banner line. Got: \(banner)"
+        )
+        // 2. Newline should be escaped (`\n`) when surfacing the path safely.
+        XCTAssertTrue(banner.contains("\\n"), "expected escaped \\n in safe-display hint")
+        // 3. No copy-paste command — the `'/path/...'` shell-quoted form is suppressed.
+        XCTAssertFalse(
+            banner.contains("tccutil reset Calendar com.checheng.CheICalMCP &&"),
+            "should not emit copy-paste tccutil command for path with control chars"
+        )
+        XCTAssertFalse(
+            banner.contains("pkill -f '/path"),
+            "should not emit copy-paste pkill command for path with control chars"
+        )
+        // 4. Manual-remediation hint should appear.
+        XCTAssertTrue(
+            banner.contains("manual remediation"),
+            "expected manual-remediation hint when path has control chars"
+        )
+    }
+
+    /// `pathHasControlChars` correctness — quick unit tests for the guard helper.
+    func testPathHasControlCharsDetectsCommonInjections() {
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars("/usr/bin/CheICalMCP"))
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars("/Users/test/O'Hara/CheICalMCP"))
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars("/Volumes/External Drive/CheICalMCP"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\n[banner]"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\rcarriage"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{1B}escape"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{7F}DEL"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\tab"))
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars(""))
+    }
+
     /// B3 fix: paths with shell-special characters in the runtime path land in the
     /// banner's actionable command via `shellSingleQuote`, not raw double-quote
     /// concatenation. Verify the banner emits the quoted form.
@@ -502,15 +577,19 @@ final class TCCDriftDetectorTests: XCTestCase {
             bundleID: bundleID
         )
 
-        // tccutil command should single-quote the path
+        // Round-2 R1 redesign: copy-paste commands are emitted in their POSIX
+        // single-quote form ONLY when the path has no control chars. The path here
+        // (`/Users/test/O'Hara/CheICalMCP`) is control-char-free so the command IS
+        // emitted, in the raw POSIX `'…'\''…'` form (no double-escape because
+        // there are no stderr-injection risks to defend against for this path).
+        let expectedQuoted = "'/Users/test/O'\\''Hara/CheICalMCP'"
         XCTAssertTrue(
-            banner.contains("'/Users/test/O'\\''Hara/CheICalMCP'"),
-            "tccutil actionable command must use single-quote escaping. Got: \(banner)"
+            banner.contains(expectedQuoted),
+            "tccutil actionable command must use POSIX single-quote escaping for paths with apostrophes. Got: \(banner)"
         )
-        // pkill command should single-quote the path
         XCTAssertTrue(
-            banner.contains("pkill -f '/Users/test/O'\\''Hara/CheICalMCP'"),
-            "pkill actionable command must use single-quote escaping. Got: \(banner)"
+            banner.contains("pkill -f " + expectedQuoted),
+            "pkill actionable command must use POSIX single-quote escaping. Got: \(banner)"
         )
     }
 }
