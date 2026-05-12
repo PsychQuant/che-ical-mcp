@@ -79,6 +79,18 @@ struct LiveProcessInventorySource: ProcessInventorySource {
             )
         }
 
+        // Close parent's write-end fds of the child's stdout/stderr pipes. POSIX pipe
+        // EOF semantics require *every* write-end fd to close — Foundation's `Process`
+        // dups the pipe write end into the child but retains the parent's reference
+        // until the `Pipe` is deallocated. Without these closes, `readDataToEndOfFile`
+        // below blocks indefinitely even after the child exits because there is still
+        // an open write end (ours) on the pipe. Suspected #122 R3 CI hang root cause:
+        // local macOS (25.4+) appears to schedule fd cleanup aggressively enough that
+        // the deadlock doesn't manifest, but GitHub Actions macos-latest reproduces it
+        // reliably. Mirrors the fix in `TCCDriftDetectorBannerTests.spawnAndCaptureStderr`.
+        try? stdout.fileHandleForWriting.close()
+        try? stderr.fileHandleForWriting.close()
+
         // Read pipes BEFORE waitUntilExit: `ps -A` output is large (one line per process
         // on the host, often >64KB), and the OS pipe buffer is ~64KB. If we wait for the
         // child first, it blocks on stdout write once the buffer fills, and waitUntilExit

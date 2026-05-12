@@ -96,6 +96,13 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
             return TCCQueryResult(entries: [], failureReason: "sqlite3 spawn failed: \(error.localizedDescription)")
         }
 
+        // Close parent's write-end fds. See ProcessInventorySource for the full rationale
+        // — this fixes the suspected #122 R3 CI hang on GitHub Actions macos-latest where
+        // `readDataToEndOfFile` blocks forever because Foundation keeps the parent's pipe
+        // write-end open and EOF requires *every* writer to close.
+        try? stdout.fileHandleForWriting.close()
+        try? stderr.fileHandleForWriting.close()
+
         // Read pipes BEFORE waitUntilExit to avoid deadlock if output exceeds the OS
         // pipe buffer. sqlite3 with this filter typically returns <1KB so the issue
         // doesn't surface in practice, but we mirror ProcessInventorySource for
