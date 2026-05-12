@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-05-12
+
 ### Added
 
 - **TCC drift detector + startup banner** (#122, `Sources/CheICalMCP/EventKit/TCCDriftDetector.swift` + `TCCDatabaseSource.swift` + `ProcessInventorySource.swift`): emits a single-shot stderr banner at MCP-server-mode startup with version, binary path, PID, and any drift signals detected. Two signals: (1) **TCC.db path mismatch** — TCC has a grant for CheICalMCP but recorded against a different binary path than the running one (typical when `~/bin/CheICalMCP` and the `.mcpb` install path co-exist); the running binary will get `.notDetermined` even though "CheICalMCP" appears in System Settings. (2) **Stale running processes** — long-lived CheICalMCP processes started before the on-disk binary mtime hold cached auth state from older code (root cause confirmed during #122 reproduction: 37 stale processes from pre-v1.8.0 on the issuer's host). Banner is advisory and non-blocking; failed reads (sqlite3 unavailable, ps blocked, TCC.db locked) surface as skip reasons rather than aborting startup. Opt-out via `CHE_ICAL_MCP_NO_BANNER=<any non-empty>` for CI / automation. Skip applies to `--version` / `--help` / `--setup` / `--print-tcc-path` / `--self-update` / `--cli` paths.
