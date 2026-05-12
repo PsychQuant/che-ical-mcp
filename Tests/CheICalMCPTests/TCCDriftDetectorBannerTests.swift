@@ -52,9 +52,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         let stderr = Pipe()
         let stdin = Pipe()
+        let stdout = Pipe()  // discard stdout — JSON-RPC noise, but parent must close write end
         process.standardError = stderr
         process.standardInput = stdin
-        process.standardOutput = Pipe()  // discard stdout — JSON-RPC noise
+        process.standardOutput = stdout
 
         // Drain stderr off a background queue. `readDataToEndOfFile()` on the calling
         // thread can deadlock if the child fills the pipe buffer (>64KB on macOS) before
@@ -76,11 +77,37 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             drainDone.signal()
         }
 
+        // Same drain pattern for stdout — without this, the child writing >64KB of
+        // JSON-RPC noise (or startup logs) fills the pipe and blocks on `write(2)`,
+        // which deadlocks the MCP loop before it reaches its stdin-EOF exit path.
+        // CI macOS runners exhibit this; dev hosts appear to size pipe buffers larger
+        // or schedule differently, masking the issue locally.
+        let stdoutHandle = stdout.fileHandleForReading
+        let stdoutQueue = DispatchQueue(label: "spawnAndCaptureStderr.stdoutDrain")
+        let stdoutDrainDone = DispatchSemaphore(value: 0)
+        stdoutQueue.async {
+            while true {
+                let chunk = stdoutHandle.availableData
+                if chunk.isEmpty { break }
+            }
+            stdoutDrainDone.signal()
+        }
+
         try process.run()
 
-        // Close stdin immediately so the MCP loop has no data, then wait briefly for
-        // the banner to flush. If the process exits on its own (--version / --help),
-        // we drop out of the loop early via isRunning check.
+        // Close parent's copies of the child's pipe ends. Required for EOF semantics
+        // to fire on the read side once the child exits: a pipe only signals EOF when
+        // *every* write-end fd is closed, and `Process` retains parent-side write-end
+        // handles after `run()` until the `Pipe` is deallocated. Without these closes,
+        // the stderr/stdout drain queues block indefinitely on `availableData` even
+        // after SIGKILL, causing `drainDone.wait` to time out and `waitUntilExit()` to
+        // never see the child release its fds.
+        try? stderr.fileHandleForWriting.close()
+        try? stdout.fileHandleForWriting.close()
+
+        // Close stdin so the MCP loop reads EOF, then wait briefly for the banner to
+        // flush. If the process exits on its own (--version / --help), we drop out of
+        // the polling loop early via isRunning check.
         try stdin.fileHandleForWriting.close()
 
         let deadline = Date().addingTimeInterval(maxWait)
@@ -102,13 +129,29 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
                 kill(process.processIdentifier, SIGKILL)
             }
         }
-        process.waitUntilExit()
 
-        // Wait for the drain queue to see EOF (child fds released after exit). Bounded
-        // by 1s so we never block indefinitely if EOF doesn't arrive — partial output
-        // is preferable to a hang.
+        // Bounded `waitUntilExit`. Even SIGKILL'd processes can briefly remain in
+        // uninterruptible kernel states (TCC sandbox checks, NFS, etc.); we don't
+        // want a stuck child to wedge the whole test job for 20 minutes. After a
+        // 3-second hard cap we abandon the wait and force-reap via a second SIGKILL
+        // (idempotent — sending SIGKILL to a zombie is a no-op).
+        let waitQueue = DispatchQueue(label: "spawnAndCaptureStderr.wait")
+        let waitDone = DispatchSemaphore(value: 0)
+        waitQueue.async {
+            process.waitUntilExit()
+            waitDone.signal()
+        }
+        if waitDone.wait(timeout: .now() + 3.0) == .timedOut {
+            kill(process.processIdentifier, SIGKILL)
+            _ = waitDone.wait(timeout: .now() + 1.0)
+        }
+
+        // Bound the drain waits too — if EOF still hasn't arrived (extremely unlikely
+        // after explicit pipe-write-end close + SIGKILL), partial output is fine.
         _ = drainDone.wait(timeout: .now() + 1.0)
+        _ = stdoutDrainDone.wait(timeout: .now() + 1.0)
         try? stderrHandle.close()
+        try? stdoutHandle.close()
 
         stderrLock.lock()
         let stderrText = String(data: stderrBuffer, encoding: .utf8) ?? ""
