@@ -53,13 +53,19 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
     /// integration tests that point at a synthetic db.
     let databasePath: String
     let sqlite3Path: String
+    /// Hard timeout for the `sqlite3` subprocess (#126). TCC.db locks by another process
+    /// (e.g. tccd writing simultaneously) could hang the query indefinitely; 500ms gives
+    /// healthy queries ~50× headroom over their ~10ms baseline.
+    let timeoutMilliseconds: Int
 
     init(
         databasePath: String = NSString(string: "~/Library/Application Support/com.apple.TCC/TCC.db").expandingTildeInPath,
-        sqlite3Path: String = "/usr/bin/sqlite3"
+        sqlite3Path: String = "/usr/bin/sqlite3",
+        timeoutMilliseconds: Int = 500
     ) {
         self.databasePath = databasePath
         self.sqlite3Path = sqlite3Path
+        self.timeoutMilliseconds = timeoutMilliseconds
     }
 
     func readCheICalMCPEntries() -> TCCQueryResult {
@@ -85,39 +91,27 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
         process.executableURL = URL(fileURLWithPath: sqlite3Path)
         process.arguments = ["-readonly", "-separator", "|", databasePath, sql]
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+        let result: SubprocessRunResult
         do {
-            try process.run()
+            result = try SubprocessRunner.run(process: process, timeoutMilliseconds: timeoutMilliseconds)
         } catch {
             return TCCQueryResult(entries: [], failureReason: "sqlite3 spawn failed: \(error.localizedDescription)")
         }
 
-        // Close parent's write-end fds. See ProcessInventorySource for the full rationale
-        // — this fixes the suspected #122 R3 CI hang on GitHub Actions macos-latest where
-        // `readDataToEndOfFile` blocks forever because Foundation keeps the parent's pipe
-        // write-end open and EOF requires *every* writer to close.
-        try? stdout.fileHandleForWriting.close()
-        try? stderr.fileHandleForWriting.close()
-
-        // Read pipes BEFORE waitUntilExit to avoid deadlock if output exceeds the OS
-        // pipe buffer. sqlite3 with this filter typically returns <1KB so the issue
-        // doesn't surface in practice, but we mirror ProcessInventorySource for
-        // consistency — both subprocess helpers should share the same read pattern.
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let errOutput = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
-            return TCCQueryResult(entries: [], failureReason: "sqlite3 exit \(process.terminationStatus): \(errOutput)")
+        if result.timedOut {
+            return TCCQueryResult(
+                entries: [],
+                failureReason: "sqlite3 timed out after \(timeoutMilliseconds)ms"
+            )
         }
 
-        guard let output = String(data: outputData, encoding: .utf8) else {
+        guard result.exitStatus == 0 else {
+            let errOutput = String(data: result.stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
+            return TCCQueryResult(entries: [], failureReason: "sqlite3 exit \(result.exitStatus): \(errOutput)")
+        }
+
+        guard let output = String(data: result.stdoutData, encoding: .utf8) else {
             return TCCQueryResult(entries: [], failureReason: "sqlite3 output not UTF-8")
         }
 

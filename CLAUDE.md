@@ -58,3 +58,15 @@ When a handler needs a test fake, **introduce a new narrow `*Source` protocol sc
 **Canonical example**: `reminderCleanupSource` in `CheICalMCPServer.init` + `Tests/CheICalMCPTests/CleanupHandlerTests.swift`. New handler tests should mirror that structure (the *injection pattern* — narrow protocol, default to shared singleton, inject in tests). The protocol *name* `EventKitManaging` is grandfathered; new protocols should use `<Domain>Source`.
 
 This convention is **per-handler doc**, not a refactor: existing 30+ handlers continue to use `eventKitManager` directly — no migration debt. The seam appears only when a handler graduates into the test surface.
+
+## Startup Banner CLI Skip List (#122 + #130)
+
+The TCC drift detector startup banner (#122) intentionally **does NOT** run for these CLI side-channels: `--version`, `--help`, `--setup`, `--print-tcc-path`, `--self-update`, `--cli`. All of them exit before reaching the MCP server default branch where `emitStartupBanner()` lives.
+
+**`--setup` deserves explicit justification** (#130 — surfaced as Codex M5 finding in `idd-verify #122`): the Strategy Lock comment on #122 included `--setup` running drift check at start as Acceptance Criterion #7, but the Plan tier (and shipped implementation) silently retracted it. **The retraction is intentional and stands**:
+
+- `--setup` is the **manual remediation path**, not a diagnostic surface. Its job is to drive the macOS TCC permission dialog round-trip; the banner's drift signals are noise during that dialog flow and risk distracting users who are mid-prompt.
+- Drift signals address "the running binary may not be the one TCC granted access to" — but `--setup` is specifically the binary the user just decided to authorize. Re-surfacing drift here would be cargo-culted output, not actionable.
+- The diagnostic path that *does* surface drift signals is `--print-tcc-path` (which prints the banner-style binary path + bundle ID + TCC state). Users who want to see drift before running `--setup` already have a clear ordering: `--print-tcc-path` → review → `--setup`.
+
+If a future use case argues for `--setup` triggering banner emission, **revisit by writing a follow-up issue with the user-flow rationale** — don't flip the skip list silently. The skip list itself is enforced via `testNoBannerForVersionFlag` / `testNoBannerForHelpFlag` integration tests (`TCCDriftDetectorBannerTests`), so adding a new skip target without test coverage will surface as a test gap during verify.

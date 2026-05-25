@@ -198,18 +198,40 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// In default MCP server mode (no flags), the banner header line must appear on
     /// stderr within the wait window. We don't assert specific drift signals because
     /// host state varies.
+    ///
+    /// **Path comparison nuance** (#129): the banner now uses `BinaryPathResolver` which
+    /// runs `realpath(3)`. `.build/debug/CheICalMCP` is a per-architecture symlink (e.g.
+    /// to `.build/arm64-apple-macosx/debug/CheICalMCP`), so the banner's emitted path
+    /// is the symlink target, not the symlink itself. We compare against the resolved
+    /// path so the assertion matches the post-#129 canonical-path behavior.
+    ///
+    /// **Latency budget enforcement** (#127): the Plan tier for #122 specified
+    /// `< 200ms integration including spawn`. This test now encodes that budget as
+    /// `XCTAssertLessThan` so future regressions in banner emission speed are caught
+    /// rather than discovered through user reports. Empirical baseline ~50-100ms on
+    /// healthy local macOS; we use 1.5s as the assertion bound to absorb local-machine
+    /// noise (Spotlight indexing / brew autoupdate / etc.) while still catching the
+    /// "banner now takes 10 seconds" class of regression that would actually matter.
     func testBannerAppearsInDefaultMCPServerMode() throws {
         try skipIfCI()
         let binary = try locateBuiltBinary()
+        let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
+
+        let start = Date()
         let (stderr, _) = try spawnAndCaptureStderr(binary: binary)
+        let elapsed = Date().timeIntervalSince(start)
 
         XCTAssertTrue(
             stderr.contains("[banner] che-ical-mcp"),
             "Default startup should emit banner. Got stderr: \(stderr.prefix(200))"
         )
         XCTAssertTrue(
-            stderr.contains(binary.path),
-            "Banner should include the running binary path. Got stderr: \(stderr.prefix(200))"
+            stderr.contains(resolvedBinaryPath),
+            "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
+        )
+        XCTAssertLessThan(
+            elapsed, 1.5,
+            "Banner must emit within Plan tier latency budget (#127, target 200ms; assertion bound at 1.5s to absorb local-host noise). Elapsed: \(String(format: "%.3f", elapsed))s"
         )
     }
 
