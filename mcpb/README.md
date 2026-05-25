@@ -110,9 +110,13 @@ If `--setup` keeps failing, you can grant access manually:
 3. Repeat for **Privacy & Security → Reminders**.
 4. Restart Claude Desktop.
 
-### Symptom: tool calls fail silently after upgrade
+### Symptom: tool calls fail with `accessDenied` after upgrade
 
-This is the canonical post-upgrade scenario. The binary at the same path now has a different cdhash, so the stored TCC grant doesn't validate. Re-run Steps 1–4. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis.
+> **Corrected #114**: pre-v1.9.0 this section claimed cdhash invalidation was the cause. That hypothesis was disproved by #108 Phase 1 smoke (TCC grants survived 5 binary swaps because csreq is stable across cdhash for the same Developer-ID identity). The real silent-failure mode was the in-process `has*Access` cache anti-pattern, structurally fixed in v1.9.0 (#108 Phase 2): every Calendar/Reminders call now reads fresh TCC state instead of trusting a cached boolean.
+
+If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, follow the troubleshooting `tccutil reset` snippet to re-grant. Stale-cache silent failures cannot happen with the per-call gate.
+
+If you're on **v1.8.x or earlier** AND seeing this symptom, upgrading to v1.9.0+ is the structural fix; the manual Steps 1–4 remediation is a stopgap for that older release line. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis and the disproved-hypothesis audit trail.
 
 ### Verifying the fix worked
 

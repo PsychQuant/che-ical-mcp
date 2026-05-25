@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Cluster: 16 verify follow-ups from #108 (TCC has\*Access refactor) and #122 (TCC drift detector banner) — one PR ([#135](https://github.com/PsychQuant/che-ical-mcp/pull/135)), 4 commits, 367 tests pass (was 348).
+
+### Breaking
+
+- **Deploy floor raised to macOS 14.0 (Sonoma)** (#119): `Package.swift` `.macOS(.v13)` → `.macOS(.v14)`. Removes 5 `#available(macOS 14.0, *)` branches across `main.swift` + `AuthorizationStatusSource.swift` plus the `@available` class-level annotation on `AuthorizationGateTests`. macOS 13 (Ventura) users will hit a hard SDK-version mismatch rather than a silent dyld failure — `mcpb/manifest.json` now declares `compatibility.runtimes.macos = "14.0"` to surface this at install time. Rationale: macOS 14 (Sonoma) is ~2.5 years old as of this release, EventKit's per-call gate work (#108 Phase 2) is built on macOS 14 APIs, and maintaining dead pre-14 branches outweighed any negligible Calendar/Reminders MCP user share on macOS 13.
+
+### Added
+
+- **`TCCStatusFormatter` enum + 6 unit tests** (#117): extracts the inline `--print-tcc-path` status formatter into a unit-testable `TCCStatusFormatter.describe` covering all 5 `EKAuthorizationStatus` cases + `@unknown default` raw-value escape hatch. Closes the formatting-regression-only-caught-by-manual-smoke-test gap.
+- **`BinaryPathResolver` enum + 7 unit tests** (#121, #128, #129): unifies argv[0] resolution across `--print-tcc-path`, the startup banner, and `--self-update`. Uses `realpath(3)` to walk multi-level symlink chains (closes #121 — single-hop `destinationOfSymbolicLink` left intermediate paths visible) and exposes `resolveWithPATHFallback` for bare-argv[0] `$PATH` walk used by `--self-update`.
+- **`SubprocessRunner` helper** (#126): consolidates `sqlite3` + `ps` subprocess execution from `LiveTCCDatabaseSource` and `LiveProcessInventorySource` with hard-cap `DispatchSourceTimer` timeout (500ms default). Hung child processes (TCC.db locked / sandbox edge case) surface as explicit `failureReason: "sqlite3 timed out after 500ms"` instead of blocking MCP server startup.
+- **`EventKitError.unsupportedEntityType(rawValue: UInt)` case** (#118): `LiveAuthorizationStatusSource.requestFullAccess` `@unknown default` now throws this typed error instead of returning `false` (which got misattributed downstream as user-denied). Future Apple-added `EKEntityType` cases surface as a build-version mismatch rather than a phantom denial.
+- **`EventKitManager.forTesting(probe:)` DEBUG factory** (#115): test-only construction path with explicit AuthorizationStatusSource injection. New `EventKitManagerForTestingTests` exercises it so the seam is provably wired, not dead code.
+- **Direct unit tests for `LiveTCCDatabaseSource` + `LiveProcessInventorySource`** (#124): 13 tests covering missing binaries, missing TCC.db, corrupt-db exit-status surfacing, synthetic-db happy path with real `sqlite3` seed, tiny-timeout race tolerance, exact-basename match positive + negative cases, deep-path basename extraction. Closes the CI coverage gap where Live impls were only exercised through the GHA-flaky binary-spawn integration tests.
+
+### Changed
+
+- **`AuthorizationGate.ensureAccess` now accepts `isSSH` / `isLaunchd` defaulted params** (#113): `EventKitManager.ensureCalendarAccess` / `ensureReminderAccess` pass `Self.isSSHSession` + `Self.isNonInteractiveSession` through to the gate. Restores the SSH-context and launchd-context-specific workaround text in `EventKitError.accessDenied` that the #108 Phase 2 refactor had hardcoded to `false`.
+- **`EventKitManager.init` now `fileprivate`** (#115): singleton invariant (`EventKitManager.shared`) no longer relies on convention. Production code must use `.shared`; tests use the new `forTesting(probe:)` factory.
+- **`AuthorizationStatusSource` protocol drops `Sendable` constraint** (#116, Option A from issue): `EKEventStore` is non-`Sendable`; the protocol constraint forced `@unchecked Sendable` workarounds on `LiveAuthorizationStatusSource` and `MockAuthorizationStatusSource`. Actor isolation in `EventKitManager` (the sole owner) provides the safety guarantee instead. `@preconcurrency import EventKit` suppresses the framework-side warning. Mock loses `@unchecked Sendable` cleanly.
+- **`ProcessInventoryParser.parseRow` exact-basename match** (#125): comparison switched from `commPath.contains(processNameSubstring)` to `URL(commPath).lastPathComponent == processName`. Eliminates false positives like `/path/CheICalMCP-helper` and `/tmp/CheICalMCPLegacy.bak` from the banner's stale-process count. Known limitation: versioned binaries (e.g. `CheICalMCP-1.10.0`) are not matched — recommend opening a follow-up if package-manager distribution adopts that naming.
+- **`MockAuthorizationStatusSource` gains explicit fresh-instance pattern comment** (#120): documents why the unsynchronized `requestCallCount` is safe (single-test ownership, never shared) so future copy-paste of the mock pattern doesn't propagate a hidden race.
+- **`testBannerAppearsInDefaultMCPServerMode` adds `XCTAssertLessThan(elapsed, 1.5)` latency budget** (#127): encodes the Plan tier #122 target (200ms target, 1.5s assertion bound for local-host noise tolerance) so banner-emission regressions are caught in CI rather than discovered through user reports.
+
+### Docs
+
+- **`mcpb/README.md` post-install / upgrade narrative rewritten** (#114): drops the disproved "cdhash invalidation breaks TCC grants on each release" hypothesis; reframes the silent-failure mode as the in-process `has*Access` cache anti-pattern (fixed structurally in v1.9.0 via #108 Phase 2). Errata header in `CHANGELOG [1.8.1]` entry preserves the original wrong narrative for audit. Inline troubleshooting paragraph at line 115 also corrected — previously contradicted the lead paragraph.
+- **`CLAUDE.md` gains 'Startup Banner CLI Skip List' section** (#130): documents the `--setup` skip decision (Option B from issue). Strategy Lock Acceptance Criterion #7 (`--setup runs drift check at start`) was silently retracted by the Plan tier; this commit makes the retraction explicit with the user-flow rationale (`--setup` is the remediation path, not a diagnostic surface). Future revisits must write a follow-up issue rather than flip the skip list silently.
+- **`README.md` updated** to reflect macOS 14.0 floor + current v1.10.0 version (lines 237, 540, 544).
+
 ## [1.10.0] - 2026-05-12
 
 ### Added
