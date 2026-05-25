@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "CheICalMCP",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", .upToNextMinor(from: "0.12.0"))

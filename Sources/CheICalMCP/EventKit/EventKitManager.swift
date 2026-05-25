@@ -37,15 +37,28 @@ actor EventKitManager: EventKitManaging {
 
     static let shared = EventKitManager()
 
+    /// Singleton invariant: production code MUST go through `EventKitManager.shared`.
+    /// Tests inject a mock probe via `EventKitManager.forTesting(probe:)` (DEBUG-only
+    /// factory below). The init itself is `fileprivate` so only `shared` and the
+    /// test factory in this file can construct instances. (#115)
+    ///
     /// - Parameter authorizationSource: Probe for TCC state reads + access requests.
     ///   Default wires `LiveAuthorizationStatusSource` sharing the same `EKEventStore`
-    ///   instance so request attribution matches data-ops. Tests inject a mock probe
-    ///   to exercise the `AuthorizationGate` switch without real EventKit access.
-    init(authorizationSource: AuthorizationStatusSource? = nil) {
+    ///   instance so request attribution matches data-ops.
+    fileprivate init(authorizationSource: AuthorizationStatusSource? = nil) {
         let store = EKEventStore()
         self.eventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
     }
+
+    #if DEBUG
+    /// Test-only factory for injecting a custom `AuthorizationStatusSource` (e.g. a mock
+    /// that returns `.notDetermined` without prompting). Production callers must use
+    /// `EventKitManager.shared` — see fileprivate `init` above for the singleton invariant. (#115)
+    static func forTesting(probe: AuthorizationStatusSource) -> EventKitManager {
+        EventKitManager(authorizationSource: probe)
+    }
+    #endif
 
     // MARK: - Access Gate (#108 Phase 2)
 
@@ -67,19 +80,27 @@ actor EventKitManager: EventKitManaging {
     /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
     /// which cached the granted state in `hasCalendarAccess` and silently failed on
     /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
+    ///
+    /// Threads SSH/launchd session context into the gate so `EventKitError.accessDenied`
+    /// surfaces with the appropriate context-specific workaround text. (#113)
     func ensureCalendarAccess() async throws {
         try await AuthorizationGate.ensureAccess(
             for: .event,
             typeName: "Calendar",
+            isSSH: Self.isSSHSession,
+            isLaunchd: Self.isNonInteractiveSession,
             probe: authorizationSource
         )
     }
 
     /// Per-call TCC status check for Reminders. Counterpart of `ensureCalendarAccess()`.
+    /// Threads SSH/launchd context (#113) — same reasoning as `ensureCalendarAccess`.
     func ensureReminderAccess() async throws {
         try await AuthorizationGate.ensureAccess(
             for: .reminder,
             typeName: "Reminders",
+            isSSH: Self.isSSHSession,
+            isLaunchd: Self.isNonInteractiveSession,
             probe: authorizationSource
         )
     }
@@ -1744,6 +1765,11 @@ enum EventKitError: LocalizedError {
     case insufficientAccess(type: String)
     /// `@unknown default` in the TCC authorization-status switch — guards against future EKAuthorizationStatus enum cases that this build doesn't recognize.
     case unknownAuthState(type: String, statusValue: Int)
+    /// `@unknown default` in the `EKEntityType` switch — guards against future Apple-added entities
+    /// (e.g. hypothetical `.contact`) being misattributed as a TCC-denied error when the gate
+    /// calls `requestFullAccess(for:)`. Surfaces as a build-version mismatch instead. (#118)
+    /// `EKEntityType.rawValue` is `UInt`; preserved as-is to avoid lossy narrowing.
+    case unsupportedEntityType(rawValue: UInt)
     case calendarNotFound(identifier: String, available: [String] = [])
     case calendarNotFoundWithSource(name: String, source: String, available: [String] = [])
     case multipleCalendarsFound(name: String, sources: String)
@@ -1809,6 +1835,13 @@ enum EventKitError: LocalizedError {
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
             2. Or 'tccutil reset Calendar com.checheng.CheICalMCP' (and same for Reminders) then re-grant
             3. Or update CheICalMCP to a newer release that recognizes the new state
+            """
+        case .unsupportedEntityType(let rawValue):
+            return """
+            EventKit entity type \(rawValue) is not recognized by this CheICalMCP build. \
+            Likely a future Apple-added EKEntityType case. Update CheICalMCP to a release \
+            that supports the new entity, or report the raw value at \
+            https://github.com/PsychQuant/che-ical-mcp/issues.
             """
         case .calendarNotFound(let id, _):
             // #37 F1: do NOT interpolate `available` into the trusted-message

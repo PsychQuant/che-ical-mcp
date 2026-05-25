@@ -44,29 +44,9 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
 
-    func statusString(_ s: EKAuthorizationStatus) -> String {
-        if #available(macOS 14.0, *) {
-            switch s {
-            case .notDetermined: return "notDetermined (never asked / TCC db has no entry)"
-            case .restricted:    return "restricted (system policy denies — Screen Time / MDM / etc.)"
-            case .denied:        return "denied (user explicitly denied)"
-            case .fullAccess:    return "fullAccess (granted)"
-            case .writeOnly:     return "writeOnly (partial — can create but not read)"
-            @unknown default:    return "unknown (raw value \(s.rawValue))"
-            }
-        } else {
-            switch s {
-            case .notDetermined: return "notDetermined"
-            case .restricted:    return "restricted"
-            case .denied:        return "denied"
-            case .authorized:    return "authorized (legacy full-access on pre-macOS 14)"
-            @unknown default:    return "unknown (raw value \(s.rawValue))"
-            }
-        }
-    }
-
     let calStatus = EKEventStore.authorizationStatus(for: .event)
     let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+    let statusString = TCCStatusFormatter.describe
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
@@ -115,26 +95,16 @@ if CommandLine.arguments.contains("--setup") {
 
     // Request Calendar access
     do {
-        if #available(macOS 14.0, *) {
-            let granted = try await store.requestFullAccessToEvents()
-            print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
-        } else {
-            let granted = try await store.requestAccess(to: .event)
-            print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
-        }
+        let granted = try await store.requestFullAccessToEvents()
+        print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
     } catch {
         print("Calendar access: ✗ error — \(error.localizedDescription)")
     }
 
     // Request Reminders access
     do {
-        if #available(macOS 14.0, *) {
-            let granted = try await store.requestFullAccessToReminders()
-            print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
-        } else {
-            let granted = try await store.requestAccess(to: .reminder)
-            print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
-        }
+        let granted = try await store.requestFullAccessToReminders()
+        print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
     } catch {
         print("Reminders access: ✗ error — \(error.localizedDescription)")
     }
