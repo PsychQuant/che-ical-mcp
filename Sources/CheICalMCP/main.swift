@@ -39,8 +39,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     // find the extracted binary path on their own.
 
     let argv0 = CommandLine.arguments[0]
-    let resolved = (try? FileManager.default.destinationOfSymbolicLink(atPath: argv0)) ?? argv0
-    let absolute = URL(fileURLWithPath: resolved).standardizedFileURL.path
+    let absolute = BinaryPathResolver.resolveArgv0(argv0)
 
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
 
@@ -147,15 +146,11 @@ func emitStartupBanner() {
     }
 
     let argv0 = CommandLine.arguments.first ?? ""
-    let resolvedPath: String = {
-        // Real path resolution mirrors `--print-tcc-path` behavior. See verify F5 /
-        // F7 for the known follow-up about unifying `realpath(3)` across all three
-        // diagnostic entry points (banner, --print-tcc-path, --self-update).
-        if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: argv0) {
-            return URL(fileURLWithPath: dest).standardizedFileURL.path
-        }
-        return URL(fileURLWithPath: argv0).standardizedFileURL.path
-    }()
+    // Resolved via `BinaryPathResolver` (#129) — same realpath(3) canonical path that
+    // `--print-tcc-path` and `--self-update` now use. Eliminates the multi-hop symlink
+    // discrepancy (#121) and the false-positive drift signal from `destinationOfSymbolicLink`'s
+    // 1-hop limitation (#128).
+    let resolvedPath = BinaryPathResolver.resolveArgv0(argv0)
 
     let mtime: Date? = {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
