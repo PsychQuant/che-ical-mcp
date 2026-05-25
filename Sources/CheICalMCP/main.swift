@@ -39,34 +39,13 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     // find the extracted binary path on their own.
 
     let argv0 = CommandLine.arguments[0]
-    let resolved = (try? FileManager.default.destinationOfSymbolicLink(atPath: argv0)) ?? argv0
-    let absolute = URL(fileURLWithPath: resolved).standardizedFileURL.path
+    let absolute = BinaryPathResolver.resolveArgv0(argv0)
 
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
 
-    func statusString(_ s: EKAuthorizationStatus) -> String {
-        if #available(macOS 14.0, *) {
-            switch s {
-            case .notDetermined: return "notDetermined (never asked / TCC db has no entry)"
-            case .restricted:    return "restricted (system policy denies — Screen Time / MDM / etc.)"
-            case .denied:        return "denied (user explicitly denied)"
-            case .fullAccess:    return "fullAccess (granted)"
-            case .writeOnly:     return "writeOnly (partial — can create but not read)"
-            @unknown default:    return "unknown (raw value \(s.rawValue))"
-            }
-        } else {
-            switch s {
-            case .notDetermined: return "notDetermined"
-            case .restricted:    return "restricted"
-            case .denied:        return "denied"
-            case .authorized:    return "authorized (legacy full-access on pre-macOS 14)"
-            @unknown default:    return "unknown (raw value \(s.rawValue))"
-            }
-        }
-    }
-
     let calStatus = EKEventStore.authorizationStatus(for: .event)
     let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+    let statusString = TCCStatusFormatter.describe
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
@@ -115,26 +94,16 @@ if CommandLine.arguments.contains("--setup") {
 
     // Request Calendar access
     do {
-        if #available(macOS 14.0, *) {
-            let granted = try await store.requestFullAccessToEvents()
-            print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
-        } else {
-            let granted = try await store.requestAccess(to: .event)
-            print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
-        }
+        let granted = try await store.requestFullAccessToEvents()
+        print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
     } catch {
         print("Calendar access: ✗ error — \(error.localizedDescription)")
     }
 
     // Request Reminders access
     do {
-        if #available(macOS 14.0, *) {
-            let granted = try await store.requestFullAccessToReminders()
-            print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
-        } else {
-            let granted = try await store.requestAccess(to: .reminder)
-            print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
-        }
+        let granted = try await store.requestFullAccessToReminders()
+        print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
     } catch {
         print("Reminders access: ✗ error — \(error.localizedDescription)")
     }
@@ -177,15 +146,11 @@ func emitStartupBanner() {
     }
 
     let argv0 = CommandLine.arguments.first ?? ""
-    let resolvedPath: String = {
-        // Real path resolution mirrors `--print-tcc-path` behavior. See verify F5 /
-        // F7 for the known follow-up about unifying `realpath(3)` across all three
-        // diagnostic entry points (banner, --print-tcc-path, --self-update).
-        if let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: argv0) {
-            return URL(fileURLWithPath: dest).standardizedFileURL.path
-        }
-        return URL(fileURLWithPath: argv0).standardizedFileURL.path
-    }()
+    // Resolved via `BinaryPathResolver` (#129) — same realpath(3) canonical path that
+    // `--print-tcc-path` and `--self-update` now use. Eliminates the multi-hop symlink
+    // discrepancy (#121) and the false-positive drift signal from `destinationOfSymbolicLink`'s
+    // 1-hop limitation (#128).
+    let resolvedPath = BinaryPathResolver.resolveArgv0(argv0)
 
     let mtime: Date? = {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {

@@ -192,48 +192,19 @@ enum SelfUpdate {
         return URL(string: url)!
     }
 
-    /// Resolve the current binary's path on disk. Uses `realpath(3)`
-    /// to follow symlinks — important because `~/bin/CheICalMCP` is
-    /// often a symlink in dev installs and the user's `argv[0]` may
-    /// be a relative path or a symlink target.
-    ///
-    /// **PATH-resolved invocations** (#49 verify Finding 3): if the
-    /// user runs `CheICalMCP --self-update` (no slash in argv[0],
-    /// shell-PATH-resolved), `argv[0]` is just `CheICalMCP`. We then
-    /// walk `$PATH` to find the executable, then `realpath` that
-    /// candidate. Without this, PATH-invoked self-update would throw
-    /// `binaryPathUnresolvable` for the most common invocation style.
+    /// Resolve the current binary's path on disk via `BinaryPathResolver` (#129) —
+    /// same multi-hop realpath logic that `--print-tcc-path` and the startup banner
+    /// use, with the additional `$PATH` walk needed for bare argv[0] invocations
+    /// (`CheICalMCP --self-update` shell-resolved; #49 verify Finding 3).
     private static func resolveCurrentBinaryPath() throws -> String {
         guard let argv0 = CommandLine.arguments.first else {
             throw SelfUpdateError.binaryPathUnresolvable
         }
-        // If argv[0] contains a slash, it's a path (absolute or relative).
-        // realpath resolves it directly.
-        if argv0.contains("/") {
-            if let resolved = realpath(argv0, nil) {
-                defer { free(resolved) }
-                return String(cString: resolved)
-            }
-            // realpath failed but argv0 has a slash — return as-is.
-            return argv0
-        }
-
-        // PATH-resolved invocation: walk $PATH to find the executable.
-        guard let pathEnv = ProcessInfo.processInfo.environment["PATH"] else {
+        do {
+            return try BinaryPathResolver.resolveWithPATHFallback(argv0)
+        } catch {
             throw SelfUpdateError.binaryPathUnresolvable
         }
-        let fm = FileManager.default
-        for dir in pathEnv.split(separator: ":") {
-            let candidate = "\(dir)/\(argv0)"
-            if fm.isExecutableFile(atPath: candidate) {
-                if let resolved = realpath(candidate, nil) {
-                    defer { free(resolved) }
-                    return String(cString: resolved)
-                }
-                return candidate
-            }
-        }
-        throw SelfUpdateError.binaryPathUnresolvable
     }
 
     /// Fetch the SHA-256 companion file from a release asset URL (#98).

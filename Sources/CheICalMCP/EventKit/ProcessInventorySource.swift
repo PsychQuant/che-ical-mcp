@@ -43,14 +43,25 @@ struct ProcessInventoryResult: Sendable, Equatable {
 /// adds complexity for marginal latency wins.
 struct LiveProcessInventorySource: ProcessInventorySource {
     let psPath: String
-    let processNameSubstring: String
+    /// Exact basename to match the `comm` column against (#125). Substring matching was
+    /// vulnerable to false positives like `/path/CheICalMCP-helper` or `/tmp/CheICalMCPLegacy.bak`
+    /// inflating the stale-process count + polluting the actionable PID list. Now we compare
+    /// `URL(commPath).lastPathComponent == processName`.
+    let processName: String
+    /// Hard timeout for the `ps` subprocess (#126). When `ps` hangs (rare: stuck syscall,
+    /// fs stall, sandbox edge case), the banner runs synchronously before MCP server init
+    /// and would block startup indefinitely. 500ms default — `ps -A` on healthy macOS
+    /// completes in ~20-30ms so this is ~17× headroom.
+    let timeoutMilliseconds: Int
 
     init(
         psPath: String = "/bin/ps",
-        processNameSubstring: String = "CheICalMCP"
+        processName: String = "CheICalMCP",
+        timeoutMilliseconds: Int = 500
     ) {
         self.psPath = psPath
-        self.processNameSubstring = processNameSubstring
+        self.processName = processName
+        self.timeoutMilliseconds = timeoutMilliseconds
     }
 
     func enumerateCheICalMCPProcesses() -> ProcessInventoryResult {
@@ -65,13 +76,9 @@ struct LiveProcessInventorySource: ProcessInventorySource {
         // command line is always the binary so we get the path back).
         process.arguments = ["-A", "-o", "pid=,lstart=,comm="]
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+        let result: SubprocessRunResult
         do {
-            try process.run()
+            result = try SubprocessRunner.run(process: process, timeoutMilliseconds: timeoutMilliseconds)
         } catch {
             return ProcessInventoryResult(
                 processes: [],
@@ -79,44 +86,30 @@ struct LiveProcessInventorySource: ProcessInventorySource {
             )
         }
 
-        // Close parent's write-end fds of the child's stdout/stderr pipes. POSIX pipe
-        // EOF semantics require *every* write-end fd to close — Foundation's `Process`
-        // dups the pipe write end into the child but retains the parent's reference
-        // until the `Pipe` is deallocated. Without these closes, `readDataToEndOfFile`
-        // below blocks indefinitely even after the child exits because there is still
-        // an open write end (ours) on the pipe. Suspected #122 R3 CI hang root cause:
-        // local macOS (25.4+) appears to schedule fd cleanup aggressively enough that
-        // the deadlock doesn't manifest, but GitHub Actions macos-latest reproduces it
-        // reliably. Mirrors the fix in `TCCDriftDetectorBannerTests.spawnAndCaptureStderr`.
-        try? stdout.fileHandleForWriting.close()
-        try? stderr.fileHandleForWriting.close()
-
-        // Read pipes BEFORE waitUntilExit: `ps -A` output is large (one line per process
-        // on the host, often >64KB), and the OS pipe buffer is ~64KB. If we wait for the
-        // child first, it blocks on stdout write once the buffer fills, and waitUntilExit
-        // deadlocks. readDataToEndOfFile reads until EOF (child closes its stdout on
-        // exit), so the child can drain naturally as we read.
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let errOutput = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
+        if result.timedOut {
             return ProcessInventoryResult(
                 processes: [],
-                failureReason: "ps exit \(process.terminationStatus): \(errOutput)"
+                failureReason: "ps timed out after \(timeoutMilliseconds)ms"
             )
         }
 
-        guard let output = String(data: outputData, encoding: .utf8) else {
+        guard result.exitStatus == 0 else {
+            let errOutput = String(data: result.stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no stderr)"
+            return ProcessInventoryResult(
+                processes: [],
+                failureReason: "ps exit \(result.exitStatus): \(errOutput)"
+            )
+        }
+
+        guard let output = String(data: result.stdoutData, encoding: .utf8) else {
             return ProcessInventoryResult(processes: [], failureReason: "ps output not UTF-8")
         }
 
         let formatter = LiveProcessInventorySource.lstartFormatter
         let processes = output
             .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { ProcessInventoryParser.parseRow(String($0), nameSubstring: processNameSubstring, lstartFormatter: formatter) }
+            .compactMap { ProcessInventoryParser.parseRow(String($0), processName: processName, lstartFormatter: formatter) }
 
         return ProcessInventoryResult(processes: processes, failureReason: nil)
     }
@@ -140,9 +133,14 @@ struct LiveProcessInventorySource: ProcessInventorySource {
 
 /// Pulled out as a free function so tests can exercise row parsing without spawning ps.
 enum ProcessInventoryParser {
+    /// Exact-basename match (#125). The pre-fix substring match (`commPath.contains(name)`)
+    /// caught false positives like `/path/CheICalMCP-helper` and `/tmp/CheICalMCPLegacy.bak`
+    /// inflating the banner's stale-process count. We now compare the path's last component
+    /// (e.g. `CheICalMCP` from `~/bin/CheICalMCP`) for equality. Trailing whitespace stripped
+    /// because `ps -o comm=` occasionally emits trailing tabs.
     static func parseRow(
         _ row: String,
-        nameSubstring: String,
+        processName: String,
         lstartFormatter: DateFormatter
     ) -> RunningProcess? {
         // ps -o pid=,lstart=,comm= produces: "  PID Day Mon DD HH:MM:SS YYYY  /path/to/comm"
@@ -159,13 +157,17 @@ enum ProcessInventoryParser {
         let commPath = parts[6...].joined(separator: " ")
 
         // Defensive: an empty/whitespace-only commPath would slip past the
-        // substring test and produce a `RunningProcess` with no executable path
+        // match test and produce a `RunningProcess` with no executable path
         // (verify finding F6). The token count is already `>= 7` but pathological
         // ps rows (e.g. zombie / kernel-thread with stripped comm) can yield 6
         // valid lstart tokens plus an empty 7th.
-        guard !commPath.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        guard commPath.contains(nameSubstring) else { return nil }
+        let trimmedComm = commPath.trimmingCharacters(in: .whitespaces)
+        guard !trimmedComm.isEmpty else { return nil }
+        // Exact basename match — `lastPathComponent` of `/usr/local/bin/CheICalMCP` is
+        // `CheICalMCP`; of `/path/CheICalMCP-helper` is `CheICalMCP-helper` (no match).
+        let basename = URL(fileURLWithPath: trimmedComm).lastPathComponent
+        guard basename == processName else { return nil }
 
-        return RunningProcess(pid: pid, executablePath: commPath, startedAt: startedAt)
+        return RunningProcess(pid: pid, executablePath: trimmedComm, startedAt: startedAt)
     }
 }

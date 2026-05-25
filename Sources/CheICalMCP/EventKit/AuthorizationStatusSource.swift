@@ -1,4 +1,4 @@
-import EventKit
+@preconcurrency import EventKit
 import Foundation
 
 /// Test seam for TCC authorization probing. Production wires `LiveAuthorizationStatusSource`;
@@ -15,7 +15,13 @@ import Foundation
 /// where any future TCC state change (manual System Settings revoke / future macOS policy
 /// shift / cross-Developer-ID re-signing) was invisible to the running process. The probe
 /// + gate combination replaces the cache with a per-call cheap status check.
-protocol AuthorizationStatusSource: Sendable {
+///
+/// **Why no `Sendable` constraint** (#116): `LiveAuthorizationStatusSource` carries a
+/// non-`Sendable` `EKEventStore`; declaring the protocol `Sendable` would force every
+/// conformer into `@unchecked Sendable` (which papered over a real Swift 6 strict-
+/// concurrency violation). Actor isolation in `EventKitManager` (the sole owner) provides
+/// the safety guarantee instead — the source never crosses an actor boundary in production.
+protocol AuthorizationStatusSource {
     /// Read current TCC authorization status. Cheap (μs-scale, kernel-cache hit after first call).
     /// MUST NOT trigger TCC dialog — that's `requestFullAccess`'s job.
     func authorizationStatus(for entityType: EKEntityType) -> EKAuthorizationStatus
@@ -40,17 +46,13 @@ struct LiveAuthorizationStatusSource: AuthorizationStatusSource {
     }
 
     func requestFullAccess(for entityType: EKEntityType) async throws -> Bool {
-        if #available(macOS 14.0, *) {
-            switch entityType {
-            case .event:
-                return try await store.requestFullAccessToEvents()
-            case .reminder:
-                return try await store.requestFullAccessToReminders()
-            @unknown default:
-                return false
-            }
-        } else {
-            return try await store.requestAccess(to: entityType)
+        switch entityType {
+        case .event:
+            return try await store.requestFullAccessToEvents()
+        case .reminder:
+            return try await store.requestFullAccessToReminders()
+        @unknown default:
+            throw EventKitError.unsupportedEntityType(rawValue: entityType.rawValue)
         }
     }
 }
@@ -77,42 +79,26 @@ enum AuthorizationGate {
     static func ensureAccess(
         for entityType: EKEntityType,
         typeName: String,
+        isSSH: Bool = false,
+        isLaunchd: Bool = false,
         probe: AuthorizationStatusSource
     ) async throws {
         let status = probe.authorizationStatus(for: entityType)
 
-        if #available(macOS 14.0, *) {
-            switch status {
-            case .fullAccess:
-                return
-            case .writeOnly:
-                throw EventKitError.insufficientAccess(type: typeName)
-            case .denied, .restricted:
-                throw EventKitError.accessDenied(type: typeName, isSSH: false, isLaunchd: false)
-            case .notDetermined:
-                let granted = try await probe.requestFullAccess(for: entityType)
-                if !granted {
-                    throw EventKitError.accessDenied(type: typeName, isSSH: false, isLaunchd: false)
-                }
-            @unknown default:
-                throw EventKitError.unknownAuthState(type: typeName, statusValue: status.rawValue)
+        switch status {
+        case .fullAccess:
+            return
+        case .writeOnly:
+            throw EventKitError.insufficientAccess(type: typeName)
+        case .denied, .restricted:
+            throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
+        case .notDetermined:
+            let granted = try await probe.requestFullAccess(for: entityType)
+            if !granted {
+                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
             }
-        } else {
-            // Pre-macOS 14: `.fullAccess` / `.writeOnly` enum cases didn't exist.
-            // Legacy `.authorized` covers the granted state.
-            switch status {
-            case .authorized:
-                return
-            case .denied, .restricted:
-                throw EventKitError.accessDenied(type: typeName, isSSH: false, isLaunchd: false)
-            case .notDetermined:
-                let granted = try await probe.requestFullAccess(for: entityType)
-                if !granted {
-                    throw EventKitError.accessDenied(type: typeName, isSSH: false, isLaunchd: false)
-                }
-            @unknown default:
-                throw EventKitError.unknownAuthState(type: typeName, statusValue: status.rawValue)
-            }
+        @unknown default:
+            throw EventKitError.unknownAuthState(type: typeName, statusValue: status.rawValue)
         }
     }
 }

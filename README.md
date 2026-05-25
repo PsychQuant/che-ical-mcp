@@ -234,7 +234,7 @@ This queries GitHub Releases for the latest tag, downloads the new binary, and a
 
 ### Requirements
 
-- macOS 13.0+
+- macOS 14.0+ (Sonoma or later — required since cluster v1.11.0+ for full TCC permission API support)
 - Xcode Command Line Tools (only if building from source)
 
 ### For Claude Desktop
@@ -537,11 +537,11 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.8.0
+- **Current Version**: v1.10.0
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
-- **Platform**: macOS 13.0+ (Ventura and later)
+- **Platform**: macOS 14.0+ (Sonoma and later — bumped from 13.0 in the post-1.10 cluster per [#119](https://github.com/PsychQuant/che-ical-mcp/issues/119))
 - **Tools**: 29 tools for calendars, events, reminders, tags, undo/redo, cleanup, and advanced operations
 
 ---
