@@ -30,9 +30,13 @@ The binary lives under `~/Library/Application Support/Claude/Claude Extensions/l
 
 ## Post-install / Upgrade (TCC permissions)
 
-**Why this is needed**: macOS Calendar / Reminders access is gated by TCC (Transparency, Consent & Control). TCC binds permission grants to the binary's path **and** code signature (cdhash). When a new release ships, the cdhash changes — TCC invalidates the existing grant and expects to re-prompt. But the MCP server is launched by Claude Desktop without a terminal session, so the re-authorization dialog cannot reliably appear (it gets attributed to the wrong process or suppressed). Result: calendar tool calls silently fail with `accessDenied`.
+**Why this is needed** (corrected #114; original cdhash framing was disproved by #108 Phase 1 smoke test): macOS Calendar / Reminders access is gated by TCC (Transparency, Consent & Control). TCC entries are keyed by a designated requirement (csreq) — for our notarized, Developer-ID-signed binary the csreq survives cdhash changes across releases, so a previously-granted permission keeps working on upgrade as long as the binary's signing identity stays stable. (Verified empirically: TCC grants for `~/bin/CheICalMCP` survived 5 consecutive binary swaps in #108 Phase 1.)
 
-The fix is a one-time manual setup, triggered from Terminal, that lets macOS surface the TCC dialog properly. You only need to do this on first install **and** after each version upgrade.
+The silent-failure mode users hit pre-v1.9.0 was instead an in-process cache anti-pattern: `EventKitManager` used to short-circuit on actor-private `hasCalendarAccess` / `hasReminderAccess` booleans set on first successful access. If TCC state later changed (manual revoke in System Settings, fresh install in a parallel context, or any state shift outside the running process), the cached booleans stayed `true` and the next call returned a stale-grant `accessDenied` from EventKit — without re-prompting and without surfacing the underlying revocation. This violated Apple's documented "call `authorizationStatus(for:)` every time" pattern (TN3153 + `EKEventStore.authorizationStatus(for:)` API docs).
+
+**v1.9.0 (#108 Phase 2) replaced the cache with a per-call `AuthorizationGate.ensureAccess(...)`** — every Calendar/Reminders operation now reads fresh TCC state via `EKEventStore.authorizationStatus(for:)` before the underlying call. Any subsequent state change surfaces as an immediate `accessDenied` with the appropriate `EventKitError.accessDenied` workaround text (SSH / launchd / interactive variants).
+
+For **first install** on a machine that has never granted TCC to this binary, the steps below are still required — you'll see `notDetermined` from the diagnostic query and need to trigger the initial prompt via Terminal. Subsequent upgrades from v1.9.0+ generally don't need re-running `--setup` unless the system surfaces `denied` (manual revoke or framework-layer reset). The `che-ical-mcp 1.10.0` startup banner (#122) prints current TCC state on every spawn so you can verify without manual SQL.
 
 ### Step 1 — verify current TCC state
 
@@ -45,7 +49,7 @@ Interpret the result:
 
 | `auth_value` | Meaning | Action |
 |---|---|---|
-| `2` | Granted | No action needed — calendar tools should work. If they don't, proceed to Step 2 anyway (cdhash may have changed silently). |
+| `2` | Granted | No action needed — calendar tools should work. If they don't, the v1.9.0 per-call gate (#108 Phase 2) will surface the underlying reason as an explicit `accessDenied` error in tool output rather than silently masking it. |
 | `0` | Denied | Reset and re-grant via Step 2 + the troubleshooting `tccutil reset` snippet below. |
 | _(empty / no row)_ | Never asked | Proceed to Step 2 to trigger the dialog. |
 
