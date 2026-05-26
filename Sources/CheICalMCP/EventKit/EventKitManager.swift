@@ -1140,10 +1140,19 @@ actor EventKitManager: EventKitManaging {
         reminder.calendar = calendar
 
         if let due = dueDate {
-            reminder.dueDateComponents = Calendar.current.dateComponents(
+            // #134: populate dueDateComponents.timeZone so iCloud Web / macOS
+            // Today-view render the time at the host's wall clock instead of
+            // re-interpreting floating components as UTC. EKReminder's
+            // dueDateComponents is NSDateComponents-based which permits
+            // timeZone == nil ("floating"); native EventKit on Mac/iPhone
+            // resolves floating as local but iCloud Web does not — the spec
+            // contract is "always store with explicit timezone".
+            var dueComponents = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute],
                 from: due
             )
+            dueComponents.timeZone = TimeZone.current
+            reminder.dueDateComponents = dueComponents
         }
 
         // Add alarms
@@ -1204,10 +1213,15 @@ actor EventKitManager: EventKitManaging {
         if clearDueDate {
             reminder.dueDateComponents = nil
         } else if let due = dueDate {
-            reminder.dueDateComponents = Calendar.current.dateComponents(
+            // #134: see createReminder for rationale — always store explicit
+            // timezone so iCloud Web / macOS Today-view don't re-interpret
+            // floating components as UTC.
+            var dueComponents = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute],
                 from: due
             )
+            dueComponents.timeZone = TimeZone.current
+            reminder.dueDateComponents = dueComponents
         }
 
         if let name = calendarName {
