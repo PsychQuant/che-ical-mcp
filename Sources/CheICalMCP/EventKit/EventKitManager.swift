@@ -77,6 +77,27 @@ actor EventKitManager: EventKitManaging {
     /// Test-accessible wrapper
     static var isNonInteractive: Bool { isNonInteractiveSession }
 
+    /// Detect the `.mcpb` extension install context inside Claude Desktop (#133).
+    ///
+    /// When the binary lives under `Claude Extensions/local.mcpb.*/server/`,
+    /// it was spawned by Claude Desktop's `.mcpb` extension installer. On
+    /// Claude Desktop ≥ 1.6608.2 (verified through current 1.8555.2 as of
+    /// 2026-05-26), this spawn path hits the upstream Calendar/Reminders
+    /// access regression tracked at `anthropics/claude-code#58239` (still
+    /// open as of writing) — Claude.app bundle is missing the
+    /// `com.apple.security.personal-information.calendars` entitlement and
+    /// `NSCalendarsFullAccessUsageDescription` Info.plist string that
+    /// macOS 14+ requires on the responsible process.
+    ///
+    /// Detection is by binary path substring because the bug is install-
+    /// channel-specific (only `.mcpb` is affected; Claude Code plugin path
+    /// `~/bin/CheICalMCP` is unaffected — different spawn chain).
+    static let isMCPBClaudeDesktopInstall: Bool = {
+        let argv0 = CommandLine.arguments.first ?? ""
+        let resolved = BinaryPathResolver.resolveArgv0(argv0)
+        return resolved.contains("Claude Extensions/local.mcpb.")
+    }()
+
     /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
     /// which cached the granted state in `hasCalendarAccess` and silently failed on
     /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
@@ -1827,6 +1848,36 @@ enum EventKitError: LocalizedError {
                 2. Or manually add CheICalMCP in: \
                 System Settings → Privacy & Security → \(type)
                 3. After granting permission, restart the launchd job
+                """
+            }
+            // #133: when running under Claude Desktop's `.mcpb` extension install
+            // on Claude Desktop ≥ 1.6608.2, the generic "Open System Settings"
+            // advice is misleading — the bug is upstream
+            // (anthropics/claude-code#58239, still open as of 2026-05-26 on
+            // Claude Desktop 1.8555.2): Claude.app's bundle is missing the
+            // `com.apple.security.personal-information.calendars` /
+            // `.reminders` entitlements + matching Info.plist usage
+            // descriptions that macOS 14+ requires on the responsible
+            // process. System Settings cannot grant what the bundle never
+            // requested. Surface the real workaround (switch to Claude Code
+            // plugin install path) instead of churning users through wrong
+            // remediation steps.
+            if EventKitManager.isMCPBClaudeDesktopInstall {
+                return """
+                \(type) access denied. This is the upstream Claude Desktop \
+                `.mcpb` extension regression (anthropics/claude-code#58239) — \
+                Claude.app on macOS 14+ is missing the Calendar/Reminders \
+                entitlements + Info.plist usage descriptions that the framework \
+                requires. System Settings cannot fix what the bundle never \
+                requested. Workaround:
+                1. Use the Claude Code plugin install path instead — \
+                in Claude Code, run: \
+                `claude plugin install che-ical-mcp@psychquant-claude-plugins`
+                2. The plugin route auto-downloads `~/bin/CheICalMCP` and spawns \
+                without going through Claude.app's `disclaimer` wrapper, \
+                which is the broken path
+                3. If you must stay on `.mcpb`, follow / 👍 the upstream issue: \
+                https://github.com/anthropics/claude-code/issues/58239
                 """
             }
             return """
