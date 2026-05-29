@@ -26,6 +26,7 @@ mcpb/server/*
 
 # MCPB package (generated)
 mcpb/*.mcpb
+mcpb/*.mcpb.sha256
 
 # Private docs (not for public repo)
 docs/private/

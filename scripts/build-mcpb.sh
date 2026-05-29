@@ -265,15 +265,22 @@ echo ""
 if command -v mcpb &> /dev/null; then
     echo "Packing MCPB bundle..."
     cd "$MCPB_DIR"
-    mcpb pack
+    # Pack with an explicit, version-stamped output name (#112). `mcpb pack`
+    # otherwise derives the output filename from the source dir name → mcpb/mcpb.mcpb,
+    # forcing a manual rename every release. .mcpbignore (#111) keeps prior
+    # versions' artifacts out of the archive.
+    PACKED="che-ical-mcp-${SOURCE_VERSION}.mcpb"
+    mcpb pack . "$PACKED"
+    shasum -a 256 "$PACKED" | awk '{print $1}' > "${PACKED}.sha256"
     echo ""
     echo "=== Build Complete ==="
-    echo "MCPB package: $MCPB_DIR/che-ical-mcp.mcpb"
+    echo "MCPB package: $MCPB_DIR/$PACKED"
+    echo "SHA-256:      $MCPB_DIR/${PACKED}.sha256"
 else
     echo "=== Build Complete (Manual Pack Required) ==="
     echo "mcpb CLI not found. To pack the bundle:"
     echo "  1. Install: npm install -g @anthropic-ai/mcpb"
-    echo "  2. Run: cd mcpb && mcpb pack"
+    echo "  2. Run: cd mcpb && mcpb pack . \"che-ical-mcp-${SOURCE_VERSION}.mcpb\""
 fi
 
 echo ""
