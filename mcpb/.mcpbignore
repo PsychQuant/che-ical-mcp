@@ -1,8 +1,11 @@
 # mcpb pack ignore (#111)
 # mcpb/ doubles as both the `mcpb pack` source dir and the build output dir.
-# Without this, every release bundles the PREVIOUS versions' release artifacts
-# (*.mcpb / *.mcpb.sha256) into the new archive — monotonic accumulation, and
-# end users open vX.Y.Z.mcpb to find a confusing v(X.Y.Z-1).mcpb.sha256 inside.
+# The load-bearing line is *.mcpb.sha256: mcpb 2.1.2's built-in EXCLUDE_PATTERNS
+# already drops *.mcpb, but NOT the companion *.mcpb.sha256 — so without this,
+# each release leaks the previous version's lone .mcpb.sha256 into the new archive
+# (end users open vX.Y.Z.mcpb to find a stray v(X.Y.Z-1).mcpb.sha256 inside).
+# *.mcpb is kept as explicit defense-in-depth: redundant with the built-in default
+# today, but makes intent clear and survives a future mcpb that drops the default.
 # Verified: mcpb 2.1.2 honors this file (pack prints "ignored (.mcpbignore) files: N").
 *.mcpb
 *.mcpb.sha256

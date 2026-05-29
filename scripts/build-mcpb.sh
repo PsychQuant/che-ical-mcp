@@ -280,7 +280,7 @@ else
     echo "=== Build Complete (Manual Pack Required) ==="
     echo "mcpb CLI not found. To pack the bundle:"
     echo "  1. Install: npm install -g @anthropic-ai/mcpb"
-    echo "  2. Run: cd mcpb && mcpb pack"
+    echo "  2. Run: cd mcpb && mcpb pack . \"che-ical-mcp-${SOURCE_VERSION}.mcpb\""
 fi
 
 echo ""
