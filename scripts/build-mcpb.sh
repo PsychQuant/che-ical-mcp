@@ -265,6 +265,11 @@ echo ""
 if command -v mcpb &> /dev/null; then
     echo "Packing MCPB bundle..."
     cd "$MCPB_DIR"
+    # Validate manifest schema before packing (#138) — fail-fast on schema drift
+    # (e.g. mcpb 2.1.2 strict-rejects unknown compatibility.runtimes keys) rather
+    # than letting `mcpb pack` abort mid-way with a cryptic error. set -e aborts here.
+    echo "Validating manifest schema..."
+    mcpb validate manifest.json
     # Pack with an explicit, version-stamped output name (#112). `mcpb pack`
     # otherwise derives the output filename from the source dir name → mcpb/mcpb.mcpb,
     # forcing a manual rename every release. .mcpbignore (#111) keeps prior

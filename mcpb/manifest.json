@@ -60,9 +60,6 @@
     { "name": "undo_history", "description": "List undoable operations with timestamps" }
   ],
   "compatibility": {
-    "platforms": ["darwin"],
-    "runtimes": {
-      "macos": "14.0"
-    }
+    "platforms": ["darwin"]
   }
 }
