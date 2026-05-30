@@ -81,8 +81,14 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 }
 
 if CommandLine.arguments.contains("--setup") {
-    // Warn if running in a non-interactive environment where TCC dialogs cannot appear
-    if ProcessInfo.processInfo.environment["TERM"] == nil || getppid() == 1 {
+    // Non-interactive detection for --setup uses the NARROWER check (no TERM / direct
+    // launchd child) and deliberately does NOT include the `CI` env var that
+    // EventKitManager.isNonInteractiveSession adds (#131). Rationale: `--setup` is the
+    // human-run manual remediation path — a person in Terminal.app who happens to have
+    // CI=1 exported can still see the TCC dialog, so CI must not force a skip here.
+    // (This is verify finding #4's concern, correctly scoped to the manual path.)
+    let nonInteractive = ProcessInfo.processInfo.environment["TERM"] == nil || getppid() == 1
+    if nonInteractive {
         print("WARNING: --setup appears to be running in a non-interactive session.")
         print("Permission dialogs cannot appear here. Run this command from Terminal.app instead.\n")
     }
@@ -91,27 +97,54 @@ if CommandLine.arguments.contains("--setup") {
     print("(This triggers macOS TCC permission dialogs for this binary)\n")
 
     let store = EKEventStore()
+    var anyBlockedOrDenied = false
 
-    // Request Calendar access
-    do {
-        let granted = try await store.requestFullAccessToEvents()
-        print("Calendar access: \(granted ? "✓ granted" : "✗ denied")")
-    } catch {
-        print("Calendar access: ✗ error — \(error.localizedDescription)")
+    // #143: check authorizationStatus BEFORE calling the blocking requestFullAccess.
+    // In a non-interactive session a `.notDetermined` status would hang forever on a
+    // dialog that can never appear — previously --setup only *warned* then called the
+    // blocking API anyway. setupAccessDecision() returns the right action; an
+    // already-granted (`.fullAccess`) binary still reports success (not skipped).
+    func runSetup(
+        _ label: String,
+        entity: EKEntityType,
+        request: () async throws -> Bool
+    ) async {
+        let status = EKEventStore.authorizationStatus(for: entity)
+        switch setupAccessDecision(status: status, isNonInteractive: nonInteractive) {
+        case .alreadyGranted:
+            print("\(label) access: ✓ already granted")
+        case .requestAccess:
+            do {
+                let granted = try await request()
+                print("\(label) access: \(granted ? "✓ granted" : "✗ denied")")
+                if !granted { anyBlockedOrDenied = true }
+            } catch {
+                print("\(label) access: ✗ error — \(error.localizedDescription)")
+                anyBlockedOrDenied = true
+            }
+        case .skipWouldBlock:
+            print("\(label) access: ⤼ skipped — non-interactive session; requestFullAccess would block on a TCC dialog that can't appear here (#143). Grant manually (see below).")
+            anyBlockedOrDenied = true
+        case .denied:
+            print("\(label) access: ✗ denied")
+            anyBlockedOrDenied = true
+        case .writeOnly:
+            print("\(label) access: ◐ write-only (partial — upgrade to full access in System Settings)")
+            anyBlockedOrDenied = true
+        }
     }
 
-    // Request Reminders access
-    do {
-        let granted = try await store.requestFullAccessToReminders()
-        print("Reminders access: \(granted ? "✓ granted" : "✗ denied")")
-    } catch {
-        print("Reminders access: ✗ error — \(error.localizedDescription)")
-    }
+    await runSetup("Calendar", entity: .event) { try await store.requestFullAccessToEvents() }
+    await runSetup("Reminders", entity: .reminder) { try await store.requestFullAccessToReminders() }
 
-    print("\nIf permissions were denied, grant them manually:")
-    print("  System Settings → Privacy & Security → Calendar → enable CheICalMCP")
-    print("  System Settings → Privacy & Security → Reminders → enable CheICalMCP")
-    exit(0)
+    if anyBlockedOrDenied {
+        print("\nIf permissions were denied or skipped, grant them manually:")
+        print("  System Settings → Privacy & Security → Calendar → enable CheICalMCP")
+        print("  System Settings → Privacy & Security → Reminders → enable CheICalMCP")
+    }
+    // Exit non-zero when any type was skipped/denied so callers (and the user) can
+    // tell setup did not fully succeed — previously --setup always exited 0.
+    exit(anyBlockedOrDenied ? 1 : 0)
 }
 
 // CLI mode: invoke tools directly without MCP server

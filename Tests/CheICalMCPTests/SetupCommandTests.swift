@@ -1,8 +1,46 @@
+import EventKit
 import XCTest
 
 @testable import CheICalMCP
 
 final class SetupCommandTests: XCTestCase {
+
+    // MARK: - Setup Access Decision (#143)
+
+    /// The `--setup` path must check `authorizationStatus` BEFORE calling the
+    /// blocking `requestFullAccess`. In a non-interactive session a `.notDetermined`
+    /// status would hang forever on a TCC dialog that can never appear, so the
+    /// decision must be `.skipWouldBlock` there — while an already-granted
+    /// (`.fullAccess`) status must still report success WITHOUT skipping (the
+    /// already-granted re-run case the diagnosis flagged).
+    func testSetupDecision_notDetermined_nonInteractive_skipsToAvoidBlock() {
+        XCTAssertEqual(
+            setupAccessDecision(status: .notDetermined, isNonInteractive: true),
+            .skipWouldBlock,
+            ".notDetermined + non-interactive must skip requestFullAccess (would hang, #143)")
+    }
+
+    func testSetupDecision_notDetermined_interactive_requestsAccess() {
+        XCTAssertEqual(
+            setupAccessDecision(status: .notDetermined, isNonInteractive: false),
+            .requestAccess,
+            ".notDetermined + interactive must request access (TCC dialog can appear)")
+    }
+
+    func testSetupDecision_fullAccess_alreadyGranted_regardlessOfInteractivity() {
+        // The already-granted re-run case: must NOT be lumped into the skip path.
+        XCTAssertEqual(setupAccessDecision(status: .fullAccess, isNonInteractive: true), .alreadyGranted)
+        XCTAssertEqual(setupAccessDecision(status: .fullAccess, isNonInteractive: false), .alreadyGranted)
+    }
+
+    func testSetupDecision_deniedAndRestricted_reportDenied() {
+        XCTAssertEqual(setupAccessDecision(status: .denied, isNonInteractive: true), .denied)
+        XCTAssertEqual(setupAccessDecision(status: .restricted, isNonInteractive: false), .denied)
+    }
+
+    func testSetupDecision_writeOnly_isPartial() {
+        XCTAssertEqual(setupAccessDecision(status: .writeOnly, isNonInteractive: false), .writeOnly)
+    }
 
     // MARK: - Help Message
 
