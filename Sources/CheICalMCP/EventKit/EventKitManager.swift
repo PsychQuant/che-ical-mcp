@@ -73,6 +73,7 @@ actor EventKitManager: EventKitManaging {
     private static let isNonInteractiveSession: Bool =
         getppid() == 1
             || ProcessInfo.processInfo.environment["TERM"] == nil
+            || ProcessInfo.processInfo.environment["CI"] != nil  // CI runners (GHA etc.) — no GUI to show a TCC prompt (#131)
 
     /// Test-accessible wrapper
     static var isNonInteractive: Bool { isNonInteractiveSession }

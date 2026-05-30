@@ -1,17 +1,19 @@
-// MARK: - CI build exclusion (#131 follow-up to #122)
+// MARK: - CI handling (#131 — RESOLVED)
 //
-// This entire test class is excluded from the build when `CI_BUILD` is defined
-// (via `-Xswiftc -DCI_BUILD` in `.github/workflows/test.yml`). The runtime
-// XCTSkipIf approach (commit f00d591) did not unblock GitHub Actions: the
-// `swift test` phase still produced zero output for 8+ minutes after build
-// completed, indicating the hang sits *before* any test method executes —
-// most likely during xctest binary load or test discovery, triggered by some
-// aspect of compiling/linking this class. Compile-time exclusion sidesteps
-// that path entirely. Local development still gets these tests (no flag set);
-// CHANGELOG and #131 track the investigation. Remove the `#if` guard once the
-// GHA-specific hang is identified and resolved.
-
-#if !CI_BUILD
+// #131 root cause (the GHA hang) was `AuthorizationGate.ensureAccess` blocking on
+// `requestFullAccess` for `.notDetermined` in a non-interactive session — now fixed
+// in the production gate (fast-fail). The earlier "hang sits before any test method /
+// xctest load" theory was a pre-R6 guess that the R6 verbose+PTY log disproved (the
+// hang was inside DispatchRoundTripTests' real EventKit call, now fast-failing).
+//
+// Both the compile-time `#if !CI_BUILD` exclusion AND the runtime `skipIfCI()` guard
+// are now removed: these binary-spawn tests run on CI. The precaution is no longer
+// load-bearing because `spawnAndCaptureStderr` bounds every wait — `maxWait` poll,
+// SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap with a force-reap
+// SIGKILL — so a stuck child fails fast (~6s/test worst case) instead of wedging the
+// 20m job timeout. The spawned binary also inherits the same EventKit fast-fail under
+// CI=1, so the banner path (which only reads `authorizationStatus`, never
+// `requestFullAccess`) has no blocking primitive left to hang on.
 
 import XCTest
 import Darwin  // SIGKILL + kill(_:_:) for the SIGTERM→SIGKILL escalation in spawnAndCaptureStderr
@@ -174,25 +176,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         return (stderrText, process.terminationStatus)
     }
 
-    // MARK: - CI guard
-
-    /// Binary-spawn tests hang reliably on GitHub Actions `macos-latest` with no
-    /// observable test output (build completes, then 14+ minutes of silence until
-    /// the 20m job timeout cancels the run). R3 / R3.2 / R3.3 fixes (SIGKILL
-    /// fallback, parent pipe write-end close in both the test helper and the
-    /// production subprocess helpers) did not unblock CI. Local 338/338 still
-    /// pass in 1.49s, and the 13 unit tests in `TCCDriftDetectorTests.swift`
-    /// cover banner-format invariants via mocked sources, so we skip these on CI
-    /// and track the root-cause investigation in #131. Remove this guard once
-    /// the GHA-specific hang is identified and resolved.
-    private func skipIfCI() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["CI"] != nil
-                || ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] != nil,
-            "Skipped on CI — see #131 for the GHA macos-latest hang investigation."
-        )
-    }
-
     // MARK: - Tests
 
     /// In default MCP server mode (no flags), the banner header line must appear on
@@ -213,7 +196,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// noise (Spotlight indexing / brew autoupdate / etc.) while still catching the
     /// "banner now takes 10 seconds" class of regression that would actually matter.
     func testBannerAppearsInDefaultMCPServerMode() throws {
-        try skipIfCI()
         let binary = try locateBuiltBinary()
         let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
 
@@ -237,7 +219,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
     /// Setting `CHE_ICAL_MCP_NO_BANNER=1` must completely suppress banner output.
     func testBannerSuppressedByEnvironmentVariable() throws {
-        try skipIfCI()
         let binary = try locateBuiltBinary()
         var env = ProcessInfo.processInfo.environment
         env["CHE_ICAL_MCP_NO_BANNER"] = "1"
@@ -256,7 +237,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
     /// `--version` exits before the MCP-server-mode code path, so no banner.
     func testNoBannerForVersionFlag() throws {
-        try skipIfCI()
         let binary = try locateBuiltBinary()
         let (stderr, status) = try spawnAndCaptureStderr(
             binary: binary,
@@ -273,7 +253,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// `--help` exits before banner too. Same path as `--version`, separate test to
     /// document the contract explicitly.
     func testNoBannerForHelpFlag() throws {
-        try skipIfCI()
         let binary = try locateBuiltBinary()
         let (stderr, status) = try spawnAndCaptureStderr(
             binary: binary,
@@ -293,7 +272,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// to the mcpb path, we just run from any arbitrary path and assert the banner
     /// recognizes the alternate path.
     func testBannerHandlesArbitraryBinaryPath() throws {
-        try skipIfCI()
         let builtBinary = try locateBuiltBinary()
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("CheICalMCP-banner-test-\(UUID().uuidString)")
@@ -315,5 +293,3 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 }
-
-#endif  // !CI_BUILD

@@ -93,6 +93,15 @@ enum AuthorizationGate {
         case .denied, .restricted:
             throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
         case .notDetermined:
+            // A non-interactive session (SSH / launchd / CI runner / no TTY) cannot display
+            // the TCC permission dialog that `requestFullAccess` triggers. On some hosts
+            // (GitHub Actions macos sandbox #131, or over SSH) the request blocks indefinitely
+            // waiting for a dialog that can never appear, hanging the process. Fast-fail with
+            // the same actionable error as `.denied` instead of hanging — the user must grant
+            // access interactively first (`--setup` from a Terminal, not over SSH).
+            if isSSH || isLaunchd {
+                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
+            }
             let granted = try await probe.requestFullAccess(for: entityType)
             if !granted {
                 throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
