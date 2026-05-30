@@ -80,7 +80,7 @@ enum AuthorizationGate {
         for entityType: EKEntityType,
         typeName: String,
         isSSH: Bool = false,
-        isLaunchd: Bool = false,
+        isNonInteractive: Bool = false,
         probe: AuthorizationStatusSource
     ) async throws {
         let status = probe.authorizationStatus(for: entityType)
@@ -91,7 +91,7 @@ enum AuthorizationGate {
         case .writeOnly:
             throw EventKitError.insufficientAccess(type: typeName)
         case .denied, .restricted:
-            throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
+            throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
         case .notDetermined:
             // A non-interactive session (SSH / launchd / CI runner / no TTY) cannot display
             // the TCC permission dialog that `requestFullAccess` triggers. On some hosts
@@ -99,12 +99,12 @@ enum AuthorizationGate {
             // waiting for a dialog that can never appear, hanging the process. Fast-fail with
             // the same actionable error as `.denied` instead of hanging — the user must grant
             // access interactively first (`--setup` from a Terminal, not over SSH).
-            if isSSH || isLaunchd {
-                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
+            if isSSH || isNonInteractive {
+                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
             }
             let granted = try await probe.requestFullAccess(for: entityType)
             if !granted {
-                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isLaunchd: isLaunchd)
+                throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
             }
         @unknown default:
             throw EventKitError.unknownAuthState(type: typeName, statusValue: status.rawValue)

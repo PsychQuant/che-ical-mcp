@@ -27,14 +27,14 @@ final class SetupCommandTests: XCTestCase {
     // MARK: - Error Messages
 
     func testAccessDeniedLaunchdMessage() {
-        let error = EventKitError.accessDenied(type: "Calendar", isSSH: false, isLaunchd: true)
+        let error = EventKitError.accessDenied(type: "Calendar", isSSH: false, isNonInteractive: true)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("non-interactive"), "Error should mention non-interactive session")
         XCTAssertTrue(message.contains("--setup"), "Error should mention --setup workaround")
     }
 
     func testAccessDeniedSSHOnlyMessage() {
-        let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isLaunchd: false)
+        let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isNonInteractive: false)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SSH"), "SSH error should mention SSH")
         XCTAssertFalse(message.contains("--setup"), "SSH-only error should not mention --setup")
@@ -42,7 +42,7 @@ final class SetupCommandTests: XCTestCase {
 
     func testAccessDeniedSSHAndLaunchdMessage() {
         // When both SSH and non-interactive are true, message should cover both
-        let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isLaunchd: true)
+        let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isNonInteractive: true)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SSH"), "Combined error should mention SSH")
         XCTAssertTrue(message.contains("non-interactive"), "Combined error should mention non-interactive")
@@ -51,7 +51,7 @@ final class SetupCommandTests: XCTestCase {
     }
 
     func testAccessDeniedNormalMessage() {
-        let error = EventKitError.accessDenied(type: "Calendar", isSSH: false, isLaunchd: false)
+        let error = EventKitError.accessDenied(type: "Calendar", isSSH: false, isNonInteractive: false)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("System Settings"), "Normal error should mention System Settings")
         XCTAssertFalse(message.contains("non-interactive"), "Normal error should not mention non-interactive")

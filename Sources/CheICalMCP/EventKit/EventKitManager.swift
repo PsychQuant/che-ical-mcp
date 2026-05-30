@@ -110,7 +110,7 @@ actor EventKitManager: EventKitManaging {
             for: .event,
             typeName: "Calendar",
             isSSH: Self.isSSHSession,
-            isLaunchd: Self.isNonInteractiveSession,
+            isNonInteractive: Self.isNonInteractiveSession,
             probe: authorizationSource
         )
     }
@@ -122,7 +122,7 @@ actor EventKitManager: EventKitManaging {
             for: .reminder,
             typeName: "Reminders",
             isSSH: Self.isSSHSession,
-            isLaunchd: Self.isNonInteractiveSession,
+            isNonInteractive: Self.isNonInteractiveSession,
             probe: authorizationSource
         )
     }
@@ -1795,7 +1795,7 @@ struct LocationTriggerInput {
 // MARK: - Errors
 
 enum EventKitError: LocalizedError {
-    case accessDenied(type: String, isSSH: Bool = false, isLaunchd: Bool = false)
+    case accessDenied(type: String, isSSH: Bool = false, isNonInteractive: Bool = false)
     /// `.writeOnly` partial-access state (macOS 14+). User granted write-only but a read operation was attempted.
     /// Not silently downgradable — caller must surface so user can upgrade in System Settings.
     case insufficientAccess(type: String)
@@ -1817,8 +1817,8 @@ enum EventKitError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accessDenied(type: let type, isSSH: let isSSH, isLaunchd: let isLaunchd):
-            if isSSH && isLaunchd {
+        case .accessDenied(type: let type, isSSH: let isSSH, isNonInteractive: let isNonInteractive):
+            if isSSH && isNonInteractive {
                 return """
                 \(type) access denied (SSH + non-interactive session detected). \
                 macOS TCC does not carry privacy permissions to SSH sessions, \
@@ -1841,14 +1841,14 @@ enum EventKitError: LocalizedError {
                 3. After either step, restart the SSH session
                 """
             }
-            if isLaunchd {
+            if isNonInteractive {
                 return """
-                \(type) access denied (non-interactive session detected). \
+                \(type) access denied (non-interactive session detected — launchd / CI runner / no TTY). \
                 macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
                 1. Run 'CheICalMCP --setup' once from Terminal to trigger the TCC permission dialog
                 2. Or manually add CheICalMCP in: \
                 System Settings → Privacy & Security → \(type)
-                3. After granting permission, restart the launchd job
+                3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
                 """
             }
             // #133: when running under Claude Desktop's `.mcpb` extension install
