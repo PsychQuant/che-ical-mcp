@@ -94,8 +94,20 @@ final class MCPBInstallSanitizerTests: XCTestCase {
         // Indirect contract assertion via source presence — Swift doesn't let
         // us mutate the static, so we ground-truth-check the message-template
         // text that lives in EventKitManager.swift.
-        let sourcePath = "/Users/che/Developer/che-mcps/che-ical-mcp/Sources/CheICalMCP/EventKit/EventKitManager.swift"
-        let source = try String(contentsOfFile: sourcePath, encoding: .utf8)
+        //
+        // Resolve the source path from `#filePath` (the compiler-injected absolute
+        // path of THIS test file) instead of a hardcoded `/Users/che/...` literal,
+        // so the test runs on any checkout — CI runners (`/Users/runner/work/...`),
+        // other contributors' machines, etc. (#131: this machine-specific path was
+        // previously masked by the `-DCI_BUILD` compile-out; re-enabling CI test
+        // execution surfaced it.)
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Tests/CheICalMCPTests/
+            .deletingLastPathComponent()   // Tests/
+            .deletingLastPathComponent()   // repo root
+        let sourceURL = repoRoot
+            .appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
         XCTAssertTrue(source.contains("isMCPBClaudeDesktopInstall"),
             "EventKitManager must expose isMCPBClaudeDesktopInstall — required by #133 detection contract")
