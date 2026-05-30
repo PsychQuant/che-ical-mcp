@@ -95,16 +95,26 @@ final class MCPBInstallSanitizerTests: XCTestCase {
         // us mutate the static, so we ground-truth-check the message-template
         // text that lives in EventKitManager.swift.
         //
-        // Resolve the source path from `#filePath` (the compiler-injected absolute
-        // path of THIS test file) instead of a hardcoded `/Users/che/...` literal,
-        // so the test runs on any checkout — CI runners (`/Users/runner/work/...`),
-        // other contributors' machines, etc. (#131: this machine-specific path was
-        // previously masked by the `-DCI_BUILD` compile-out; re-enabling CI test
-        // execution surfaced it.)
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // Tests/CheICalMCPTests/
-            .deletingLastPathComponent()   // Tests/
-            .deletingLastPathComponent()   // repo root
+        // Resolve the repo root by walking up from `#filePath` (the compiler-injected
+        // absolute path of THIS test file) until we find the directory containing
+        // `Package.swift` — instead of a hardcoded `/Users/che/...` literal OR a
+        // fixed-depth ×N `deletingLastPathComponent`. The marker walk survives the
+        // test file moving into a subdirectory (e.g. the `Tests/CheICalMCPTests/Helpers/`
+        // layout CLAUDE.md #83 encourages); a positional level count would silently
+        // read the wrong path after such a move. Runs on any checkout — CI runners
+        // (`/Users/runner/work/...`), other contributors' machines, etc.
+        // (#131: machine-specific path was masked by the `-DCI_BUILD` compile-out;
+        // re-enabling CI test execution surfaced it; verify hardened the depth assumption.)
+        let fm = FileManager.default
+        var repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !fm.fileExists(atPath: repoRoot.appendingPathComponent("Package.swift").path) {
+            let parent = repoRoot.deletingLastPathComponent()
+            guard parent.path != repoRoot.path else {
+                XCTFail("Could not locate Package.swift above \(#filePath) — repo layout changed?")
+                return
+            }
+            repoRoot = parent
+        }
         let sourceURL = repoRoot
             .appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)

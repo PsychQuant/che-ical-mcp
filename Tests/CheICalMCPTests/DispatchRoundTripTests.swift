@@ -1,24 +1,16 @@
-// MARK: - CI build exclusion (#131, second cluster after #122 R6 verbose log finding)
+// MARK: - Dispatch round-trip tests (#131 — re-enabled in CI)
 //
-// The two `executeToolCall(...)` tests call a real `CheICalMCPServer()`,
-// which dispatches to handlers that call `EventKitManager.shared` (real
-// EventKit framework). On GHA macos-15-arm64 in a sandboxed CI runner with
-// no TCC grants, EventKit blocks indefinitely waiting for a TCC prompt that
-// can never appear — different from local macOS 26 where EventKit returns
-// `.denied` synchronously. The original comment correctly anticipated CI
-// permission errors but assumed those would be returned promptly rather
-// than block forever. Compile-time excluded under `-DCI_BUILD` until #131
-// is properly resolved (likely by injecting `FakeEventKitManager` or
-// adding a per-call timeout). The structural `testDefinedToolsHaveUniqueNames`
-// is also compiled out for simplicity — when re-enabling the dispatch tests
-// we'll re-enable the whole class together.
+// The two `executeToolCall(...)` tests drive a real `CheICalMCPServer()`, whose
+// handlers call `EventKitManager.shared` (real EventKit). Historically these hung on
+// GHA macos sandboxed runners: with no TCC grants, `AuthorizationGate.ensureAccess`
+// called `requestFullAccess` for `.notDetermined` even in a non-interactive session,
+// blocking forever on a TCC dialog that can never appear (local macOS returns `.denied`
+// synchronously, which masked the bug). The whole class — including the structural
+// `testDefinedToolsHaveUniqueNames` — was compile-excluded under `-DCI_BUILD`.
 //
-// #131 RESOLVED: root cause was AuthorizationGate.ensureAccess calling
-// requestFullAccess for `.notDetermined` even in a non-interactive session —
-// on a GHA CI runner that blocks forever waiting for a TCC dialog. The gate
-// now fast-fails in non-interactive sessions, so these real-server dispatch
-// tests return promptly (handler throws accessDenied) instead of hanging.
-// Compile guard removed; re-enabled in CI.
+// #131 RESOLVED: the gate now fast-fails in non-interactive sessions, so these
+// real-server dispatch tests return promptly (handler throws `accessDenied`) instead
+// of hanging. The `-DCI_BUILD` guard is removed and the class runs in CI again.
 
 import XCTest
 import MCP
