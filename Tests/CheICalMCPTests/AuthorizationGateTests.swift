@@ -70,6 +70,30 @@ final class AuthorizationGateTests: XCTestCase {
         XCTAssertEqual(probe.requestCallCount, 0, ".denied must NOT trigger request (would silent-fail)")
     }
 
+    /// #131: in a non-interactive session (launchd / CI runner) the gate must NOT call
+    /// `requestFullAccess` for `.notDetermined` — on a GHA CI sandbox that request blocks
+    /// forever waiting for a TCC dialog that can never appear. Fast-fail instead of hanging.
+    func testNotDetermined_inNonInteractiveSession_fastFailsWithoutRequest() async throws {
+        let probe = MockAuthorizationStatusSource(status: .notDetermined)
+        do {
+            try await AuthorizationGate.ensureAccess(
+                for: .event, typeName: "Calendar", isLaunchd: true, probe: probe
+            )
+            XCTFail("Expected .accessDenied for .notDetermined in a non-interactive session")
+        } catch let error as EventKitError {
+            guard case .accessDenied(let type, _, let isLaunchd) = error else {
+                XCTFail("Expected .accessDenied, got \(error)")
+                return
+            }
+            XCTAssertEqual(type, "Calendar")
+            XCTAssertTrue(isLaunchd, "isLaunchd context should thread through the error")
+        }
+        XCTAssertEqual(
+            probe.requestCallCount, 0,
+            ".notDetermined + isLaunchd must NOT call requestFullAccess (would block on CI, #131)"
+        )
+    }
+
     func testRestricted_throwsAccessDenied() async throws {
         let probe = MockAuthorizationStatusSource(status: .restricted)
         do {
@@ -179,7 +203,13 @@ final class AuthorizationGateTests: XCTestCase {
         }
     }
 
-    func testNotDeterminedThenDenied_threadsContextFlagsIntoError() async throws {
+    /// #131: `.notDetermined` in a non-interactive session (isSSH and/or isLaunchd) must
+    /// fast-fail WITHOUT calling `requestFullAccess` — over SSH or on a CI runner the request
+    /// blocks forever waiting for a TCC dialog that can never appear. The thrown error must
+    /// still thread both context flags so #113's SSH/launchd workaround text surfaces.
+    /// (Was `testNotDeterminedThenDenied_threadsContextFlagsIntoError`, which asserted a
+    /// post-request denial; #131 moved the non-interactive case to a pre-request fast-fail.)
+    func testNotDetermined_nonInteractive_fastFailsAndThreadsContextFlags() async throws {
         let probe = MockAuthorizationStatusSource(status: .notDetermined, requestResult: false)
         do {
             try await AuthorizationGate.ensureAccess(
@@ -187,17 +217,20 @@ final class AuthorizationGateTests: XCTestCase {
                 isSSH: true, isLaunchd: true,
                 probe: probe
             )
-            XCTFail("Expected EventKitError.accessDenied after request returned false")
+            XCTFail("Expected EventKitError.accessDenied (non-interactive fast-fail)")
         } catch let error as EventKitError {
             guard case .accessDenied(let type, let isSSH, let isLaunchd) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertEqual(type, "Reminders")
-            XCTAssertTrue(isSSH, "post-request denial path must also thread isSSH (#113)")
-            XCTAssertTrue(isLaunchd, "post-request denial path must also thread isLaunchd (#113)")
+            XCTAssertTrue(isSSH, "fast-fail path must thread isSSH (#113)")
+            XCTAssertTrue(isLaunchd, "fast-fail path must thread isLaunchd (#113)")
         }
-        XCTAssertEqual(probe.requestCallCount, 1)
+        XCTAssertEqual(
+            probe.requestCallCount, 0,
+            "#131: non-interactive .notDetermined must NOT call requestFullAccess (would block on CI / SSH)"
+        )
     }
 
     // MARK: - Unsupported entity (#118)

@@ -1,17 +1,15 @@
-// MARK: - CI build exclusion (#131 follow-up to #122)
+// MARK: - CI handling (#131)
 //
-// This entire test class is excluded from the build when `CI_BUILD` is defined
-// (via `-Xswiftc -DCI_BUILD` in `.github/workflows/test.yml`). The runtime
-// XCTSkipIf approach (commit f00d591) did not unblock GitHub Actions: the
-// `swift test` phase still produced zero output for 8+ minutes after build
-// completed, indicating the hang sits *before* any test method executes —
-// most likely during xctest binary load or test discovery, triggered by some
-// aspect of compiling/linking this class. Compile-time exclusion sidesteps
-// that path entirely. Local development still gets these tests (no flag set);
-// CHANGELOG and #131 track the investigation. Remove the `#if` guard once the
-// GHA-specific hang is identified and resolved.
-
-#if !CI_BUILD
+// #131 root cause (the GHA hang) was `AuthorizationGate.ensureAccess` blocking on
+// `requestFullAccess` for `.notDetermined` in a non-interactive session — now fixed
+// in the production gate (fast-fail). The earlier "hang sits before any test method /
+// xctest load" theory below was a pre-R6 guess that the R6 verbose+PTY log disproved
+// (the hang was inside DispatchRoundTripTests' real EventKit call, now fast-failing).
+// The compile-time `#if !CI_BUILD` exclusion is therefore removed so this class builds
+// in CI. These tests SPAWN A BINARY — a different mechanism than the EventKit hang,
+// never yet exercised on a CI runner — so the runtime `skipIfCI()` guard is retained
+// as a precaution; drop it in a follow-up once a CI run confirms the binary-spawn path
+// doesn't hang.
 
 import XCTest
 import Darwin  // SIGKILL + kill(_:_:) for the SIGTERM→SIGKILL escalation in spawnAndCaptureStderr
@@ -315,5 +313,3 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 }
-
-#endif  // !CI_BUILD

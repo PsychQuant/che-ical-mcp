@@ -12,8 +12,13 @@
 // adding a per-call timeout). The structural `testDefinedToolsHaveUniqueNames`
 // is also compiled out for simplicity — when re-enabling the dispatch tests
 // we'll re-enable the whole class together.
-
-#if !CI_BUILD
+//
+// #131 RESOLVED: root cause was AuthorizationGate.ensureAccess calling
+// requestFullAccess for `.notDetermined` even in a non-interactive session —
+// on a GHA CI runner that blocks forever waiting for a TCC dialog. The gate
+// now fast-fails in non-interactive sessions, so these real-server dispatch
+// tests return promptly (handler throws accessDenied) instead of hanging.
+// Compile guard removed; re-enabled in CI.
 
 import XCTest
 import MCP
@@ -87,5 +92,3 @@ final class DispatchRoundTripTests: XCTestCase {
         )
     }
 }
-
-#endif  // !CI_BUILD
