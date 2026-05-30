@@ -2,7 +2,7 @@ import EventKit
 import XCTest
 @testable import CheICalMCP
 
-/// Pure unit tests for `AuthorizationGate.ensureAccess(for:typeName:isSSH:isLaunchd:probe:)` —
+/// Pure unit tests for `AuthorizationGate.ensureAccess(for:typeName:isSSH:isNonInteractive:probe:)` —
 /// the per-call TCC authorization gate that replaces the legacy `hasCalendarAccess` /
 /// `hasReminderAccess` process-lifetime caches (#108 Phase 2).
 ///
@@ -77,20 +77,20 @@ final class AuthorizationGateTests: XCTestCase {
         let probe = MockAuthorizationStatusSource(status: .notDetermined)
         do {
             try await AuthorizationGate.ensureAccess(
-                for: .event, typeName: "Calendar", isLaunchd: true, probe: probe
+                for: .event, typeName: "Calendar", isNonInteractive: true, probe: probe
             )
             XCTFail("Expected .accessDenied for .notDetermined in a non-interactive session")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, _, let isLaunchd) = error else {
+            guard case .accessDenied(let type, _, let isNonInteractive) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertEqual(type, "Calendar")
-            XCTAssertTrue(isLaunchd, "isLaunchd context should thread through the error")
+            XCTAssertTrue(isNonInteractive, "isNonInteractive context should thread through the error")
         }
         XCTAssertEqual(
             probe.requestCallCount, 0,
-            ".notDetermined + isLaunchd must NOT call requestFullAccess (would block on CI, #131)"
+            ".notDetermined + isNonInteractive must NOT call requestFullAccess (would block on CI, #131)"
         )
     }
 
@@ -170,17 +170,17 @@ final class AuthorizationGateTests: XCTestCase {
         do {
             try await AuthorizationGate.ensureAccess(
                 for: .event, typeName: "Calendar",
-                isSSH: true, isLaunchd: false,
+                isSSH: true, isNonInteractive: false,
                 probe: probe
             )
             XCTFail("Expected EventKitError.accessDenied")
         } catch let error as EventKitError {
-            guard case .accessDenied(_, let isSSH, let isLaunchd) = error else {
+            guard case .accessDenied(_, let isSSH, let isNonInteractive) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertTrue(isSSH, "isSSH flag must be threaded into error so SSH-specific workaround text is surfaced (#108 regression fix #113)")
-            XCTAssertFalse(isLaunchd, "isLaunchd must remain false when not supplied")
+            XCTAssertFalse(isNonInteractive, "isNonInteractive must remain false when not supplied")
         }
     }
 
@@ -189,21 +189,21 @@ final class AuthorizationGateTests: XCTestCase {
         do {
             try await AuthorizationGate.ensureAccess(
                 for: .event, typeName: "Calendar",
-                isSSH: false, isLaunchd: true,
+                isSSH: false, isNonInteractive: true,
                 probe: probe
             )
             XCTFail("Expected EventKitError.accessDenied")
         } catch let error as EventKitError {
-            guard case .accessDenied(_, let isSSH, let isLaunchd) = error else {
+            guard case .accessDenied(_, let isSSH, let isNonInteractive) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertFalse(isSSH, "isSSH must remain false when not supplied")
-            XCTAssertTrue(isLaunchd, "isLaunchd flag must be threaded into error so launchd-specific workaround text is surfaced (#113)")
+            XCTAssertTrue(isNonInteractive, "isNonInteractive flag must be threaded into error so launchd-specific workaround text is surfaced (#113)")
         }
     }
 
-    /// #131: `.notDetermined` in a non-interactive session (isSSH and/or isLaunchd) must
+    /// #131: `.notDetermined` in a non-interactive session (isSSH and/or isNonInteractive) must
     /// fast-fail WITHOUT calling `requestFullAccess` — over SSH or on a CI runner the request
     /// blocks forever waiting for a TCC dialog that can never appear. The thrown error must
     /// still thread both context flags so #113's SSH/launchd workaround text surfaces.
@@ -214,18 +214,18 @@ final class AuthorizationGateTests: XCTestCase {
         do {
             try await AuthorizationGate.ensureAccess(
                 for: .reminder, typeName: "Reminders",
-                isSSH: true, isLaunchd: true,
+                isSSH: true, isNonInteractive: true,
                 probe: probe
             )
             XCTFail("Expected EventKitError.accessDenied (non-interactive fast-fail)")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, let isSSH, let isLaunchd) = error else {
+            guard case .accessDenied(let type, let isSSH, let isNonInteractive) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertEqual(type, "Reminders")
             XCTAssertTrue(isSSH, "fast-fail path must thread isSSH (#113)")
-            XCTAssertTrue(isLaunchd, "fast-fail path must thread isLaunchd (#113)")
+            XCTAssertTrue(isNonInteractive, "fast-fail path must thread isNonInteractive (#113)")
         }
         XCTAssertEqual(
             probe.requestCallCount, 0,

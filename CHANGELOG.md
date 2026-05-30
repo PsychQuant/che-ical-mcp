@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Cluster #131 + #143 + #144 — non-interactive EventKit access hardening.** PR [#142](https://github.com/PsychQuant/che-ical-mcp/pull/142) (#131), PR [#145](https://github.com/PsychQuant/che-ical-mcp/pull/145) (#143 #144). 6-AI verified.
+
+- **Fixed (#131)**: GHA CI test hang root-caused — `AuthorizationGate.ensureAccess` now fast-fails `.notDetermined` in non-interactive sessions (SSH / launchd / CI) instead of blocking forever on a TCC dialog that can never appear. Removed the `-DCI_BUILD` compile-exclusion + the `skipIfCI()` guards so `DispatchRoundTripTests` and the binary-spawn `TCCDriftDetectorBannerTests` now run on CI (GHA green, all banner tests execute).
+- **Fixed (#143)**: `--setup` no longer hangs in non-interactive sessions — it now checks `EKEventStore.authorizationStatus` before calling the blocking `requestFullAccess`. On `.notDetermined` in a non-interactive session it prints remediation and skips (exits non-zero) rather than blocking; an already-granted binary still reports success. New pure `setupAccessDecision(status:isNonInteractive:)` helper + decision-table tests. `--setup` uses a narrower non-interactive check (`TERM`/`ppid`) that deliberately excludes the `CI` env var, so a human in Terminal with `CI=1` still gets the dialog.
+- **Changed (#144)**: renamed `isLaunchd` → `isNonInteractive` (the `AuthorizationGate` param + `EventKitError.accessDenied` case label were named `isLaunchd` but fed `isNonInteractiveSession` = launchd ∪ no-TTY ∪ CI) across `AuthorizationStatusSource` + `EventKitManager` + tests, and generalized the launchd-specific remediation wording ("restart the launchd job" → "restart the non-interactive job (launchd service, CI runner, etc.)") in both the launchd-only and SSH+non-interactive branches.
+
 Cluster: 16 verify follow-ups from #108 (TCC has\*Access refactor) and #122 (TCC drift detector banner) — one PR ([#135](https://github.com/PsychQuant/che-ical-mcp/pull/135)), 4 commits, 367 tests pass (was 348).
 
 ### Breaking

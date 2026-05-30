@@ -56,7 +56,7 @@ final class MCPBInstallSanitizerTests: XCTestCase {
     /// the generic message. Pin that for backward compatibility — non-`.mcpb`
     /// users must keep getting the System Settings instructions.
     func testAccessDenied_genericMessage_inTestEnvironment_keepsSystemSettingsInstructions() {
-        let err = EventKitError.accessDenied(type: "Calendar", isSSH: false, isLaunchd: false)
+        let err = EventKitError.accessDenied(type: "Calendar", isSSH: false, isNonInteractive: false)
         let msg = err.errorDescription ?? ""
         XCTAssertTrue(msg.contains("Open System Settings → Privacy & Security → Calendar"),
             "generic branch (no SSH/launchd/mcpb context) must still tell users to use System Settings")
@@ -70,14 +70,14 @@ final class MCPBInstallSanitizerTests: XCTestCase {
     /// SSH+launchd > SSH > launchd > .mcpb > generic. SSH-specific message
     /// has more diagnostic value than the install-channel message.
     func testAccessDenied_sshContext_winsOverMCPBContext() {
-        let err = EventKitError.accessDenied(type: "Calendar", isSSH: true, isLaunchd: false)
+        let err = EventKitError.accessDenied(type: "Calendar", isSSH: true, isNonInteractive: false)
         let msg = err.errorDescription ?? ""
         XCTAssertTrue(msg.contains("SSH"),
             "SSH context message must take priority over `.mcpb` context — SSH is more diagnostic")
     }
 
     func testAccessDenied_launchdContext_winsOverMCPBContext() {
-        let err = EventKitError.accessDenied(type: "Reminders", isSSH: false, isLaunchd: true)
+        let err = EventKitError.accessDenied(type: "Reminders", isSSH: false, isNonInteractive: true)
         let msg = err.errorDescription ?? ""
         XCTAssertTrue(msg.contains("non-interactive") || msg.contains("launchd") || msg.contains("--setup"),
             "launchd context message must take priority — `--setup` is the canonical remediation")
