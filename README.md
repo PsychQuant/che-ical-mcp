@@ -531,6 +531,8 @@ CheICalMCP --setup
 
 > **Detection**: CheICalMCP automatically detects non-interactive sessions (missing `TERM` env var or direct launchd child) and provides targeted error messages with `--setup` instructions. This works even for indirect launch chains (launchd → Claude Code → CheICalMCP).
 >
+> **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (no `TERM` / direct launchd child) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
+>
 > **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, manually add CheICalMCP in **System Settings → Privacy & Security → Calendar/Reminders**.
 
 ---

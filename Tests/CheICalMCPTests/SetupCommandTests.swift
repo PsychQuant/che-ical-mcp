@@ -86,6 +86,13 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(message.contains("non-interactive"), "Combined error should mention non-interactive")
         XCTAssertTrue(message.contains("--setup"), "Combined error should mention --setup")
         XCTAssertTrue(message.contains("sshd"), "Combined error should mention sshd workaround")
+        // #144 regression guard (Codex finding): the combined SSH + non-interactive
+        // branch must NOT use launchd-only remediation wording — it fires for any
+        // non-interactive context (CI runner / no TTY), not just launchd. The
+        // generalized copy names the non-interactive job explicitly.
+        XCTAssertTrue(
+            message.contains("non-interactive job"),
+            "Combined error remediation must be generalized (not launchd-specific) — see #144")
     }
 
     func testAccessDeniedNormalMessage() {

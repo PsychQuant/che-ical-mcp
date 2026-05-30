@@ -103,8 +103,8 @@ actor EventKitManager: EventKitManaging {
     /// which cached the granted state in `hasCalendarAccess` and silently failed on
     /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
     ///
-    /// Threads SSH/launchd session context into the gate so `EventKitError.accessDenied`
-    /// surfaces with the appropriate context-specific workaround text. (#113)
+    /// Threads SSH / non-interactive session context into the gate so `EventKitError.accessDenied`
+    /// surfaces with the appropriate context-specific workaround text. (#113, #144)
     func ensureCalendarAccess() async throws {
         try await AuthorizationGate.ensureAccess(
             for: .event,
@@ -116,7 +116,7 @@ actor EventKitManager: EventKitManaging {
     }
 
     /// Per-call TCC status check for Reminders. Counterpart of `ensureCalendarAccess()`.
-    /// Threads SSH/launchd context (#113) — same reasoning as `ensureCalendarAccess`.
+    /// Threads SSH / non-interactive context (#113, #144) — same reasoning as `ensureCalendarAccess`.
     func ensureReminderAccess() async throws {
         try await AuthorizationGate.ensureAccess(
             for: .reminder,
@@ -1828,7 +1828,8 @@ enum EventKitError: LocalizedError {
                 System Settings → Privacy & Security → \(type)
                 3. Or grant Full Disk Access to /usr/sbin/sshd: \
                 System Settings → Privacy & Security → Full Disk Access → add sshd
-                4. After any step, restart both the SSH session and the launchd job
+                4. After any step, restart both the SSH session and the non-interactive job \
+                (launchd service, CI runner, etc.)
                 """
             }
             if isSSH {
