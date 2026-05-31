@@ -81,13 +81,15 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 }
 
 if CommandLine.arguments.contains("--setup") {
-    // Non-interactive detection for --setup uses the NARROWER check (no TERM / direct
-    // launchd child) and deliberately does NOT include the `CI` env var that
-    // EventKitManager.isNonInteractiveSession adds (#131). Rationale: `--setup` is the
-    // human-run manual remediation path — a person in Terminal.app who happens to have
-    // CI=1 exported can still see the TCC dialog, so CI must not force a skip here.
-    // (This is verify finding #4's concern, correctly scoped to the manual path.)
-    let nonInteractive = ProcessInfo.processInfo.environment["TERM"] == nil || getppid() == 1
+    // Non-interactive detection for --setup deliberately uses `includeCI: false` (#143):
+    // `--setup` is the human-run manual remediation path — a person in Terminal.app who
+    // happens to have CI=1 exported can still see the TCC dialog, so CI must NOT force a
+    // skip here (unlike the MCP server gate, which passes includeCI: true). Both call
+    // sites now share the pure `NonInteractiveDetection` helper (#149).
+    let nonInteractive = NonInteractiveDetection.isNonInteractive(
+        env: ProcessInfo.processInfo.environment,
+        ppid: getppid(),
+        includeCI: false)
     if nonInteractive {
         print("WARNING: --setup appears to be running in a non-interactive session.")
         print("Permission dialogs cannot appear here. Run this command from Terminal.app instead.\n")
