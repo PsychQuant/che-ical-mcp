@@ -257,9 +257,10 @@ extension EventKitErrorSanitizer {
 
     /// Escape control characters for safe stderr inclusion. Returns a
     /// version of `s` with: backslash → `\\`, LF → `\n`, CR → `\r`, and
-    /// **all other C0 controls (`\x00..\x1F`) plus DEL (`\x7F`)** → `\xHH`
-    /// hex escape. Other Unicode scalars (printable ASCII, accents, CJK,
-    /// emoji) pass through unchanged.
+    /// **all other C0 controls (`\x00..\x1F`), DEL (`\x7F`), plus the C1
+    /// band (`\x80..\x9F`)** → `\xHH` hex escape. Other Unicode scalars
+    /// (printable ASCII, accents, CJK, emoji — all ≥ `\xA0`) pass through
+    /// unchanged.
     ///
     /// **Pre-#73 behavior** (3-char fast-path for backslash/LF/CR only) was
     /// a known gap: ESC `\x1b` reached stderr verbatim, allowing an
@@ -274,9 +275,10 @@ extension EventKitErrorSanitizer {
     /// use `sanitize(_:)` directly (e.g. the `deleteRemindersBatch` catch
     /// path bound by spec R3) share the same control-char hardening.
     ///
-    /// **C1 controls (`\x80..\x9F`)** are deferred — separate issue if
-    /// terminal hijacking via the C1 alternate forms (e.g. `\xC2\x9B` ≡
-    /// CSI) becomes an observed concern.
+    /// **C1 controls (`\x80..\x9F`)** are now also escaped (#150) — closes
+    /// the 8-bit CSI alternate form (`\xC2\x9B` ≡ CSI) that could otherwise
+    /// reach the terminal verbatim. Printable scalars start at `\xA0`
+    /// (NBSP), so the C1 range is control-only and safe to escape wholesale.
     static func escapeForStderr(_ s: String) -> String {
         var result = ""
         result.reserveCapacity(s.unicodeScalars.count)
@@ -289,7 +291,7 @@ extension EventKitErrorSanitizer {
                 result.append("\\n")
             case 0x0D:   // CR
                 result.append("\\r")
-            case 0x00...0x1F, 0x7F:   // C0 + DEL
+            case 0x00...0x1F, 0x7F, 0x80...0x9F:   // C0 + DEL + C1
                 result.append(String(format: "\\x%02x", v))
             default:
                 result.unicodeScalars.append(scalar)
