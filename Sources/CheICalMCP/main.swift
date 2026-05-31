@@ -119,7 +119,12 @@ if CommandLine.arguments.contains("--setup") {
                 print("\(label) access: \(granted ? "✓ granted" : "✗ denied")")
                 if !granted { anyBlockedOrDenied = true }
             } catch {
-                print("\(label) access: ✗ error — \(error.localizedDescription)")
+                // Escape the framework error text at the stdout boundary, matching the
+                // discipline in TCCDriftDetector / SelfUpdate (#146). First-party EventKit
+                // source, but control chars (NUL / ANSI) in localizedDescription should not
+                // pass through raw to a terminal.
+                let safe = EventKitErrorSanitizer.escapeForStderr(error.localizedDescription)
+                print("\(label) access: ✗ error — \(safe)")
                 anyBlockedOrDenied = true
             }
         case .skipWouldBlock:
