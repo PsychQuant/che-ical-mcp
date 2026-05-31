@@ -518,6 +518,25 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{001F}"), "\\x1f")
     }
 
+    /// Pin the C1 control band (`\x80..\x9F`) — must be hex-escaped (#150).
+    /// The 8-bit CSI introducer `\x9B` is the alternate form of `ESC [` and
+    /// can drive the same terminal-hijack sequences as 7-bit ESC, so it must
+    /// not reach the terminal verbatim. Printable scalars start at `\xA0`
+    /// (NBSP), so the whole `\x80..\x9F` range is control-only.
+    func testEscapeForStderrEscapesC1Controls() {
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{0080}"), "\\x80")  // PAD — band start
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{009B}"), "\\x9b")  // CSI (8-bit ≡ ESC [)
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{009F}"), "\\x9f")  // APC — band end
+        // 8-bit CSI clear-screen attack must be fully neutralized.
+        let attack = "foo\u{009B}2J\u{009B}Hbar"
+        let safe = EventKitErrorSanitizer.escapeForStderr(attack)
+        XCTAssertFalse(safe.unicodeScalars.contains { (0x80...0x9F).contains($0.value) },
+            "no raw C1 control may survive escape; got: \(safe.debugDescription)")
+        XCTAssertEqual(safe, "foo\\x9b2J\\x9bHbar")
+        // Boundary: NBSP (\xA0, first printable above C1) must pass through unchanged.
+        XCTAssertEqual(EventKitErrorSanitizer.escapeForStderr("\u{00A0}"), "\u{00A0}")
+    }
+
     /// Pin the canonical ANSI clear-screen + home-cursor attack:
     /// `"foo\x1b[2J\x1b[Hbar"` must escape to `"foo\x1b[2J\x1b[Hbar"`
     /// (literal ESC bytes neutralized; `[2J` etc. are printable ASCII

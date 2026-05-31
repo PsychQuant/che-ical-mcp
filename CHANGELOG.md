@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed (#143)**: `--setup` no longer hangs in non-interactive sessions — it now checks `EKEventStore.authorizationStatus` before calling the blocking `requestFullAccess`. On `.notDetermined` in a non-interactive session it prints remediation and skips (exits non-zero) rather than blocking; an already-granted binary still reports success. New pure `setupAccessDecision(status:isNonInteractive:)` helper + decision-table tests. `--setup` uses a narrower non-interactive check (`TERM`/`ppid`) that deliberately excludes the `CI` env var, so a human in Terminal with `CI=1` still gets the dialog.
 - **Changed (#144)**: renamed `isLaunchd` → `isNonInteractive` (the `AuthorizationGate` param + `EventKitError.accessDenied` case label were named `isLaunchd` but fed `isNonInteractiveSession` = launchd ∪ no-TTY ∪ CI) across `AuthorizationStatusSource` + `EventKitManager` + tests, and generalized the launchd-specific remediation wording ("restart the launchd job" → "restart the non-interactive job (launchd service, CI runner, etc.)") in both the launchd-only and SSH+non-interactive branches.
 
+**Verify follow-ups (#146 / #147 / #149 / #150) — test + escape hardening.** PR [#148](https://github.com/PsychQuant/che-ical-mcp/pull/148) (#146 #147), PR [#151](https://github.com/PsychQuant/che-ical-mcp/pull/151) (#149 #150). 6-AI verified.
+
+- **Fixed (#146 / #147)**: `--setup` error output now routes through `EventKitErrorSanitizer.escapeForStderr` (consistency with other stderr-boundary callers); `testIsNonInteractiveDetection` made robust to the `CI` env var (was env-fragile under `CI=1`).
+- **Changed (#149)**: extracted a pure injectable `NonInteractiveDetection.isNonInteractive(env:ppid:includeCI:)` helper. Both the MCP server gate (`includeCI: true`) and `--setup` (`includeCI: false`, preserving the #143 CI carve-out) delegate to it, so the predicate is matrix-testable `(TERM, CI, ppid) × includeCI` via an independent oracle instead of inline process-global reads.
+- **Changed (#150)**: `EventKitErrorSanitizer.escapeForStderr` now also escapes the C1 control band (`\x80..\x9F`), closing the 8-bit CSI (`\xC2\x9B`) terminal-hijack form; printable scalars start at `\xA0`, so the C1 range is control-only.
+
 Cluster: 16 verify follow-ups from #108 (TCC has\*Access refactor) and #122 (TCC drift detector banner) — one PR ([#135](https://github.com/PsychQuant/che-ical-mcp/pull/135)), 4 commits, 367 tests pass (was 348).
 
 ### Breaking

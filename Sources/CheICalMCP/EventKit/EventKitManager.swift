@@ -66,14 +66,16 @@ actor EventKitManager: EventKitManaging {
         ProcessInfo.processInfo.environment["SSH_CLIENT"] != nil
             || ProcessInfo.processInfo.environment["SSH_CONNECTION"] != nil
 
-    /// Detect if running in a non-interactive session (launchd, cron, etc.)
-    /// Uses multiple heuristics: direct launchd child (ppid==1) OR missing TERM env var.
-    /// This catches both direct launchd jobs AND indirect chains (launchd → Claude → MCP)
-    /// where TERM is typically absent.
+    /// Detect if running in a non-interactive session (launchd, cron, CI, no TTY).
+    /// Delegates to the pure `NonInteractiveDetection` helper (#149) with `includeCI: true` —
+    /// the MCP server gate treats a CI runner as non-interactive (no GUI for the TCC prompt,
+    /// #131). Catches direct launchd jobs AND indirect chains (launchd → Claude → MCP) where
+    /// `TERM` is typically absent.
     private static let isNonInteractiveSession: Bool =
-        getppid() == 1
-            || ProcessInfo.processInfo.environment["TERM"] == nil
-            || ProcessInfo.processInfo.environment["CI"] != nil  // CI runners (GHA etc.) — no GUI to show a TCC prompt (#131)
+        NonInteractiveDetection.isNonInteractive(
+            env: ProcessInfo.processInfo.environment,
+            ppid: getppid(),
+            includeCI: true)
 
     /// Test-accessible wrapper
     static var isNonInteractive: Bool { isNonInteractiveSession }
