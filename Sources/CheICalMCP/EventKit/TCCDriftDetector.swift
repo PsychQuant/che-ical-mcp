@@ -264,12 +264,20 @@ struct TCCDriftDetector {
         return "'\(escaped)'"
     }
 
-    /// Returns true if the input contains any C0 control character (`\x00..\x1F`,
-    /// `\x7F` DEL). Used to gate the copy-paste actionable command (verify round-2
-    /// R1) — control chars inside single-quoted shell strings would split the
-    /// banner line on stderr, regardless of POSIX shell quoting semantics.
+    /// Returns true if the input contains any control character: C0 (`\x00..\x1F`),
+    /// DEL (`\x7F`), or the C1 band (`\x80..\x9F`). Used to gate the copy-paste
+    /// actionable command (verify round-2 R1) — control chars inside single-quoted
+    /// shell strings would split the banner line on stderr, regardless of POSIX
+    /// shell quoting semantics.
+    ///
+    /// The C1 band matches `EventKitErrorSanitizer.escapeForStderr`'s control-char
+    /// definition (#150 / #152) so the gate and the escaper cannot diverge: a C1
+    /// char (e.g. 8-bit CSI `\x9B`) in the running binary's path must NOT slip
+    /// unescaped into the `shellSingleQuote` command branch. Printable scalars
+    /// resume at `\xA0` (NBSP), so the C1 range is control-only.
     static func pathHasControlChars(_ s: String) -> Bool {
-        for scalar in s.unicodeScalars where scalar.value < 0x20 || scalar.value == 0x7F {
+        for scalar in s.unicodeScalars
+        where scalar.value < 0x20 || scalar.value == 0x7F || (0x80...0x9F).contains(scalar.value) {
             return true
         }
         return false

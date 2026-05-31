@@ -546,6 +546,16 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{7F}DEL"))
         XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\tab"))
         XCTAssertFalse(TCCDriftDetector.pathHasControlChars(""))
+        // #152 — C1 control band (0x80-0x9F) must be detected, matching
+        // escapeForStderr's #150 definition. The 8-bit CSI (0x9B) is the
+        // load-bearing case (alternate form of ESC [).
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{80}C1start"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{9B}CSI"))
+        XCTAssertTrue(TCCDriftDetector.pathHasControlChars("/path/with\u{9F}C1end"))
+        // Boundary: NBSP (0xA0, first printable above C1) must NOT trip the gate.
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars("/path/with\u{A0}nbsp"))
+        // Printable Unicode (accents / CJK) above C1 must pass.
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars("/Users/José/中文/CheICalMCP"))
     }
 
     /// B3 fix: paths with shell-special characters in the runtime path land in the
