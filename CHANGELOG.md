@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**#154 — TCC healing re-prompt unblocked (personal-information entitlements).**
+
+- **Fixed (#154)**: long-lived installs upgraded from the pre-v1.7.1 ad-hoc era could hit silent, permanent Calendar (or Reminders) denial on macOS 26.5: the TCC row stays pinned to the old build's cdhashes (csreq match fails at access time) while the healing re-prompt is policy-blocked because the hardened-runtime binary shipped **no** entitlements — and every status-API-based diagnostic (`authorizationStatus(for:)` per-call gate, `--print-tcc-path`, the v1.10.0 startup banner, System Settings) reports green. `Entitlements.plist` now ships `com.apple.security.personal-information.calendars` + `.reminders` (both unrestricted; reverses the #58 item 5 decision, which held on 26.4.1 but Apple has since tightened). First launch of the fixed build is finally allowed to re-prompt; approving rewrites the row keyed to the Developer ID requirement, healing it for all future upgrades. New `EntitlementsPlistTests` pins both keys in CI.
+- **Added (#154)**: `scripts/sign-and-notarize.sh` step 2.5 release gate — verifies both personal-information entitlements on the **signed binary** (fail-fast before the 1-15 min notarization wait), catching a wrong/stale `ENTITLEMENTS` path that source-level tests cannot see.
+
 **Cluster #131 + #143 + #144 — non-interactive EventKit access hardening.** PR [#142](https://github.com/PsychQuant/che-ical-mcp/pull/142) (#131), PR [#145](https://github.com/PsychQuant/che-ical-mcp/pull/145) (#143 #144). 6-AI verified.
 
 - **Fixed (#131)**: GHA CI test hang root-caused — `AuthorizationGate.ensureAccess` now fast-fails `.notDetermined` in non-interactive sessions (SSH / launchd / CI) instead of blocking forever on a TCC dialog that can never appear. Removed the `-DCI_BUILD` compile-exclusion + the `skipIfCI()` guards so `DispatchRoundTripTests` and the binary-spawn `TCCDriftDetectorBannerTests` now run on CI (GHA green, all banner tests execute).
