@@ -36,7 +36,7 @@ The silent-failure mode users hit pre-v1.9.0 was instead an in-process cache ant
 
 **v1.9.0 (#108 Phase 2) replaced the cache with a per-call `AuthorizationGate.ensureAccess(...)`** — every Calendar/Reminders operation now reads fresh TCC state via `EKEventStore.authorizationStatus(for:)` before the underlying call. Any subsequent state change surfaces as an immediate `accessDenied` with the appropriate `EventKitError.accessDenied` workaround text (SSH / launchd / interactive variants).
 
-For **first install** on a machine that has never granted TCC to this binary, the steps below are still required — you'll see `notDetermined` from the diagnostic query and need to trigger the initial prompt via Terminal. Subsequent upgrades from v1.9.0+ generally don't need re-running `--setup` unless the system surfaces `denied` (manual revoke or framework-layer reset). The `che-ical-mcp 1.10.0` startup banner (#122) prints current TCC state on every spawn so you can verify without manual SQL.
+For **first install** on a machine that has never granted TCC to this binary, the steps below are still required — you'll see `notDetermined` from the diagnostic query and need to trigger the initial prompt via Terminal. Subsequent upgrades from v1.9.0+ generally don't need re-running `--setup` unless the system surfaces `denied` (manual revoke or framework-layer reset). The `che-ical-mcp 1.11.0` startup banner (#122) prints current TCC state on every spawn so you can verify without manual SQL.
 
 ### Step 1 — verify current TCC state
 
