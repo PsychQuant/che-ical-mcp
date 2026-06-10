@@ -1,11 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-    Intentionally empty: hardened runtime is the macOS 26 TCC trigger.
-    EventKit (Calendar / Reminders) is user-prompt-driven and requires no
-    entitlement key for outside-MAS distribution. Add specific keys here only
-    if hardened runtime breaks a specific API at runtime.
+    #154 reversed the #58 decision to keep this file empty. On macOS 26.4.1
+    "hardened runtime alone" was enough to trigger TCC; macOS 26.5 tightened
+    the prompting policy — tccd now refuses to show ANY Calendar/Reminders
+    prompt for a hardened-runtime binary that lacks the matching
+    personal-information entitlement:
+
+        Prompting policy for hardened runtime; service: kTCCServiceCalendar
+        requires entitlement com.apple.security.personal-information.calendars
+        but it is missing
+        Policy disallows prompt ... access denied
+
+    Without these keys, a TCC row pinned to an old build's csreq (e.g. the
+    pre-v1.7.1 ad-hoc era) can never heal: the re-prompt is policy-blocked and
+    the denial is silent and permanent while every status API reports green.
+
+    Both keys are unrestricted entitlements — valid for Developer ID
+    distribution outside the App Store, no provisioning profile needed, and
+    no extra notarization requirements.
+
+    Do NOT remove these keys. EntitlementsPlistTests pins them in CI, and
+    scripts/sign-and-notarize.sh re-verifies them on the signed binary.
 -->
 <plist version="1.0">
-<dict/>
+<dict>
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.personal-information.reminders</key>
+    <true/>
+</dict>
 </plist>
