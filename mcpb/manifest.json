@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "che-ical-mcp",
   "display_name": "macOS Calendar & Reminders",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Native EventKit integration for macOS Calendar and Reminders apps",
   "long_description": "A powerful MCP server providing 29 tools for managing macOS Calendar events and Reminders. Features include attendee/organizer read-only access, per-event timezone support, undo/redo, flexible date parsing, fuzzy calendar matching, batch operations with dry-run preview, advanced filtering/sorting/limiting, conflict detection, duplicate finding, multi-keyword search, recurring event occurrence-level operations, MCP-level #hashtag tags for reminders, and support for iCloud, Google, and Exchange calendars. Requires macOS 14.0 (Sonoma) or later.",
   "author": {
@@ -16,9 +16,19 @@
   "homepage": "https://github.com/PsychQuant/che-ical-mcp",
   "support": "https://github.com/PsychQuant/che-ical-mcp/issues",
   "icon": "icon.png",
-  "keywords": ["calendar", "reminders", "eventkit", "macos", "tasks", "scheduling", "tags"],
+  "keywords": [
+    "calendar",
+    "reminders",
+    "eventkit",
+    "macos",
+    "tasks",
+    "scheduling",
+    "tags"
+  ],
   "license": "MIT",
-  "privacy_policies": ["https://github.com/PsychQuant/che-ical-mcp/blob/main/mcpb/PRIVACY.md"],
+  "privacy_policies": [
+    "https://github.com/PsychQuant/che-ical-mcp/blob/main/mcpb/PRIVACY.md"
+  ],
   "server": {
     "type": "binary",
     "entry_point": "server/CheICalMCP",
@@ -29,37 +39,126 @@
     }
   },
   "tools": [
-    { "name": "list_calendars", "description": "List all available calendars and reminder lists" },
-    { "name": "create_calendar", "description": "Create a new calendar or reminder list" },
-    { "name": "delete_calendar", "description": "Delete a calendar by its identifier" },
-    { "name": "list_events", "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting" },
-    { "name": "create_event", "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone" },
-    { "name": "update_event", "description": "Update an existing calendar event (including timezone, recurrence span for recurring)" },
-    { "name": "delete_event", "description": "Delete a calendar event (with occurrence support for recurring)" },
-    { "name": "list_reminders", "description": "List reminders from the Reminders app" },
-    { "name": "create_reminder", "description": "Create a new reminder with optional due date, recurrence, location trigger, and tags" },
-    { "name": "update_reminder", "description": "Update an existing reminder (including tags, clear_due_date)" },
-    { "name": "complete_reminder", "description": "Mark a reminder as completed or incomplete" },
-    { "name": "delete_reminder", "description": "Delete a reminder" },
-    { "name": "search_events", "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit" },
-    { "name": "list_events_quick", "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit" },
-    { "name": "create_events_batch", "description": "Create multiple events at once" },
-    { "name": "check_conflicts", "description": "Check for overlapping events in a time range with attendees/organizer" },
-    { "name": "copy_event", "description": "Copy an event to another calendar (with optional move)" },
-    { "name": "move_events_batch", "description": "Move multiple events to another calendar" },
-    { "name": "delete_events_batch", "description": "Delete multiple events at once" },
-    { "name": "find_duplicate_events", "description": "Find duplicate events across calendars" },
-    { "name": "update_calendar", "description": "Update a calendar's properties (rename or change color)" },
-    { "name": "search_reminders", "description": "Search reminders by keyword(s) or tag with AND/OR matching" },
-    { "name": "create_reminders_batch", "description": "Create multiple reminders at once (with tags support)" },
-    { "name": "delete_reminders_batch", "description": "Delete multiple reminders at once" },
-    { "name": "list_reminder_tags", "description": "List all unique tags used across reminders with usage counts" },
-    { "name": "cleanup_completed_reminders", "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list." },
-    { "name": "undo", "description": "Undo the most recent calendar/reminder operation" },
-    { "name": "redo", "description": "Redo the last undone operation" },
-    { "name": "undo_history", "description": "List undoable operations with timestamps" }
+    {
+      "name": "list_calendars",
+      "description": "List all available calendars and reminder lists"
+    },
+    {
+      "name": "create_calendar",
+      "description": "Create a new calendar or reminder list"
+    },
+    {
+      "name": "delete_calendar",
+      "description": "Delete a calendar by its identifier"
+    },
+    {
+      "name": "list_events",
+      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting"
+    },
+    {
+      "name": "create_event",
+      "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone"
+    },
+    {
+      "name": "update_event",
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring)"
+    },
+    {
+      "name": "delete_event",
+      "description": "Delete a calendar event (with occurrence support for recurring)"
+    },
+    {
+      "name": "list_reminders",
+      "description": "List reminders from the Reminders app"
+    },
+    {
+      "name": "create_reminder",
+      "description": "Create a new reminder with optional due date, recurrence, location trigger, and tags"
+    },
+    {
+      "name": "update_reminder",
+      "description": "Update an existing reminder (including tags, clear_due_date)"
+    },
+    {
+      "name": "complete_reminder",
+      "description": "Mark a reminder as completed or incomplete"
+    },
+    {
+      "name": "delete_reminder",
+      "description": "Delete a reminder"
+    },
+    {
+      "name": "search_events",
+      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit"
+    },
+    {
+      "name": "list_events_quick",
+      "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit"
+    },
+    {
+      "name": "create_events_batch",
+      "description": "Create multiple events at once"
+    },
+    {
+      "name": "check_conflicts",
+      "description": "Check for overlapping events in a time range with attendees/organizer"
+    },
+    {
+      "name": "copy_event",
+      "description": "Copy an event to another calendar (with optional move)"
+    },
+    {
+      "name": "move_events_batch",
+      "description": "Move multiple events to another calendar"
+    },
+    {
+      "name": "delete_events_batch",
+      "description": "Delete multiple events at once"
+    },
+    {
+      "name": "find_duplicate_events",
+      "description": "Find duplicate events across calendars"
+    },
+    {
+      "name": "update_calendar",
+      "description": "Update a calendar's properties (rename or change color)"
+    },
+    {
+      "name": "search_reminders",
+      "description": "Search reminders by keyword(s) or tag with AND/OR matching"
+    },
+    {
+      "name": "create_reminders_batch",
+      "description": "Create multiple reminders at once (with tags support)"
+    },
+    {
+      "name": "delete_reminders_batch",
+      "description": "Delete multiple reminders at once"
+    },
+    {
+      "name": "list_reminder_tags",
+      "description": "List all unique tags used across reminders with usage counts"
+    },
+    {
+      "name": "cleanup_completed_reminders",
+      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list."
+    },
+    {
+      "name": "undo",
+      "description": "Undo the most recent calendar/reminder operation"
+    },
+    {
+      "name": "redo",
+      "description": "Redo the last undone operation"
+    },
+    {
+      "name": "undo_history",
+      "description": "List undoable operations with timestamps"
+    }
   ],
   "compatibility": {
-    "platforms": ["darwin"]
+    "platforms": [
+      "darwin"
+    ]
   }
 }

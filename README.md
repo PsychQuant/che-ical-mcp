@@ -498,8 +498,17 @@ If ambiguity is detected, the error message will list all available sources.
 | Permission dialog never appears | See [Grant Permissions](#grant-permissions) for macOS Sequoia workaround |
 | **Permission denied over SSH** | See [SSH Access](#ssh-access) below |
 | **Permission denied under launchd** | See [launchd / Automation](#launchd--automation) below |
+| **One service denied while every diagnostic reports green** | See [Silent permanent denial after upgrade](#silent-permanent-denial-after-upgrade-154) below |
 | Calendar not found | Ensure the calendar is visible in macOS Calendar app |
 | Reminders not syncing | Check iCloud sync in System Settings |
+
+### Silent permanent denial after upgrade (#154)
+
+If one service (typically Calendar) returns `access denied` while the other works, **and** `--print-tcc-path`, System Settings, and the startup banner all report the permission as granted, you are likely hitting the [#154](https://github.com/PsychQuant/che-ical-mcp/issues/154) signature: a TCC row created by a pre-v1.7.1 (ad-hoc-signed) build is pinned to that old build's code hashes. The upgraded Developer ID binary can never match it, and on macOS 26.5+ the OS only allows the healing re-prompt when the binary carries the matching `com.apple.security.personal-information.*` entitlement.
+
+**Fix**: upgrade to **v1.11.0 or later** (the binary now ships both entitlements), restart the host app (full `Cmd+Q` for Claude Desktop), and approve the permission dialog that appears on the first Calendar/Reminders access. Approving rewrites the TCC row keyed to the Developer ID requirement, so it survives all future upgrades. If you accidentally **deny** the dialog, re-enable the toggle in System Settings → Privacy & Security → Calendars.
+
+> ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` because the binary has no LaunchServices registration. And do **not** run a bare `tccutil reset Calendar` (without a bundle ID): it wipes Calendar grants for *every* app on the machine and, on a pre-entitlements binary, leaves CheICalMCP permanently unable to re-prompt.
 
 ### SSH Access
 
@@ -539,7 +548,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.10.0
+- **Current Version**: v1.11.0
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
