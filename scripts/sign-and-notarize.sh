@@ -119,6 +119,27 @@ echo ""
 echo "[2/5] Verifying signature..."
 codesign --verify --deep --strict --verbose=2 "$BINARY" 2>&1 | head -5
 
+# Step 2.5: entitlements gate (#154) — the SIGNED binary must carry both
+# personal-information keys, or macOS 26.5's prompting policy blocks the TCC
+# healing re-prompt (silent permanent denial; see issue #154). This guards the
+# signed artifact itself: a wrong/stale ENTITLEMENTS path would pass the
+# source-level EntitlementsPlistTests yet still ship a broken binary. Runs
+# before notarization so a miss fails in seconds, not after a 1-15 min wait.
+echo ""
+echo "[2.5/5] Verifying personal-information entitlements on signed binary..."
+SIGNED_ENTITLEMENTS="$(codesign -d --entitlements - --xml "$BINARY" 2>/dev/null)"
+for key in com.apple.security.personal-information.calendars \
+           com.apple.security.personal-information.reminders; do
+    if ! printf '%s' "$SIGNED_ENTITLEMENTS" | grep -qF "$key"; then
+        echo "Error: signed binary is missing entitlement '$key'." >&2
+        echo "       Without it macOS 26.5 refuses the TCC healing re-prompt (#154)." >&2
+        echo "       Check that ENTITLEMENTS ('$ENTITLEMENTS') is the repo's" >&2
+        echo "       Sources/CheICalMCP/Entitlements.plist and contains both keys." >&2
+        exit 1
+    fi
+done
+echo "  ✓ calendars + reminders entitlements present"
+
 # Step 3: notarize (requires zip wrapper for raw Mach-O)
 # Capture submission output so we can extract submission ID for post-mortem debug
 # if the wait fails. notarytool prints "  id: <UUID>" line on success and failure.
