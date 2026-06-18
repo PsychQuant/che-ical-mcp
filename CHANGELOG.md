@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-06-18
+
+**#160 — `create_event` start < end validation (symmetric with `update_event`).**
+
+- **Fixed (#160)**: `createEvent` had no time-range guard while `updateEvent` rejected `end <= start` for timed events. The asymmetry let `create_event` persist inverted / zero-duration timed events that `update_event` rejects. Extracted a shared static `EventKitManager.validateTimeRange(start:end:isAllDay:)` — throws `invalidTimeRange` when `start >= end && !isAllDay`, all-day events exempt — called from both `createEvent` (before save) and `updateEvent` (replacing the inline guard; original error message preserved via a `hint` parameter). New `TimeValidationTests` cases exercise the shared guard directly. 405 tests, 0 failures. 6-AI / multi-reviewer verified.
+
 ## [1.11.0] - 2026-06-10
 
 **#154 — TCC healing re-prompt unblocked (personal-information entitlements).**
