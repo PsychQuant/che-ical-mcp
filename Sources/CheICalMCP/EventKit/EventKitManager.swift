@@ -379,6 +379,23 @@ actor EventKitManager: EventKitManaging {
         return eventStore.events(matching: predicate)
     }
 
+    /// Validates that a timed event's start is strictly before its end.
+    ///
+    /// All-day events are exempt (their day-range / same-instant representation is valid).
+    /// Shared by `createEvent` and `updateEvent` so both reject inverted / zero-duration
+    /// timed events consistently — previously only `updateEvent` guarded this, letting
+    /// `createEvent` persist invalid events (#160).
+    ///
+    /// - Parameter hint: optional caller-specific guidance appended to the error message
+    ///   (e.g. `updateEvent`'s "provide both start_time and end_time" advice).
+    static func validateTimeRange(start: Date, end: Date, isAllDay: Bool, hint: String? = nil) throws {
+        guard start >= end, !isAllDay else { return }
+        let formatter = ISO8601DateFormatter()
+        var message = "Start time (\(formatter.string(from: start))) must be before end time (\(formatter.string(from: end)))."
+        if let hint { message += " " + hint }
+        throw EventKitError.invalidTimeRange(message: message)
+    }
+
     func createEvent(
         title: String,
         startDate: Date,
@@ -395,6 +412,9 @@ actor EventKitManager: EventKitManaging {
         timezone: TimeZone? = nil
     ) async throws -> CreateEventResult {
         try await ensureCalendarAccess()
+
+        // Reject inverted / zero-duration timed events (symmetric with updateEvent — #160).
+        try Self.validateTimeRange(start: startDate, end: endDate, isAllDay: isAllDay)
 
         // Resolve calendar first (required for both duplicate check and creation)
         guard let name = calendarName else {
@@ -539,15 +559,13 @@ actor EventKitManager: EventKitManaging {
             event.endDate = newEnd
         }
 
-        // Validate time range
-        if event.startDate >= event.endDate && !event.isAllDay {
-            let dateFormatter = ISO8601DateFormatter()
-            let startStr = dateFormatter.string(from: event.startDate)
-            let endStr = dateFormatter.string(from: event.endDate)
-            throw EventKitError.invalidTimeRange(
-                message: "Start time (\(startStr)) must be before end time (\(endStr)). When changing the date, provide both start_time and end_time."
-            )
-        }
+        // Validate time range (shared guard with createEvent — #160)
+        try Self.validateTimeRange(
+            start: event.startDate,
+            end: event.endDate,
+            isAllDay: event.isAllDay,
+            hint: "When changing the date, provide both start_time and end_time."
+        )
 
         if let n = notes { event.notes = n }
         if let l = location { event.location = l }

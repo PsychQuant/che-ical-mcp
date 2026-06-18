@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+@testable import CheICalMCP
 
 /// Tests for time validation logic in event updates
 /// These tests verify the fix for the update_event bug where
@@ -126,5 +127,51 @@ final class TimeValidationTests: XCTestCase {
         // This is a valid case for all-day events
         let startOfDay = calendar.startOfDay(for: date)
         XCTAssertEqual(startOfDay, calendar.startOfDay(for: date), "All-day events can have same start and end")
+    }
+
+    // MARK: - validateTimeRange production guard (#160)
+    // These exercise the real shared guard (not mirrored arithmetic), so create_event
+    // and update_event are proven to reject inverted / zero-duration timed events
+    // consistently. All-day events are exempt.
+
+    private func date160(_ hour: Int, _ minute: Int = 0) -> Date {
+        Calendar.current.date(from: DateComponents(
+            year: 2026, month: 1, day: 31, hour: hour, minute: minute
+        ))!
+    }
+
+    func testValidateTimeRange_endBeforeStart_timed_throws() {
+        XCTAssertThrowsError(
+            try EventKitManager.validateTimeRange(start: date160(15), end: date160(14), isAllDay: false)
+        ) { error in
+            guard case EventKitError.invalidTimeRange = error else {
+                return XCTFail("expected EventKitError.invalidTimeRange, got \(error)")
+            }
+        }
+    }
+
+    func testValidateTimeRange_endEqualsStart_timed_throws() {
+        // The #160 zero-duration case: create_event previously accepted this silently.
+        let t = date160(14)
+        XCTAssertThrowsError(
+            try EventKitManager.validateTimeRange(start: t, end: t, isAllDay: false)
+        ) { error in
+            guard case EventKitError.invalidTimeRange = error else {
+                return XCTFail("expected EventKitError.invalidTimeRange, got \(error)")
+            }
+        }
+    }
+
+    func testValidateTimeRange_allDay_endEqualsStart_doesNotThrow() {
+        let t = date160(0)
+        XCTAssertNoThrow(
+            try EventKitManager.validateTimeRange(start: t, end: t, isAllDay: true)
+        )
+    }
+
+    func testValidateTimeRange_endAfterStart_timed_doesNotThrow() {
+        XCTAssertNoThrow(
+            try EventKitManager.validateTimeRange(start: date160(14), end: date160(15), isAllDay: false)
+        )
     }
 }
