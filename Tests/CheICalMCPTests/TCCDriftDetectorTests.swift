@@ -269,6 +269,40 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertLessThanOrEqual(nonEmpty.count, 2)
     }
 
+    // #163 — banner surfaces the `--setup` remediation when Calendar is not granted.
+
+    func testFormatBannerSurfacesSetupHintWhenCalendarNotGranted() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false
+        )
+
+        XCTAssertTrue(banner.contains("Calendar access not granted"),
+            "banner must flag missing Calendar access")
+        XCTAssertTrue(banner.contains("--setup"),
+            "banner must surface the --setup remediation command")
+        XCTAssertTrue(banner.contains(runningPath),
+            "banner --setup hint must reference the resolved running binary path")
+    }
+
+    func testFormatBannerNoSetupHintWhenCalendarGranted() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: true
+        )
+
+        XCTAssertFalse(banner.contains("Calendar access not granted"),
+            "granted Calendar access must NOT emit the --setup remediation line")
+    }
+
     func testFormatBannerIncludesActionableCommands() {
         let report = DriftReport(
             signals: [

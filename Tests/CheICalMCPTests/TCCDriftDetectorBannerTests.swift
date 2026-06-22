@@ -266,6 +266,24 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 
+    /// #163 / #122 skip-list: `--setup` exits before `emitStartupBanner()` is reached, so it
+    /// must emit no banner. Exit status is intentionally NOT asserted — `--setup` exits
+    /// non-zero when access is denied/skipped (host-TCC-state dependent), and under this
+    /// non-interactive spawn `.notDetermined` is skipped (never calls the blocking request,
+    /// so no hang).
+    func testNoBannerForSetupFlag() throws {
+        let binary = try locateBuiltBinary()
+        let (stderr, _) = try spawnAndCaptureStderr(
+            binary: binary,
+            arguments: ["--setup"]
+        )
+
+        XCTAssertFalse(
+            stderr.contains("[banner]"),
+            "--setup path should not emit banner. Got stderr: \(stderr)"
+        )
+    }
+
     /// Spawn the binary from a path not present in TCC.db — typically forces a
     /// path-mismatch drift signal (or skip-reason if sqlite3 unavailable). This is the
     /// "mcpb 怎麼 test" answer per the Plan tier discussion: we don't actually install

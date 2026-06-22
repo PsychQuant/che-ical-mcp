@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-06-23
+
+**#163 — foreground `--setup` so the Calendar TCC dialog actually presents, + binary-specific `--setup` remediation in denial messages and the startup banner.**
+
+- **Fixed (#163)**: interactive `--setup` ran its `requestFullAccess` calls from a bare CLI async context, which on macOS 14+/26 has no foreground-app context or running run loop to pump EventKit's system modal — so the **first** request (Calendar) silently returned denied with no dialog while a later one (Reminders) sometimes slipped through (the Calendar-denied / Reminders-granted asymmetry users hit). Interactive `--setup` now runs inside a foreground `NSApplication` (`setActivationPolicy(.regular)` + delegate + `app.run()`) via `SetupRunner`, mirroring che-apple-mail-mcp's `SetupWindow.run()` (che-apple-mail-mcp#213) — no SwiftUI window, EventKit presents its own modal; we only need the foreground context. The non-interactive path stays headless (status-only, never enters the run loop).
+- **Added (#163)**: permission-denied tool responses and the startup banner now surface the **resolved absolute path of the running binary** plus a copy-pasteable `"<path>" --setup` command (via `EventKitManager.setupCommandHint` / `resolvedSetupCommandHint`, control-char sanitized). For the buried Claude Desktop `.mcpb` binary this is the actionable way to grant THIS binary's TCC permission; the `.mcpb` denial message now leads with `--setup` (foreground dialog) and keeps the plugin-install path as the fallback.
+- **Refactored (#163)**: extracted `SetupEntityOutcome` + `SetupRunner.evaluateEntity(status:nonInteractive:request:)` — a pure, injectable seam so every setup branch (already-granted / granted / denied / skip-would-block / write-only / sanitized-error) is unit-testable without an `EKEventStore` or stdout capture.
+
 ## [1.11.1] - 2026-06-18
 
 **#160 — `create_event` start < end validation (symmetric with `update_event`).**

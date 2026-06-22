@@ -107,4 +107,106 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertFalse(message.contains("non-interactive"), "Normal error should not mention non-interactive")
         XCTAssertFalse(message.contains("SSH"), "Normal error should not mention SSH")
     }
+
+    // MARK: - #163 — binary-specific `--setup` remediation hint
+
+    /// The pure hint formatter wraps the injected path in quotes and appends `--setup`.
+    func testSetupCommandHint_formatsQuotedPathWithFlag() {
+        let hint = EventKitManager.setupCommandHint(binaryPath: "/Users/x/bin/CheICalMCP")
+        XCTAssertEqual(hint, "\"/Users/x/bin/CheICalMCP\" --setup")
+    }
+
+    /// Control chars in the path must be escaped (the hint can land in a terminal / response).
+    func testSetupCommandHint_escapesControlChars() {
+        let hint = EventKitManager.setupCommandHint(binaryPath: "/bin/ev\u{07}il")
+        XCTAssertFalse(hint.contains("\u{07}"), "BEL must be escaped, not passed raw")
+        XCTAssertTrue(hint.contains("--setup"))
+    }
+
+    /// The resolved hint reads argv[0] (the xctest runner here) and still ends in `--setup`.
+    func testResolvedSetupCommandHint_containsSetupFlag() {
+        let hint = EventKitManager.resolvedSetupCommandHint()
+        XCTAssertTrue(hint.contains("--setup"), "resolved hint must contain the --setup flag")
+        XCTAssertTrue(hint.hasPrefix("\""), "resolved hint must quote the binary path")
+    }
+
+    /// The generic (no-context) denial message now includes the resolved `--setup` command,
+    /// in addition to the System Settings instructions.
+    func testAccessDeniedNormalMessage_includesResolvedSetupCommand() {
+        let error = EventKitError.accessDenied(type: "Calendar", isSSH: false, isNonInteractive: false)
+        let message = error.errorDescription ?? ""
+        XCTAssertTrue(message.contains("--setup"),
+            "generic denial must surface the --setup remediation command (#163)")
+        XCTAssertTrue(message.contains(EventKitManager.resolvedSetupCommandHint()),
+            "generic denial must embed the resolved binary-specific setup hint")
+    }
+
+    // MARK: - #163 — SetupRunner.evaluateEntity (injectable branch logic)
+
+    func testEvaluateEntity_fullAccess_isAlreadyGranted() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .fullAccess, nonInteractive: false) {
+            XCTFail("request must NOT be called when already granted"); return false
+        }
+        XCTAssertEqual(outcome, .alreadyGranted)
+        XCTAssertFalse(outcome.isBad)
+    }
+
+    func testEvaluateEntity_notDetermined_interactive_requestGranted() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .notDetermined, nonInteractive: false) { true }
+        XCTAssertEqual(outcome, .granted)
+        XCTAssertFalse(outcome.isBad)
+    }
+
+    func testEvaluateEntity_notDetermined_interactive_requestDenied() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .notDetermined, nonInteractive: false) { false }
+        XCTAssertEqual(outcome, .denied)
+        XCTAssertTrue(outcome.isBad)
+    }
+
+    func testEvaluateEntity_notDetermined_nonInteractive_skipsWouldBlock() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .notDetermined, nonInteractive: true) {
+            XCTFail("request must NOT be called in non-interactive skip path"); return false
+        }
+        XCTAssertEqual(outcome, .skippedWouldBlock)
+        XCTAssertTrue(outcome.isBad)
+    }
+
+    func testEvaluateEntity_denied_reportsDenied() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .denied, nonInteractive: false) {
+            XCTFail("request must NOT be called when already denied"); return false
+        }
+        XCTAssertEqual(outcome, .denied)
+        XCTAssertTrue(outcome.isBad)
+    }
+
+    func testEvaluateEntity_writeOnly_isPartial() async {
+        let outcome = await SetupRunner.evaluateEntity(status: .writeOnly, nonInteractive: false) {
+            XCTFail("request must NOT be called for write-only"); return false
+        }
+        XCTAssertEqual(outcome, .writeOnly)
+        XCTAssertTrue(outcome.isBad)
+    }
+
+    func testEvaluateEntity_requestThrows_errorIsSanitized() async {
+        struct ControlCharError: LocalizedError {
+            var errorDescription: String? { "bad\u{07}desc" }
+        }
+        let outcome = await SetupRunner.evaluateEntity(status: .notDetermined, nonInteractive: false) {
+            throw ControlCharError()
+        }
+        guard case .error(let safe) = outcome else {
+            return XCTFail("throwing request must map to .error, got \(outcome)")
+        }
+        XCTAssertFalse(safe.contains("\u{07}"), "framework error text must be control-char sanitized")
+        XCTAssertTrue(safe.contains("bad") && safe.contains("desc"), "sanitized text keeps printable content")
+        XCTAssertTrue(outcome.isBad)
+    }
+
+    /// `message(label:)` formats the per-entity status line the setup output prints.
+    func testSetupEntityOutcome_messageFormatting() {
+        XCTAssertEqual(SetupEntityOutcome.granted.message(label: "Calendar"), "Calendar access: ✓ granted")
+        XCTAssertEqual(SetupEntityOutcome.alreadyGranted.message(label: "Reminders"), "Reminders access: ✓ already granted")
+        XCTAssertTrue(SetupEntityOutcome.skippedWouldBlock.message(label: "Calendar").contains("⤼ skipped"))
+        XCTAssertTrue(SetupEntityOutcome.writeOnly.message(label: "Calendar").contains("write-only"))
+    }
 }

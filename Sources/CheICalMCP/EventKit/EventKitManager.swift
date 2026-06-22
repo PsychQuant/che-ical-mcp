@@ -101,6 +101,25 @@ actor EventKitManager: EventKitManaging {
         return resolved.contains("Claude Extensions/local.mcpb.")
     }()
 
+    /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
+    /// The path is injected (not read from globals) so denial-message wiring is
+    /// unit-testable deterministically; control chars in the path are escaped so the
+    /// hint is safe to surface in a response or a terminal.
+    static func setupCommandHint(binaryPath: String) -> String {
+        let safe = EventKitErrorSanitizer.escapeForStderr(binaryPath)
+        return "\"\(safe)\" --setup"
+    }
+
+    /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the
+    /// same realpath(3) path `--print-tcc-path` / the banner use) and format the `--setup`
+    /// remediation hint. The `.mcpb` install's binary lives at a buried path users can't
+    /// easily locate, so denial messages surface the exact command to grant THIS binary's
+    /// TCC permission — the foreground `--setup` is what makes the dialog present (#163).
+    static func resolvedSetupCommandHint() -> String {
+        let argv0 = CommandLine.arguments.first ?? AppVersion.name
+        return setupCommandHint(binaryPath: BinaryPathResolver.resolveArgv0(argv0))
+    }
+
     /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
     /// which cached the granted state in `hasCalendarAccess` and silently failed on
     /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
@@ -1866,47 +1885,43 @@ enum EventKitError: LocalizedError {
                 return """
                 \(type) access denied (non-interactive session detected — launchd / CI runner / no TTY). \
                 macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
-                1. Run 'CheICalMCP --setup' once from Terminal to trigger the TCC permission dialog
+                1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
+                \(EventKitManager.resolvedSetupCommandHint())
                 2. Or manually add CheICalMCP in: \
                 System Settings → Privacy & Security → \(type)
                 3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
                 """
             }
-            // #133: when running under Claude Desktop's `.mcpb` extension install
-            // on Claude Desktop ≥ 1.6608.2, the generic "Open System Settings"
-            // advice is misleading — the bug is upstream
-            // (anthropics/claude-code#58239, still open as of 2026-05-26 on
-            // Claude Desktop 1.8555.2): Claude.app's bundle is missing the
-            // `com.apple.security.personal-information.calendars` /
-            // `.reminders` entitlements + matching Info.plist usage
-            // descriptions that macOS 14+ requires on the responsible
-            // process. System Settings cannot grant what the bundle never
-            // requested. Surface the real workaround (switch to Claude Code
-            // plugin install path) instead of churning users through wrong
-            // remediation steps.
+            // #133 / #163: under Claude Desktop's `.mcpb` extension install, the generic
+            // "Open System Settings" advice is misleading — on macOS 14+ the TCC dialog
+            // only presents from a foreground app context, so the primary fix is to run
+            // THIS buried `.mcpb` binary's foreground `--setup` once from Terminal (#163;
+            // the dialog now presents after the NSApplication change). If that still denies,
+            // it is the deeper signed-binary entitlement edge case under investigation
+            // (cf. anthropics/claude-code#58239) — the Claude Code plugin install path
+            // avoids Claude.app's `disclaimer` wrapper entirely and is the fallback.
             if EventKitManager.isMCPBClaudeDesktopInstall {
                 return """
-                \(type) access denied. This is the upstream Claude Desktop \
-                `.mcpb` extension regression (anthropics/claude-code#58239) — \
-                Claude.app on macOS 14+ is missing the Calendar/Reminders \
-                entitlements + Info.plist usage descriptions that the framework \
-                requires. System Settings cannot fix what the bundle never \
-                requested. Workaround:
-                1. Use the Claude Code plugin install path instead — \
-                in Claude Code, run: \
+                \(type) access denied (Claude Desktop `.mcpb` install). On macOS 14+ the TCC \
+                permission dialog only presents from a foreground app context, so grant THIS \
+                binary access by running its setup once from Terminal:
+                1. \(EventKitManager.resolvedSetupCommandHint())
+                2. Click Allow on the \(type) dialog, then fully quit + reopen Claude Desktop (Cmd+Q)
+                3. If still denied after granting (a signed-binary entitlement edge case still \
+                under investigation), use the Claude Code plugin install path, which avoids \
+                Claude.app's `disclaimer` wrapper — in Claude Code, run: \
                 `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-                2. The plugin route auto-downloads `~/bin/CheICalMCP` and spawns \
-                without going through Claude.app's `disclaimer` wrapper, \
-                which is the broken path
-                3. If you must stay on `.mcpb`, follow / 👍 the upstream issue: \
-                https://github.com/anthropics/claude-code/issues/58239
+                4. Background / follow / 👍 the upstream tracker: \
+                anthropics/claude-code#58239 (https://github.com/anthropics/claude-code/issues/58239)
                 """
             }
             return """
             \(type) access denied. Please grant permission:
             1. Open System Settings → Privacy & Security → \(type)
             2. Enable access for the MCP server or Terminal
-            3. Restart Claude Desktop/Code
+            3. Or grant this exact binary access by running its setup from Terminal: \
+            \(EventKitManager.resolvedSetupCommandHint())
+            4. Restart Claude Desktop/Code
             """
         case .insufficientAccess(let type):
             return """

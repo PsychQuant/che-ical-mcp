@@ -125,7 +125,8 @@ struct TCCDriftDetector {
         version: String,
         runningBinaryPath: String,
         pid: Int32,
-        bundleID: String
+        bundleID: String,
+        calendarAccessGranted: Bool = true
     ) -> String {
         // CWE-117 / stderr-injection defense (verify finding B1, three-reviewer
         // consensus): every interpolated value reaching stderr passes through
@@ -151,6 +152,18 @@ struct TCCDriftDetector {
         }
         lines.append("[banner] che-ical-mcp \(safeVersion) — \(status) — PID \(pid)")
         lines.append("[banner] binary: \(safePath)")
+
+        // #163: when Calendar access is not granted for THIS binary, surface the exact
+        // foreground `--setup` command so the user can grant the dialog that only presents
+        // from a foreground app context. Same control-char branching as the drift lines:
+        // emit a copy-paste command only when the path is clean, else a safe-display hint.
+        if !calendarAccessGranted {
+            if pathHasControlChars(runningBinaryPath) {
+                lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
+            } else {
+                lines.append("[banner] Calendar access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup")
+            }
+        }
 
         for signal in report.signals {
             switch signal {

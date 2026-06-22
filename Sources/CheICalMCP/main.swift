@@ -98,60 +98,22 @@ if CommandLine.arguments.contains("--setup") {
     print("CheICalMCP Setup — Requesting Calendar & Reminders permissions...")
     print("(This triggers macOS TCC permission dialogs for this binary)\n")
 
-    let store = EKEventStore()
-    var anyBlockedOrDenied = false
-
-    // #143: check authorizationStatus BEFORE calling the blocking requestFullAccess.
-    // In a non-interactive session a `.notDetermined` status would hang forever on a
-    // dialog that can never appear — previously --setup only *warned* then called the
-    // blocking API anyway. setupAccessDecision() returns the right action; an
-    // already-granted (`.fullAccess`) binary still reports success (not skipped).
-    func runSetup(
-        _ label: String,
-        entity: EKEntityType,
-        request: () async throws -> Bool
-    ) async {
-        let status = EKEventStore.authorizationStatus(for: entity)
-        switch setupAccessDecision(status: status, isNonInteractive: nonInteractive) {
-        case .alreadyGranted:
-            print("\(label) access: ✓ already granted")
-        case .requestAccess:
-            do {
-                let granted = try await request()
-                print("\(label) access: \(granted ? "✓ granted" : "✗ denied")")
-                if !granted { anyBlockedOrDenied = true }
-            } catch {
-                // Escape the framework error text at the stdout boundary, matching the
-                // discipline in TCCDriftDetector / SelfUpdate (#146). First-party EventKit
-                // source, but control chars (NUL / ANSI) in localizedDescription should not
-                // pass through raw to a terminal.
-                let safe = EventKitErrorSanitizer.escapeForStderr(error.localizedDescription)
-                print("\(label) access: ✗ error — \(safe)")
-                anyBlockedOrDenied = true
-            }
-        case .skipWouldBlock:
-            print("\(label) access: ⤼ skipped — non-interactive session; requestFullAccess would block on a TCC dialog that can't appear here (#143). Grant manually (see below).")
-            anyBlockedOrDenied = true
-        case .denied:
-            print("\(label) access: ✗ denied")
-            anyBlockedOrDenied = true
-        case .writeOnly:
-            print("\(label) access: ◐ write-only (partial — upgrade to full access in System Settings)")
-            anyBlockedOrDenied = true
-        }
+    // The interactive requests must run inside a foreground NSApplication so EventKit's TCC
+    // dialogs can present. A bare CLI async request has no foreground-app context or running
+    // run loop, so on macOS 14+/26 the FIRST request (Calendar) silently returns denied while
+    // a later one (Reminders) slips through (#163). SetupRunner mirrors che-apple-mail-mcp's
+    // SetupWindow.run() (che-apple-mail-mcp#213). The non-interactive path can't present a dialog anyway, so it
+    // reports status headlessly (skip / already-granted) and exits — never entering the loop.
+    if nonInteractive {
+        let bad = await SetupRunner.requestBoth(nonInteractive: true)
+        SetupRunner.printGuidanceIfNeeded(bad)
+        exit(bad ? 1 : 0)
+    } else {
+        // Top-level code is @MainActor-isolated (SE-0343), so we can drive
+        // NSApplication directly on the main thread. runInteractive() never returns
+        // (the delegate exits once the TCC dialogs resolve).
+        SetupRunner.runInteractive()
     }
-
-    await runSetup("Calendar", entity: .event) { try await store.requestFullAccessToEvents() }
-    await runSetup("Reminders", entity: .reminder) { try await store.requestFullAccessToReminders() }
-
-    if anyBlockedOrDenied {
-        print("\nIf permissions were denied or skipped, grant them manually:")
-        print("  System Settings → Privacy & Security → Calendar → enable CheICalMCP")
-        print("  System Settings → Privacy & Security → Reminders → enable CheICalMCP")
-    }
-    // Exit non-zero when any type was skipped/denied so callers (and the user) can
-    // tell setup did not fully succeed — previously --setup always exited 0.
-    exit(anyBlockedOrDenied ? 1 : 0)
 }
 
 // CLI mode: invoke tools directly without MCP server
@@ -207,12 +169,17 @@ func emitStartupBanner() {
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
+    // #163: cheap status read (never triggers a dialog) so the banner can surface the
+    // `--setup` command when Calendar isn't granted for this binary. Reuses the same
+    // probe the authorization gate uses.
+    let calendarGranted = LiveAuthorizationStatusSource().authorizationStatus(for: .event) == .fullAccess
     let banner = TCCDriftDetector.formatBanner(
         report: report,
         version: AppVersion.current,
         runningBinaryPath: resolvedPath,
         pid: ProcessInfo.processInfo.processIdentifier,
-        bundleID: bundleID
+        bundleID: bundleID,
+        calendarAccessGranted: calendarGranted
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }
