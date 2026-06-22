@@ -28,5 +28,5 @@
 
 ## 5. 發佈後驗證：(B) 根因二分的發佈後驗證實驗（程序，非 code）
 
-- [ ] 5.1 出 notarized build：`make release-signed` 產生簽章 + notarized binary 與 `.mcpb`。驗證：`xcrun notarytool` 成功、`codesign -dv` 顯示 Developer ID + personal-information entitlements。
+- [x] 5.1 出 notarized build：`make release-signed` 產生簽章 + notarized binary 與 `.mcpb`。驗證：`xcrun notarytool` 成功、`codesign -dv` 顯示 Developer ID + personal-information entitlements。
 - [ ] 5.2 執行 **(B) 根因二分的發佈後驗證實驗（程序，非 code）**：`tccutil reset Calendar <bundleID>` → 跑 .mcpb 解壓 binary `--setup` → 試 Calendar tool call。依結果分類（dialog-presentation 已解 / 殘留簽章根因 → 另開 idd-diagnose），記於變更驗證註記。驗證：實驗結果與分類已書面記錄；請 #163 回覆者 LittleCoinCoin 協助實測。
