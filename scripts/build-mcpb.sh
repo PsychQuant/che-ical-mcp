@@ -59,7 +59,33 @@ if [[ "$PLIST_VERSION" != "$SOURCE_VERSION" ]]; then
     exit 1
 fi
 
-echo "  ✓ Version.swift, Info.plist, and mcpb/manifest.json all at $SOURCE_VERSION"
+# Co-located Claude Code distribution artifacts (#163 co-locate-plugin-marketplace):
+# the self-hosted marketplace entry + the plugin manifest must also match the source
+# of truth, or the two channels (Desktop .mcpb / Code self-hosted marketplace) ship
+# mismatched versions. Guarded with -f so forks / partial checkouts without the
+# co-located plugin still build.
+MKTPL_JSON="$PROJECT_DIR/.claude-plugin/marketplace.json"
+PLUGIN_MANIFEST="$PROJECT_DIR/plugin/.claude-plugin/plugin.json"
+
+if [[ -f "$MKTPL_JSON" ]]; then
+    MKTPL_VERSION=$(python3 -c "import json; d=json.load(open('$MKTPL_JSON')); print(next((p.get('version','') for p in d.get('plugins',[]) if p.get('name')=='che-ical-mcp'), ''))")
+    if [[ "$MKTPL_VERSION" != "$SOURCE_VERSION" ]]; then
+        echo "  ✗ Version drift: Version.swift=$SOURCE_VERSION but .claude-plugin/marketplace.json che-ical-mcp entry=$MKTPL_VERSION"
+        echo "    Bump the che-ical-mcp plugin entry \"version\" in .claude-plugin/marketplace.json to \"$SOURCE_VERSION\"."
+        exit 1
+    fi
+fi
+
+if [[ -f "$PLUGIN_MANIFEST" ]]; then
+    PLUGIN_MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('$PLUGIN_MANIFEST')).get('version',''))")
+    if [[ "$PLUGIN_MANIFEST_VERSION" != "$SOURCE_VERSION" ]]; then
+        echo "  ✗ Version drift: Version.swift=$SOURCE_VERSION but plugin/.claude-plugin/plugin.json=$PLUGIN_MANIFEST_VERSION"
+        echo "    Bump plugin/.claude-plugin/plugin.json \"version\" to \"$SOURCE_VERSION\"."
+        exit 1
+    fi
+fi
+
+echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + plugin.json all at $SOURCE_VERSION"
 
 # Steps 3-4: Build for both architectures
 echo "[3/7] Building for Apple Silicon (arm64)..."

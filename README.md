@@ -76,17 +76,22 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 The plugin includes slash commands (`/today`, `/week`, `/quick-event`, `/remind`), skills, and **a PreToolUse hook that automatically verifies day-of-week** when creating or updating events — preventing date/weekday mismatch errors.
 
-Two steps — register the marketplace once, then install the plugin:
+Two steps — register the marketplace once, then install the plugin. This repo is its
+own self-hosted marketplace (the plugin definition lives in `plugin/`):
 
 ```bash
 # 1. Register the marketplace (one-time)
-claude plugin marketplace add PsychQuant/psychquant-claude-plugins
+claude plugin marketplace add PsychQuant/che-ical-mcp
 
 # 2. Install the plugin
-claude plugin install che-ical-mcp@psychquant-claude-plugins
+claude plugin install che-ical-mcp@che-ical-mcp
 ```
 
-> **Inside Claude Code?** The slash-command equivalents `/plugin marketplace add PsychQuant/psychquant-claude-plugins` and `/plugin install che-ical-mcp@psychquant-claude-plugins` work the same way.
+> **Inside Claude Code?** The slash-command equivalents `/plugin marketplace add PsychQuant/che-ical-mcp` and `/plugin install che-ical-mcp@che-ical-mcp` work the same way.
+>
+> **Add via git, not a raw URL.** The marketplace's plugin `source` is a same-repo relative path (`./plugin`), which only resolves when the marketplace is added through its Git repo (GitHub `owner/repo`, as above) — not via a direct URL to `marketplace.json`.
+>
+> The plugin is also still bundled in the `psychquant-claude-plugins` aggregator (`claude plugin install che-ical-mcp@psychquant-claude-plugins`); both serve the same versioned binary.
 
 > **Note:** The plugin wraps the MCP binary with auto-download. If the binary is not found at `~/bin/CheICalMCP`, it will be downloaded from GitHub Releases on first use.
 

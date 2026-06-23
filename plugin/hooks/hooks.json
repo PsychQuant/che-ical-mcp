@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-mcp.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__che-ical-mcp__create_event|mcp__che-ical-mcp__update_event|mcp__plugin_che-ical-mcp_ical__create_event|mcp__plugin_che-ical-mcp_ical__update_event",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/verify-weekday.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

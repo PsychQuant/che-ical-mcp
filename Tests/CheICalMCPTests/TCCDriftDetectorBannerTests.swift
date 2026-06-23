@@ -299,7 +299,14 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         let tempBinary = tempDir.appendingPathComponent("CheICalMCP")
         try FileManager.default.copyItem(at: builtBinary, to: tempBinary)
 
-        let (stderr, _) = try spawnAndCaptureStderr(binary: tempBinary)
+        // A freshly-copied binary at a never-seen path incurs a one-time macOS Gatekeeper
+        // first-exec assessment before `main` runs — measured ~3.7s cold here (vs ~0.3s once
+        // assessed). The banner only emits after that, so the default 1.0s maxWait would
+        // SIGTERM the child before it ever prints. The continuous stderr drain captures the
+        // banner the moment it lands, so we just need a wait budget that comfortably exceeds
+        // cold-exec assessment; 10s gives margin for slower/CI hosts without risking a job hang
+        // (the post-kill waitUntilExit is independently capped at 3s).
+        let (stderr, _) = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
 
         XCTAssertTrue(
             stderr.contains("[banner] che-ical-mcp"),

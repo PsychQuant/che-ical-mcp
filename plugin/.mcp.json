@@ -1,0 +1,7 @@
+{
+  "ical": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/che-ical-mcp-wrapper.sh",
+    "description": "macOS Calendar & Reminders MCP server - Native EventKit integration"
+  }
+}
