@@ -121,43 +121,13 @@ enum SetupRunner {
         print("  System Settings → Privacy & Security → Reminders → enable CheICalMCP")
     }
 
-    /// Interactive path: spin up a foreground `NSApplication`, request both
-    /// entitlements inside its run loop (so the TCC dialogs present), print
-    /// results, and exit with the right code. Never returns.
+    /// Interactive path: present the SwiftUI `SetupWindow` inside a foreground
+    /// `NSApplication` (#164) so the user sees live status + Grant buttons + the
+    /// authorization-target binary path, and the TCC dialogs can present. Never returns.
+    /// The window-driving lives in `SetupWindow`; non-AppKit/SwiftUI platforms degrade
+    /// to the headless `requestBoth` flow there.
     @MainActor
     static func runInteractive() -> Never {
-        #if canImport(AppKit)
-        let app = NSApplication.shared
-        app.setActivationPolicy(.regular)       // foreground app -> TCC dialogs can attach
-        let delegate = SetupAppDelegate()
-        app.delegate = delegate
-        app.run()                               // pumps the run loop; the delegate exits when done
-        exit(0)                                  // unreachable (delegate calls exit) — satisfies Never
-        #else
-        // No AppKit (non-macOS) — best-effort bare request on a pumped semaphore.
-        let sema = DispatchSemaphore(value: 0)
-        var bad = false
-        Task { @MainActor in bad = await requestBoth(nonInteractive: false); sema.signal() }
-        sema.wait()
-        printGuidanceIfNeeded(bad)
-        exit(bad ? 1 : 0)
-        #endif
+        SetupWindow.run()
     }
 }
-
-#if canImport(AppKit)
-/// Drives the EventKit requests once the app's run loop is live. No window is
-/// shown: EventKit presents its own system modal; we only need the foreground
-/// app context the run loop provides.
-@MainActor
-final class SetupAppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.activate(ignoringOtherApps: true)
-        Task { @MainActor in
-            let bad = await SetupRunner.requestBoth(nonInteractive: false)
-            SetupRunner.printGuidanceIfNeeded(bad)
-            exit(bad ? 1 : 0)
-        }
-    }
-}
-#endif

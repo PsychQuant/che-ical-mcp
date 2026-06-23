@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-06-23
+
+**#164 — SwiftUI SetupWindow for interactive `--setup` (follow-up to #163).**
+
+- **Added (#164)**: interactive `--setup` now presents a SwiftUI **SetupWindow** inside the foreground `NSApplication` (from #163) instead of firing the requests window-less. The window shows live Calendar / Reminders status, per-entity **Grant** buttons that call `requestFullAccess*` directly (the system dialog), the resolved absolute path of the binary being authorized (the buried `.mcpb` binary — with Copy / Open System Settings actions), and flips to "✅ Ready" the instant access is granted (1.5s live re-check). Mirrors che-apple-mail-mcp's `SetupWindow` (che-apple-mail-mcp#213), but richer because EventKit has a request API (FDA does not). Non-interactive / non-AppKit paths stay headless; the stdio MCP path never enters the window runloop.
+- **Refactored (#164)**: extracted `SetupEntityState` + `SetupModel` (injectable `AuthorizationStatusSource` probe) so the window's status mapping, grant handling (incl. sanitized error), live refresh, and timer idempotency are unit-tested without an `EKEventStore` or SwiftUI render. `SetupRunner.runInteractive()` now delegates to `SetupWindow.run()`.
+- 428 tests, 0 failures.
+
 ## [1.12.0] - 2026-06-23
 
 **#163 — foreground `--setup` so the Calendar TCC dialog actually presents, + binary-specific `--setup` remediation in denial messages and the startup banner.**
