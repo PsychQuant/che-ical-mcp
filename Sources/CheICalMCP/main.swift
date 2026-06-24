@@ -89,6 +89,7 @@ if CommandLine.arguments.contains("--setup") {
     let nonInteractive = NonInteractiveDetection.isNonInteractive(
         env: ProcessInfo.processInfo.environment,
         ppid: getppid(),
+        hasGUISession: NonInteractiveDetection.hasGUISession,
         includeCI: false)
     if nonInteractive {
         print("WARNING: --setup appears to be running in a non-interactive session.")

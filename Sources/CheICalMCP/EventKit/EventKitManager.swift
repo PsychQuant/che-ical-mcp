@@ -66,15 +66,18 @@ actor EventKitManager: EventKitManaging {
         ProcessInfo.processInfo.environment["SSH_CLIENT"] != nil
             || ProcessInfo.processInfo.environment["SSH_CONNECTION"] != nil
 
-    /// Detect if running in a non-interactive session (launchd, cron, CI, no TTY).
+    /// Detect if running in a non-interactive session (launchd daemon, cron, CI, no GUI).
     /// Delegates to the pure `NonInteractiveDetection` helper (#149) with `includeCI: true` —
-    /// the MCP server gate treats a CI runner as non-interactive (no GUI for the TCC prompt,
-    /// #131). Catches direct launchd jobs AND indirect chains (launchd → Claude → MCP) where
-    /// `TERM` is typically absent.
+    /// the MCP server gate treats a CI runner as non-interactive (#131). Uses a window-server
+    /// (Aqua) session probe rather than `TERM` (#165): a GUI-app-spawned MCP server (Claude
+    /// Desktop) has no controlling TTY yet IS in a GUI session and CAN present the TCC dialog,
+    /// so it must NOT be treated as non-interactive — otherwise the gate fast-fails before
+    /// `requestFullAccess` and the first-grant dialog never appears.
     private static let isNonInteractiveSession: Bool =
         NonInteractiveDetection.isNonInteractive(
             env: ProcessInfo.processInfo.environment,
             ppid: getppid(),
+            hasGUISession: NonInteractiveDetection.hasGUISession,
             includeCI: true)
 
     /// Test-accessible wrapper

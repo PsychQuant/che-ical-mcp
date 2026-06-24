@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Added (#164)**: interactive `--setup` now presents a SwiftUI **SetupWindow** inside the foreground `NSApplication` (from #163) instead of firing the requests window-less. The window shows live Calendar / Reminders status, per-entity **Grant** buttons that call `requestFullAccess*` directly (the system dialog), the resolved absolute path of the binary being authorized (the buried `.mcpb` binary — with Copy / Open System Settings actions), and flips to "✅ Ready" the instant access is granted (1.5s live re-check). Mirrors che-apple-mail-mcp's `SetupWindow` (che-apple-mail-mcp#213), but richer because EventKit has a request API (FDA does not). Non-interactive / non-AppKit paths stay headless; the stdio MCP path never enters the window runloop.
 - **Refactored (#164)**: extracted `SetupEntityState` + `SetupModel` (injectable `AuthorizationStatusSource` probe) so the window's status mapping, grant handling (incl. sanitized error), live refresh, and timer idempotency are unit-tested without an `EKEventStore` or SwiftUI render. `SetupRunner.runInteractive()` now delegates to `SetupWindow.run()`.
-- 428 tests, 0 failures.
+
+**#165 — Calendar denied through Claude Desktop: `isNonInteractive` misfired on `TERM == nil`.**
+
+- **Fixed (#165)**: the MCP-server access gate detected "non-interactive" via `env["TERM"] == nil`, which is true for a process spawned by a GUI app (Claude Desktop spawns the stdio server with no controlling TTY). The gate then fast-failed on `.notDetermined` *without ever calling `requestFullAccess`*, so the first-grant Calendar dialog never appeared through Claude Desktop and the tool call returned `access denied (non-interactive session detected)`. `NonInteractiveDetection.isNonInteractive` now uses an injectable **GUI-session** signal (production: `CGSessionCopyCurrentDictionary() != nil`, a window-server/Aqua session) instead of `TERM`: a GUI-app-spawned MCP server (no TTY but in the Aqua session) is correctly treated as interactive, so the gate calls `requestFullAccess` and the dialog can present. #131 (CI hang) stays protected by the `CI` clause; #143 (`--setup` human with `CI=1`) still gets the dialog; launchd daemon / no-GUI-session still fast-fails. Verified via the `NonInteractiveDetection` matrix tests.
+- 429 tests, 0 failures.
 
 ## [1.12.0] - 2026-06-23
 
