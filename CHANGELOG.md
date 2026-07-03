@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**#166 — Claude Desktop 1.18286.0 silently dropped the entire che-ical server (`serverInfo.name` ≠ manifest id).**
+
+- **Fixed (#166)**: the running server self-reported `serverInfo.name = "CheICalMCP"` (PascalCase) while the manifest / extension id is `che-ical-mcp` (kebab). Claude Desktop 1.18286.0's tool-injection layer reconciles the two and, on mismatch, silently drops the **whole** 29-tool server from every conversation — the transport handshake + `tools/list` complete (Desktop receives the full list) but no tool is ever injected, while Claude Code (which does not reconcile the names) works end-to-end. Added `AppVersion.mcpServerName = "che-ical-mcp"` (the MCP protocol identity, which MUST equal the manifest `name`) and repointed the `Server` serverInfo to it. `AppVersion.name` stays `CheICalMCP` — it is the on-disk binary/product name used in `--version` / `--help` / argv0 fallbacks, where the executable's real name is correct. Leading-**but-unproven** root cause: Desktop confirmation needs a notarized reinstall (currently blocked on the expired Apple Developer agreement); the local runtime probe confirms `serverInfo.name` now returns `che-ical-mcp`. 430 tests, 0 failures.
+- **Added (#166)**: `ManifestParityTests.testServerInfoNameMatchesManifestName` guards `serverInfo.name` ↔ `mcpb/manifest.json` `name` parity — the same drift class the file already guarded for `tools[].name`, closing a coverage gap. A cross-umbrella sweep found the identical latent mismatch in che-apple-notes-mcp / che-xcode-mcp / che-contacts-mcp (not Desktop-installed → not yet user-impacting); tracked separately.
+
 ## [1.13.0] - 2026-06-23
 
 **#164 — SwiftUI SetupWindow for interactive `--setup` (follow-up to #163).**
