@@ -22,4 +22,6 @@
 
 ## 5. 發佈 + 手動視窗驗證
 
-- [ ] 5.1 出 notarized build（`make release-signed`）並手動驗證 SetupWindow：互動 `--setup` 開窗、Grant 彈框、授權後翻 Ready、binary 路徑/Copy/Open Settings 正確。驗證：notarytool Accepted；手動視窗驗證結果記於變更驗證註記（需真人）。
+- [~] 5.1 出 notarized build（`make release-signed`）並手動驗證 SetupWindow：互動 `--setup` 開窗、Grant 彈框、授權後翻 Ready、binary 路徑/Copy/Open Settings 正確。驗證：notarytool Accepted；手動視窗驗證結果記於變更驗證註記（需真人）。
+  - **手動視窗驗證 ✅ 完成**（2026-07-03，macOS 26，dev-signed build hotswap 進 installed `.mcpb`）：`--setup` 開窗、Calendar/Reminders 雙綠 full access granted、底部「Both granted — ready」、binary 路徑正確、Open System Settings + Copy binary path 按鈕在。Grant→`requestFullAccess` 彈框因已 fullAccess 無法重現（UI 正確收起 Grant 按鈕）。#164 已據此 /idd-close。
+  - **notarytool Accepted 仍 deferred**：卡 Apple 協議 403，隨下次 notarized `.mcpb` 重發補上（與 #163/#165/#166 共用同一 tail）。change 待 notarize 完成後 `/spectra:archive`。
