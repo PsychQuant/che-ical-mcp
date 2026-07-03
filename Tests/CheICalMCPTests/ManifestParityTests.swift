@@ -77,14 +77,21 @@ final class ManifestParityTests: XCTestCase {
         )
     }
 
-    /// The running server's advertised identity (`serverInfo.name`, fed by
-    /// `AppVersion.mcpServerName` at `Server.swift`) MUST equal the manifest /
-    /// extension id (`mcpb/manifest.json` `name`). Claude Desktop 1.18286.0's
-    /// tool-injection layer reconciles the two and silently drops the whole
-    /// server on mismatch (#166 — `serverInfo.name` was PascalCase `CheICalMCP`
-    /// while the manifest id is kebab `che-ical-mcp`, so all 29 tools vanished
-    /// from Desktop conversations). Guards against the mismatch recurring — the
-    /// same drift class this file already guards for `tools[].name`.
+    /// `AppVersion.mcpServerName` — the constant that feeds the running server's
+    /// `serverInfo.name` at `Server.swift` — MUST equal the manifest / extension
+    /// id (`mcpb/manifest.json` `name`). Both are kebab `che-ical-mcp`.
+    ///
+    /// Motivation (#166): `serverInfo.name` was PascalCase `CheICalMCP` while the
+    /// manifest id is kebab `che-ical-mcp`; the leading (Desktop-side **unproven**)
+    /// hypothesis is that Claude Desktop 1.18286.0 reconciles the two and drops the
+    /// whole server on mismatch. A matching name is a baseline MCP expectation
+    /// regardless, and this guards the same drift class as `tools[].name` above.
+    ///
+    /// SCOPE (deliberate): this asserts the **constant ↔ manifest** value parity.
+    /// It does NOT assert the live `Server(name:)` **wiring** (that `Server.swift`
+    /// actually passes `mcpServerName` rather than `AppVersion.name`) — a wiring
+    /// revert would not be caught here. That wiring is grep- + runtime-probe-
+    /// verified; a true wiring seam is tracked as a follow-up.
     func testServerInfoNameMatchesManifestName() throws {
         let manifestURL = try locateManifest()
         let data = try Data(contentsOf: manifestURL)
