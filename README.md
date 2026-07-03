@@ -5,22 +5,32 @@
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
 
-**macOS Calendar & Reminders MCP server** - Native EventKit integration for complete calendar and task management.
+**Give Claude native control of macOS Calendar and Reminders.** A Swift MCP server built directly on EventKit — 29 tools for events, reminders, tags, batch operations, conflict detection, and undo/redo. Not just calendar events: it drives Reminders and tasks too.
 
 [English](README.md) | [繁體中文](README_zh-TW.md)
 
 ---
 
-> ## ✅ Claude Desktop `.mcpb` — working end-to-end as of v1.14.0 (2026-07-03)
->
-> Two earlier Claude Desktop regressions broke the `.mcpb` install; **both are now fixed** — install the latest `.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases/latest) and read + write + tool-injection all work.
->
-> | Past symptom | Cause | Fixed in |
-> |--------------|-------|----------|
-> | Write tools returned `Calendar access denied` (reads worked) on Desktop 1.6608.2+ | the hardened-runtime binary shipped no `com.apple.security.personal-information.*` entitlements | **v1.11.0** ([#154](https://github.com/PsychQuant/che-ical-mcp/issues/154)) |
-> | The **entire** 29-tool server silently dropped from every conversation on Desktop 1.18286.0 | a literal `&` in the manifest `display_name` (`"macOS Calendar & Reminders"`) tripped Desktop's tool-injection layer | **v1.14.0** ([#166](https://github.com/PsychQuant/che-ical-mcp/issues/166)) |
->
-> Empirically confirmed on the previously-failing Desktop install 2026-07-03 (removing only the `&` flipped the server from dropped → injecting real EventKit data). Historical detail: [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132) / [`#166`](https://github.com/PsychQuant/che-ical-mcp/issues/166) / upstream [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239). The Claude Code plugin path was unaffected throughout.
+## Install
+
+**Claude Code** — register this repo as a marketplace, then install the plugin. The plugin bundles the `/today`, `/week`, `/quick-event`, `/remind` slash commands and a PreToolUse hook that verifies day-of-week on every event write:
+
+```bash
+claude plugin marketplace add PsychQuant/che-ical-mcp
+claude plugin install che-ical-mcp@che-ical-mcp
+```
+
+**Claude Desktop** — download the latest `.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases/latest) and double-click to install.
+
+**Standalone MCP** — the 29-tool server on its own, no plugin extras:
+
+```bash
+mkdir -p ~/bin
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP
+claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
+```
+
+On first use, macOS prompts for **Calendar** and **Reminders** access — click **Allow**. Building from source, upgrading in place, or running under SSH / launchd / VS Code? See [Installation](#installation) for the full guide.
 
 ---
 

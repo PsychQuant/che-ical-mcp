@@ -1,26 +1,36 @@
 # che-ical-mcp
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)](https://www.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-14.0%2B-blue)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)](https://swift.org/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
 
-**macOS 行事曆與提醒事項 MCP 伺服器** - 原生 EventKit 整合，完整的行事曆和任務管理。
+**讓 Claude 直接操控 macOS 行事曆與提醒事項。** 一個建構在 EventKit 之上的原生 Swift MCP 伺服器 — 29 個工具涵蓋事件、提醒、標籤、批次操作、衝突偵測與復原／重做。不只是行事曆事件，連提醒事項和任務也一起管。
 
 [English](README.md) | [繁體中文](README_zh-TW.md)
 
 ---
 
-> ## ✅ Claude Desktop `.mcpb` — 自 v1.14.0 起（2026-07-03）已可正常使用
->
-> 先前有兩個 Claude Desktop regression 讓 `.mcpb` 安裝路徑壞掉，**現在都已修復** — 從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases/latest) 安裝最新 `.mcpb`，讀取 + 寫入 + 工具注入全部正常。
->
-> | 過去症狀 | 原因 | 修復版本 |
-> |----------|------|----------|
-> | Desktop 1.6608.2+ 上 write 工具回 `Calendar access denied`（讀取仍正常）| hardened-runtime binary 沒帶 `com.apple.security.personal-information.*` entitlements | **v1.11.0**（[#154](https://github.com/PsychQuant/che-ical-mcp/issues/154)）|
-> | Desktop 1.18286.0 上**整台** 29-tool server 從每個對話 silent-drop | manifest `display_name` 裡一個字面 `&`（`"macOS Calendar & Reminders"`）觸發 Desktop 工具注入層 | **v1.14.0**（[#166](https://github.com/PsychQuant/che-ical-mcp/issues/166)）|
->
-> 2026-07-03 在原本失敗的 Desktop 實機以單一變數證實（只拿掉 `&` 就從 drop 翻成注入真實 EventKit 資料）。歷史細節：[`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132) / [`#166`](https://github.com/PsychQuant/che-ical-mcp/issues/166) / 上游 [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239)。Claude Code plugin 路徑全程不受影響。
+## 安裝
+
+**Claude Code** — 先把這個 repo 註冊成 marketplace，再安裝 plugin。Plugin 內含 `/today`、`/week`、`/quick-event`、`/remind` slash 指令，以及一個在每次寫入事件時自動核對星期幾的 PreToolUse hook：
+
+```bash
+claude plugin marketplace add PsychQuant/che-ical-mcp
+claude plugin install che-ical-mcp@che-ical-mcp
+```
+
+**Claude Desktop** — 從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases/latest) 下載最新的 `.mcpb`，雙擊安裝。
+
+**單獨的 MCP** — 只要 29 個工具的伺服器本體，不需要 plugin 額外功能：
+
+```bash
+mkdir -p ~/bin
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP
+claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
+```
+
+首次使用時，macOS 會跳出**行事曆**與**提醒事項**的存取請求 — 點選**允許**。想從原始碼建置、就地升級，或在 SSH／launchd／VS Code 下執行？完整說明見下方 [安裝方式](#安裝方式)。
 
 ---
 
