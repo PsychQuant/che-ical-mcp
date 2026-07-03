@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-03
+
 **#166 — Claude Desktop 1.18286.0 silently dropped the entire che-ical server. CONFIRMED root cause: a literal `&` in the manifest `display_name`.**
 
 - **Fixed (#166) — the cure**: `mcpb/manifest.json` `display_name` was `"macOS Calendar & Reminders"`. The literal `&` (ampersand) makes Claude Desktop 1.18286.0's tool-injection layer silently drop the **whole** 29-tool server from every conversation — the transport handshake + `tools/list` complete (Desktop receives the full list) but no tool is ever injected, and nothing surfaces in any log (drift is above the MCP-protocol layer). Claude Code (which does not run this injection layer) worked end-to-end throughout. Changed `display_name` to `"macOS Calendar and Reminders"`. **Empirically confirmed by single-variable intervention** on the exact failing Desktop install (2026-07-03): with the 29-tool binary and manifest otherwise byte-identical, removing only the `&` flipped the server from dropped → injecting real EventKit calendar data. This also explains the regression timeline exactly — `display_name` carried the `&` long before the 2026-07-02 Desktop update; the update changed how the injection layer handles it.
