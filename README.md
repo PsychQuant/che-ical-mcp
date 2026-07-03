@@ -55,120 +55,6 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 
 ---
 
-## Quick Start
-
-### For Claude Desktop
-
-#### Option A: MCPB One-Click Install (Recommended)
-
-Download the latest `.mcpb` file from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) and double-click to install.
-
-#### Option B: Manual Configuration
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "che-ical-mcp": {
-      "command": "/usr/local/bin/che-ical-mcp"
-    }
-  }
-}
-```
-
-### For Claude Code (CLI)
-
-#### Option A: Install as Plugin (Recommended)
-
-The plugin includes slash commands (`/today`, `/week`, `/quick-event`, `/remind`), skills, and **a PreToolUse hook that automatically verifies day-of-week** when creating or updating events — preventing date/weekday mismatch errors.
-
-Two steps — register the marketplace once, then install the plugin. This repo is its
-own self-hosted marketplace (the plugin definition lives in `plugin/`):
-
-```bash
-# 1. Register the marketplace (one-time)
-claude plugin marketplace add PsychQuant/che-ical-mcp
-
-# 2. Install the plugin
-claude plugin install che-ical-mcp@che-ical-mcp
-```
-
-> **Inside Claude Code?** The slash-command equivalents `/plugin marketplace add PsychQuant/che-ical-mcp` and `/plugin install che-ical-mcp@che-ical-mcp` work the same way.
->
-> **Add via git, not a raw URL.** The marketplace's plugin `source` is a same-repo relative path (`./plugin`), which only resolves when the marketplace is added through its Git repo (GitHub `owner/repo`, as above) — not via a direct URL to `marketplace.json`.
->
-> The plugin is also still bundled in the `psychquant-claude-plugins` aggregator (`claude plugin install che-ical-mcp@psychquant-claude-plugins`); both serve the same versioned binary.
-
-> **Note:** The plugin wraps the MCP binary with auto-download. If the binary is not found at `~/bin/CheICalMCP`, it will be downloaded from GitHub Releases on first use.
-
-#### Option B: Install as standalone MCP
-
-If you only need the MCP server without plugin features:
-
-```bash
-# Create ~/bin if needed
-mkdir -p ~/bin
-
-# Download the latest release
-# Note: if upgrading from an older version, `rm -f ~/bin/CheICalMCP` first.
-# Without this, on macOS 26 the kernel may kill the new binary with a stale
-# code-signature cache from the old inode (which running MCP processes might
-# still be holding open).
-rm -f ~/bin/CheICalMCP
-curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
-chmod +x ~/bin/CheICalMCP
-
-# Add to Claude Code
-# --scope user    : available across all projects (stored in ~/.claude.json)
-# --transport stdio: local binary execution via stdin/stdout
-# --              : separator between claude options and the command
-claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
-```
-
-> **💡 Tip:** Always install the binary to a local directory like `~/bin/`. Avoid placing it in cloud-synced folders (Dropbox, iCloud, OneDrive) as file sync operations can cause MCP connection timeouts.
-
-### Build from Source (Optional)
-
-```bash
-git clone https://github.com/PsychQuant/che-ical-mcp.git
-cd che-ical-mcp
-make release && make install
-```
-
-> **⚠️ Swift 6 / Xcode 18 users:** Do not use `swift build` directly — upstream MCP SDK has a concurrency error ([swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)). The Makefile auto-detects this and falls back to Swift 5 language mode.
-
-On first use, macOS will prompt for **Calendar** and **Reminders** access - click "Allow".
-
-### CLI Mode (No MCP Server)
-
-All 29 tools can be invoked directly from the command line without running the MCP server:
-
-```bash
-# Flag-based: --key value pairs
-CheICalMCP --cli list_events --start_date 2026-03-29 --end_date 2026-03-30
-
-# JSON via stdin
-echo '{"tool":"list_calendars","arguments":{}}' | CheICalMCP --cli
-
-# Use with Claude Code via shell
-claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
-```
-
-Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer subprocess over MCP protocol. TCC permissions still required — run `CheICalMCP --setup` first if needed.
-
-### Upgrading an existing install
-
-The plugin wrapper auto-downloads on **fresh** installs, but does NOT replace an existing binary. To upgrade in place:
-
-```bash
-~/bin/CheICalMCP --self-update
-```
-
-This queries GitHub Releases for the latest tag, downloads the new binary, and atomically replaces the current one. If the binary is currently running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual alternative if `--self-update` is unavailable: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
-
----
-
 ## All 29 Tools
 
 <details>
@@ -244,66 +130,77 @@ This queries GitHub Releases for the latest tag, downloads the new binary, and a
 
 ## Installation
 
+The quick paths live at the [top of this README](#install). This is the full reference — manual config, source builds, permission edge cases, in-place upgrades, and CLI mode.
+
 ### Requirements
 
-- macOS 14.0+ (Sonoma or later — required since cluster v1.11.0+ for full TCC permission API support)
+- macOS 14.0+ (Sonoma or later — required since v1.11.0 for the full TCC permission API)
 - Xcode Command Line Tools (only if building from source)
 
-### For Claude Desktop
+### Claude Desktop
 
-#### Method 1: MCPB One-Click Install (Recommended)
+**One-click (recommended):** download the latest `che-ical-mcp-<version>.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases), double-click, and restart Claude Desktop.
 
-1. Download the latest `che-ical-mcp-<version>.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases)
-2. Double-click the `.mcpb` file to install
-3. Restart Claude Desktop
-
-#### Method 2: Manual Configuration
-
-1. Download the binary:
-   ```bash
-   curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
-   chmod +x /usr/local/bin/che-ical-mcp
-   ```
-
-2. Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-   ```json
-   {
-     "mcpServers": {
-       "che-ical-mcp": {
-         "command": "/usr/local/bin/che-ical-mcp"
-       }
-     }
-   }
-   ```
-
-3. Restart Claude Desktop
-
-### For Claude Code (CLI)
+**Manual config:** download the binary, then point `claude_desktop_config.json` at it.
 
 ```bash
-# Create ~/bin if needed
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
+chmod +x /usr/local/bin/che-ical-mcp
+```
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "che-ical-mcp": {
+      "command": "/usr/local/bin/che-ical-mcp"
+    }
+  }
+}
+```
+
+### Claude Code — plugin (recommended)
+
+```bash
+claude plugin marketplace add PsychQuant/che-ical-mcp
+claude plugin install che-ical-mcp@che-ical-mcp
+```
+
+- Inside Claude Code, the slash equivalents `/plugin marketplace add PsychQuant/che-ical-mcp` and `/plugin install che-ical-mcp@che-ical-mcp` work the same way.
+- Add the marketplace through its **Git repo** (`owner/repo`), not a raw `marketplace.json` URL — the plugin `source` is a same-repo relative path (`./plugin`) that only resolves when added via Git.
+- Also bundled in the `psychquant-claude-plugins` aggregator (`claude plugin install che-ical-mcp@psychquant-claude-plugins`); both serve the same versioned binary.
+- The wrapper auto-downloads the binary to `~/bin/CheICalMCP` on first use if it isn't already there.
+
+### Claude Code — standalone MCP
+
+```bash
 mkdir -p ~/bin
 
-# Download the binary
+# If upgrading, remove the old binary first. On macOS 26 the kernel can kill a
+# fresh binary that inherits a stale code-signature cache from the old inode —
+# one a running MCP process may still be holding open.
+rm -f ~/bin/CheICalMCP
+
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
-# Register with Claude Code (user scope = available in all projects)
+# --scope user: available in all projects  ·  --transport stdio: local stdin/stdout
 claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```
 
-### Build from Source (Optional)
+> **💡 Tip:** Keep the binary in a local directory like `~/bin/`. Cloud-synced folders (Dropbox, iCloud, OneDrive) can trigger MCP connection timeouts when sync touches the file.
+
+### Build from Source (optional)
 
 ```bash
 git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
-
-# Register with Claude Code
 claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```
 
-> **⚠️ Swift 6 / Xcode 18 使用者：** 不要直接使用 `swift build` — 上游 MCP SDK 有 concurrency 錯誤（[swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)）。Makefile 會自動偵測並回退到 Swift 5 語言模式。
+> **⚠️ Swift 6 / Xcode 18 users:** Don't run `swift build` directly — the upstream MCP SDK has a concurrency error ([swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)). The Makefile auto-detects this and falls back to Swift 5 language mode.
 
 ### Grant Permissions
 
@@ -334,6 +231,33 @@ On first use, macOS will prompt for **Calendar** and **Reminders** access. Click
 > ```
 >
 > **Note:** This modification will be overwritten when VS Code updates. You'll need to re-apply it after each VS Code update.
+
+### Upgrading an existing install
+
+The plugin wrapper auto-downloads on **fresh** installs but does not replace an existing binary. To upgrade in place:
+
+```bash
+~/bin/CheICalMCP --self-update
+```
+
+This queries GitHub Releases for the latest tag, downloads the new binary, and atomically replaces the current one. If it is running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual fallback: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
+
+### CLI Mode (no MCP server)
+
+All 29 tools can be invoked directly from the command line, no MCP server required:
+
+```bash
+# Flag-based: --key value pairs
+CheICalMCP --cli list_events --start_date 2026-03-29 --end_date 2026-03-30
+
+# JSON via stdin
+echo '{"tool":"list_calendars","arguments":{}}' | CheICalMCP --cli
+
+# From Claude Code via shell
+claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
+```
+
+Handy for launchd jobs, shell scripts, CI pipelines, and agents that prefer a subprocess over the MCP protocol. TCC permissions still apply — run `CheICalMCP --setup` first if needed.
 
 ---
 

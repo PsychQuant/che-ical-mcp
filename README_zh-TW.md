@@ -55,96 +55,6 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 ---
 
-## 快速開始
-
-### Claude Desktop
-
-#### 方式 A：MCPB 一鍵安裝（推薦）
-
-從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) 下載最新的 `.mcpb` 檔案，雙擊即可安裝。
-
-#### 方式 B：手動設定
-
-編輯 `~/Library/Application Support/Claude/claude_desktop_config.json`：
-
-```json
-{
-  "mcpServers": {
-    "che-ical-mcp": {
-      "command": "/usr/local/bin/che-ical-mcp"
-    }
-  }
-}
-```
-
-### Claude Code (CLI)
-
-#### 方式 A：安裝為 Plugin（推薦）
-
-Plugin 包含快捷指令（`/today`、`/week`、`/quick-event`、`/remind`）、skills，以及**建立/修改事件時自動驗證星期的 PreToolUse hook** — 防止日期與星期不符的錯誤。
-
-兩個步驟 — 先註冊 marketplace，再安裝 plugin：
-
-```bash
-# 1. 註冊 marketplace（一次性）
-claude plugin marketplace add PsychQuant/psychquant-claude-plugins
-
-# 2. 安裝 plugin
-claude plugin install che-ical-mcp@psychquant-claude-plugins
-```
-
-> **已經在 Claude Code 裡？** 等價的 slash-command `/plugin marketplace add PsychQuant/psychquant-claude-plugins` 和 `/plugin install che-ical-mcp@psychquant-claude-plugins` 效果相同。
-
-> **備註：** Plugin 內建自動下載功能。如果 `~/bin/CheICalMCP` 不存在，首次使用時會自動從 GitHub Releases 下載。
-
-#### 方式 B：僅安裝 MCP Server
-
-如果只需要 MCP 功能，不需要 plugin 附加功能：
-
-```bash
-# 建立 ~/bin（如果不存在）
-mkdir -p ~/bin
-
-# 下載最新版本
-# 注意：升級時請先 `rm -f ~/bin/CheICalMCP`。沒做這步的話，
-# macOS 26 kernel 可能會拿舊 inode 的 stale code-signature
-# cache 殺掉新 binary（執行中的舊 MCP server processes 可能還
-# 持有那個 inode）— 這是 #62 修的升級陷阱。
-rm -f ~/bin/CheICalMCP
-curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
-chmod +x ~/bin/CheICalMCP
-
-# 加入 Claude Code
-# --scope user    : 跨所有專案可用（存在 ~/.claude.json）
-# --transport stdio: 本地 binary 執行，透過 stdin/stdout
-# --              : 分隔 claude 選項和實際執行的命令
-claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
-```
-
-> **💡 提示：** 請將 binary 安裝到本機目錄如 `~/bin/`。避免放在雲端同步資料夾（Dropbox、iCloud、OneDrive），否則檔案同步可能造成 MCP 連線逾時。
-
-### 從原始碼編譯（可選）
-
-```bash
-git clone https://github.com/PsychQuant/che-ical-mcp.git
-cd che-ical-mcp
-make release && make install
-```
-
-首次使用時，macOS 會詢問**行事曆**和**提醒事項**存取權限 - 請點選「允許」。
-
-### 升級既有安裝
-
-Plugin wrapper 在**全新安裝**時會自動下載，但**不會**取代既有 binary。就地升級：
-
-```bash
-~/bin/CheICalMCP --self-update
-```
-
-會查詢 GitHub Releases 最新 tag、下載新 binary、原子地取代舊版。若 binary 正在當 MCP server 跑，升級後請重啟 MCP host（Claude Desktop / Claude Code）讓新版本生效。手動替代方案：`rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`。
-
----
-
 ## 全部 29 個工具
 
 <details>
@@ -219,57 +129,68 @@ Plugin wrapper 在**全新安裝**時會自動下載，但**不會**取代既有
 
 ## 安裝方式
 
+快速安裝路徑在 [README 最上方](#安裝)。這裡是完整參考 — 手動設定、原始碼編譯、權限邊界情況、就地升級，以及 CLI 模式。
+
 ### 系統需求
 
-- macOS 14.0+（Sonoma 或更新版本，自 post-1.10 cluster 起為完整 TCC 權限 API 支援所需）
+- macOS 14.0+（Sonoma 或更新版本，自 v1.11.0 起為完整 TCC 權限 API 所需）
 - Xcode 命令列工具（僅從原始碼編譯時需要）
 
 ### Claude Desktop
 
-#### 方法 1：MCPB 一鍵安裝（推薦）
+**一鍵安裝（推薦）：** 從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) 下載最新的 `che-ical-mcp-<version>.mcpb`，雙擊安裝，重新啟動 Claude Desktop。
 
-1. 從 [Releases](https://github.com/PsychQuant/che-ical-mcp/releases) 下載最新的 `che-ical-mcp-<version>.mcpb`
-2. 雙擊 `.mcpb` 檔案安裝
-3. 重新啟動 Claude Desktop
-
-#### 方法 2：手動設定
-
-1. 下載執行檔：
-   ```bash
-   # 升級時先 rm -f 舊 binary（macOS 26 inode-reuse 簽章雜湊錯位陷阱，#62）
-   rm -f /usr/local/bin/che-ical-mcp
-   curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
-   chmod +x /usr/local/bin/che-ical-mcp
-   ```
-
-2. 編輯 `~/Library/Application Support/Claude/claude_desktop_config.json`：
-   ```json
-   {
-     "mcpServers": {
-       "che-ical-mcp": {
-         "command": "/usr/local/bin/che-ical-mcp"
-       }
-     }
-   }
-   ```
-
-3. 重新啟動 Claude Desktop
-
-### Claude Code (CLI)
+**手動設定：** 下載 binary，再讓 `claude_desktop_config.json` 指向它。
 
 ```bash
-# 建立 ~/bin（如果不存在）
+# 升級時先 rm -f 舊 binary（macOS 26 inode-reuse 簽章雜湊錯位陷阱，#62）
+rm -f /usr/local/bin/che-ical-mcp
+curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o /usr/local/bin/che-ical-mcp
+chmod +x /usr/local/bin/che-ical-mcp
+```
+
+編輯 `~/Library/Application Support/Claude/claude_desktop_config.json`，再重新啟動 Claude Desktop：
+
+```json
+{
+  "mcpServers": {
+    "che-ical-mcp": {
+      "command": "/usr/local/bin/che-ical-mcp"
+    }
+  }
+}
+```
+
+### Claude Code — plugin（推薦）
+
+```bash
+claude plugin marketplace add PsychQuant/che-ical-mcp
+claude plugin install che-ical-mcp@che-ical-mcp
+```
+
+- 已經在 Claude Code 裡的話，等價的 slash 指令 `/plugin marketplace add PsychQuant/che-ical-mcp` 與 `/plugin install che-ical-mcp@che-ical-mcp` 效果相同。
+- 用 **Git repo**（`owner/repo`）加 marketplace，不要用 `marketplace.json` 的原始 URL — plugin 的 `source` 是同 repo 的相對路徑（`./plugin`），只有透過 Git 加入時才解析得到。
+- 也一併收錄在 `psychquant-claude-plugins` 聚合 marketplace（`claude plugin install che-ical-mcp@psychquant-claude-plugins`）；兩者提供同一個版本化 binary。
+- Plugin wrapper 首次使用時，若 `~/bin/CheICalMCP` 不存在會自動下載。
+
+### Claude Code — 獨立 MCP
+
+```bash
 mkdir -p ~/bin
 
-# 下載執行檔
-# 升級時先 rm -f 舊 binary（macOS 26 inode-reuse 簽章雜湊錯位陷阱，#62）
+# 升級時先移除舊 binary。macOS 26 kernel 可能拿舊 inode 的 stale
+# code-signature cache 殺掉新 binary（執行中的舊 MCP process 可能還
+# 持有那個 inode）— 這是 #62 修的升級陷阱。
 rm -f ~/bin/CheICalMCP
+
 curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP
 chmod +x ~/bin/CheICalMCP
 
-# 註冊到 Claude Code（user scope = 所有專案都可使用）
+# --scope user：跨所有專案可用  ·  --transport stdio：本地 stdin/stdout
 claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```
+
+> **💡 提示：** 請把 binary 放在本機目錄如 `~/bin/`。雲端同步資料夾（Dropbox、iCloud、OneDrive）在同步碰到檔案時可能造成 MCP 連線逾時。
 
 ### 從原始碼編譯（可選）
 
@@ -277,11 +198,10 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 git clone https://github.com/PsychQuant/che-ical-mcp.git
 cd che-ical-mcp
 make release && make install
-
-# 複製到 ~/bin 並註冊
-cp .build/release/CheICalMCP ~/bin/
 claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 ```
+
+> **⚠️ Swift 6 / Xcode 18 使用者：** 不要直接使用 `swift build` — 上游 MCP SDK 有 concurrency 錯誤（[swift-sdk#214](https://github.com/modelcontextprotocol/swift-sdk/issues/214)）。Makefile 會自動偵測並回退到 Swift 5 語言模式。
 
 ### 授予權限
 
@@ -312,6 +232,33 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 > ```
 >
 > **注意：** VS Code 更新時此修改會被覆蓋，需要在每次更新後重新執行。
+
+### 升級既有安裝
+
+Plugin wrapper 在**全新安裝**時會自動下載，但**不會**取代既有 binary。就地升級：
+
+```bash
+~/bin/CheICalMCP --self-update
+```
+
+會查詢 GitHub Releases 最新 tag、下載新 binary、原子地取代舊版。若 binary 正在當 MCP server 跑，升級後請重啟 MCP host（Claude Desktop / Claude Code）讓新版本生效。手動替代方案：`rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`。
+
+### CLI 模式（不啟動 MCP server）
+
+29 個工具全都能直接從命令列呼叫，不需要跑 MCP server：
+
+```bash
+# Flag 形式：--key value
+CheICalMCP --cli list_events --start_date 2026-03-29 --end_date 2026-03-30
+
+# JSON 從 stdin
+echo '{"tool":"list_calendars","arguments":{}}' | CheICalMCP --cli
+
+# 在 Claude Code 裡透過 shell
+claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
+```
+
+適合 launchd 排程、shell script、CI pipeline，以及偏好用子程序而非 MCP protocol 的 agent。TCC 權限仍需先授予 — 需要時先跑 `CheICalMCP --setup`。
 
 ---
 
