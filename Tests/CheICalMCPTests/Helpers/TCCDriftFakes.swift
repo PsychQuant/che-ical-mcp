@@ -29,6 +29,22 @@ struct FakeProcessInventorySource: ProcessInventorySource {
     func enumerateCheICalMCPProcesses() -> ProcessInventoryResult { result }
 }
 
+/// Fake self-code-signing source for the #155 csreq-mismatch signal. Returns a fixed
+/// evaluation for every blob and a fixed entitlement answer — enough to drive the drift
+/// logic deterministically (the real running-binary signature can't be controlled here).
+struct FakeCodeSignatureSource: CodeSignatureSource {
+    let evaluation: RequirementEvaluation
+    let hasEntitlement: Bool?
+
+    init(evaluation: RequirementEvaluation = .satisfies, hasEntitlement: Bool? = true) {
+        self.evaluation = evaluation
+        self.hasEntitlement = hasEntitlement
+    }
+
+    func evaluateRunningBinary(againstRequirementBlob csreqBlob: Data) -> RequirementEvaluation { evaluation }
+    func runningBinaryHasPersonalInfoEntitlement() -> Bool? { hasEntitlement }
+}
+
 // MARK: - Factory helpers (terse fixtures so the test names carry the meaning, not setup boilerplate)
 
 enum TCCDriftFixtures {
@@ -37,9 +53,13 @@ enum TCCDriftFixtures {
         service: String = "kTCCServiceCalendar",
         client: String,
         authValue: Int = 2,
-        lastModifiedUnix: Int64 = 1_748_774_595
+        lastModifiedUnix: Int64 = 1_748_774_595,
+        csreqHex: String? = nil
     ) -> TCCEntry {
-        TCCEntry(service: service, client: client, authValue: authValue, lastModifiedUnix: lastModifiedUnix)
+        TCCEntry(
+            service: service, client: client, authValue: authValue,
+            lastModifiedUnix: lastModifiedUnix, csreqHex: csreqHex
+        )
     }
 
     /// Build a `RunningProcess` from a date string in `LiveProcessInventorySource`'s

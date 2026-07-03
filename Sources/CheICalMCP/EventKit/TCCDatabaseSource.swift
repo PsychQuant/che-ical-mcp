@@ -28,6 +28,19 @@ struct TCCEntry: Sendable, Equatable {
     let authValue: Int
     /// `last_modified` column (Unix epoch seconds).
     let lastModifiedUnix: Int64
+    /// `csreq` BLOB column, hex-encoded (via SQL `hex(csreq)`) so it survives the text
+    /// pipe from the sqlite3 CLI. This is the serialized code-signing requirement TCC
+    /// pinned at grant time; #155 checks whether the running binary still satisfies it.
+    /// `nil` when the row has no csreq (older/ad-hoc rows) or the column is absent.
+    let csreqHex: String?
+
+    init(service: String, client: String, authValue: Int, lastModifiedUnix: Int64, csreqHex: String? = nil) {
+        self.service = service
+        self.client = client
+        self.authValue = authValue
+        self.lastModifiedUnix = lastModifiedUnix
+        self.csreqHex = csreqHex
+    }
 }
 
 /// Either a list of TCC entries that matched, or the reason a read attempt was skipped.
@@ -81,8 +94,11 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
         // Restrict the SQL to CheICalMCP-related rows so we don't bring back the whole
         // table. `client LIKE '%CheICalMCP%'` catches both `/path/.../CheICalMCP` binary
         // paths and `com.checheng.CheICalMCP` bundle IDs.
+        // `hex(csreq)` keeps the requirement BLOB intact across the sqlite3 CLI's text
+        // pipe (a raw BLOB would carry NULs / the `|` separator and corrupt parsing).
+        // Appended last so the existing 4-field indices are unchanged (#155).
         let sql = """
-        SELECT service, client, auth_value, last_modified
+        SELECT service, client, auth_value, last_modified, hex(csreq)
         FROM access
         WHERE client LIKE '%CheICalMCP%';
         """
@@ -129,11 +145,14 @@ struct LiveTCCDatabaseSource: TCCDatabaseSource {
         guard parts.count >= 4 else { return nil }
         guard let authValue = Int(parts[2]) else { return nil }
         guard let lastModified = Int64(parts[3]) else { return nil }
+        // 5th field is `hex(csreq)`; empty (NULL csreq) or absent (schema variance) → nil.
+        let csreqHex: String? = (parts.count >= 5 && !parts[4].isEmpty) ? parts[4] : nil
         return TCCEntry(
             service: parts[0],
             client: parts[1],
             authValue: authValue,
-            lastModifiedUnix: lastModified
+            lastModifiedUnix: lastModified,
+            csreqHex: csreqHex
         )
     }
 }

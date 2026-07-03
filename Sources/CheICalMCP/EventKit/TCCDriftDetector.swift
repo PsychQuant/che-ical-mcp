@@ -15,6 +15,9 @@ import Foundation
 struct TCCDriftDetector {
     let tcc: TCCDatabaseSource
     let processes: ProcessInventorySource
+    /// Self-code-signing checks for the csreq-mismatch signal (#155). Default-wired to
+    /// the Security-framework Live impl; a fake is injected in tests.
+    let codeSignature: CodeSignatureSource
     /// Resolved absolute path of the currently running binary (typically `argv[0]`
     /// resolved through `realpath`).
     let runningBinaryPath: String
@@ -30,10 +33,12 @@ struct TCCDriftDetector {
         processes: ProcessInventorySource,
         runningBinaryPath: String,
         diskBinaryMtime: Date? = nil,
-        stalePIDListLimit: Int = 5
+        stalePIDListLimit: Int = 5,
+        codeSignature: CodeSignatureSource = LiveCodeSignatureSource()
     ) {
         self.tcc = tcc
         self.processes = processes
+        self.codeSignature = codeSignature
         self.runningBinaryPath = runningBinaryPath
         self.diskBinaryMtime = diskBinaryMtime
         self.stalePIDListLimit = stalePIDListLimit
@@ -75,6 +80,34 @@ struct TCCDriftDetector {
                         runningBinaryPath: runningBinaryPath,
                         recordedClient: recent.client
                     ))
+                }
+            }
+
+            // --- csreq mismatch signal (#155 — the #154 silent-denial class) ---
+            //
+            // For each service row that pins a csreq, ask the Security framework whether
+            // the running binary still satisfies it. A `.mismatch` (errSecCSReqFailed) is
+            // the silent-denial class: TCC denies at access time while every status API
+            // reports green, so this banner line is the only surface that catches it.
+            // `.undecidable` → skip (never cry wolf on an install we can't read). Emitted
+            // per-service, most-recent row wins. `hasEntitlement` (read once) annotates
+            // whether a re-prompt would also be policy-blocked (the second half of #154).
+            let hasEntitlement = codeSignature.runningBinaryHasPersonalInfoEntitlement()
+            let csreqByService = Dictionary(
+                grouping: tccResult.entries.filter { $0.csreqHex != nil },
+                by: { $0.service }
+            )
+            for (service, rows) in csreqByService.sorted(by: { $0.key < $1.key }) {
+                guard let recent = rows.max(by: { $0.lastModifiedUnix < $1.lastModifiedUnix }),
+                      let hex = recent.csreqHex,
+                      let blob = TCCDriftDetector.dataFromHex(hex) else { continue }
+                switch codeSignature.evaluateRunningBinary(againstRequirementBlob: blob) {
+                case .mismatch:
+                    signals.append(.csreqMismatch(service: service, hasEntitlement: hasEntitlement))
+                case .undecidable(let reason):
+                    skipReasons.append("csreq check skipped for \(service): \(reason)")
+                case .satisfies:
+                    break
                 }
             }
         }
@@ -216,6 +249,26 @@ struct TCCDriftDetector {
                 } else {
                     lines.append("[drift]   → pkill -f \(shellSingleQuote(runningBinaryPath)) && fully restart your Claude Code / Desktop host")
                 }
+
+            case .csreqMismatch(let service, let hasEntitlement):
+                let safeLabel = EventKitErrorSanitizer.escapeForStderr(humanReadableService(service))
+                lines.append("[drift] TCC.db \(safeLabel) entry pins a code requirement this binary no longer satisfies")
+                lines.append("[drift]   (silent denial — access refused at use time while every status API reports green; #154/#155)")
+                if hasEntitlement == false {
+                    lines.append("[drift]   this binary also lacks the personal-information entitlement — hardened-runtime re-prompts are policy-blocked")
+                }
+                // Same control-char / whitelist gating as the tccPathMismatch case: emit a
+                // copy-paste command only for a recognized service and a clean path.
+                if let tccutilName = tccutilShortName(forService: service) {
+                    if pathHasControlChars(runningBinaryPath) {
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation: tccutil reset \(tccutilName) \(safeBundle), then re-grant from a Developer-ID / notarized build)")
+                    } else {
+                        lines.append("[drift]   → tccutil reset \(tccutilName) \(safeBundle) && \(shellSingleQuote(runningBinaryPath)) --setup   (re-grant from a Developer-ID / notarized build, #154)")
+                    }
+                } else {
+                    let safeService = EventKitErrorSanitizer.escapeForStderr(service)
+                    lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")
+                }
             }
         }
 
@@ -296,6 +349,22 @@ struct TCCDriftDetector {
         return false
     }
 
+    /// Decode a hex string (from SQL `hex(csreq)`, uppercase) into raw bytes for the
+    /// Security-framework requirement check (#155). Returns nil for odd-length or
+    /// non-hex input so a malformed blob degrades to "no signal", not a crash.
+    static func dataFromHex(_ hex: String) -> Data? {
+        guard hex.count % 2 == 0, !hex.isEmpty else { return nil }
+        var data = Data(capacity: hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            data.append(byte)
+            index = next
+        }
+        return data
+    }
+
     /// Process-wide cached ISO-8601 formatter for banner timestamps (verify finding
     /// F9). Banner emits once per startup so cost is negligible, but the pattern is
     /// consistent with `LiveProcessInventorySource.lstartFormatter` static caching.
@@ -323,4 +392,12 @@ enum DriftSignal: Sendable, Equatable {
     /// on-disk binary mtime. They cannot be running the current code; their cached auth
     /// state may differ from what TCC currently grants.
     case staleProcesses(count: Int, oldestStartedAt: Date, samplePIDs: [Int32])
+
+    /// The TCC row for this service pins a code requirement (`csreq`) that the running
+    /// binary no longer satisfies (#155 — the #154 silent-denial class). macOS denies at
+    /// access time while every status API reports green, so this is the only surface that
+    /// catches it. `hasEntitlement` annotates whether the running binary carries the
+    /// personal-information entitlement: `false`/`nil` means a hardened-runtime re-prompt
+    /// would also be policy-blocked (the second half of the #154 signature).
+    case csreqMismatch(service: String, hasEntitlement: Bool?)
 }

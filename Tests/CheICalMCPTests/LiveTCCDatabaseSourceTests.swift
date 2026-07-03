@@ -78,10 +78,12 @@ final class LiveTCCDatabaseSourceTests: XCTestCase {
         // Use sqlite3 to seed the schema + rows. The LIKE filter only matches CheICalMCP-
         // bearing client values, so the SomeOtherTool row must NOT appear in the parsed
         // result.
+        // Schema includes the `csreq` BLOB column TCC.db carries (#155). The CheICalMCP
+        // row seeds a blob (`X'…'`) so the `hex(csreq)` projection + parse round-trips.
         let seedSQL = """
-        CREATE TABLE access (service TEXT, client TEXT, auth_value INTEGER, last_modified INTEGER);
-        INSERT INTO access VALUES ('kTCCServiceCalendar', '/Users/test/bin/CheICalMCP', 2, 1700000000);
-        INSERT INTO access VALUES ('kTCCServiceCalendar', '/Applications/SomeOtherTool', 2, 1700000001);
+        CREATE TABLE access (service TEXT, client TEXT, auth_value INTEGER, last_modified INTEGER, csreq BLOB);
+        INSERT INTO access VALUES ('kTCCServiceCalendar', '/Users/test/bin/CheICalMCP', 2, 1700000000, X'DEADBEEF');
+        INSERT INTO access VALUES ('kTCCServiceCalendar', '/Applications/SomeOtherTool', 2, 1700000001, NULL);
         """
         let seedProcess = Process()
         seedProcess.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -97,6 +99,8 @@ final class LiveTCCDatabaseSourceTests: XCTestCase {
         XCTAssertEqual(result.entries.first?.client, "/Users/test/bin/CheICalMCP")
         XCTAssertEqual(result.entries.first?.authValue, 2)
         XCTAssertEqual(result.entries.first?.lastModifiedUnix, 1700000000)
+        XCTAssertEqual(result.entries.first?.csreqHex, "DEADBEEF",
+            "hex(csreq) projection must round-trip the pinned requirement blob (#155)")
     }
 
     // MARK: - Timeout (#126)
