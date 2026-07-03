@@ -78,7 +78,7 @@ class CheICalMCPServer {
 
         // Create server with tools capability
         server = Server(
-            name: AppVersion.name,
+            name: AppVersion.mcpServerName,
             version: AppVersion.current,
             capabilities: .init(tools: .init())
         )

@@ -76,4 +76,29 @@ final class ManifestParityTests: XCTestCase {
             "Tools in manifest with empty descriptions: \(emptyDescriptionTools)"
         )
     }
+
+    /// The running server's advertised identity (`serverInfo.name`, fed by
+    /// `AppVersion.mcpServerName` at `Server.swift`) MUST equal the manifest /
+    /// extension id (`mcpb/manifest.json` `name`). Claude Desktop 1.18286.0's
+    /// tool-injection layer reconciles the two and silently drops the whole
+    /// server on mismatch (#166 — `serverInfo.name` was PascalCase `CheICalMCP`
+    /// while the manifest id is kebab `che-ical-mcp`, so all 29 tools vanished
+    /// from Desktop conversations). Guards against the mismatch recurring — the
+    /// same drift class this file already guards for `tools[].name`.
+    func testServerInfoNameMatchesManifestName() throws {
+        let manifestURL = try locateManifest()
+        let data = try Data(contentsOf: manifestURL)
+
+        guard let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let manifestName = manifest["name"] as? String
+        else {
+            XCTFail("mcpb/manifest.json did not parse as object with a 'name' string")
+            return
+        }
+
+        XCTAssertEqual(
+            AppVersion.mcpServerName, manifestName,
+            "serverInfo.name (AppVersion.mcpServerName=\"\(AppVersion.mcpServerName)\") must equal mcpb/manifest.json name (\"\(manifestName)\") so Claude Desktop can reconcile the running server against its extension id (#166)."
+        )
+    }
 }

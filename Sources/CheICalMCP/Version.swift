@@ -5,8 +5,17 @@ enum AppVersion {
     /// Current version - update this when releasing
     static let current = "1.13.0"
 
-    /// App name
+    /// App name — the on-disk binary / product name, shown in `--version`,
+    /// `--help` usage lines, and used as the argv0 fallback. Must match the
+    /// executable's actual filename (`CheICalMCP`), NOT the manifest id.
     static let name = "CheICalMCP"
+
+    /// MCP protocol server identity (`serverInfo.name`). MUST equal
+    /// `mcpb/manifest.json` `name` so Claude Desktop's tool-injection layer can
+    /// reconcile the running server against its extension id — a mismatch makes
+    /// Desktop 1.18286.0 silently drop the entire server from conversations
+    /// (#166). Distinct from `name` above, which is the binary/product name.
+    static let mcpServerName = "che-ical-mcp"
 
     /// Full display name
     static let displayName = "macOS Calendar & Reminders MCP Server"
