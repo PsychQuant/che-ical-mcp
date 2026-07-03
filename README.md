@@ -11,19 +11,16 @@
 
 ---
 
-> ## ⚠️ Claude Desktop `.mcpb` install is temporarily broken (2026-05-12)
+> ## ✅ Claude Desktop `.mcpb` — working end-to-end as of v1.14.0 (2026-07-03)
 >
-> The `.mcpb` extension install for Claude Desktop **cannot write to Calendar / Reminders** on Claude Desktop **1.6608.2 and later** (released ~2026-05-09). Write tools return `Calendar access denied`; read tools still work.
+> Two earlier Claude Desktop regressions broke the `.mcpb` install; **both are now fixed** — install the latest `.mcpb` from [Releases](https://github.com/PsychQuant/che-ical-mcp/releases/latest) and read + write + tool-injection all work.
 >
-> **Use one of these instead** until Anthropic ships a fix:
+> | Past symptom | Cause | Fixed in |
+> |--------------|-------|----------|
+> | Write tools returned `Calendar access denied` (reads worked) on Desktop 1.6608.2+ | the hardened-runtime binary shipped no `com.apple.security.personal-information.*` entitlements | **v1.11.0** ([#154](https://github.com/PsychQuant/che-ical-mcp/issues/154)) |
+> | The **entire** 29-tool server silently dropped from every conversation on Desktop 1.18286.0 | a literal `&` in the manifest `display_name` (`"macOS Calendar & Reminders"`) tripped Desktop's tool-injection layer | **v1.14.0** ([#166](https://github.com/PsychQuant/che-ical-mcp/issues/166)) |
 >
-> | Path | Status |
-> |------|--------|
-> | **Claude Code plugin** (`claude plugin install che-ical-mcp@psychquant-claude-plugins`) | ✓ Works |
-> | Legacy `claude_desktop_config.json` (point Claude Desktop at the binary directly) | ⚠ Untested, may bypass the broken wrapper |
-> | Google Calendar API + manual move to target calendar | ✓ Works |
->
-> **Tracking**: upstream [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239), local [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132). Detailed evidence + structural diagnosis in those threads. This banner will be removed once Anthropic restores `.mcpb` Calendar access.
+> Empirically confirmed on the previously-failing Desktop install 2026-07-03 (removing only the `&` flipped the server from dropped → injecting real EventKit data). Historical detail: [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132) / [`#166`](https://github.com/PsychQuant/che-ical-mcp/issues/166) / upstream [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239). The Claude Code plugin path was unaffected throughout.
 
 ---
 
