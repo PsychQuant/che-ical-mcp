@@ -74,3 +74,18 @@ If a future use case argues for `--setup` triggering banner emission, **revisit 
 **Test coverage of the skip list is currently partial**: `testNoBannerForVersionFlag` + `testNoBannerForHelpFlag` exercise `--version` + `--help` only. The other 4 skip targets (`--setup`, `--print-tcc-path`, `--self-update`, `--cli`) are skipped structurally because they call `exit(0)` before `emitStartupBanner()` is reached (control-flow guarantee in `main.swift`), but there is no integration test asserting "binary spawned with `--setup` emits no banner". Adding 4 more `testNoBannerForXxxFlag` integration tests is tracked as a follow-up (low priority — the control-flow guarantee is straightforward to read).
 
 **`#131` update (banner tests now run on CI)**: the `TCCDriftDetectorBannerTests` binary-spawn tests previously carried a runtime `skipIfCI()` guard while #131's GHA hang was unexplained. #131 is resolved (root cause = `AuthorizationGate` blocking on `requestFullAccess` for `.notDetermined` in a non-interactive session, now fast-failing), so the `skipIfCI()` guard is **removed** — all 5 banner tests run on CI. The earlier "skip limits GHA-hang exposure" caveat no longer applies: `spawnAndCaptureStderr` bounds every wait with a SIGTERM→SIGKILL escalation + 3s hard `waitUntilExit` cap (worst case ~6s/test, never the 20m job timeout), and the spawned binary inherits the same EventKit fast-fail under `CI=1`.
+
+## MCP Server Identity Convention (#166)
+
+**Invariant: the value passed as `Server(name:)` (i.e. the runtime `serverInfo.name`) MUST equal `mcpb/manifest.json` `name`.** Both are `che-ical-mcp` (kebab). Claude Desktop 1.18286.0's tool-injection layer reconciles the running server's self-reported `serverInfo.name` against the manifest / extension id; on mismatch it silently drops the **entire** server (all tools) from conversations — the transport handshake and `tools/list` still complete, so no log surfaces the drop. This is why che-ical vanished from Desktop while still working in Claude Code (which does not reconcile the names).
+
+**Two distinct name constants in `Version.swift` — do not conflate them:**
+
+| Constant | Value | Feeds | Must match |
+|----------|-------|-------|-----------|
+| `AppVersion.mcpServerName` | `che-ical-mcp` (kebab) | `Server(name:)` → `serverInfo.name` | `mcpb/manifest.json` `name` |
+| `AppVersion.name` | `CheICalMCP` (Pascal) | `--version`, `--help` Usage lines, argv0 fallbacks | the on-disk binary filename |
+
+`AppVersion.name` is the **binary/product name** and is correctly PascalCase (the executable is `CheICalMCP`); `mcpServerName` is the **MCP protocol identity** and must be the kebab manifest id. `ManifestParityTests.testServerInfoNameMatchesManifestName` enforces the invariant at `swift test` time (alongside the existing `tools[].name` parity guard). When cloning this repo's structure to a new MCP server, wire `Server(name:)` to a kebab constant that equals the manifest, **not** to the binary name.
+
+> **Umbrella note (#166 sister sweep)**: the same latent mismatch exists in che-apple-notes-mcp (`CheAppleNotesMCP`), che-xcode-mcp (`CheXcodeMCP`), and likely che-contacts-mcp (`CheContactsMCP`). They aren't Desktop-installed yet, so they aren't user-impacting, but they will silently drop if installed as `.mcpb` under Desktop 1.18286.0+. Fix rides along on each server's next release; tracked separately.
