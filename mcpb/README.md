@@ -1,20 +1,15 @@
 # che-ical-mcp — `.mcpb` Installation Guide
 
-> ## ⚠️ Known broken on Claude Desktop 1.6608.2+ (as of 2026-05-12)
+> ## ✅ `.mcpb` on Claude Desktop — working end-to-end as of v1.14.0 (2026-07-03)
 >
-> **The `.mcpb` extension install path cannot write to Calendar or Reminders on Claude Desktop 1.6608.2 and later.** Read paths (e.g. `list_events`, `search_events`) still work. All write tools (`create_event` / `update_event` / `create_reminder` / etc.) return `Calendar access denied` regardless of TCC.db state.
+> Two separate Claude Desktop regressions previously broke this install path. **Both are now fixed** — install the latest `.mcpb` (below) and the read + write + tool-injection path works end-to-end.
 >
-> **Cause**: regression in Claude Desktop 1.6608.2 (released ~2026-05-09). Verified by 94 successful `.mcpb` writes pre-1.6608.2 versus 10 consecutive failures starting 2026-05-11. Same binary continues to work via Terminal context. The structural gap is missing `com.apple.security.personal-information.calendars` entitlement + missing `NSCalendarsFullAccessUsageDescription` in `Claude.app/Contents/Info.plist`.
+> | Past symptom | Cause | Fixed in |
+> |--------------|-------|----------|
+> | Write tools returned `Calendar access denied` (reads still worked) on Desktop 1.6608.2+ | the hardened-runtime binary shipped **no** `com.apple.security.personal-information.*` entitlements, so macOS blocked the TCC re-prompt | **v1.11.0** ([#154](https://github.com/PsychQuant/che-ical-mcp/issues/154)) |
+> | The **entire** 29-tool server silently dropped from every conversation on Desktop 1.18286.0 | a literal `&` in the manifest `display_name` (`"macOS Calendar & Reminders"`) tripped Desktop's tool-injection layer — the handshake + `tools/list` completed but no tool was ever injected | **v1.14.0** ([#166](https://github.com/PsychQuant/che-ical-mcp/issues/166)) |
 >
-> **Use one of these workarounds until Anthropic ships a fix:**
->
-> | Path | Status | How |
-> |------|--------|-----|
-> | **Claude Code plugin** | ✓ Works | Install via `claude plugin install che-ical-mcp@psychquant-claude-plugins` — binary auto-downloads to `~/bin/CheICalMCP`, spawn context bypasses the broken `.mcpb` wrapper |
-> | **Legacy `claude_desktop_config.json`** | ⚠ Untested | Manually edit `~/Library/Application Support/Claude/claude_desktop_config.json` to point at the binary directly; may bypass the `disclaimer` wrapper |
-> | **Google Calendar API** | ✓ Works | Bypass macOS Calendar entirely; manually move to target calendar afterwards |
->
-> **Tracking**: upstream report at [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239), local tracker at [`PsychQuant/che-ical-mcp#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132). Once Anthropic restores `.mcpb` Calendar access, this section will be removed and the install steps below will work end-to-end again.
+> Empirically confirmed on the previously-failing Desktop install 2026-07-03 (removing only the `&` flipped the server from dropped → injecting real EventKit data). Historical detail: [`#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132) / [`#166`](https://github.com/PsychQuant/che-ical-mcp/issues/166) / upstream [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239). The Claude Code plugin path (`claude plugin install che-ical-mcp@psychquant-claude-plugins`) was unaffected throughout and remains an alternative.
 
 ---
 
@@ -36,7 +31,7 @@ The silent-failure mode users hit pre-v1.9.0 was instead an in-process cache ant
 
 **v1.9.0 (#108 Phase 2) replaced the cache with a per-call `AuthorizationGate.ensureAccess(...)`** — every Calendar/Reminders operation now reads fresh TCC state via `EKEventStore.authorizationStatus(for:)` before the underlying call. Any subsequent state change surfaces as an immediate `accessDenied` with the appropriate `EventKitError.accessDenied` workaround text (SSH / launchd / interactive variants).
 
-For **first install** on a machine that has never granted TCC to this binary, the steps below are still required — you'll see `notDetermined` from the diagnostic query and need to trigger the initial prompt via Terminal. Subsequent upgrades from v1.9.0+ generally don't need re-running `--setup` unless the system surfaces `denied` (manual revoke or framework-layer reset). The `che-ical-mcp 1.11.0` startup banner (#122) prints current TCC state on every spawn so you can verify without manual SQL.
+For **first install** on a machine that has never granted TCC to this binary, the steps below are still required — you'll see `notDetermined` from the diagnostic query and need to trigger the initial prompt via Terminal. Subsequent upgrades from v1.9.0+ generally don't need re-running `--setup` unless the system surfaces `denied` (manual revoke or framework-layer reset). The che-ical-mcp startup banner (#122) prints current TCC state on every spawn so you can verify without manual SQL, and since v1.14.0 (#155) it also flags a `csreq` mismatch — the specific silent-denial class where a TCC row pins a signature the running binary no longer satisfies.
 
 ### Step 1 — verify current TCC state
 

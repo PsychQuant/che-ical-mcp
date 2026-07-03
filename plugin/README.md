@@ -2,9 +2,9 @@
 
 Claude Code plugin for macOS Calendar & Reminders management using native EventKit.
 
-> ## ℹ️ Why use this plugin instead of the `.mcpb` Claude Desktop install?
+> ## ℹ️ Claude Code plugin vs `.mcpb` Claude Desktop install
 >
-> Claude Desktop **1.6608.2+** (2026-05-09 release) **broke Calendar / Reminders write access for `.mcpb` extension installs** — see [`PsychQuant/che-ical-mcp#132`](https://github.com/PsychQuant/che-ical-mcp/issues/132) and [`anthropics/claude-code#58239`](https://github.com/anthropics/claude-code/issues/58239). This Claude Code plugin path is **not affected** — it spawns the binary via a different process chain that doesn't go through the broken `disclaimer` wrapper. If you tried `.mcpb` and hit "Calendar access denied", install this plugin instead.
+> **Both paths work as of v1.14.0.** Two earlier Desktop regressions that broke the `.mcpb` install are now resolved: write-denial on Desktop 1.6608.2+ (missing personal-information entitlements — fixed v1.11.0, [`#154`](https://github.com/PsychQuant/che-ical-mcp/issues/154)) and a whole-server tool-injection drop on Desktop 1.18286.0 (a literal `&` in the manifest `display_name` — fixed v1.14.0, [`#166`](https://github.com/PsychQuant/che-ical-mcp/issues/166)). Use this **Claude Code plugin** for `~/bin` auto-download + wrapper-managed upgrades; use the [`.mcpb` bundle](https://github.com/PsychQuant/che-ical-mcp/releases/latest) for Claude Desktop one-click install.
 
 ## Features
 
@@ -134,9 +134,23 @@ This plugin requires macOS permissions:
 
 ## Version
 
-Plugin version: 1.11.0 (matches MCP server version)
+Plugin version: 1.14.0 (matches MCP server version)
 
 ### Changelog
+
+**1.14.0** (2026-07-03)
+- **Claude Desktop tool-injection drop fixed** (#166): a literal `&` in `mcpb/manifest.json` `display_name` made Desktop 1.18286.0 silently drop the whole 29-tool server from every conversation (Claude Code was unaffected). Changed `&` → `and`; confirmed by single-variable intervention on the failing install + a `ManifestParityTests` regression guard. Also aligned `serverInfo.name` to the kebab manifest id (hygiene; empirically refuted as the cause).
+- **#154 sister batch**: csreq-mismatch TCC drift signal (#155, `SecCodeCheckValidity` self-check for the silent-denial class), `.mcpb` denial message no longer dead-ends on `--setup` for the already-`.denied` signature (#158), macOS badge 13.0 → 14.0 (#157), swift-nio 2.96 → 2.101 (#159). 454 tests.
+
+**1.13.0** (2026-06-23)
+- **SwiftUI SetupWindow** (#164): interactive `--setup` presents a live-status window (per-entity Grant buttons + resolved binary path) inside the #163 foreground `NSApplication`.
+- **Desktop Calendar-denied fix** (#165): `isNonInteractive` misfired on `TERM == nil` for GUI-app-spawned servers → fast-failed before `requestFullAccess`, so the first-grant dialog never appeared through Claude Desktop; now uses a `CGSession` GUI-session signal. 429 tests.
+
+**1.12.0** (2026-06-23)
+- **Foreground `--setup`** (#163): interactive `--setup` now runs inside a foreground `NSApplication` so EventKit's Calendar TCC modal actually presents (previously silently denied from a bare CLI async context). Denial messages + startup banner surface the resolved binary path + a copy-pasteable `"<path>" --setup` command for the buried `.mcpb` binary.
+
+**1.11.1** (2026-06-18)
+- **`create_event` time-range validation** (#160): symmetric with `update_event` — rejects inverted / zero-duration timed events via a shared `validateTimeRange` guard. 405 tests.
 
 **1.11.0** (2026-06-10)
 - **TCC healing re-prompt unblocked** (#154): `Entitlements.plist` now ships `com.apple.security.personal-information.calendars` + `.reminders`. Long-lived installs upgraded from the pre-v1.7.1 ad-hoc era could hit silent permanent Calendar denial on macOS 26.5 — the TCC row stays pinned to the old build's cdhashes while the healing re-prompt was policy-blocked (binary had no entitlements), with every diagnostic reporting green. First launch of this build is finally allowed to re-prompt; approving rewrites the row keyed to the Developer ID requirement. New `EntitlementsPlistTests` + value-aware signed-binary release gate.
