@@ -61,11 +61,13 @@ final class AuthorizationGateTests: XCTestCase {
             try await AuthorizationGate.ensureAccess(for: .event, typeName: "Calendar", probe: probe)
             XCTFail("Expected EventKitError.accessDenied for .denied")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, _, _) = error else {
+            guard case .accessDenied(let type, _, _, let deniedByStatus) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertEqual(type, "Calendar")
+            XCTAssertTrue(deniedByStatus,
+                ".denied status must set deniedByStatus so the #154 dead-end message shows (#158)")
         }
         XCTAssertEqual(probe.requestCallCount, 0, ".denied must NOT trigger request (would silent-fail)")
     }
@@ -81,12 +83,14 @@ final class AuthorizationGateTests: XCTestCase {
             )
             XCTFail("Expected .accessDenied for .notDetermined in a non-interactive session")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, _, let isNonInteractive) = error else {
+            guard case .accessDenied(let type, _, let isNonInteractive, let deniedByStatus) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
             XCTAssertEqual(type, "Calendar")
             XCTAssertTrue(isNonInteractive, "isNonInteractive context should thread through the error")
+            XCTAssertFalse(deniedByStatus,
+                ".notDetermined fast-fail is a first-run non-interactive block, not the #154 dead end (#158)")
         }
         XCTAssertEqual(
             probe.requestCallCount, 0,
@@ -155,7 +159,7 @@ final class AuthorizationGateTests: XCTestCase {
             try await AuthorizationGate.ensureAccess(for: .reminder, typeName: "Reminders", probe: probe)
             XCTFail("Expected EventKitError.accessDenied for .denied")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, _, _) = error else {
+            guard case .accessDenied(let type, _, _, _) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
@@ -175,7 +179,7 @@ final class AuthorizationGateTests: XCTestCase {
             )
             XCTFail("Expected EventKitError.accessDenied")
         } catch let error as EventKitError {
-            guard case .accessDenied(_, let isSSH, let isNonInteractive) = error else {
+            guard case .accessDenied(_, let isSSH, let isNonInteractive, _) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
@@ -194,7 +198,7 @@ final class AuthorizationGateTests: XCTestCase {
             )
             XCTFail("Expected EventKitError.accessDenied")
         } catch let error as EventKitError {
-            guard case .accessDenied(_, let isSSH, let isNonInteractive) = error else {
+            guard case .accessDenied(_, let isSSH, let isNonInteractive, _) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }
@@ -219,7 +223,7 @@ final class AuthorizationGateTests: XCTestCase {
             )
             XCTFail("Expected EventKitError.accessDenied (non-interactive fast-fail)")
         } catch let error as EventKitError {
-            guard case .accessDenied(let type, let isSSH, let isNonInteractive) = error else {
+            guard case .accessDenied(let type, let isSSH, let isNonInteractive, _) = error else {
                 XCTFail("Expected .accessDenied, got \(error)")
                 return
             }

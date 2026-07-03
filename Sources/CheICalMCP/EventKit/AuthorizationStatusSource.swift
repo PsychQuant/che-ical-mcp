@@ -91,7 +91,11 @@ enum AuthorizationGate {
         case .writeOnly:
             throw EventKitError.insufficientAccess(type: typeName)
         case .denied, .restricted:
-            throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
+            // Status is already denied → requestFullAccess is skipped (it only fires on
+            // `.notDetermined`). Flag `deniedByStatus` so the message layer knows a bare
+            // `--setup` cannot re-prompt from here — the #154 dead-end signature (#158).
+            throw EventKitError.accessDenied(
+                type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive, deniedByStatus: true)
         case .notDetermined:
             // A non-interactive session (SSH / launchd / CI runner / no TTY) cannot display
             // the TCC permission dialog that `requestFullAccess` triggers. On some hosts

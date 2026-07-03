@@ -123,6 +123,111 @@ actor EventKitManager: EventKitManaging {
         return setupCommandHint(binaryPath: BinaryPathResolver.resolveArgv0(argv0))
     }
 
+    /// Pure formatter for the `EventKitError.accessDenied` remediation message. Every
+    /// environment signal (`isMCPB`, `deniedByStatus`) and the resolved `--setup` hint are
+    /// injected — not read from globals — so branch selection is unit-testable deterministically
+    /// (same rationale as `setupCommandHint(binaryPath:)`; `isMCPBClaudeDesktopInstall` is a
+    /// path-derived static that a test cannot flip). `deniedByStatus` selects the #154 dead-end
+    /// variant that must NOT lead with `--setup`, because a bare `--setup` cannot re-prompt a
+    /// status that is already `.denied` (the status-first check only requests on `.notDetermined`). (#158)
+    static func accessDeniedMessage(
+        type: String,
+        isSSH: Bool,
+        isNonInteractive: Bool,
+        isMCPB: Bool,
+        deniedByStatus: Bool,
+        setupHint: String
+    ) -> String {
+        if isSSH && isNonInteractive {
+            return """
+            \(type) access denied (SSH + non-interactive session detected). \
+            macOS TCC does not carry privacy permissions to SSH sessions, \
+            and permission dialogs cannot appear in non-interactive environments. Workarounds:
+            1. Run 'CheICalMCP --setup' once from Terminal on the target Mac (not over SSH)
+            2. Or manually add CheICalMCP in: \
+            System Settings → Privacy & Security → \(type)
+            3. Or grant Full Disk Access to /usr/sbin/sshd: \
+            System Settings → Privacy & Security → Full Disk Access → add sshd
+            4. After any step, restart both the SSH session and the non-interactive job \
+            (launchd service, CI runner, etc.)
+            """
+        }
+        if isSSH {
+            return """
+            \(type) access denied (SSH session detected). \
+            macOS TCC does not carry privacy permissions to SSH sessions. Workarounds:
+            1. Run CheICalMCP once LOCALLY first to trigger the TCC permission dialog
+            2. Or grant Full Disk Access to /usr/sbin/sshd: \
+            System Settings → Privacy & Security → Full Disk Access → add sshd
+            3. After either step, restart the SSH session
+            """
+        }
+        if isNonInteractive {
+            return """
+            \(type) access denied (non-interactive session detected — launchd / CI runner / no TTY). \
+            macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
+            1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
+            \(setupHint)
+            2. Or manually add CheICalMCP in: \
+            System Settings → Privacy & Security → \(type)
+            3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
+            """
+        }
+        // #154 dead-end signature under the `.mcpb` install: TCC status was already `.denied`
+        // at the gate, so a bare `--setup` cannot re-prompt (the status-first check skips
+        // requestFullAccess unless the status is `.notDetermined`). Recommending `--setup`
+        // here actively misleads — Terminal `--setup` reads the *lying* `.fullAccess` legacy
+        // row and no-ops, while the MCP context stays denied. Name the real blocker (#63032)
+        // and point at the paths that actually work. (#158)
+        if isMCPB && deniedByStatus {
+            return """
+            \(type) access denied (Claude Desktop `.mcpb` install; macOS TCC already reports this \
+            binary as denied — not a first-run prompt). Re-running `--setup` will NOT fix this: the \
+            status-first check only calls requestFullAccess on `.notDetermined`, so an already-denied \
+            status short-circuits. This is the #154 signature — a stale Developer-ID TCC row \
+            csreq-mismatches and reads back denied in the MCP context, while a Terminal `--setup`/`--cli` \
+            sees the *lying* `.fullAccess` row and no-ops. Real blocker: csreq mismatch on a legacy \
+            pinned row + Claude Desktop attribution lacking usage strings \
+            (ref anthropics/claude-code#63032, https://github.com/anthropics/claude-code/issues/63032). \
+            What actually works:
+            1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
+            `disclaimer` wrapper entirely (see #132): in Claude Code, run \
+            `claude plugin install che-ical-mcp@psychquant-claude-plugins`
+            2. Or clear the stale/mismatched row so a fresh grant can be minted: \
+            `tccutil reset \(type) com.checheng.CheICalMCP`, then re-run \(setupHint) from Terminal \
+            (now first-run → the dialog can present)
+            3. Or, for one-off calendar data, fall back to `.ics` import
+            4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
+            """
+        }
+        // #133 / #163: first-run under `.mcpb` (status was `.notDetermined`, or the dialog could not
+        // present) — here `--setup` from a foreground Terminal context IS the fix, because the status
+        // is still requestable. Distinct from the `deniedByStatus` dead end above.
+        if isMCPB {
+            return """
+            \(type) access denied (Claude Desktop `.mcpb` install). On macOS 14+ the TCC \
+            permission dialog only presents from a foreground app context, so grant THIS \
+            binary access by running its setup once from Terminal:
+            1. \(setupHint)
+            2. Click Allow on the \(type) dialog, then fully quit + reopen Claude Desktop (Cmd+Q)
+            3. If still denied after granting (a signed-binary entitlement edge case still \
+            under investigation), use the Claude Code plugin install path, which avoids \
+            Claude.app's `disclaimer` wrapper — in Claude Code, run: \
+            `claude plugin install che-ical-mcp@psychquant-claude-plugins`
+            4. Background / follow / 👍 the upstream tracker: \
+            anthropics/claude-code#58239 (https://github.com/anthropics/claude-code/issues/58239)
+            """
+        }
+        return """
+        \(type) access denied. Please grant permission:
+        1. Open System Settings → Privacy & Security → \(type)
+        2. Enable access for the MCP server or Terminal
+        3. Or grant this exact binary access by running its setup from Terminal: \
+        \(setupHint)
+        4. Restart Claude Desktop/Code
+        """
+    }
+
     /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
     /// which cached the granted state in `hasCalendarAccess` and silently failed on
     /// any subsequent revoke. See `AuthorizationGate.ensureAccess` for the switch logic.
@@ -1837,7 +1942,13 @@ struct LocationTriggerInput {
 // MARK: - Errors
 
 enum EventKitError: LocalizedError {
-    case accessDenied(type: String, isSSH: Bool = false, isNonInteractive: Bool = false)
+    /// - Parameter deniedByStatus: the TCC status was already `.denied`/`.restricted`
+    ///   at the gate, so `requestFullAccess` was skipped (the status-first check only
+    ///   requests on `.notDetermined`). Under the `.mcpb` install this is the #154
+    ///   signature — a stale Developer-ID TCC row csreq-mismatches and reads back
+    ///   denied in the MCP context, while a Terminal `--setup` sees the *lying*
+    ///   `.fullAccess` row and no-ops → recommending a bare `--setup` is a dead end. (#158)
+    case accessDenied(type: String, isSSH: Bool = false, isNonInteractive: Bool = false, deniedByStatus: Bool = false)
     /// `.writeOnly` partial-access state (macOS 14+). User granted write-only but a read operation was attempted.
     /// Not silently downgradable — caller must surface so user can upgrade in System Settings.
     case insufficientAccess(type: String)
@@ -1859,73 +1970,15 @@ enum EventKitError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .accessDenied(type: let type, isSSH: let isSSH, isNonInteractive: let isNonInteractive):
-            if isSSH && isNonInteractive {
-                return """
-                \(type) access denied (SSH + non-interactive session detected). \
-                macOS TCC does not carry privacy permissions to SSH sessions, \
-                and permission dialogs cannot appear in non-interactive environments. Workarounds:
-                1. Run 'CheICalMCP --setup' once from Terminal on the target Mac (not over SSH)
-                2. Or manually add CheICalMCP in: \
-                System Settings → Privacy & Security → \(type)
-                3. Or grant Full Disk Access to /usr/sbin/sshd: \
-                System Settings → Privacy & Security → Full Disk Access → add sshd
-                4. After any step, restart both the SSH session and the non-interactive job \
-                (launchd service, CI runner, etc.)
-                """
-            }
-            if isSSH {
-                return """
-                \(type) access denied (SSH session detected). \
-                macOS TCC does not carry privacy permissions to SSH sessions. Workarounds:
-                1. Run CheICalMCP once LOCALLY first to trigger the TCC permission dialog
-                2. Or grant Full Disk Access to /usr/sbin/sshd: \
-                System Settings → Privacy & Security → Full Disk Access → add sshd
-                3. After either step, restart the SSH session
-                """
-            }
-            if isNonInteractive {
-                return """
-                \(type) access denied (non-interactive session detected — launchd / CI runner / no TTY). \
-                macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
-                1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
-                \(EventKitManager.resolvedSetupCommandHint())
-                2. Or manually add CheICalMCP in: \
-                System Settings → Privacy & Security → \(type)
-                3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
-                """
-            }
-            // #133 / #163: under Claude Desktop's `.mcpb` extension install, the generic
-            // "Open System Settings" advice is misleading — on macOS 14+ the TCC dialog
-            // only presents from a foreground app context, so the primary fix is to run
-            // THIS buried `.mcpb` binary's foreground `--setup` once from Terminal (#163;
-            // the dialog now presents after the NSApplication change). If that still denies,
-            // it is the deeper signed-binary entitlement edge case under investigation
-            // (cf. anthropics/claude-code#58239) — the Claude Code plugin install path
-            // avoids Claude.app's `disclaimer` wrapper entirely and is the fallback.
-            if EventKitManager.isMCPBClaudeDesktopInstall {
-                return """
-                \(type) access denied (Claude Desktop `.mcpb` install). On macOS 14+ the TCC \
-                permission dialog only presents from a foreground app context, so grant THIS \
-                binary access by running its setup once from Terminal:
-                1. \(EventKitManager.resolvedSetupCommandHint())
-                2. Click Allow on the \(type) dialog, then fully quit + reopen Claude Desktop (Cmd+Q)
-                3. If still denied after granting (a signed-binary entitlement edge case still \
-                under investigation), use the Claude Code plugin install path, which avoids \
-                Claude.app's `disclaimer` wrapper — in Claude Code, run: \
-                `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-                4. Background / follow / 👍 the upstream tracker: \
-                anthropics/claude-code#58239 (https://github.com/anthropics/claude-code/issues/58239)
-                """
-            }
-            return """
-            \(type) access denied. Please grant permission:
-            1. Open System Settings → Privacy & Security → \(type)
-            2. Enable access for the MCP server or Terminal
-            3. Or grant this exact binary access by running its setup from Terminal: \
-            \(EventKitManager.resolvedSetupCommandHint())
-            4. Restart Claude Desktop/Code
-            """
+        case .accessDenied(type: let type, isSSH: let isSSH, isNonInteractive: let isNonInteractive, deniedByStatus: let deniedByStatus):
+            return EventKitManager.accessDeniedMessage(
+                type: type,
+                isSSH: isSSH,
+                isNonInteractive: isNonInteractive,
+                isMCPB: EventKitManager.isMCPBClaudeDesktopInstall,
+                deniedByStatus: deniedByStatus,
+                setupHint: EventKitManager.resolvedSetupCommandHint()
+            )
         case .insufficientAccess(let type):
             return """
             \(type) access is write-only — read operations need full access. To upgrade:
