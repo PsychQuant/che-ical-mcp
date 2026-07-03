@@ -108,4 +108,39 @@ final class ManifestParityTests: XCTestCase {
             "serverInfo.name (AppVersion.mcpServerName=\"\(AppVersion.mcpServerName)\") must equal mcpb/manifest.json name (\"\(manifestName)\") so Claude Desktop can reconcile the running server against its extension id (#166)."
         )
     }
+
+    /// #166 CONFIRMED ROOT CAUSE: a literal `&` (ampersand) in the manifest
+    /// `display_name` makes Claude Desktop 1.18286.0's tool-injection layer
+    /// silently drop the ENTIRE server from every conversation — handshake and
+    /// `tools/list` still complete, so nothing surfaces in any log.
+    ///
+    /// Proven by single-variable intervention on the exact failing Desktop
+    /// install (2026-07-03): with the 29-tool binary + manifest unchanged except
+    /// `display_name` "macOS Calendar & Reminders" → "macOS Calendar and
+    /// Reminders", the server flipped from dropped → injecting real EventKit
+    /// data. Two earlier hypotheses (serverInfo.name mismatch; tool
+    /// schema-depth / description-length / tool-count) were empirically refuted
+    /// — they survived every test precisely because `display_name` was never the
+    /// varied variable.
+    ///
+    /// `&` is the only character CONFIRMED to break injection; `<` and `>` are
+    /// guarded alongside it as defense-in-depth (same XML/HTML metacharacter
+    /// class, unverified) so this bug class cannot silently recur.
+    func testDisplayNameHasNoXMLMetacharacters() throws {
+        let manifestURL = try locateManifest()
+        let data = try Data(contentsOf: manifestURL)
+
+        guard let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let displayName = manifest["display_name"] as? String
+        else {
+            XCTFail("mcpb/manifest.json did not parse as object with a 'display_name' string")
+            return
+        }
+
+        let forbidden = displayName.filter { "&<>".contains($0) }
+        XCTAssertTrue(
+            forbidden.isEmpty,
+            "mcpb/manifest.json display_name (\"\(displayName)\") must not contain XML/HTML metacharacters \(Array("&<>")) — a literal `&` makes Claude Desktop 1.18286.0 silently drop the whole server from conversations (#166, confirmed root cause). Found: \(Array(forbidden))."
+        )
+    }
 }
