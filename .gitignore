@@ -44,3 +44,5 @@ openspec/.vector-search.db*
 .claude/ralph-loop.local.md
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+.claude/.idd/
+.tmp-*
