@@ -36,6 +36,11 @@ references/
 .spectra/
 openspec/.vector-search.db*
 
+# MCP Registry publisher secrets (mcp-publisher login drops plaintext tokens here — NEVER commit)
+.mcpregistry_github_token
+.mcpregistry_registry_token
+.mcp_publisher_token
+
 # Session / local state
 .remember/
 .claude/settings.local.json

@@ -178,7 +178,7 @@ This document compares che-ical-mcp against all known macOS Calendar/Reminders M
 
 ### che-ical-mcp's Unique Strengths
 
-1. **24 tools** — nearly 2x the closest competitor (13)
+1. **29 tools** — over 2x the closest competitor (13)
 2. **Pure Swift + direct EventKit** — millisecond queries, no bridge overhead
 3. **5 batch operations** — no competitor has any
 4. **Conflict detection** — unique pre-scheduling safety

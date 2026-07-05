@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-05
+
+**Metadata correction — tool-count consistency across published surfaces.**
+
+- **Fixed** — `server.json` `description` read "24 tools" and `PROMOTION.md` read "20 tools", while the server actually exposes **29 tools** (the authoritative count: `mcpb/manifest.json` `tools[]` has 29 entries, guarded by `ManifestParityTests`, and `long_description` already said 29). Corrected the registry-facing `server.json` description, `docs/COMPETITIVE_ANALYSIS.md` ("24 tools → 29 tools", "nearly 2x → over 2x"), and all six `PROMOTION.md` mentions to 29. Historical tool counts in this CHANGELOG and the README version-history table (e.g. "28 tools" at v1.6.0) are left as accurate records of past versions.
+- **No code or tool-surface changes** — the binary is functionally identical to v1.14.0. This release exists solely to publish the corrected metadata: MCP Registry versions are immutable, so a metadata fix to the already-published `io.github.PsychQuant/che-ical-mcp` v1.14.0 requires cutting a new version.
+- 454 tests, 0 failures (unchanged).
+
 ## [1.14.0] - 2026-07-03
 
 **#166 — Claude Desktop 1.18286.0 silently dropped the entire che-ical server. CONFIRMED root cause: a literal `&` in the manifest `display_name`.**

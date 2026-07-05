@@ -486,7 +486,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.14.0
+- **Current Version**: v1.14.1
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -499,6 +499,7 @@ CheICalMCP --setup
 
 | Version | Changes |
 |---------|---------|
+| v1.14.1 | **Metadata correction — tool-count consistency.** `server.json` `description` said "24 tools" and `PROMOTION.md` said "20 tools"; the server actually exposes **29 tools** (matching `mcpb/manifest.json` `long_description` and the `ManifestParityTests` tool-parity guard). Corrected the registry-facing `server.json`, `docs/COMPETITIVE_ANALYSIS.md`, and `PROMOTION.md` to 29. No code or tool-surface changes — functionally identical to v1.14.0; this release exists solely to publish corrected registry metadata (registry versions are immutable). |
 | v1.14.0 | **Claude Desktop tool-injection drop fixed** (#166): a literal `&` in `mcpb/manifest.json` `display_name` made Desktop 1.18286.0 silently drop the whole 29-tool server from every conversation (Claude Code unaffected); changed `&` → `and`, confirmed by single-variable intervention on the failing install + a `ManifestParityTests` regression guard. Also aligned `serverInfo.name` to the kebab manifest id (hygiene; empirically refuted as the cause). **#154 sister batch**: csreq-mismatch TCC drift signal (#155, `SecCodeCheckValidity` self-check for the silent-denial class), `.mcpb` denial message no longer dead-ends on `--setup` for the already-`.denied` signature (#158), macOS badge 13.0 → 14.0 (#157), swift-nio 2.96 → 2.101 (#159). 454 tests. |
 | v1.13.0 | **SwiftUI SetupWindow** (#164): interactive `--setup` presents a live-status window (per-entity Grant buttons + resolved binary path) inside the #163 foreground `NSApplication`. **Desktop Calendar-denied fix** (#165): `isNonInteractive` misfired on `TERM == nil` for GUI-app-spawned servers → fast-failed before `requestFullAccess`, so the first-grant dialog never appeared through Claude Desktop; now uses a `CGSession` GUI-session signal. 429 tests. |
 | v1.12.0 | **Foreground `--setup`** (#163): interactive `--setup` now runs inside a foreground `NSApplication` so EventKit's Calendar TCC modal actually presents (previously silently denied from a bare CLI async context). Denial messages + startup banner surface the resolved binary path + a copy-pasteable `"<path>" --setup` command for the buried `.mcpb` binary. |

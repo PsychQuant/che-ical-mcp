@@ -1,6 +1,6 @@
 {
   "name": "che-ical-mcp",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "description": "macOS 行事曆與提醒事項 MCP Server - EventKit 整合，29 個工具，--cli 直接呼叫模式、--setup TCC 預授權、--self-update 自我升級+SHA-256 驗證、個別事件時區、復原/重做、週期事件 occurrence 操作、cleanup_completed_reminders 一鍵清除、清除到期日、星期驗證、MCP 層級 #標籤、冪等寫入、重複事件、地點觸發、結構化位置、彈性日期解析、模糊匹配、篩選/排序/限制",
   "author": {
     "name": "Che Cheng"
