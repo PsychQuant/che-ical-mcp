@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-07-07
+
+**#168 — `troubleshoot-tcc` diagnostic now covers the host-app (responsible-process) TCC layer, not just the binary's own grant.**
+
+- **Fixed** — `troubleshoot-tcc` previously inspected only the `CheICalMCP` binary's own EventKit `authorizationStatus`, missing macOS TCC's responsible-process layer. A user hit `Calendar access denied` while the System Settings list showed a *second* entry — a bare version string (e.g. `2.1.202` = the Claude Code versioned binary at `~/.local/share/claude/versions/<version>`) whose toggle also mattered. The `troubleshoot-tcc` skill, `/check-tcc` command, `mcpb/README.md`, and `plugin/CLAUDE.md` now document the two-layer authorization model, the context-dependence of `--print-tcc-path`, a full "which toggles to flip" checklist (Claude Code vs Claude Desktop), and a toggle-and-observe verification procedure.
+- **Docs / skill-layer only** — no binary or tool-surface changes; the binary is byte-identical to v1.14.1. Sister issues #169 (`--print-tcc-path` should print execution context) and #170 (Claude Code updates rotate the versioned binary path, staling the host-layer grant) filed for follow-up.
+
 ## [1.14.1] - 2026-07-05
 
 **Metadata correction — tool-count consistency across published surfaces.**
