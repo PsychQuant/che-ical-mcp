@@ -25,7 +25,7 @@ Host-layer entry names:
 |---|---|---|
 | **Claude Code** (CLI) | A bare **version-number string**, e.g. `2.1.202`, with a question-mark document icon | That IS the Claude Code native binary — the real executable lives at `~/.local/share/claude/versions/<version>` (`~/.local/bin/claude` is a symlink to it), and TCC displays a path-keyed client by its filename. ⚠️ The path **rotates on every Claude Code update**, so this grant can silently go stale (#170) |
 | **Terminal.app / iTerm2 / VS Code** | The app's own name | Applies when you run the binary (or claude) from that app's shell |
-| **Claude Desktop** | *(no host entry needed)* | Desktop spawns `.mcpb` servers via `/Applications/Claude.app/Contents/Helpers/disclaimer`, which makes the child its **own** responsible process — the `.mcpb` `CheICalMCP` entry is self-contained |
+| **Claude Desktop** | *(no host entry needed)* | Desktop spawns `.mcpb` servers via `/Applications/Claude.app/Contents/Helpers/disclaimer`, which makes the child its **own** responsible process — the `.mcpb` `CheICalMCP` entry is self-contained. (The disclaimer shim `exec`-replaces itself, so it usually won't show up in a live `ps` ancestry trace — identify Desktop context by the *absence* of a `claude/versions/…` ancestor, not by finding the disclaimer.) |
 
 **Operative rule**: for the host you actually use, make sure **both** the `CheICalMCP` entry and the host-layer entry are toggled ON. (Whether tccd requires both — AND — or only the responsible one is not yet conclusively established; both-ON is a sufficient condition either way. See "Verifying which entry gates your context" below.)
 
@@ -97,11 +97,13 @@ Open **System Settings → Privacy & Security → Calendar** (then repeat for **
 To confirm **which host context** a running server actually belongs to, trace its ancestry:
 
 ```bash
-# Replace <pid> with a CheICalMCP pid from: pgrep -fl CheICalMCP
-P=<pid>; while [ "$P" -gt 1 ]; do ps -o pid=,ppid=,comm= -p $P; P=$(ps -o ppid= -p $P | tr -d ' '); done
+# Set P to a CheICalMCP pid from: pgrep -fl CheICalMCP
+P=<pid>; while [ -n "$P" ] && [ "$P" -gt 1 ] 2>/dev/null; do ps -o pid=,ppid=,comm= -p "$P"; P=$(ps -o ppid= -p "$P" | tr -d ' '); done
 ```
 
-A chain containing `.../claude/versions/<version>` = Claude Code context; a chain containing `Helpers/disclaimer` = Claude Desktop (self-responsible).
+Read the chain like this:
+- Contains `.../claude/versions/<version>` → **Claude Code** context (the version-number binary is the responsible process; this half is reliable — the versioned binary stays resident in the live tree).
+- **Claude Desktop** is identified by *absence*: the `Helpers/disclaimer` shim typically `exec`-replaces itself with the server binary, so it usually does **not** appear as a live ancestor. A Desktop-spawned server's chain is roughly `CheICalMCP → Claude → launchd` with **no** `claude/versions/…` segment. So: chain lacks the `claude/versions/…` segment **and** the running binary is the `.mcpb` path (from Step 1) → treat as Desktop / self-responsible.
 
 ### Step 4: Reset stale TCC entries (only if `denied` or post-upgrade silent fail)
 
@@ -139,12 +141,13 @@ The complete "what to click" list, per host:
 
 **Claude Code (wrapper install, `~/bin/CheICalMCP`)**
 
-1. In Terminal.app, run `~/bin/CheICalMCP --setup` → click **Allow** on both dialogs (Calendar + Reminders) — creates the binary-layer grant
+1. In Terminal.app, run `~/bin/CheICalMCP --setup` → click **Allow** on both dialogs (Calendar + Reminders). This creates the `CheICalMCP` binary-layer grant. ⚠️ Note the attribution nuance: because you launched it from Terminal, the *responsible process* for this grant is Terminal, not Claude Code — so this step is mainly to (a) get the `CheICalMCP` entry created and (b) prove the binary itself can prompt. The host-layer grant that actually gates Claude Code's tool calls is created in step 3, from a Claude Code session.
 2. System Settings → Privacy & Security → **Calendar**: confirm `CheICalMCP` toggle **ON**; repeat under **Reminders**
-3. In a Claude Code session, trigger a calendar tool call (e.g. "list 我今天的 events"):
+3. In a Claude Code session, trigger a calendar tool call (e.g. "list 我今天的 events") — this is the step that establishes the Claude Code host-layer grant:
    - If a new permission dialog appears → **Allow** (creates the host-layer grant)
    - If the call fails without a dialog → check both panes for the **version-number entry** (e.g. `2.1.202`) and toggle it **ON**
 4. Re-run the tool call → should return real data
+   - Still failing after clicking Allow in step 1 but not step 3? That's the classic #168 symptom — the step-1 grant landed on Terminal's attribution, not Claude Code's. The step-3 host-layer entry is the one that matters here.
 5. **After every Claude Code update**: if calendar tools break again, re-check Step 3's version-number entry — the binary path rotated (#170)
 
 **Claude Desktop (`.mcpb` install)**

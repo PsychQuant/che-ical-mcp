@@ -11,13 +11,15 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
 
 ## Execution
 
-1. **Locate the binary**:
+1. **Locate the binary** (both installs — Desktop `.mcpb` and Claude Code wrapper):
 
    ```bash
+   # Desktop .mcpb install first, then Claude Code wrapper install (~/bin)
    BINARY=$(find ~/Library/Application\ Support/Claude -name CheICalMCP 2>/dev/null | head -1)
+   [ -z "$BINARY" ] && [ -x "$HOME/bin/CheICalMCP" ] && BINARY="$HOME/bin/CheICalMCP"
    ```
 
-   If empty → tell user `.mcpb` is not installed in Claude Desktop and point to https://github.com/PsychQuant/che-ical-mcp/releases/latest
+   If still empty → neither install found. For Claude Desktop, install the `.mcpb`; for Claude Code, the plugin wrapper auto-downloads `~/bin/CheICalMCP` on first MCP spawn. Both from https://github.com/PsychQuant/che-ical-mcp/releases/latest
 
 2. **Run the diagnostic**:
 
@@ -31,7 +33,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | `tccutil reset` + re-grant via Step 3 |
+   | `denied` | Explicitly denied | `tccutil reset` then re-grant (see `troubleshoot-tcc` skill Step 4–5) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
