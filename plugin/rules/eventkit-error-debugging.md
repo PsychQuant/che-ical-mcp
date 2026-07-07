@@ -34,7 +34,7 @@ Pre-v1.9.0 you could rationalize "maybe the cache is stale, retry will work"; po
 
 ## Reference
 
-- `troubleshoot-tcc` skill — full 4-step diagnostic walkthrough
+- `troubleshoot-tcc` skill — full 6-step diagnostic walkthrough (binary layer + host-app / responsible-process layer, #168)
 - `/check-tcc` — quick state read
 - `mcpb/README.md` (v1.8.1+) — user-facing setup guide
 - Issue #108 (closed) — full RCA + falsified cdhash hypothesis + corrected cache anti-pattern

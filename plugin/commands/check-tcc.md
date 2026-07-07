@@ -11,13 +11,15 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
 
 ## Execution
 
-1. **Locate the binary**:
+1. **Locate the binary** (both installs — Desktop `.mcpb` and Claude Code wrapper):
 
    ```bash
+   # Desktop .mcpb install first, then Claude Code wrapper install (~/bin)
    BINARY=$(find ~/Library/Application\ Support/Claude -name CheICalMCP 2>/dev/null | head -1)
+   [ -z "$BINARY" ] && [ -x "$HOME/bin/CheICalMCP" ] && BINARY="$HOME/bin/CheICalMCP"
    ```
 
-   If empty → tell user `.mcpb` is not installed in Claude Desktop and point to https://github.com/PsychQuant/che-ical-mcp/releases/latest
+   If still empty → neither install found. For Claude Desktop, install the `.mcpb`; for Claude Code, the plugin wrapper auto-downloads `~/bin/CheICalMCP` on first MCP spawn. Both from https://github.com/PsychQuant/che-ical-mcp/releases/latest
 
 2. **Run the diagnostic**:
 
@@ -31,11 +33,19 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | `tccutil reset` + re-grant via Step 3 |
+   | `denied` | Explicitly denied | `tccutil reset` then re-grant (see `troubleshoot-tcc` skill Step 4–5) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
-4. **If user wants the full troubleshooting walkthrough**, suggest `troubleshoot-tcc` skill or paste the `mcpb/README.md` link.
+4. **Remind about the two TCC layers (#168)**: the status above is **context-dependent** — it reflects the attribution of the context this command ran in (for a Claude Code session's Bash tool, that's the Claude Code side), not an absolute property of the binary. Besides the `CheICalMCP` entry, System Settings → Privacy & Security → Calendar / Reminders may need a **host-layer entry** toggled ON:
+
+   | Host | Host-layer entry |
+   |---|---|
+   | Claude Code | A version-number entry like `2.1.202` (= the Claude Code native binary; rotates on every update, #170) |
+   | Terminal / VS Code | The app's own name |
+   | Claude Desktop | None needed (disclaimer isolation — the `.mcpb` `CheICalMCP` entry is self-contained) |
+
+5. **If user wants the full troubleshooting walkthrough**, suggest `troubleshoot-tcc` skill (covers both layers + the complete authorization checklist) or paste the `mcpb/README.md` link.
 
 ## Why this command exists
 

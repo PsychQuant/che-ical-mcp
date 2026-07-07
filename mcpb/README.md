@@ -113,6 +113,13 @@ If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state act
 
 If you're on **v1.8.x or earlier** AND seeing this symptom, upgrading to v1.9.0+ is the structural fix; the manual Steps 1–4 remediation is a stopgap for that older release line. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis and the disproved-hypothesis audit trail.
 
+### A second, unnamed entry (e.g. `2.1.202`) in the permission list
+
+You may see an extra entry in **System Settings → Privacy & Security → Calendar / Reminders** showing a bare version-number string (e.g. `2.1.202`) with a question-mark icon, next to `CheICalMCP`. That is **not** part of this `.mcpb` — it's the **Claude Code CLI's native binary** (`~/.local/share/claude/versions/<version>`), which macOS TCC lists as the *responsible process* for calendar access made from Claude Code sessions ([#168](https://github.com/PsychQuant/che-ical-mcp/issues/168)).
+
+- **Claude Desktop users**: this entry is irrelevant to the `.mcpb`. Desktop launches MCP servers through its `Helpers/disclaimer`, which makes the `.mcpb` binary its own TCC client — the `CheICalMCP` entry alone is what matters here.
+- **If you also use Claude Code**: keep that version-number entry toggled ON too, and note it can go stale after Claude Code updates (the versioned path rotates, [#170](https://github.com/PsychQuant/che-ical-mcp/issues/170)). Full two-layer walkthrough: the `troubleshoot-tcc` skill in the plugin.
+
 ### Verifying the fix worked
 
 After Step 4, run the Step 1 SQL query again. You should now see two rows with `auth_value=2` and a recent `last_modified` timestamp matching today's date. If the timestamp didn't update, Step 3 didn't actually trigger the prompt — reset via the troubleshooting snippet and retry.
