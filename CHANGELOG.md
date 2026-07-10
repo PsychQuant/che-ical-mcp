@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**#175 — startup banner now detects the "versioned Claude Code host + ungranted EventKit" combination.**
+
+- **Added** — a new drift-detector signal (`#122` family): when the MCP server starts under a Claude Code **versioned** host binary (`~/.local/share/claude/versions/<v>` — the path #170 documents as rotating on every auto-update, staling the host-side TCC grant) AND Calendar is not granted in the current attribution context, the banner explains the rotation and points at the actionable fix (toggle the newest version-number entry in System Settings, or trigger a tool call to re-prompt; troubleshoot-tcc skill for the full checklist). The parent-chain capture (`ParentChainSource`, #169) is spent only on the ungranted path — granted users see zero added noise; capture failure degrades to a visible `versioned-host check skipped` reason per the #122 advisory contract.
+
 **#173 — parent-chain diagnostics polish (follow-up bundle from the #169 verify).**
 
 - **Changed** — the `--print-tcc-path` parent-chain walk now makes every early stop visible: hop-cap and cycle stops append a synthetic marker hop (`(chain truncated after 15 hops)` / `(cycle detected)`, carrying the pid the walk stopped at) instead of ending silently; `ps` rows with an empty `comm` keep their pid→ppid linkage as `(unknown)` instead of severing the chain one hop early; `ps` runs with `-ww` so long bundle paths are never width-clamped; non-UTF-8 `ps` output and non-zero exits now surface as `(parent chain unavailable: …)` reasons (with stderr's first line attached) instead of a silently empty chain. The NOTE wording no longer equates the parent chain with macOS's responsible process (it is an approximation), and Claude Desktop users are routed to the sqlite3 TCC query (this shell-invoked chain can never show the Desktop MCP context). 9 new tests including real-subprocess fixture tests for the decode/exit failure paths (`LiveParentChainSourceTests`).
