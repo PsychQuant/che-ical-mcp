@@ -2,19 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>com.checheng.CheICalMCP</string>
-    <key>CFBundleName</key>
-    <string>CheICalMCP</string>
-    <key>CFBundleVersion</key>
-    <string>1.14.1</string>
-    <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>CheICalMCP needs access to your calendars to manage events and schedules.</string>
-    <key>NSRemindersFullAccessUsageDescription</key>
-    <string>CheICalMCP needs access to your reminders to manage tasks.</string>
-    <key>NSCalendarsUsageDescription</key>
-    <string>CheICalMCP needs access to your calendars to manage events and schedules.</string>
-    <key>NSRemindersUsageDescription</key>
-    <string>CheICalMCP needs access to your reminders to manage tasks.</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.checheng.CheICalMCP</string>
+	<key>CFBundleName</key>
+	<string>CheICalMCP</string>
+	<key>CFBundleVersion</key>
+	<string>1.14.2</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>CheICalMCP needs access to your calendars to manage events and schedules.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>CheICalMCP needs access to your calendars to manage events and schedules.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>CheICalMCP needs access to your reminders to manage tasks.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>CheICalMCP needs access to your reminders to manage tasks.</string>
 </dict>
 </plist>

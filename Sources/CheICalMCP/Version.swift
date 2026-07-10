@@ -3,7 +3,7 @@ import Foundation
 /// Centralized version management
 enum AppVersion {
     /// Current version - update this when releasing
-    static let current = "1.14.1"
+    static let current = "1.14.2"
 
     /// App name — the on-disk binary / product name, shown in `--version`,
     /// `--help` usage lines, and used as the argv0 fallback. Must match the
