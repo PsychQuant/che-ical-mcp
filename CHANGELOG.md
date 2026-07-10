@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**#169 — `--print-tcc-path` now prints its execution context (parent process chain) + a context-dependence warning.**
+
+- **Added** — the `--print-tcc-path` diagnostic output ends with a new "Execution context (parent process chain)" section: the binary's own pid/path marked `(this binary)`, then every ancestor up to launchd (pid 1), captured via a single `ps -A -o pid=,ppid=,comm=` snapshot walked in-memory (cycle-guarded, hop-capped at 15 — a real Claude Code session chain already spends 10 hops). A `NOTE:` warning follows, stating that the EventKit authorization status shown above reflects the CURRENT execution context (the responsible process), not an absolute property of the binary (#168) — to diagnose a specific host, run the command from within that host's environment. `ps` failure/timeout degrades to a visible `(parent chain unavailable: <reason>)` line; the rest of the output is unaffected.
+- **Internals** — new `ParentChainSource` seam (`LiveParentChainSource` via `SubprocessRunner`, 500 ms budget) + pure `ParentChainWalker` (parse/walk) + `ParentChainFormatter` (display, per the #117 extraction precedent); `--help` text mentions the new section. 14 new unit tests (`ParentChainWalkTests`, `ParentChainFormatterTests`).
+
 ## [1.14.2] - 2026-07-07
 
 **#168 — `troubleshoot-tcc` diagnostic now covers the host-app (responsible-process) TCC layer, not just the binary's own grant.**
