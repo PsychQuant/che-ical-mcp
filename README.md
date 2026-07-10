@@ -435,6 +435,7 @@ If ambiguity is detected, the error message will list all available sources.
 | **Permission denied over SSH** | See [SSH Access](#ssh-access) below |
 | **Permission denied under launchd** | See [launchd / Automation](#launchd--automation) below |
 | **One service denied while every diagnostic reports green** | See [Silent permanent denial after upgrade](#silent-permanent-denial-after-upgrade-154) below |
+| **Calendar/Reminders break again after every Claude Code update** | See [Claude Code updates rotate the host-side grant](#claude-code-updates-rotate-the-host-side-grant-170) below |
 | Calendar not found | Ensure the calendar is visible in macOS Calendar app |
 | Reminders not syncing | Check iCloud sync in System Settings |
 
@@ -447,6 +448,12 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 **Fix**: upgrade to **v1.11.0 or later** (the binary now ships both entitlements), restart the host app (full `Cmd+Q` for Claude Desktop), and approve the permission dialog that appears on the first Calendar/Reminders access. Approving rewrites the TCC row keyed to the Developer ID requirement, so it survives all future upgrades. If you accidentally **deny** the dialog, re-enable the corresponding toggle in System Settings → Privacy & Security → Calendars or Reminders.
 
 > ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` because the binary has no LaunchServices registration. And do **not** run a bare `tccutil reset Calendar` (without a bundle ID): it wipes Calendar grants for *every* app on the machine and, on a pre-entitlements binary, leaves CheICalMCP permanently unable to re-prompt.
+
+### Claude Code updates rotate the host-side grant (#170)
+
+Under a Claude Code **native install**, the real executable lives at a **versioned path** (`~/.local/share/claude/versions/<version>`; `~/.local/bin/claude` is just a symlink), and macOS TCC keys the host-side Calendar/Reminders grant to that path. **Every Claude Code auto-update rotates the path and silently invalidates the grant** — the classic symptom is "worked yesterday, broken right after an update", with System Settings accumulating stale bare-version-number entries (`2.1.202`, `2.1.203`, …).
+
+**Fix**: trigger any calendar tool call from Claude Code so macOS re-prompts (or re-creates the entry), then toggle the **newest** version-number entry ON in System Settings → Privacy & Security → Calendars / Reminders. Full checklist: the `troubleshoot-tcc` skill (`/che-ical-mcp:check-tcc`). Root cause is upstream (tracked in [#170](https://github.com/PsychQuant/che-ical-mcp/issues/170) — Claude Code would need a stable TCC identity); this repo can only detect and document it.
 
 ### SSH Access
 
