@@ -27,6 +27,21 @@ struct TCCDriftDetector {
     /// Maximum stale process PIDs to list verbatim in the banner; the rest are
     /// summarized as a count.
     let stalePIDListLimit: Int
+    /// Parent-chain capture for the #175 versioned-host signal. Default-wired to the
+    /// `ps`-backed Live impl (#169); a fake is injected in tests.
+    let parentChain: ParentChainSource
+    /// Whether EventKit is FULLY granted (Calendar AND Reminders) in the CURRENT
+    /// attribution context (#168). Read once by `main.swift` before construction; gates
+    /// the #175 versioned-host check so the extra `ps` spawn only happens when something
+    /// is actually wrong. Either service ungranted counts as broken — a Reminders-only
+    /// breakage under a versioned host deserves the rotation explanation too (#175
+    /// verify DA-1: Calendar-only gating would leave that user doubly silent).
+    let eventKitAccessGranted: Bool
+
+    /// The path fragment that identifies a Claude Code native-install versioned binary
+    /// (`~/.local/share/claude/versions/<version>`). TCC keys the host-side grant to
+    /// this rotating path, so every auto-update silently invalidates it (#170).
+    static let claudeVersionedPathFragment = "/.local/share/claude/versions/"
 
     init(
         tcc: TCCDatabaseSource,
@@ -34,7 +49,9 @@ struct TCCDriftDetector {
         runningBinaryPath: String,
         diskBinaryMtime: Date? = nil,
         stalePIDListLimit: Int = 5,
-        codeSignature: CodeSignatureSource = LiveCodeSignatureSource()
+        codeSignature: CodeSignatureSource = LiveCodeSignatureSource(),
+        parentChain: ParentChainSource = LiveParentChainSource(),
+        eventKitAccessGranted: Bool = true
     ) {
         self.tcc = tcc
         self.processes = processes
@@ -42,6 +59,8 @@ struct TCCDriftDetector {
         self.runningBinaryPath = runningBinaryPath
         self.diskBinaryMtime = diskBinaryMtime
         self.stalePIDListLimit = stalePIDListLimit
+        self.parentChain = parentChain
+        self.eventKitAccessGranted = eventKitAccessGranted
     }
 
     // MARK: - Detect
@@ -136,6 +155,25 @@ struct TCCDriftDetector {
             skipReasons.append("process check skipped: disk binary mtime unavailable")
         }
 
+        // --- Versioned-host ungranted signal (#175 / #170) ---
+        //
+        // Only checked when EventKit is NOT fully granted in this context: the extra `ps`
+        // spawn (500ms-capped) is spent exclusively on the broken path, and granted
+        // users see zero added noise. In MCP-server mode the parent chain IS the host
+        // chain, and `authorizationStatus` follows that attribution context (#168) —
+        // so "chain contains a versioned claude binary + ungranted" pinpoints the
+        // #170 rotation as the likely cause.
+        if !eventKitAccessGranted {
+            let chainResult = parentChain.captureChain(from: getppid())
+            if let reason = chainResult.failureReason {
+                skipReasons.append("versioned-host check skipped: \(reason)")
+            } else if let hostHop = chainResult.hops.first(
+                where: { $0.command.contains(Self.claudeVersionedPathFragment) }
+            ) {
+                signals.append(.versionedClaudeHostUngranted(hostPath: hostHop.command))
+            }
+        }
+
         return DriftReport(signals: signals, skipReasons: skipReasons)
     }
 
@@ -190,7 +228,17 @@ struct TCCDriftDetector {
         // foreground `--setup` command so the user can grant the dialog that only presents
         // from a foreground app context. Same control-char branching as the drift lines:
         // emit a copy-paste command only when the path is clean, else a safe-display hint.
-        if !calendarAccessGranted {
+        //
+        // Suppressed when the #175 versioned-host signal is present (verify DA-2):
+        // `--setup` grants CheICalMCP-as-foreground-app's OWN attribution identity, but
+        // the versioned-host diagnosis says the HOST's grant is what rotated away
+        // (#168/#170) — printing both would offer contradictory remediation, and the
+        // `--setup` path is the dead end in that scenario.
+        let versionedHostSignalPresent = report.signals.contains {
+            if case .versionedClaudeHostUngranted = $0 { return true }
+            return false
+        }
+        if !calendarAccessGranted, !versionedHostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
                 lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
             } else {
@@ -269,6 +317,15 @@ struct TCCDriftDetector {
                     let safeService = EventKitErrorSanitizer.escapeForStderr(service)
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")
                 }
+
+            case .versionedClaudeHostUngranted(let hostPath):
+                // hostPath comes from `ps` comm (ancestor-controlled) — same CWE-117
+                // stderr discipline as every other interpolated banner field.
+                let safeHost = EventKitErrorSanitizer.escapeForStderr(hostPath)
+                lines.append("[drift] EventKit not granted under a Claude Code versioned host")
+                lines.append("[drift]   host binary: \(safeHost)")
+                lines.append("[drift]   (this path rotates on every Claude Code update, staling the host-side TCC grant — #170)")
+                lines.append("[drift]   → toggle the NEWEST version-number entry ON in System Settings → Privacy & Security → Calendars / Reminders, or trigger any calendar tool call to re-prompt; full checklist: the troubleshoot-tcc skill")
             }
         }
 
@@ -400,4 +457,12 @@ enum DriftSignal: Sendable, Equatable {
     /// personal-information entitlement: `false`/`nil` means a hardened-runtime re-prompt
     /// would also be policy-blocked (the second half of the #154 signature).
     case csreqMismatch(service: String, hasEntitlement: Bool?)
+
+    /// The MCP server is starting under a Claude Code **versioned** host binary
+    /// (`~/.local/share/claude/versions/<v>`) and EventKit is NOT granted in this
+    /// context. TCC keys the host-side grant to that rotating path, so every Claude
+    /// Code auto-update silently invalidates it (#170) — this signal turns the
+    /// "worked yesterday, broken after an update" mystery into an actionable line
+    /// (#175). `hostPath` is the versioned binary observed on the parent chain.
+    case versionedClaudeHostUngranted(hostPath: String)
 }

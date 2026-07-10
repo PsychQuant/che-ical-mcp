@@ -174,18 +174,25 @@ func emitStartupBanner() {
         return attrs[.modificationDate] as? Date
     }()
 
+    // #163: cheap status reads (never trigger a dialog) so the banner can surface the
+    // `--setup` command when Calendar isn't granted for this binary. Reuses the same
+    // probe the authorization gate uses. Read BEFORE detector construction (#175): both
+    // services gate the versioned-host check — a Reminders-only breakage under a
+    // versioned host deserves the rotation explanation too (verify DA-1) — and the
+    // extra `ps` spawn only happens on the ungranted path.
+    let statusSource = LiveAuthorizationStatusSource()
+    let calendarGranted = statusSource.authorizationStatus(for: .event) == .fullAccess
+    let remindersGranted = statusSource.authorizationStatus(for: .reminder) == .fullAccess
+
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
-        diskBinaryMtime: mtime
+        diskBinaryMtime: mtime,
+        eventKitAccessGranted: calendarGranted && remindersGranted
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
-    // #163: cheap status read (never triggers a dialog) so the banner can surface the
-    // `--setup` command when Calendar isn't granted for this binary. Reuses the same
-    // probe the authorization gate uses.
-    let calendarGranted = LiveAuthorizationStatusSource().authorizationStatus(for: .event) == .fullAccess
     let banner = TCCDriftDetector.formatBanner(
         report: report,
         version: AppVersion.current,

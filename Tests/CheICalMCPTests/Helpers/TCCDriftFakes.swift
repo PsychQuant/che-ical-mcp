@@ -29,6 +29,34 @@ struct FakeProcessInventorySource: ProcessInventorySource {
     func enumerateCheICalMCPProcesses() -> ProcessInventoryResult { result }
 }
 
+/// Fake parent-chain source for the #175 versioned-host signal. Returns a fixed chain
+/// (or failure reason) regardless of the requested start pid.
+struct FakeParentChainSource: ParentChainSource {
+    let result: ParentChainResult
+
+    init(hops: [ParentChainWalker.ChainHop] = [], failureReason: String? = nil) {
+        self.result = ParentChainResult(hops: hops, failureReason: failureReason)
+    }
+
+    func captureChain(from startPid: Int32) -> ParentChainResult { result }
+}
+
+/// Call-counting parent-chain spy: proves the "granted users pay zero subprocess
+/// cost" gate observably (#175 verify, Codex suggestion), not just structurally.
+final class SpyParentChainSource: ParentChainSource, @unchecked Sendable {
+    private let result: ParentChainResult
+    private(set) var captureCallCount = 0
+
+    init(hops: [ParentChainWalker.ChainHop] = [], failureReason: String? = nil) {
+        self.result = ParentChainResult(hops: hops, failureReason: failureReason)
+    }
+
+    func captureChain(from startPid: Int32) -> ParentChainResult {
+        captureCallCount += 1
+        return result
+    }
+}
+
 /// Fake self-code-signing source for the #155 csreq-mismatch signal. Returns a fixed
 /// evaluation for every blob and a fixed entitlement answer — enough to drive the drift
 /// logic deterministically (the real running-binary signature can't be controlled here).
