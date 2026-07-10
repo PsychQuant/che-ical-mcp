@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-10
+
 **#175 — startup banner now detects the "versioned Claude Code host + ungranted EventKit" combination.**
 
 - **Added** — a new drift-detector signal (`#122` family): when the MCP server starts under a Claude Code **versioned** host binary (`~/.local/share/claude/versions/<v>` — the path #170 documents as rotating on every auto-update, staling the host-side TCC grant) AND EventKit is not fully granted in the current attribution context (**either** Calendar or Reminders ungranted counts — a Reminders-only breakage was doubly silent under Calendar-only gating, verify DA-1), the banner explains the rotation and points at the actionable fix (toggle the newest version-number entry in System Settings, or trigger a tool call to re-prompt; troubleshoot-tcc skill for the full checklist). The parent-chain capture (`ParentChainSource`, #169) is spent only on the ungranted path — granted users pay zero added subprocess cost (spy-asserted); capture failure degrades to a visible `versioned-host check skipped` reason per the #122 advisory contract.

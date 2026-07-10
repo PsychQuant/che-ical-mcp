@@ -493,7 +493,7 @@ CheICalMCP --setup
 
 ## Technical Details
 
-- **Current Version**: v1.14.1
+- **Current Version**: v1.15.0
 - **Framework**: [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **Calendar API**: EventKit (native macOS framework)
 - **Transport**: stdio
@@ -506,6 +506,8 @@ CheICalMCP --setup
 
 | Version | Changes |
 |---------|---------|
+| v1.15.0 | **`--print-tcc-path` execution context + versioned-host banner signal.** The TCC diagnostic now prints its parent process chain (self → … → launchd) with a context-dependence warning — the authorization status follows the responsible-process context (#168), so knowing *which* host the query ran under is load-bearing (#169). Parent-chain diagnostics polish: visible truncation/cycle markers, empty-`comm` linkage, `ps -ww`, decode/exit failure reporting, NOTE precision (#173). New drift-detector signal: "versioned Claude Code host + ungranted EventKit" — explains the #170 update-rotation breakage proactively at startup, suppressing the contradictory `--setup` hint in that scenario (#175). All three verified by 6-AI cross-model ensembles; a CWE-150 terminal-escape gap found by verify was fixed pre-merge. Version drift from the v1.14.2 plugin release aligned across all five version sites (#172). 490 tests. |
+| v1.14.2 | **Docs/skill-layer release — two-layer TCC authorization model** (#168): `troubleshoot-tcc` skill, `/check-tcc`, `mcpb/README.md`, and `plugin/CLAUDE.md` now document the host-app (responsible-process) TCC layer, the bare version-number System Settings entries (`2.1.202` = Claude Code's versioned binary), and the toggle-and-observe verification procedure. Binary byte-identical to v1.14.1 at release time (plugin-shell only; source version sites aligned later in #172). |
 | v1.14.1 | **Metadata correction — tool-count consistency.** `server.json` `description` said "24 tools" and `PROMOTION.md` said "20 tools"; the server actually exposes **29 tools** (matching `mcpb/manifest.json` `long_description` and the `ManifestParityTests` tool-parity guard). Corrected the registry-facing `server.json`, `docs/COMPETITIVE_ANALYSIS.md`, and `PROMOTION.md` to 29. No code or tool-surface changes — functionally identical to v1.14.0; this release exists solely to publish corrected registry metadata (registry versions are immutable). |
 | v1.14.0 | **Claude Desktop tool-injection drop fixed** (#166): a literal `&` in `mcpb/manifest.json` `display_name` made Desktop 1.18286.0 silently drop the whole 29-tool server from every conversation (Claude Code unaffected); changed `&` → `and`, confirmed by single-variable intervention on the failing install + a `ManifestParityTests` regression guard. Also aligned `serverInfo.name` to the kebab manifest id (hygiene; empirically refuted as the cause). **#154 sister batch**: csreq-mismatch TCC drift signal (#155, `SecCodeCheckValidity` self-check for the silent-denial class), `.mcpb` denial message no longer dead-ends on `--setup` for the already-`.denied` signature (#158), macOS badge 13.0 → 14.0 (#157), swift-nio 2.96 → 2.101 (#159). 454 tests. |
 | v1.13.0 | **SwiftUI SetupWindow** (#164): interactive `--setup` presents a live-status window (per-entity Grant buttons + resolved binary path) inside the #163 foreground `NSApplication`. **Desktop Calendar-denied fix** (#165): `isNonInteractive` misfired on `TERM == nil` for GUI-app-spawned servers → fast-failed before `requestFullAccess`, so the first-grant dialog never appeared through Claude Desktop; now uses a `CGSession` GUI-session signal. 429 tests. |
