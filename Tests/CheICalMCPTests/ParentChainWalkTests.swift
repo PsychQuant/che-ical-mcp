@@ -105,6 +105,23 @@ final class ParentChainWalkTests: XCTestCase {
         XCTAssertEqual(chain.last?.command, "(chain truncated after 15 hops)")
     }
 
+    func testWalk_chainExactlyCapPlusLaunchd_showsLaunchdNotTruncationMarker() {
+        // #173 verify LOW-1 (DA probe-confirmed): a chain whose (maxHops+1)-th node IS
+        // launchd has reached its root — marking it "truncated" is the mirror image of
+        // the silent-truncation misinformation this issue exists to eliminate. The cap
+        // exempts the terminal sentinel (pid 1), which unconditionally ends the walk.
+        var table: [Int32: ParentChainWalker.ProcessEntry] = [:]
+        for i in Int32(500)..<Int32(514) {
+            table[i] = .init(ppid: i + 1, command: "/p\(i)")
+        }
+        table[514] = .init(ppid: 1, command: "/p514")
+        table[1] = .init(ppid: 0, command: "/sbin/launchd")
+        let chain = ParentChainWalker.walk(table: table, from: 500)
+        XCTAssertEqual(chain.count, 16)
+        XCTAssertEqual(chain.last, ParentChainWalker.ChainHop(pid: 1, command: "/sbin/launchd"))
+        XCTAssertFalse(chain.contains { $0.command.hasPrefix("(chain truncated") })
+    }
+
     func testWalk_chainEndingWithinCap_hasNoTruncationMarker() {
         // Complete chains stay marker-free — the marker only appears when information
         // was actually cut, otherwise it would train users to ignore it.

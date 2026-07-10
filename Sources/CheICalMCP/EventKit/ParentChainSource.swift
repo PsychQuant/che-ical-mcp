@@ -79,7 +79,12 @@ enum ParentChainWalker {
                 hops.append(ChainHop(pid: pid, command: "(cycle detected)"))
                 break
             }
-            if hops.count >= maxHops {
+            // The terminal sentinel (pid 1, launchd) is exempt from the cap: it ends the
+            // walk unconditionally one line below, so admitting it costs at most one
+            // entry — while marking an already-rooted chain "truncated" would be the
+            // mirror image of the misinformation this marker exists to eliminate
+            // (#173 verify LOW-1, DA probe-confirmed).
+            if hops.count >= maxHops, pid != 1 {
                 hops.append(ChainHop(pid: pid, command: "(chain truncated after \(maxHops) hops)"))
                 break
             }
