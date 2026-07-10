@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**#173 — parent-chain diagnostics polish (follow-up bundle from the #169 verify).**
+
+- **Changed** — the `--print-tcc-path` parent-chain walk now makes every early stop visible: hop-cap and cycle stops append a synthetic marker hop (`(chain truncated after 15 hops)` / `(cycle detected)`, carrying the pid the walk stopped at) instead of ending silently; `ps` rows with an empty `comm` keep their pid→ppid linkage as `(unknown)` instead of severing the chain one hop early; `ps` runs with `-ww` so long bundle paths are never width-clamped; non-UTF-8 `ps` output and non-zero exits now surface as `(parent chain unavailable: …)` reasons (with stderr's first line attached) instead of a silently empty chain. The NOTE wording no longer equates the parent chain with macOS's responsible process (it is an approximation), and Claude Desktop users are routed to the sqlite3 TCC query (this shell-invoked chain can never show the Desktop MCP context). 9 new tests including real-subprocess fixture tests for the decode/exit failure paths (`LiveParentChainSourceTests`).
+
 **#169 — `--print-tcc-path` now prints its execution context (parent process chain) + a context-dependence warning.**
 
 - **Added** — the `--print-tcc-path` diagnostic output ends with a new "Execution context (parent process chain)" section: the binary's own pid/path marked `(this binary)`, then every ancestor up to launchd (pid 1), captured via a single `ps -A -o pid=,ppid=,comm=` snapshot walked in-memory (cycle-guarded, hop-capped at 15 — a real Claude Code session chain already spends 10 hops). A `NOTE:` warning follows, stating that the EventKit authorization status shown above reflects the CURRENT execution context (the responsible process), not an absolute property of the binary (#168) — to diagnose a specific host, run the command from within that host's environment. `ps` failure/timeout degrades to a visible `(parent chain unavailable: <reason>)` line; the rest of the output is unaffected.
