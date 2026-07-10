@@ -30,10 +30,13 @@ struct TCCDriftDetector {
     /// Parent-chain capture for the #175 versioned-host signal. Default-wired to the
     /// `ps`-backed Live impl (#169); a fake is injected in tests.
     let parentChain: ParentChainSource
-    /// Whether Calendar is granted in the CURRENT attribution context (#168). Read once
-    /// by `main.swift` before construction; gates the #175 versioned-host check so the
-    /// extra `ps` spawn only happens when something is actually wrong.
-    let calendarAccessGranted: Bool
+    /// Whether EventKit is FULLY granted (Calendar AND Reminders) in the CURRENT
+    /// attribution context (#168). Read once by `main.swift` before construction; gates
+    /// the #175 versioned-host check so the extra `ps` spawn only happens when something
+    /// is actually wrong. Either service ungranted counts as broken — a Reminders-only
+    /// breakage under a versioned host deserves the rotation explanation too (#175
+    /// verify DA-1: Calendar-only gating would leave that user doubly silent).
+    let eventKitAccessGranted: Bool
 
     /// The path fragment that identifies a Claude Code native-install versioned binary
     /// (`~/.local/share/claude/versions/<version>`). TCC keys the host-side grant to
@@ -48,7 +51,7 @@ struct TCCDriftDetector {
         stalePIDListLimit: Int = 5,
         codeSignature: CodeSignatureSource = LiveCodeSignatureSource(),
         parentChain: ParentChainSource = LiveParentChainSource(),
-        calendarAccessGranted: Bool = true
+        eventKitAccessGranted: Bool = true
     ) {
         self.tcc = tcc
         self.processes = processes
@@ -57,7 +60,7 @@ struct TCCDriftDetector {
         self.diskBinaryMtime = diskBinaryMtime
         self.stalePIDListLimit = stalePIDListLimit
         self.parentChain = parentChain
-        self.calendarAccessGranted = calendarAccessGranted
+        self.eventKitAccessGranted = eventKitAccessGranted
     }
 
     // MARK: - Detect
@@ -154,13 +157,13 @@ struct TCCDriftDetector {
 
         // --- Versioned-host ungranted signal (#175 / #170) ---
         //
-        // Only checked when Calendar is NOT granted in this context: the extra `ps`
+        // Only checked when EventKit is NOT fully granted in this context: the extra `ps`
         // spawn (500ms-capped) is spent exclusively on the broken path, and granted
         // users see zero added noise. In MCP-server mode the parent chain IS the host
         // chain, and `authorizationStatus` follows that attribution context (#168) —
         // so "chain contains a versioned claude binary + ungranted" pinpoints the
         // #170 rotation as the likely cause.
-        if !calendarAccessGranted {
+        if !eventKitAccessGranted {
             let chainResult = parentChain.captureChain(from: getppid())
             if let reason = chainResult.failureReason {
                 skipReasons.append("versioned-host check skipped: \(reason)")
@@ -225,7 +228,17 @@ struct TCCDriftDetector {
         // foreground `--setup` command so the user can grant the dialog that only presents
         // from a foreground app context. Same control-char branching as the drift lines:
         // emit a copy-paste command only when the path is clean, else a safe-display hint.
-        if !calendarAccessGranted {
+        //
+        // Suppressed when the #175 versioned-host signal is present (verify DA-2):
+        // `--setup` grants CheICalMCP-as-foreground-app's OWN attribution identity, but
+        // the versioned-host diagnosis says the HOST's grant is what rotated away
+        // (#168/#170) — printing both would offer contradictory remediation, and the
+        // `--setup` path is the dead end in that scenario.
+        let versionedHostSignalPresent = report.signals.contains {
+            if case .versionedClaudeHostUngranted = $0 { return true }
+            return false
+        }
+        if !calendarAccessGranted, !versionedHostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
                 lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
             } else {

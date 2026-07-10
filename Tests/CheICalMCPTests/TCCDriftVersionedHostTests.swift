@@ -13,7 +13,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
 
     private func makeDetector(
         chain: FakeParentChainSource,
-        calendarAccessGranted: Bool
+        eventKitAccessGranted: Bool
     ) -> TCCDriftDetector {
         TCCDriftDetector(
             tcc: FakeTCCDatabaseSource(entries: []),
@@ -21,7 +21,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             runningBinaryPath: runningPath,
             diskBinaryMtime: nil,
             parentChain: chain,
-            calendarAccessGranted: calendarAccessGranted
+            eventKitAccessGranted: eventKitAccessGranted
         )
     }
 
@@ -31,7 +31,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             .init(pid: 300, command: versionedHostPath),
             .init(pid: 1, command: "/sbin/launchd"),
         ])
-        let report = makeDetector(chain: chain, calendarAccessGranted: false).detect()
+        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
         XCTAssertTrue(report.signals.contains(.versionedClaudeHostUngranted(hostPath: versionedHostPath)))
     }
 
@@ -40,7 +40,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         let chain = FakeParentChainSource(hops: [
             .init(pid: 300, command: versionedHostPath)
         ])
-        let report = makeDetector(chain: chain, calendarAccessGranted: true).detect()
+        let report = makeDetector(chain: chain, eventKitAccessGranted: true).detect()
         XCTAssertFalse(report.signals.contains { signal in
             if case .versionedClaudeHostUngranted = signal { return true }
             return false
@@ -54,7 +54,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             .init(pid: 400, command: "/bin/zsh"),
             .init(pid: 1, command: "/sbin/launchd"),
         ])
-        let report = makeDetector(chain: chain, calendarAccessGranted: false).detect()
+        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
         XCTAssertFalse(report.signals.contains { signal in
             if case .versionedClaudeHostUngranted = signal { return true }
             return false
@@ -65,7 +65,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
 
     func testSkipReason_whenChainCaptureFails() {
         let chain = FakeParentChainSource(failureReason: "ps timed out after 500ms")
-        let report = makeDetector(chain: chain, calendarAccessGranted: false).detect()
+        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
         XCTAssertFalse(report.signals.contains { signal in
             if case .versionedClaudeHostUngranted = signal { return true }
             return false
@@ -88,6 +88,60 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         XCTAssertTrue(banner.contains("#170"), "the rotation phenomenon has a tracking issue — cite it")
         XCTAssertTrue(banner.contains("System Settings"), "the fix path must be actionable")
         XCTAssertTrue(banner.contains("rotates"), "explain WHY the grant broke (update rotated the path)")
+    }
+
+    // MARK: - verify in-scope fixes (DA-1 / DA-2 / Codex spy)
+
+    func testDetector_gateCountsRemindersOnlyBreakage() {
+        // DA-1: the issue's scope is EventKit (Calendar AND Reminders). The detector
+        // gate takes a combined eventKitAccessGranted flag — false when EITHER service
+        // is ungranted — so a Reminders-only breakage under a versioned host still
+        // gets the rotation explanation instead of total silence.
+        let chain = FakeParentChainSource(hops: [.init(pid: 300, command: versionedHostPath)])
+        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
+        XCTAssertTrue(report.signals.contains(.versionedClaudeHostUngranted(hostPath: versionedHostPath)))
+    }
+
+    func testDetector_grantedPath_neverSpawnsChainCapture() {
+        // Codex cross-model suggestion: the "granted users pay zero subprocess cost"
+        // promise is observable, not just structural — assert the seam is never called.
+        let spy = SpyParentChainSource(hops: [.init(pid: 300, command: versionedHostPath)])
+        let detector = TCCDriftDetector(
+            tcc: FakeTCCDatabaseSource(entries: []),
+            processes: FakeProcessInventorySource(processes: []),
+            runningBinaryPath: runningPath,
+            diskBinaryMtime: nil,
+            parentChain: spy,
+            eventKitAccessGranted: true
+        )
+        _ = detector.detect()
+        XCTAssertEqual(spy.captureCallCount, 0)
+    }
+
+    func testBanner_suppressesSetupLineWhenVersionedHostSignalPresent() {
+        // DA-2: `--setup` grants CheICalMCP-as-foreground-app's OWN attribution — the
+        // wrong identity for the versioned-host case, where the HOST's grant is what
+        // rotated away (#168/#170). When the #175 signal fires, the #163 --setup line
+        // must yield to it instead of pointing users into a dead end.
+        let report = DriftReport(
+            signals: [.versionedClaudeHostUngranted(hostPath: versionedHostPath)],
+            skipReasons: []
+        )
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.14.2", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertFalse(banner.contains("--setup"),
+                       "contradictory remediation: --setup targets the wrong attribution identity here")
+    }
+
+    func testBanner_keepsSetupLineWithoutVersionedHostSignal() {
+        // Control for the suppression: the #163 line is unchanged when the #175 signal
+        // is absent (plain ungranted case, e.g. Terminal host).
+        let report = DriftReport(signals: [], skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.14.2", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains("--setup"))
     }
 
     func testBanner_escapesHostileHostPath() {
