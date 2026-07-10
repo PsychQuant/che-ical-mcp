@@ -62,7 +62,7 @@ enum ParentChainWalker {
     static func walk(
         table: [Int32: ProcessEntry],
         from startPid: Int32,
-        maxHops: Int = 10
+        maxHops: Int = 15
     ) -> [ChainHop] {
         guard startPid > 0 else { return [] }
         var hops: [ChainHop] = []
@@ -79,6 +79,38 @@ enum ParentChainWalker {
             pid = entry.ppid
         }
         return hops
+    }
+}
+
+/// Display layer for the `--print-tcc-path` execution-context block. Extracted from
+/// `main.swift` per the #117 precedent (TCCStatusFormatter) so the output shape —
+/// including the context-dependence warning that must survive capture failures — is
+/// unit-testable without spawning the binary.
+enum ParentChainFormatter {
+    static func executionContextSection(
+        selfPid: Int32,
+        selfPath: String,
+        result: ParentChainResult
+    ) -> String {
+        var lines: [String] = ["Execution context (parent process chain):"]
+        lines.append("  \(selfPid)  \(selfPath)  (this binary)")
+        if let reason = result.failureReason {
+            lines.append("  (parent chain unavailable: \(reason))")
+        } else {
+            for hop in result.hops {
+                lines.append("  \(hop.pid)  \(hop.command)")
+            }
+        }
+        lines.append("")
+        lines.append("""
+            NOTE: the authorization status above reflects the CURRENT execution context
+            (the responsible process in this chain), not an absolute property of this
+            binary. Two different binaries under the same host see the same status; the
+            same binary under different hosts can see different statuses (#168).
+            To diagnose a specific host (Claude Code / Claude Desktop / Terminal),
+            run this command from within that host's environment.
+            """)
+        return lines.joined(separator: "\n")
     }
 }
 

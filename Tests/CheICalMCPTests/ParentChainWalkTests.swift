@@ -86,13 +86,16 @@ final class ParentChainWalkTests: XCTestCase {
     }
 
     func testWalk_hopCap_boundsOversizedChain() {
-        // 20-deep linear chain 500 → 501 → … ; cap at default 10 hops.
+        // 20-deep linear chain 500 → 501 → … ; cap at default 15 hops. The default must
+        // exceed a real Claude Code session's depth — an observed chain (swift → zsh →
+        // claude bg×2 → claude → login shell → login → Ghostty → launchd) already spends
+        // exactly 10 hops, so 10 would truncate the host on any deeper nesting (tmux etc.).
         var table: [Int32: ParentChainWalker.ProcessEntry] = [:]
         for i in Int32(500)..<Int32(520) {
             table[i] = .init(ppid: i + 1, command: "/p\(i)")
         }
         let chain = ParentChainWalker.walk(table: table, from: 500)
-        XCTAssertEqual(chain.count, 10)
+        XCTAssertEqual(chain.count, 15)
         XCTAssertEqual(chain.first?.pid, 500)
     }
 
