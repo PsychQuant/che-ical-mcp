@@ -46,11 +46,14 @@ enum ParentChainWalker {
             guard !trimmed.isEmpty else { continue }
             // Split into at most 3 columns: pid, ppid, command-with-possible-spaces.
             let columns = trimmed.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-            guard columns.count == 3,
+            guard columns.count >= 2,
                   let pid = Int32(columns[0]),
                   let ppid = Int32(columns[1])
             else { continue }
-            table[pid] = ProcessEntry(ppid: ppid, command: String(columns[2]))
+            // Empty comm (#173): keep the row with a visible placeholder — dropping it
+            // would sever the ppid linkage and end the walk one hop early.
+            let command = columns.count == 3 ? String(columns[2]) : "(unknown)"
+            table[pid] = ProcessEntry(ppid: ppid, command: command)
         }
         return table
     }
@@ -58,7 +61,10 @@ enum ParentChainWalker {
     /// Walk from `startPid` toward launchd (pid 1). Termination is guaranteed by three
     /// guards: a seen-set (kills cycles), a hop cap (kills oversized/corrupt chains), and
     /// the unknown-pid stop (a pid missing from the table renders as `(unknown)` and ends
-    /// the walk — its ppid is unknowable).
+    /// the walk — its ppid is unknowable). Cycle and hop-cap stops append a synthetic
+    /// marker hop (#173) — a silently-ended chain reads as complete, which for a
+    /// diagnostic that exists to show the real context is misinformation. The marker's
+    /// pid is the pid the walk stopped at, so a triager can resume by hand.
     static func walk(
         table: [Int32: ProcessEntry],
         from startPid: Int32,
@@ -68,7 +74,15 @@ enum ParentChainWalker {
         var hops: [ChainHop] = []
         var seen: Set<Int32> = []
         var pid = startPid
-        while hops.count < maxHops, pid > 0, !seen.contains(pid) {
+        while pid > 0 {
+            if seen.contains(pid) {
+                hops.append(ChainHop(pid: pid, command: "(cycle detected)"))
+                break
+            }
+            if hops.count >= maxHops {
+                hops.append(ChainHop(pid: pid, command: "(chain truncated after \(maxHops) hops)"))
+                break
+            }
             seen.insert(pid)
             guard let entry = table[pid] else {
                 hops.append(ChainHop(pid: pid, command: "(unknown)"))
@@ -107,13 +121,21 @@ enum ParentChainFormatter {
             }
         }
         lines.append("")
+        // Wording precision (#173): the responsible process is assigned at spawn time and
+        // is NOT guaranteed to sit on the getppid chain — describe the chain as an
+        // approximation. And since this flag is shell-invoked, the chain can never show
+        // the Claude Desktop MCP context; route Desktop diagnosis to the sqlite3 query
+        // printed earlier in the same output.
         lines.append("""
             NOTE: the authorization status above reflects the CURRENT execution context
-            (the responsible process in this chain), not an absolute property of this
-            binary. Two different binaries under the same host see the same status; the
-            same binary under different hosts can see different statuses (#168).
-            To diagnose a specific host (Claude Code / Claude Desktop / Terminal),
+            (the execution context this query ran under, approximated by the parent chain
+            above), not an absolute property of this binary. Two different binaries under
+            the same host see the same status; the same binary under different hosts can
+            see different statuses (#168).
+            To diagnose a specific host (Claude Code / Terminal),
             run this command from within that host's environment.
+            For Claude Desktop, this shell-invoked chain cannot show its MCP context —
+            inspect the TCC database directly instead (sqlite3 command above).
             """)
         return lines.joined(separator: "\n")
     }
@@ -141,7 +163,10 @@ struct LiveParentChainSource: ParentChainSource {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: psPath)
-        process.arguments = ["-A", "-o", "pid=,ppid=,comm="]
+        // `-ww` (#173): lift the output-width clamp so long bundle paths are never
+        // truncated by ps itself (BSD ps applies the clamp even without a tty in
+        // some configurations; the flag is a no-op when already unclamped).
+        process.arguments = ["-Aww", "-o", "pid=,ppid=,comm="]
 
         let result: SubprocessRunResult
         do {
@@ -153,10 +178,19 @@ struct LiveParentChainSource: ParentChainSource {
             return ParentChainResult(hops: [], failureReason: "ps timed out after \(timeoutMilliseconds)ms")
         }
         guard result.exitStatus == 0 else {
-            return ParentChainResult(hops: [], failureReason: "ps exited with status \(result.exitStatus)")
+            // Attach stderr's first line (#173) — it is the actionable part of a ps
+            // failure. Rendering escapes it (ParentChainFormatter), so raw bytes are safe.
+            let stderrFirstLine = String(data: result.stderrData, encoding: .utf8)?
+                .split(separator: "\n").first.map(String.init) ?? ""
+            let suffix = stderrFirstLine.isEmpty ? "" : ": \(stderrFirstLine)"
+            return ParentChainResult(hops: [], failureReason: "ps exited with status \(result.exitStatus)\(suffix)")
         }
 
-        let output = String(data: result.stdoutData, encoding: .utf8) ?? ""
+        // Non-UTF-8 output (#173): report it — a silent empty table would render as a
+        // "successful" one-hop chain (mirrors ProcessInventorySource's decode handling).
+        guard let output = String(data: result.stdoutData, encoding: .utf8) else {
+            return ParentChainResult(hops: [], failureReason: "ps output not UTF-8")
+        }
         let table = ParentChainWalker.parseProcessTable(output)
         return ParentChainResult(
             hops: ParentChainWalker.walk(table: table, from: startPid),

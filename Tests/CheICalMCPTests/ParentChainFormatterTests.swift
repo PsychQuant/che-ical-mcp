@@ -69,6 +69,30 @@ final class ParentChainFormatterTests: XCTestCase {
         XCTAssertTrue(s.contains("\\r"), "CR renders visibly so forged lines can't split")
     }
 
+    // MARK: - NOTE wording precision (#173, DA-2/DA-3)
+
+    func testNote_usesApproximationWording_notResponsibleProcessClaim() {
+        // macOS's responsible process is not guaranteed to sit on the getppid chain —
+        // the NOTE must not flatten "parent chain" into "responsible process" (#168's
+        // own nuance). It describes the chain as an approximation instead.
+        let s = ParentChainFormatter.executionContextSection(
+            selfPid: 500, selfPath: selfPath,
+            result: ParentChainResult(hops: [.init(pid: 1, command: "/sbin/launchd")], failureReason: nil))
+        XCTAssertFalse(s.contains("the responsible process in this chain"))
+        XCTAssertTrue(s.contains("approximated by the parent chain"))
+    }
+
+    func testNote_pointsClaudeDesktopUsersAtTccDbQuery() {
+        // This command is shell-invoked, so the printed chain can never show the Claude
+        // Desktop MCP context (DA-2) — the NOTE must route Desktop diagnosis to the
+        // sqlite3 TCC query printed earlier in the same output.
+        let s = ParentChainFormatter.executionContextSection(
+            selfPid: 500, selfPath: selfPath,
+            result: ParentChainResult(hops: [], failureReason: nil))
+        XCTAssertTrue(s.contains("Claude Desktop"))
+        XCTAssertTrue(s.contains("TCC database"))
+    }
+
     func testEmptyChainWithoutFailure_stillRendersSelfAndWarning() {
         // ps succeeded but the table somehow lacked our ppid — degenerate but legal.
         let s = ParentChainFormatter.executionContextSection(
