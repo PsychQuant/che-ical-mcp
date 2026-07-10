@@ -77,6 +77,18 @@ if CommandLine.arguments.contains("--print-tcc-path") {
         Additional signing info:
           codesign -dv "\(absolute)"
         """)
+
+    // #169: the EventKit status above is context-dependent (attribution follows the
+    // responsible process, not the binary — #168). Show the parent chain so users can
+    // see WHICH context this query ran under, plus the warning that stops them from
+    // reading a Terminal-context status as a Claude-Desktop verdict. Capture failure
+    // degrades to a visible "(parent chain unavailable: …)" line — never silent.
+    let chainResult = LiveParentChainSource().captureChain(from: getppid())
+    print("")
+    print(ParentChainFormatter.executionContextSection(
+        selfPid: ProcessInfo.processInfo.processIdentifier,
+        selfPath: absolute,
+        result: chainResult))
     exit(0)
 }
 

@@ -41,9 +41,11 @@ enum AppVersion {
                            Run this once from Terminal before using with launchd
                            or other non-interactive environments.
           --print-tcc-path Print binary's runtime path, bundle ID, current TCC
-                           authorization status, and ready-to-paste tccutil/sqlite3
-                           commands. Diagnostic helper for .mcpb-installed users
-                           who need to locate the extracted binary for --setup.
+                           authorization status, execution context (parent process
+                           chain — the status is context-dependent), and ready-to-
+                           paste tccutil/sqlite3 commands. Diagnostic helper for
+                           .mcpb-installed users who need to locate the extracted
+                           binary for --setup.
           --self-update    Check GitHub Releases for a newer binary, download
                            and install it at the current binary's path. Use
                            when an existing install needs to upgrade — wrapper
