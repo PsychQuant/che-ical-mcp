@@ -92,13 +92,18 @@ enum ParentChainFormatter {
         selfPath: String,
         result: ParentChainResult
     ) -> String {
+        // Every interpolated field below is ancestor- or framework-controlled (`ps` comm
+        // can carry ESC/C0/C1 in a hostile process path) and this string reaches an
+        // interactive terminal — route through the same escaper as the EventKit stderr
+        // paths (CWE-150/117 discipline, #37/#73/#150).
+        let escape = EventKitErrorSanitizer.escapeForStderr
         var lines: [String] = ["Execution context (parent process chain):"]
-        lines.append("  \(selfPid)  \(selfPath)  (this binary)")
+        lines.append("  \(selfPid)  \(escape(selfPath))  (this binary)")
         if let reason = result.failureReason {
-            lines.append("  (parent chain unavailable: \(reason))")
+            lines.append("  (parent chain unavailable: \(escape(reason)))")
         } else {
             for hop in result.hops {
-                lines.append("  \(hop.pid)  \(hop.command)")
+                lines.append("  \(hop.pid)  \(escape(hop.command))")
             }
         }
         lines.append("")

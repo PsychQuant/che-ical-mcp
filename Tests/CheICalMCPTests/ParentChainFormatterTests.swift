@@ -46,6 +46,29 @@ final class ParentChainFormatterTests: XCTestCase {
         }
     }
 
+    // MARK: - Control-char sanitization (verify #169 finding: ps `comm` is
+    // ancestor-controlled; raw ESC reaching an interactive terminal = CWE-150.
+    // Same escapeForStderr discipline as the EventKit stderr paths, #37/#73/#150.)
+
+    func testHopCommandWithEscapeSequence_isNeutralized() {
+        let result = ParentChainResult(
+            hops: [.init(pid: 400, command: "/tmp/\u{1B}[2J\u{1B}[H.app/x")],
+            failureReason: nil
+        )
+        let s = ParentChainFormatter.executionContextSection(selfPid: 500, selfPath: selfPath, result: result)
+        XCTAssertFalse(s.unicodeScalars.contains { $0.value == 0x1B }, "raw ESC must never reach stdout")
+        XCTAssertTrue(s.contains("\\x1b[2J"), "control chars render as visible escapes, not terminal effects")
+    }
+
+    func testSelfPathAndFailureReasonWithControlChars_areNeutralized() {
+        let s = ParentChainFormatter.executionContextSection(
+            selfPid: 500, selfPath: "/Users/u/\u{1B}]52;c;evil\u{07}/CheICalMCP",
+            result: ParentChainResult(hops: [], failureReason: "ps died\u{0D}FAKE: all good"))
+        XCTAssertFalse(s.unicodeScalars.contains { $0.value == 0x1B || $0.value == 0x07 || $0.value == 0x0D },
+                       "ESC/BEL/CR must be escaped in every interpolated field")
+        XCTAssertTrue(s.contains("\\r"), "CR renders visibly so forged lines can't split")
+    }
+
     func testEmptyChainWithoutFailure_stillRendersSelfAndWarning() {
         // ps succeeded but the table somehow lacked our ppid — degenerate but legal.
         let s = ParentChainFormatter.executionContextSection(
