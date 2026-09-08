@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`complete_reminder` is now annotated `destructiveHint: true`** (#202): completing a recurring reminder advances the series irreversibly, and the finished occurrence cannot be restored by undo once the identifier has rolled over (#204), so the annotation now matches `delete_reminder`. The hint is per-tool, so clients that gate on tool annotations will ask before any `complete_reminder` call, including reopening and non-recurring completions. Regression guard: `ToolAnnotationTests` (Refs #202).
+
 ## [1.17.0] - 2026-09-07
 
 **#194 — reminder recurrence on read, and explicit completion results.**
