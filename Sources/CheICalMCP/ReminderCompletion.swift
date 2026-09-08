@@ -11,10 +11,13 @@ struct ReminderCompletionSnapshot: Equatable, Sendable {
     let hasRecurrence: Bool
     let due: ReminderDueValue?
     let rules: [ReminderRecurrenceRuleValue]?
+    /// The completion instant as EventKit recorded it (#196) — restored by undo
+    /// instead of re-stamping "now". Not occurrence identity.
+    let completionDate: Date?
 
     init(id: String, title: String, calendarID: String, sourceID: String,
          isCompleted: Bool, hasRecurrence: Bool, due: ReminderDueValue?,
-         rules: [ReminderRecurrenceRuleValue]?) {
+         rules: [ReminderRecurrenceRuleValue]?, completionDate: Date?) {
         self.id = id
         self.title = title
         self.calendarID = calendarID
@@ -23,6 +26,7 @@ struct ReminderCompletionSnapshot: Equatable, Sendable {
         self.hasRecurrence = hasRecurrence
         self.due = due
         self.rules = rules
+        self.completionDate = completionDate
     }
 
     init(from reminder: EKReminder) {
@@ -31,7 +35,8 @@ struct ReminderCompletionSnapshot: Equatable, Sendable {
                   sourceID: reminder.calendar?.source?.sourceIdentifier ?? "",
                   isCompleted: reminder.isCompleted, hasRecurrence: reminder.hasRecurrenceRules,
                   due: ReminderDueValue(components: reminder.dueDateComponents),
-                  rules: reminder.recurrenceRules?.map { ReminderRecurrenceRuleValue(from: $0) })
+                  rules: reminder.recurrenceRules?.map { ReminderRecurrenceRuleValue(from: $0) },
+                  completionDate: reminder.completionDate)
     }
 
     /// Whether this snapshot carries enough immutable identity to be matched
@@ -178,6 +183,31 @@ struct ReminderCompletionResult: Sendable {
             "next_occurrence": nextOccurrence.dictionary,
             "message": message
         ]
+    }
+}
+
+/// The write an undo / redo / snapshot-restore performs on a reminder's
+/// completion state (#196). Pure so the decision is unit-testable; the manager
+/// applies it. Setting `isCompleted` alone makes EventKit stamp "now", so a
+/// restore to completed must write the recorded instant afterwards.
+struct ReminderCompletionWrite: Equatable, Sendable {
+    let isCompleted: Bool
+    let completionDate: Date?
+
+    /// Completed → the recorded instant when there is one, else `now` (redo has no
+    /// recorded instant: a completion re-applied is a fresh completion). Incomplete →
+    /// no instant.
+    static func plan(isCompleted: Bool, recorded: Date?, now: Date) -> ReminderCompletionWrite {
+        isCompleted ? ReminderCompletionWrite(isCompleted: true, completionDate: recorded ?? now)
+                    : ReminderCompletionWrite(isCompleted: false, completionDate: nil)
+    }
+
+    /// EventKit stamps `completionDate = now` whenever `isCompleted` flips to true,
+    /// so the instant is written after the flag; the incomplete branch writes `nil`
+    /// explicitly rather than relying on the same coupling in reverse.
+    func apply(to reminder: EKReminder) {
+        reminder.isCompleted = isCompleted
+        reminder.completionDate = completionDate
     }
 }
 

@@ -81,7 +81,7 @@
     },
     {
       "name": "complete_reminder",
-      "description": "Complete or reopen a reminder with an explicit operation result and observed next occurrence"
+      "description": "Complete or reopen a reminder with an explicit operation result and observed next occurrence (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
     },
     {
       "name": "delete_reminder",

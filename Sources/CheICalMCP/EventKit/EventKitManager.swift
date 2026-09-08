@@ -2018,7 +2018,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .completeReminder(let id, let wasCompleted, let title):
+        case .completeReminder(let id, let wasCompleted, _, _, let title):
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
@@ -2029,7 +2029,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) else {
                 throw EventKitError.reminderNotFound(identifier: id)
             }
-            reminder.isCompleted = wasCompleted
+            try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(wasCompleted)"
@@ -2037,7 +2037,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .completeRecurringReminder(let before, _):
             try await ensureReminderAccess()
             let reminder = try resolveRecurringOccurrence(before, verb: "undo")
-            reminder.isCompleted = before.isCompleted
+            try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(before.isCompleted)"
@@ -2100,8 +2100,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(let id, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
-        case .completeReminder(let id, let wasCompleted, let title):
-            // Redo = set back to the new state (opposite of wasCompleted)
+        case .completeReminder(let id, _, let requestedCompleted, _, let title):
+            // Redo re-applies the recorded request (#196: never the opposite of
+            // wasCompleted — that reopened an idempotently completed reminder).
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
@@ -2112,15 +2113,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) else {
                 throw EventKitError.reminderNotFound(identifier: id)
             }
-            reminder.isCompleted = !wasCompleted
+            try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Redone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(!wasCompleted)"
+            return "Redone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(requestedCompleted)"
 
         case .completeRecurringReminder(let before, let requestedCompleted):
             try await ensureReminderAccess()
             let reminder = try resolveRecurringOccurrence(before, verb: "redo")
-            reminder.isCompleted = requestedCompleted
+            try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Redone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(requestedCompleted)"
@@ -2184,11 +2185,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         event.timeZone = snapshot.timeZone
     }
 
+    /// A completion record always yields a write (#196); the throw is unreachable by
+    /// construction and exists so the arms need no force-unwrap.
+    private func apply(_ write: ReminderCompletionWrite?, to reminder: EKReminder) throws {
+        guard let write else { throw UnrecoverableUndoError(message: "Undo record is not a completion record.") }
+        write.apply(to: reminder)
+    }
+
     /// Apply a ReminderSnapshot to an EKReminder.
     private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, to reminder: EKReminder) {
         reminder.title = snapshot.title
         reminder.notes = snapshot.notes
-        reminder.isCompleted = snapshot.isCompleted
+        // #196: update / delete undo restore the recorded completion instant too.
+        ReminderCompletionWrite.plan(isCompleted: snapshot.isCompleted, recorded: snapshot.completionDate, now: Date()).apply(to: reminder)
         reminder.priority = snapshot.priority
         reminder.dueDateComponents = snapshot.dueDateComponents
 

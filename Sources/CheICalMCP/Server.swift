@@ -612,7 +612,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "complete_reminder",
-                description: "Mark a reminder as completed or incomplete. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown.",
+                description: "Mark a reminder as completed or incomplete. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown. Annotated destructive: completing a recurring reminder advances the series irreversibly, and undo cannot restore a consumed occurrence once the identifier has rolled over. The hint is tool-wide, so clients that gate on it also prompt before reopening or completing a non-recurring reminder.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -621,7 +621,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("reminder_id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
             Tool(
                 name: "delete_reminder",
