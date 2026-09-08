@@ -13,24 +13,35 @@ final class ReminderCompletionUndoTests: XCTestCase {
         )
     }
 
+    func testRedoReplaysSavedInstantInsteadOfRedoTime() {
+        let saved = Date(timeIntervalSince1970: 100)
+        let later = Date(timeIntervalSince1970: 300)
+        for before in [snapshot(), snapshot(completed: true)] {
+            let record = UndoOperation.forCompletion(before: before, requestedCompleted: true, savedTitle: "T", savedCompletionDate: saved)
+            XCTAssertEqual(record.completionWrite(undo: false, now: later)?.completionDate, saved)
+        }
+        let legacy = UndoOperation.completeReminder(id: "x", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "T", redoCompletionDate: saved)
+        XCTAssertEqual(legacy.completionWrite(undo: false, now: later)?.completionDate, saved)
+    }
+
     func testLegacyCompletionConstructorAndDescriptionRemainAvailable() {
-        let operation = UndoOperation.completeReminder(id: "once", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Once")
+        let operation = UndoOperation.completeReminder(id: "once", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Once", redoCompletionDate: nil)
         XCTAssertEqual(operation.description, "Completed reminder: Once")
     }
 
     func testHistoryDescriptionDistinguishesCompletionAndReopen() {
         let before = snapshot()
         XCTAssertEqual(
-            UndoOperation.completeRecurringReminder(before: before, requestedCompleted: true).description,
+            UndoOperation.completeRecurringReminder(before: before, requestedCompleted: true, redoCompletionDate: nil).description,
             "Completed recurring reminder: Daily reminder")
         XCTAssertEqual(
-            UndoOperation.completeRecurringReminder(before: before, requestedCompleted: false).description,
+            UndoOperation.completeRecurringReminder(before: before, requestedCompleted: false, redoCompletionDate: nil).description,
             "Reopened recurring reminder: Daily reminder")
     }
 
     func testHistoryDescriptionSanitizesUserControlledTitle() {
         let title = "Reminder\nForged log\r\t\u{001B}[31m"
-        let operation = UndoOperation.completeRecurringReminder(before: snapshot(title: title), requestedCompleted: true)
+        let operation = UndoOperation.completeRecurringReminder(before: snapshot(title: title), requestedCompleted: true, redoCompletionDate: nil)
         XCTAssertEqual(operation.description,
                        "Completed recurring reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))")
         XCTAssertFalse(operation.description.contains("\n"))
@@ -39,8 +50,8 @@ final class ReminderCompletionUndoTests: XCTestCase {
 
     func testRecordPreservesRequestedStateForIdempotentCompletion() {
         let before = snapshot(completed: true)
-        let record = UndoRecord(.completeRecurringReminder(before: before, requestedCompleted: true))
-        guard case .completeRecurringReminder(let saved, let requested) = record.operation else {
+        let record = UndoRecord(.completeRecurringReminder(before: before, requestedCompleted: true, redoCompletionDate: nil))
+        guard case .completeRecurringReminder(let saved, let requested, _) = record.operation else {
             return XCTFail("Expected recurring completion record")
         }
         XCTAssertEqual(saved, before)
@@ -52,15 +63,15 @@ final class ReminderCompletionUndoTests: XCTestCase {
         // restoreFailedUndo blocks every older entry forever. Discarding it must
         // leave the older entry on top and must not resurrect it on the redo stack.
         let manager = CalendarUndoManager()
-        await manager.record(.completeReminder(id: "older", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Older"))
-        await manager.record(.completeRecurringReminder(before: snapshot(), requestedCompleted: true))
+        await manager.record(.completeReminder(id: "older", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Older", redoCompletionDate: nil))
+        await manager.record(.completeRecurringReminder(before: snapshot(), requestedCompleted: true, redoCompletionDate: nil))
         guard let popped = await manager.popUndo() else { return XCTFail("expected a record") }
         await manager.discardFailedUndo(popped)
         let descriptions = await manager.history().map(\.description)
         XCTAssertEqual(descriptions, ["Completed reminder: Older"])
         let canRedo = await manager.canRedo
         XCTAssertFalse(canRedo)
-        guard case .completeReminder(let id, _, _, _, _)? = await manager.popUndo()?.operation else {
+        guard case .completeReminder(let id, _, _, _, _, _)? = await manager.popUndo()?.operation else {
             return XCTFail("the older record must be the next undo target")
         }
         XCTAssertEqual(id, "older")
@@ -81,15 +92,15 @@ final class ReminderCompletionUndoTests: XCTestCase {
         let identifiable = ReminderCompletionSnapshot(
             id: "r", title: "t", calendarID: "c", sourceID: "s", isCompleted: false, hasRecurrence: true,
             due: ReminderDueValue(components: DateComponents(year: 2026, month: 9, day: 5)), rules: [daily], completionDate: nil)
-        guard case .completeRecurringReminder = UndoOperation.forCompletion(before: identifiable, requestedCompleted: true, savedTitle: "t") else {
+        guard case .completeRecurringReminder = UndoOperation.forCompletion(before: identifiable, requestedCompleted: true, savedTitle: "t", savedCompletionDate: nil) else {
             return XCTFail("identifiable recurring snapshot must get the guarded record")
         }
-        guard case .completeReminder(let id, let wasCompleted, _, _, let title) = UndoOperation.forCompletion(before: snapshot(), requestedCompleted: true, savedTitle: "Saved") else {
+        guard case .completeReminder(let id, let wasCompleted, _, _, let title, _) = UndoOperation.forCompletion(before: snapshot(), requestedCompleted: true, savedTitle: "Saved", savedCompletionDate: nil) else {
             return XCTFail("non-identifiable recurring snapshot must fall back to the legacy record")
         }
         XCTAssertEqual(id, "recurring-194"); XCTAssertFalse(wasCompleted); XCTAssertEqual(title, "Saved")
         let oneOff = ReminderCompletionSnapshot(id: "o", title: "t", calendarID: "c", sourceID: "s", isCompleted: true, hasRecurrence: false, due: nil, rules: [], completionDate: Self.recordedCompletion)
-        guard case .completeReminder(_, let was, _, _, _) = UndoOperation.forCompletion(before: oneOff, requestedCompleted: false, savedTitle: "t") else {
+        guard case .completeReminder(_, let was, _, _, _, _) = UndoOperation.forCompletion(before: oneOff, requestedCompleted: false, savedTitle: "t", savedCompletionDate: nil) else {
             return XCTFail("one-off reminder must use the legacy record")
         }
         XCTAssertTrue(was)
@@ -106,10 +117,10 @@ final class ReminderCompletionUndoTests: XCTestCase {
         // A contract slip (discard called for a record that is not the one just
         // popped) must not destroy an unrelated entry.
         let manager = CalendarUndoManager()
-        await manager.record(.completeReminder(id: "a", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "A"))
-        await manager.record(.completeReminder(id: "b", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "B"))
+        await manager.record(.completeReminder(id: "a", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "A", redoCompletionDate: nil))
+        await manager.record(.completeReminder(id: "b", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "B", redoCompletionDate: nil))
         guard let poppedB = await manager.popUndo() else { return XCTFail("expected b") }
-        let unrelated = UndoRecord(.completeReminder(id: "zzz", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Z"))
+        let unrelated = UndoRecord(.completeReminder(id: "zzz", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: "Z", redoCompletionDate: nil))
         await manager.discardFailedUndo(unrelated)
         let canRedo = await manager.canRedo
         XCTAssertTrue(canRedo, "b must still be on the redo stack — the unrelated record was not the popped one")
@@ -135,8 +146,8 @@ final class ReminderCompletionUndoTests: XCTestCase {
     }
 
     func testForCompletionThreadsTheCompletionDateIntoTheLegacyRecord() {
-        guard case .completeReminder(_, let wasCompleted, _, let recorded, _) =
-                UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once") else {
+        guard case .completeReminder(_, let wasCompleted, _, let recorded, _, _) =
+                UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once", savedCompletionDate: nil) else {
             return XCTFail("one-off items use the legacy record")
         }
         XCTAssertTrue(wasCompleted)
@@ -150,8 +161,8 @@ final class ReminderCompletionUndoTests: XCTestCase {
             id: "recurring-196", title: "Daily", calendarID: "calendar", sourceID: "source",
             isCompleted: true, hasRecurrence: true, due: due, rules: [daily],
             completionDate: Self.recordedCompletion)
-        guard case .completeRecurringReminder(let recorded, _) =
-                UndoOperation.forCompletion(before: before, requestedCompleted: false, savedTitle: "Daily") else {
+        guard case .completeRecurringReminder(let recorded, _, _) =
+                UndoOperation.forCompletion(before: before, requestedCompleted: false, savedTitle: "Daily", savedCompletionDate: nil) else {
             return XCTFail("identifiable recurring items use the guarded record")
         }
         XCTAssertEqual(recorded.completionDate, Self.recordedCompletion)
@@ -186,8 +197,8 @@ final class ReminderCompletionUndoTests: XCTestCase {
     func testLegacyRecordCarriesTheRequestedStateForIdempotentCompletion() {
         // complete(true) on an already-completed one-off: undo restores the
         // recorded instant; redo must re-apply the request, never flip to incomplete.
-        guard case .completeReminder(_, let was, let requested, let recorded, _) =
-                UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: true, savedTitle: "Once") else {
+        guard case .completeReminder(_, let was, let requested, let recorded, _, _) =
+                UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: true, savedTitle: "Once", savedCompletionDate: nil) else {
             return XCTFail("one-off items use the legacy record")
         }
         XCTAssertTrue(was)
@@ -209,10 +220,10 @@ final class ReminderCompletionUndoTests: XCTestCase {
 
     func testUndoWriteRestoresTheRecordedInstantForBothRecords() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let legacy = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once")
+        let legacy = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once", savedCompletionDate: nil)
         XCTAssertEqual(legacy.completionWrite(undo: true, now: now),
                        ReminderCompletionWrite(isCompleted: true, completionDate: Self.recordedCompletion))
-        let recurring = UndoOperation.completeRecurringReminder(before: snapshot(completed: true), requestedCompleted: false)
+        let recurring = UndoOperation.completeRecurringReminder(before: snapshot(completed: true), requestedCompleted: false, redoCompletionDate: nil)
         XCTAssertEqual(recurring.completionWrite(undo: true, now: now),
                        ReminderCompletionWrite(isCompleted: true, completionDate: Self.recordedCompletion))
         XCTAssertNil(UndoOperation.createReminder(id: "x", title: "x").completionWrite(undo: true, now: now))
@@ -222,13 +233,13 @@ final class ReminderCompletionUndoTests: XCTestCase {
         // Idempotent completion: before.isCompleted == true, requested == true.
         // A redo that inferred !wasCompleted would reopen the reminder here.
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let legacy = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: true, savedTitle: "Once")
+        let legacy = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: true, savedTitle: "Once", savedCompletionDate: nil)
         XCTAssertEqual(legacy.completionWrite(undo: false, now: now),
                        ReminderCompletionWrite(isCompleted: true, completionDate: now))
-        let reopen = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once")
+        let reopen = UndoOperation.forCompletion(before: completedOneOff(), requestedCompleted: false, savedTitle: "Once", savedCompletionDate: nil)
         XCTAssertEqual(reopen.completionWrite(undo: false, now: now),
                        ReminderCompletionWrite(isCompleted: false, completionDate: nil))
-        let recurring = UndoOperation.completeRecurringReminder(before: snapshot(completed: true), requestedCompleted: true)
+        let recurring = UndoOperation.completeRecurringReminder(before: snapshot(completed: true), requestedCompleted: true, redoCompletionDate: nil)
         XCTAssertEqual(recurring.completionWrite(undo: false, now: now)?.isCompleted, true)
     }
 

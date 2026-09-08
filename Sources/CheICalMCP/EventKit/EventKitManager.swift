@@ -1989,7 +1989,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .completeReminder(let id, let wasCompleted, _, _, let title):
+        case .completeReminder(let id, let wasCompleted, _, _, let title, _):
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
@@ -2005,7 +2005,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(wasCompleted)"
 
-        case .completeRecurringReminder(let before, _):
+        case .completeRecurringReminder(let before, _, _):
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
@@ -2041,7 +2041,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(let id, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
-        case .completeReminder(let id, _, let requestedCompleted, _, let title):
+        case .completeReminder(let id, _, let requestedCompleted, _, let title, _):
             // Redo re-applies the recorded request (#196: never the opposite of
             // wasCompleted — that reopened an idempotently completed reminder).
             try await ensureReminderAccess()
@@ -2059,7 +2059,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Redone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(requestedCompleted)"
 
-        case .completeRecurringReminder(let before, let requestedCompleted):
+        case .completeRecurringReminder(let before, let requestedCompleted, _):
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
 
         case .batch(let ops):
