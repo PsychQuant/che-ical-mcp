@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change 'discard-blocked-undo-record'. Update Purpose after archive.
+Allow clients to explicitly abandon a blocked top undo record using stable identity, while preserving older history, redo records and in-flight operation safety.
 
 ## Requirements
 
