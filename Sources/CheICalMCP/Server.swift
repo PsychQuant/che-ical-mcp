@@ -253,7 +253,7 @@ class CheICalMCPServer {
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (use list_calendars to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190).")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
@@ -327,7 +327,7 @@ class CheICalMCPServer {
                         "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
@@ -371,7 +371,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove recurrence rule from event")
+                            "description": .string("Set to true to remove recurrence rule from event Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "structured_location": .object([
                             "type": .string("object"),
@@ -387,7 +387,7 @@ class CheICalMCPServer {
                         "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone)")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -571,7 +571,7 @@ class CheICalMCPServer {
                         "due_date": .object(["type": .string("string"), "description": .string("New due date")]),
                         "clear_due_date": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove due date from reminder")
+                            "description": .string("Set to true to remove due date from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
@@ -594,7 +594,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove location trigger from reminder")
+                            "description": .string("Set to true to remove location trigger from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "tags": .object([
                             "type": .string("array"),
@@ -603,7 +603,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_tags": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove all tags from reminder")
+                            "description": .string("Set to true to remove all tags from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ])
                     ]),
                     "required": .array([.string("reminder_id")])
@@ -781,7 +781,7 @@ class CheICalMCPServer {
                                     "location": .object(["type": .string("string")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
-                                    "all_day": .object(["type": .string("boolean")]),
+                                    "all_day": .object(["type": .string("boolean"), "description": .string("Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
                                         "description": .string("Recurrence rule"),
@@ -846,7 +846,7 @@ class CheICalMCPServer {
                         "event_id": .object(["type": .string("string"), "description": .string("The event identifier to copy")]),
                         "target_calendar": .object(["type": .string("string"), "description": .string("Target calendar name to copy to")]),
                         "target_calendar_source": .object(["type": .string("string"), "description": .string("Target calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "delete_original": .object(["type": .string("boolean"), "description": .string("If true, delete the original event after copying (effectively a move)")])
+                        "delete_original": .object(["type": .string("boolean"), "description": .string("If true, delete the original event after copying (effectively a move) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ]),
                     "required": .array([.string("event_id"), .string("target_calendar")])
                 ]),
@@ -903,7 +903,7 @@ class CheICalMCPServer {
                         ]),
                         "dry_run": .object([
                             "type": .string("boolean"),
-                            "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")
+                            "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -1004,7 +1004,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional: only scan tags from this reminder list")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
-                        "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete)")])
+                        "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -1019,7 +1019,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional (filter mode): scope cleanup to this reminder list only. Omit to clean across all lists on all accounts. Ignored when reminder_ids is supplied.")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Only meaningful together with calendar_name — used to disambiguate when multiple calendars share the same name. calendar_source alone (without calendar_name) is rejected because EventKit cannot scope cleanup to 'any calendar from this source'.")]),
-                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")]),
+                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "limit": .object(["type": .string("integer"), "description": .string("Maximum number of reminders to process in this call (default: 1000). If more completed reminders exist, the response includes remaining so callers know to re-invoke. Use to cap blast radius on large backlogs and to avoid multi-MB responses / long-running delete loops. Ignored when reminder_ids is supplied.")]),
                         "reminder_ids": .object([
                             "type": .string("array"),
@@ -1322,7 +1322,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let isAllDay = arguments["all_day"]?.boolValue ?? false
+        let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day") ?? false
         try rejectAllDayTimezoneConflict(allDay: isAllDay, timezone: timezone)   // #190
 
         var alarmOffsets: [Int]?
@@ -1388,7 +1388,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let isAllDay = arguments["all_day"]?.boolValue
+        let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
         let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
 
@@ -1411,9 +1411,9 @@ class CheICalMCPServer {
         }
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
-        let clearRecurrence = arguments["clear_recurrence"]?.boolValue ?? false
+        let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
         let structuredLocation = parseStructuredLocation(from: arguments)
-        let clearTimezone = arguments["clear_timezone"]?.boolValue ?? false
+        let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
@@ -1711,9 +1711,9 @@ class CheICalMCPServer {
         try InputValidation.validateReminderTextInput(title: title, notes: userNotes)
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
-        let clearTags = arguments["clear_tags"]?.boolValue ?? false
+        let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
         let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
-        let clearDueDate = arguments["clear_due_date"]?.boolValue ?? false
+        let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
         if clearDueDate && dueDate != nil {
             throw ToolError.invalidParameter("Cannot specify both due_date and clear_due_date")
         }
@@ -1722,7 +1722,7 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
-        let clearLocationTrigger = arguments["clear_location_trigger"]?.boolValue ?? false
+        let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
 
         // Determine final notes:
         // If user provides notes, use their notes as the base (replacing existing notes content)
@@ -2008,7 +2008,7 @@ class CheICalMCPServer {
         let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
         let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
         try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
-        let includeCompleted = arguments["include_completed"]?.boolValue ?? false
+        let includeCompleted = try InputValidation.requireOptionalBool(arguments, key: "include_completed") ?? false
 
         let completed: Bool? = includeCompleted ? nil : false
 
@@ -2047,7 +2047,7 @@ class CheICalMCPServer {
     }
 
     private func handleCleanupCompletedReminders(arguments: [String: Value]) async throws -> String {
-        let dryRun = arguments["dry_run"]?.boolValue ?? true
+        let dryRun = try InputValidation.requireOptionalBool(arguments, key: "dry_run") ?? true
 
         // #28 binding mode: caller supplied exact reminder_ids. Skip the
         // list/dedupe/slice pipeline entirely — we act on the caller's list
@@ -2394,7 +2394,23 @@ class CheICalMCPServer {
             }
 
             do {
-                try rejectAllDayTimezoneConflict(allDay: eventDict["all_day"]?.boolValue ?? false, timezone: batchTimezone)   // #190
+                // #207: strict boolean per item, reported like every other per-item error.
+                let itemAllDay: Bool
+                do {
+                    itemAllDay = try InputValidation.requireOptionalBool(eventDict, key: "all_day") ?? false
+                } catch {
+                    results.append([
+                        "index": index,
+                        "success": false,
+                        "error": EventKitErrorSanitizer.writeFailureLog(
+                            handler: "createEventsBatch",
+                            identifier: "\(index)",
+                            error: error
+                        )
+                    ])
+                    continue
+                }
+                try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
@@ -2412,7 +2428,7 @@ class CheICalMCPServer {
                     url: nil,
                     calendarName: eventDict["calendar_name"]?.stringValue,
                     calendarSource: eventDict["calendar_source"]?.stringValue,
-                    isAllDay: eventDict["all_day"]?.boolValue ?? false,
+                    isAllDay: itemAllDay,
                     alarmOffsets: nil,
                     recurrenceRule: batchRecurrence,
                     structuredLocation: batchStructuredLocation,
@@ -2548,7 +2564,7 @@ class CheICalMCPServer {
         }
 
         let targetCalendarSource = arguments["target_calendar_source"]?.stringValue
-        let deleteOriginal = arguments["delete_original"]?.boolValue ?? false
+        let deleteOriginal = try InputValidation.requireOptionalBool(arguments, key: "delete_original") ?? false
 
         let newEvent = try await eventKitManager.copyEvent(
             identifier: eventId,
@@ -2666,7 +2682,7 @@ class CheICalMCPServer {
 
     /// Feature 8: Delete multiple events at once (by IDs or by date range)
     private func handleDeleteEventsBatch(arguments: [String: Value]) async throws -> String {
-        let dryRun = arguments["dry_run"]?.boolValue ?? true
+        let dryRun = try InputValidation.requireOptionalBool(arguments, key: "dry_run") ?? true
         let spanStr = arguments["span"]?.stringValue ?? "this"
 
         // Determine mode: by event_ids or by calendar + date range
