@@ -14,6 +14,14 @@ final class EventCopyOperationTests: XCTestCase {
         event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil))
         return EventSnapshot(from: event, includeRecurrence: false)
     }
+    func testRestoreUsesExactCalendarIdentityAndRejectsMissingSource() throws {
+        let saved = snapshot()
+        let calendars = [(id: "other-account", title: "Work"), (id: saved.calendarIdentifier, title: "Work")]
+        let selected = try saved.resolveCalendar(in: calendars, identifier: { $0.id })
+        XCTAssertEqual(selected.id, saved.calendarIdentifier)
+        XCTAssertThrowsError(try saved.resolveCalendar(in: [calendars[0]], identifier: { $0.id }))
+    }
+
     func testMoveReturnsSourceUndoOnlyAfterSuccessfulDeletion() throws {
         var calls: [String] = []
         let outcome = try EventCopyOperation.execute(source: snapshot(), saveCopy: { calls.append("save"); return "new" }, removeSource: { calls.append("remove") })

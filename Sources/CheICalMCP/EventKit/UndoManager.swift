@@ -67,6 +67,7 @@ struct EventSnapshot {
     let title: String
     let startDate: Date
     let endDate: Date
+    let calendarIdentifier: String
     let calendarTitle: String
     let calendarSource: String?
     let notes: String?
@@ -86,6 +87,7 @@ struct EventSnapshot {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
+        self.calendarIdentifier = event.calendar.calendarIdentifier
         self.calendarTitle = event.calendar.title
         self.calendarSource = event.calendar.source?.title
         self.notes = event.notes
@@ -100,6 +102,15 @@ struct EventSnapshot {
         self.recurrenceRules = includeRecurrence ? event.recurrenceRules?.map(RecurrenceRuleSnapshot.init) : nil
         self.timeZone = event.timeZone
     }
+    /// Names can be duplicated across accounts; history restores only its original calendar.
+    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
+        guard !calendarIdentifier.isEmpty,
+              let calendar = calendars.first(where: { identifier($0) == calendarIdentifier }) else {
+            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+        }
+        return calendar
+    }
+
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.

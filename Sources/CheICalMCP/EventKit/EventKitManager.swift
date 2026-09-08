@@ -1940,7 +1940,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .deleteEvent(let snapshot):
             // Undo delete = recreate from snapshot
             let event = EKEvent(eventStore: eventStore)
-            applySnapshot(snapshot, to: event)
+            try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
@@ -1950,7 +1950,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let event = eventStore.event(withIdentifier: id) else {
                 throw EventKitError.eventNotFound(identifier: id)
             }
-            applySnapshot(oldSnapshot, to: event)
+            try applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
@@ -2080,7 +2080,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Apply an EventSnapshot to an EKEvent.
-    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) {
+    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
+        let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
         event.title = snapshot.title
         event.startDate = snapshot.startDate
         event.endDate = snapshot.endDate
@@ -2090,9 +2091,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         event.isAllDay = snapshot.isAllDay
 
         // Calendar
-        if let cal = eventStore.calendars(for: .event).first(where: { $0.title == snapshot.calendarTitle }) {
-            event.calendar = cal
-        }
+        event.calendar = originalCalendar
 
         // Alarms
         if let existingAlarms = event.alarms {
