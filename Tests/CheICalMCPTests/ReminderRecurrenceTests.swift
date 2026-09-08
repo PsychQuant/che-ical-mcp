@@ -103,11 +103,30 @@ final class ReminderRecurrenceTests: XCTestCase {
     }
 
     func testMetadataPreservesUnavailableRulesAndEmptyRules() {
+        // Defensive-contract case, NOT a production-reachable state (#203):
+        // `ReminderReadSnapshot(from:)` yields `rules == nil` only when
+        // `hasRecurrenceRules` is false. Kept so the serializer's documented
+        // `null` contract holds even if a future capture produces it.
         XCTAssertTrue(reminderMetadata(hasRecurrence: true, rules: nil, due: nil)["recurrence_rules"] is NSNull)
         let metadata = reminderMetadata(hasRecurrence: false, rules: nil, due: nil)
         XCTAssertEqual(metadata["has_recurrence"] as? Bool, false)
         XCTAssertEqual((metadata["recurrence_rules"] as? [[String: Any]])?.count, 0)
         XCTAssertTrue(metadata["due"] is NSNull)
+    }
+
+    func testRecurringItemSerializesEveryRuleInOrder() {
+        // The production-reachable recurring shape (#203): one entry per rule.
+        // (The non-recurring snapshot carries `rules == nil` — EventKit's
+        // `recurrenceRules` is nil, not empty — and the serializer emits a literal
+        // `[]` without reading `rules`; that branch is pinned by
+        // testMetadataPreservesUnavailableRulesAndEmptyRules.)
+        let daily = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil))
+        let yearly = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .yearly, interval: 3, end: nil))
+        let metadata = reminderMetadata(hasRecurrence: true, rules: [daily, yearly], due: nil)
+        let rules = metadata["recurrence_rules"] as? [[String: Any]]
+        XCTAssertEqual(rules?.map { $0["frequency"] as? String }, ["daily", "yearly"])
+        XCTAssertEqual(rules?.map { $0["interval"] as? Int }, [1, 3])
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(metadata))
     }
 
     func testRuleDictionaryEmitsFrequencyRawValue() {

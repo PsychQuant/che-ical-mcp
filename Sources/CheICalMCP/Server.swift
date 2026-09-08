@@ -2012,7 +2012,9 @@ class CheICalMCPServer {
 
         let completed: Bool? = includeCompleted ? nil : false
 
-        let reminders = try await eventKitManager.listReminders(
+        // #203: through the read seam, like list_reminders / search_reminders —
+        // value copies made inside the manager actor; no raw EKReminder escapes.
+        let reminders = try await reminderReadSource.listReminderSnapshots(
             completed: completed,
             calendarName: calendarName,
             calendarSource: calendarSource

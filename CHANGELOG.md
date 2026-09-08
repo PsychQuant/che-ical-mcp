@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`complete_reminder` is now annotated `destructiveHint: true`** (#202): completing a recurring reminder advances the series irreversibly, and the finished occurrence cannot be restored by undo once the identifier has rolled over (#204), so the annotation now matches `delete_reminder`. The hint is per-tool, so clients that gate on tool annotations will ask before any `complete_reminder` call, including reopening and non-recurring completions. Regression guard: `ToolAnnotationTests` (Refs #202).
 
+- **`list_reminder_tags` reads through the reminder snapshot seam** (#203): the third reminder read path no longer hands raw `EKReminder` objects out of the manager actor; it consumes `ReminderReadSnapshot` like `list_reminders` / `search_reminders`. Output is unchanged. Tests: a recording-fake handler test for the tags tool, a two-rule reminder through list and search, and the serializer's reachable recurrence states next to the (now labelled) defensive `rules == nil` case (Refs #203).
+
 ## [1.17.0] - 2026-09-07
 
 **#194 — reminder recurrence on read, and explicit completion results.**
