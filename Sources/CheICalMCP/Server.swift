@@ -1566,53 +1566,13 @@ class CheICalMCPServer {
             completed = legacyCompleted
         }
 
-        var reminders = try await reminderReadSource.listReminderSnapshots(
-            completed: completed,
-            calendarName: calendarName,
-            calendarSource: calendarSource
-        )
-
-        let totalFetched = reminders.count
-        let now = Date()
-
-        // Apply overdue filter (incomplete + past due date)
-        if filterMode == "overdue" {
-            reminders = reminders.filter { reminder in
-                !reminder.isCompleted &&
-                safeDateFromComponents(reminder.dueDateComponents).map { $0 < now } == true
-            }
-        }
-
-        let totalAfterFilter = reminders.count
-
-        // Apply sort
-        reminders.sort { r1, r2 in
-            switch sortMode {
-            case "priority":
-                // Priority sort: 1(high) → 5(medium) → 9(low) → 0(none)
-                let p1 = r1.priority == 0 ? Int.max : r1.priority
-                let p2 = r2.priority == 0 ? Int.max : r2.priority
-                return p1 < p2
-            case "title":
-                return (r1.title ?? "").localizedCaseInsensitiveCompare(r2.title ?? "") == .orderedAscending
-            case "creation_date":
-                let d1 = r1.creationDate ?? Date.distantPast
-                let d2 = r2.creationDate ?? Date.distantPast
-                return d1 < d2
-            default: // "due_date"
-                let d1 = safeDateFromComponents(r1.dueDateComponents)
-                let d2 = safeDateFromComponents(r2.dueDateComponents)
-                if d1 == nil && d2 == nil { return false }
-                if d1 == nil { return false }  // nulls last
-                if d2 == nil { return true }
-                return d1! < d2!
-            }
-        }
-
-        // Apply limit
-        if let limit = limit, reminders.count > limit {
-            reminders = Array(reminders.prefix(limit))
-        }
+        let page = try await reminderReadSource.listReminderPage(
+            completed: completed, calendarName: calendarName, calendarSource: calendarSource,
+            query: ReminderPageQuery(overdueOnly: filterMode == "overdue", sort: sortMode, limit: limit))
+        let now = page.referenceDate
+        let reminders = page.reminders
+        let totalFetched = page.totalFetched
+        let totalAfterFilter = page.totalAfterFilter
 
         let result = reminders.map { [self] reminder -> [String: Any] in
             let (cleanNotes, tags) = extractTags(from: reminder.notes)
@@ -1841,30 +1801,12 @@ class CheICalMCPServer {
         // Uses requireOptionalLimit (cap=10000) — same defense-in-depth as search_events.
         let limit = try InputValidation.requireOptionalLimit(arguments)
 
-        // If only tag filter (no keywords), pass empty to get all reminders, then filter by tag
-        var reminders = try await reminderReadSource.searchReminderSnapshots(
-            keywords: keywords,
-            matchMode: matchMode,
-            calendarName: calendarName,
-            calendarSource: calendarSource,
-            completed: completed
-        )
-
-        // Apply tag filter
-        if let tagFilter = tagFilter {
-            let normalizedTag = tagFilter.hasPrefix("#") ? String(tagFilter.dropFirst()) : tagFilter
-            reminders = reminders.filter { reminder in
-                let (_, tags) = extractTags(from: reminder.notes)
-                return tags.contains(where: { $0.caseInsensitiveCompare(normalizedTag) == .orderedSame })
-            }
-        }
-
-        // #107: capture pre-limit total BEFORE prefix truncation.
-        // reminder_count semantic = pre-limit total (aligned with search_events).
-        let totalCount = reminders.count
-        if let limit = limit, reminders.count > limit {
-            reminders = Array(reminders.prefix(limit))
-        }
+        let page = try await reminderReadSource.searchReminderPage(
+            keywords: keywords, matchMode: matchMode, calendarName: calendarName,
+            calendarSource: calendarSource, completed: completed,
+            query: ReminderPageQuery(tag: tagFilter, limit: limit))
+        let reminders = page.reminders
+        let totalCount = page.totalAfterFilter
 
         let result = reminders.map { [self] reminder -> [String: Any] in
             let (cleanNotes, tags) = extractTags(from: reminder.notes)

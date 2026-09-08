@@ -3,6 +3,8 @@ import Foundation
 
 /// Only the list/search surface; deliberately separate from cleanup's protocol.
 protocol ReminderReadSource: Sendable {
+    func listReminderPage(completed: Bool?, calendarName: String?, calendarSource: String?, query: ReminderPageQuery) async throws -> ReminderPage
+    func searchReminderPage(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?, query: ReminderPageQuery) async throws -> ReminderPage
     func listReminderSnapshots(completed: Bool?, calendarName: String?, calendarSource: String?) async throws -> [ReminderReadSnapshot]
     func searchReminderSnapshots(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?) async throws -> [ReminderReadSnapshot]
 }
@@ -74,7 +76,7 @@ struct ReminderReadSnapshot: Sendable {
         }
         self.init(id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
                   isCompleted: reminder.isCompleted, priority: reminder.priority,
-                  calendarTitle: reminder.calendar.title, dueDateComponents: reminder.dueDateComponents,
+                  calendarTitle: reminder.calendar?.title ?? "", dueDateComponents: reminder.dueDateComponents,
                   completionDate: reminder.completionDate, creationDate: reminder.creationDate,
                   hasRecurrence: reminder.hasRecurrenceRules,
                   rules: reminder.recurrenceRules?.map(ReminderRecurrenceRuleValue.init(from:)),

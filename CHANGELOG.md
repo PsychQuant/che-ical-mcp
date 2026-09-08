@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Reminder list/search now filter, sort and limit inside the EventKit actor before building full recurrence/alarm snapshots. Pre-limit counts and response fields are preserved; snapshots tolerate a missing calendar (#197).
+- Trailing reminder tags use a linear token scan, avoiding exponential regex backtracking on malformed note lines (#216).
+
 ### Changed
 
 - **BREAKING — every boolean tool argument is now a strict JSON boolean** (#207): the remaining boolean coercions, including the optional update field, follow the #205 contract — `create_event.all_day`, `update_event.all_day` / `clear_recurrence` / `clear_timezone`, `update_reminder.clear_tags` / `clear_due_date` / `clear_location_trigger`, `list_reminder_tags.include_completed`, `cleanup_completed_reminders.dry_run`, `create_events_batch` per-item `all_day` (reported as that item's error, like every other per-item failure), `copy_event.delete_original`, `delete_events_batch.dry_run`. A string or number is rejected with `<key> must be a boolean (true or false)` before the affected operation writes; omitted or JSON `null` keeps the default. Previously `"dry_run": "false"` silently previewed and `"delete_original": "true"` silently kept the original. Guard: `BooleanArgumentContractTests` (Refs #207).
