@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-09-09
+
+- **`undo(discard_id)` clears a jammed history head (#206/#214)**: a blocked top record can be removed explicitly by the stable ID shown in `undo_history`; a missing target is no longer kept as a permanently "transient" entry for deleted reminders or dead events. Stale IDs and active history execution are rejected.
+- **Completion dates survive undo/redo (#196/#211/#212)**: undo writes back the recorded `completion_date` instead of letting EventKit stamp the undo time; completing an already-completed reminder keeps its original instant; redo restores the saved instant.
+- **Entity-specific recurrence read fields (#198)**: `event_recurrence_rules` / `reminder_recurrence_rules` distinguish the two rule formats; legacy `recurrence_rules` aliases are retained.
+- **Event moves restore to the original calendar (#208)**: `copy_event delete_original` and `move_events_batch` record the source occurrence so undo puts it back where it came from, and both declare `destructiveHint`. All tool annotations now have an explicit tested policy (#209); `complete_reminder` is `destructiveHint: true` (#202).
+- **BREAKING — every boolean tool argument is a strict JSON boolean (#207)**: `all_day`, `clear_*`, `include_completed`, `dry_run`, `delete_original` and per-item batch `all_day` reject strings/numbers with `<key> must be a boolean (true or false)`; omitted or `null` keeps the default.
+- Reminder list/search filter, sort and limit inside the EventKit actor before building snapshots (#197); `list_reminder_tags` reads through the snapshot seam (#203); trailing tag parsing is linear, no exponential backtracking (#216); reminder write results are immutable Sendable snapshots (#215).
+
 ## [1.17.0] - 2026-09-07
 
 - **Recurring reminders (#194)**: `list_reminders` / `search_reminders` expose `has_recurrence`, structured `recurrence_rules` (incl. `frequency_raw_value`) and a `due` object (`date` / `time` / `timezone` / `date_time`). `complete_reminder` separates the write outcome (`operation`) from the saved object (`observed`) and reports the successor as `next_occurrence` (`confirmed` / `unknown` / `not_applicable`), observed once synchronously after save; the message carries the next due in the reminder's own wall clock. Contract: `docs/REMINDER_RECURRENCE.md`.

@@ -137,9 +137,17 @@ This plugin requires macOS permissions:
 
 ## Version
 
-Plugin version: 1.17.0 (matches MCP server version)
+Plugin version: 1.18.0 (matches MCP server version)
 
 ### Changelog
+
+**1.18.0** (2026-09-09)
+- **`undo(discard_id)` clears a jammed history head (#206/#214)**: a blocked top record can be removed explicitly by the stable ID shown in `undo_history`; a missing target is no longer kept as a permanently transient entry. Stale IDs and active history execution are rejected.
+- **Completion dates survive undo/redo (#196/#211/#212)**: undo writes back the recorded `completion_date`; repeated completion keeps the original instant; redo restores the saved one.
+- **Entity-specific recurrence read fields (#198)**: `event_recurrence_rules` / `reminder_recurrence_rules`, with legacy `recurrence_rules` aliases retained.
+- **Moves restore to the original calendar (#208)** and every write tool carries an explicit, tested `destructiveHint` (#202/#209).
+- **BREAKING — every boolean tool argument is a strict JSON boolean (#207)**: strings/numbers are rejected before any write; omitted or `null` keeps the default.
+- Reminder reads filter/sort/limit inside the actor before snapshotting (#197); `list_reminder_tags` uses the snapshot seam (#203); linear tag parsing (#216); Sendable reminder write results (#215).
 
 **1.17.0** (2026-09-07)
 - **Recurring reminders (#194)**: `list_reminders` / `search_reminders` expose `has_recurrence`, structured `recurrence_rules` (incl. `frequency_raw_value`) and a `due` object (`date` / `time` / `timezone` / `date_time`). `complete_reminder` separates the write outcome (`operation`) from the saved object (`observed`) and reports the successor as `next_occurrence` (`confirmed` / `unknown` / `not_applicable`), observed once synchronously after save; the message carries the next due in the reminder's own wall clock. Contract: `docs/REMINDER_RECURRENCE.md`.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-09-09
+
 ### Added
 
 - undo(discard_id) can explicitly remove a blocked top history record by the stable ID from undo_history; stale IDs and active history execution are rejected (#206, #214).
