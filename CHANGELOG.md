@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reminder write results are immutable Sendable snapshots (#215). Event moves record source-occurrence restoration for undo (#208).
+
 - Repeated reminder completion preserves its original completion date (#211); redo restores the saved completion instant instead of stamping a fresh one (#212).
 
 - Reminder list/search now filter, sort and limit inside the EventKit actor before building full recurrence/alarm snapshots. Pre-limit counts and response fields are preserved; snapshots tolerate a missing calendar (#197).
@@ -20,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Undo restores the recorded `completion_date`** (#196): every undo that returns a reminder to the completed state — the completion records, and the update / delete records through their snapshot — now carries the pre-write completion instant and writes it back instead of letting EventKit stamp the undo time. Redo re-applies the recorded request: the legacy record no longer infers it as the opposite of the prior state, which reopened an idempotently completed reminder. The record-to-write mapping (`UndoOperation.completionWrite`), the write (`ReminderCompletionWrite.apply`) and both snapshot captures are unit-tested against in-memory EventKit objects; the on-device undo round-trip is still pending (Refs #196).
 
 ### Changed
+
+- Update and optional-move tools now declare destructive hints; all tool annotations have an explicit tested policy (#209).
 
 - Reminder next-occurrence status is represented by an enum while preserving its JSON strings; completion and recurring-history methods now live in a dedicated actor extension (#199).
 - **BREAKING — every boolean tool argument is now a strict JSON boolean** (#207): the remaining boolean coercions, including the optional update field, follow the #205 contract — `create_event.all_day`, `update_event.all_day` / `clear_recurrence` / `clear_timezone`, `update_reminder.clear_tags` / `clear_due_date` / `clear_location_trigger`, `list_reminder_tags.include_completed`, `cleanup_completed_reminders.dry_run`, `create_events_batch` per-item `all_day` (reported as that item's error, like every other per-item failure), `copy_event.delete_original`, `delete_events_batch.dry_run`. A string or number is rejected with `<key> must be a boolean (true or false)` before the affected operation writes; omitted or JSON `null` keeps the default. Previously `"dry_run": "false"` silently previewed and `"delete_original": "true"` silently kept the original. Guard: `BooleanArgumentContractTests` (Refs #207).

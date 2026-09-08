@@ -1390,16 +1390,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
 
-        // Save the new event
-        try eventStore.save(newEvent, span: .thisEvent)
-
-        // Optionally delete the original
-        if deleteOriginal {
-            try eventStore.remove(sourceEvent, span: .thisEvent)
+        // A move removes one occurrence (.thisEvent), so undo restores a standalone
+        // occurrence rather than duplicating the original recurring series (#208).
+        if deleteOriginal && sourceEvent.calendar == nil {
+            throw EventKitError.calendarNotFound(identifier: "source event calendar")
         }
-
-        markNeedsRefresh()
-        return newEvent
+        let sourceSnapshot = deleteOriginal ? EventSnapshot(from: sourceEvent, includeRecurrence: false) : nil
+        defer { markNeedsRefresh() } // save may succeed even if removing the source fails
+        let outcome = try EventCopyOperation.execute(source: sourceSnapshot, saveCopy: {
+            try eventStore.save(newEvent, span: .thisEvent)
+            return newEvent
+        }, removeSource: {
+            try eventStore.remove(sourceEvent, span: .thisEvent)
+        })
+        if let undo = outcome.undo { await CalendarUndoManager.shared.record(undo) }
+        return outcome.value
     }
 
     // MARK: - Reminders

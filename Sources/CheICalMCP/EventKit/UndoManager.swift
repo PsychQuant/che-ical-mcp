@@ -82,7 +82,7 @@ struct EventSnapshot {
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
 
-    init(from event: EKEvent) {
+    init(from event: EKEvent, includeRecurrence: Bool = true) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
@@ -97,7 +97,7 @@ struct EventSnapshot {
         self.structuredLocationLat = event.structuredLocation?.geoLocation?.coordinate.latitude
         self.structuredLocationLon = event.structuredLocation?.geoLocation?.coordinate.longitude
         self.structuredLocationRadius = event.structuredLocation?.radius
-        self.recurrenceRules = event.recurrenceRules?.map(RecurrenceRuleSnapshot.init)
+        self.recurrenceRules = includeRecurrence ? event.recurrenceRules?.map(RecurrenceRuleSnapshot.init) : nil
         self.timeZone = event.timeZone
     }
 }

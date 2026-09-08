@@ -119,7 +119,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_calendar",
@@ -180,7 +180,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Event Tools
@@ -237,7 +237,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_event",
@@ -401,7 +401,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
             Tool(
                 name: "delete_event",
@@ -485,7 +485,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_reminder",
@@ -608,7 +608,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("reminder_id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
             Tool(
                 name: "complete_reminder",
@@ -662,7 +662,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // New Feature Tools
@@ -709,7 +709,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 3: Quick Time Range
@@ -758,7 +758,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("range")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 4: Batch Create Events
@@ -833,13 +833,13 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_time"), .string("end_time")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The original event is preserved.",
+                description: "Copy an event to another calendar. The original event is preserved unless delete_original is true. Undo of a move restores the deleted source occurrence; the copy remains. If deletion fails after copying, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -850,7 +850,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_id"), .string("target_calendar")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Feature 7: Move Events Batch
@@ -870,7 +870,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Feature 8: Delete Events Batch
@@ -942,7 +942,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Reminder Batch Operations
@@ -1007,7 +1007,7 @@ class CheICalMCPServer {
                         "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Cleanup Tool
