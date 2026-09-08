@@ -3236,60 +3236,7 @@ class CheICalMCPServer {
 
     /// Extract #tags from notes string, returning (clean notes without tag line, array of tags)
     private func extractTags(from notes: String?) -> (cleanNotes: String?, tags: [String]) {
-        guard let notes = notes, !notes.isEmpty else {
-            return (nil, [])
-        }
-
-        // Tags are stored as a line of #hashtags (typically the last line)
-        let tagPattern = #"#(\S+)"#
-        let regex = try! NSRegularExpression(pattern: tagPattern)
-
-        // Split into lines and find the tag line (a line where ALL non-whitespace content is #tags)
-        let lines = notes.components(separatedBy: "\n")
-        var tagLine: String?
-        var tagLineIndex: Int?
-
-        // Search from the end for a line that is entirely #tags
-        let tagLinePattern = #"^\s*(#\S+\s*)+$"#
-        let tagLineRegex = try! NSRegularExpression(pattern: tagLinePattern)
-
-        for i in stride(from: lines.count - 1, through: 0, by: -1) {
-            let line = lines[i]
-            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-            let range = NSRange(line.startIndex..., in: line)
-            if tagLineRegex.firstMatch(in: line, range: range) != nil {
-                tagLine = line
-                tagLineIndex = i
-            }
-            break  // Only check the last non-empty line
-        }
-
-        guard let foundTagLine = tagLine, let foundIndex = tagLineIndex else {
-            return (notes, [])
-        }
-
-        // Extract individual tags
-        let range = NSRange(foundTagLine.startIndex..., in: foundTagLine)
-        let matches = regex.matches(in: foundTagLine, range: range)
-        let tags = matches.compactMap { match -> String? in
-            guard let tagRange = Range(match.range(at: 1), in: foundTagLine) else { return nil }
-            return String(foundTagLine[tagRange])
-        }
-
-        if tags.isEmpty {
-            return (notes, [])
-        }
-
-        // Rebuild notes without the tag line
-        var cleanLines = lines
-        cleanLines.remove(at: foundIndex)
-        // Remove trailing empty lines
-        while let last = cleanLines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
-            cleanLines.removeLast()
-        }
-        let cleanNotes = cleanLines.isEmpty ? nil : cleanLines.joined(separator: "\n")
-
-        return (cleanNotes, tags)
+        ReminderTags.extract(from: notes)
     }
 
     /// Build notes string by combining user notes with tags
