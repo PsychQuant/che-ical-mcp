@@ -11,6 +11,18 @@ private actor ReminderReadFake: ReminderReadSource {
     func searchReminderSnapshots(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?) async throws -> [ReminderReadSnapshot] { values }
 }
 
+private actor PageOnlyReminderFake: ReminderReadSource {
+    enum Unexpected: Error { case snapshotPath }
+    func listReminderSnapshots(completed: Bool?, calendarName: String?, calendarSource: String?) async throws -> [ReminderReadSnapshot] { throw Unexpected.snapshotPath }
+    func searchReminderSnapshots(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?) async throws -> [ReminderReadSnapshot] { throw Unexpected.snapshotPath }
+    func listReminderPage(completed: Bool?, calendarName: String?, calendarSource: String?, query: ReminderPageQuery) async throws -> ReminderPage {
+        query.page([ReminderReadSnapshot(id: "page", title: "Page")]) { $0 }
+    }
+    func searchReminderPage(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?, query: ReminderPageQuery) async throws -> ReminderPage {
+        query.page([ReminderReadSnapshot(id: "page", title: "Page")]) { $0 }
+    }
+}
+
 final class ReminderRecurrenceHandlerTests: XCTestCase {
     /// "repeat" is `hasRecurrence: true` with `rules == nil` — a state
     /// `ReminderReadSnapshot(from:)` cannot produce (EventKit's `recurrenceRules`
@@ -20,6 +32,28 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
     private func records() -> [ReminderReadSnapshot] {
         [ReminderReadSnapshot(id: "one", title: "Once", hasRecurrence: false),
          ReminderReadSnapshot(id: "repeat", title: "Repeat", hasRecurrence: true)]
+    }
+
+    func testHandlersDispatchToPageRequirements() async throws {
+        let server = try await CheICalMCPServer(reminderReadSource: PageOnlyReminderFake())
+        for tool in ["list_reminders", "search_reminders"] {
+            let raw = try await server.executeToolCall(name: tool, arguments: ["keyword": .string("Page"), "limit": .int(1)])
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            XCTAssertEqual(json["reminder_count"] as? Int, 1)
+        }
+    }
+
+    func testSearchFiltersTagsBeforeLimitAndPreservesCount() async throws {
+        let records = [ReminderReadSnapshot(id: "a", title: "A", notes: "#work"),
+                       ReminderReadSnapshot(id: "b", title: "B", notes: "#other"),
+                       ReminderReadSnapshot(id: "c", title: "C", notes: "#WORK")]
+        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records))
+        let raw = try await server.executeToolCall(name: "search_reminders", arguments: ["tag": .string("work"), "limit": .int(1)])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        XCTAssertEqual(json["reminder_count"] as? Int, 2)
+        let values = try XCTUnwrap(json["reminders"] as? [[String: Any]])
+        XCTAssertEqual(values.count, 1)
+        XCTAssertEqual(values.first?["id"] as? String, "a")
     }
 
     func testListPreservesPreLimitCountAndAddsMetadata() async throws {

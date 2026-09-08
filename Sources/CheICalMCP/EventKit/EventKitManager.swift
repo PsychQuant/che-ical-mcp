@@ -1421,6 +1421,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return reminders.map { $0.calendarItemIdentifier }
     }
 
+    func listReminderPage(completed: Bool?, calendarName: String?, calendarSource: String?, query: ReminderPageQuery) async throws -> ReminderPage {
+        let values = try await listReminders(completed: completed, calendarName: calendarName, calendarSource: calendarSource)
+        return query.page(values, snapshot: ReminderReadSnapshot.init(from:))
+    }
+
+    func searchReminderPage(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?, query: ReminderPageQuery) async throws -> ReminderPage {
+        let values = try await searchReminders(keywords: keywords, matchMode: matchMode, calendarName: calendarName, calendarSource: calendarSource, completed: completed)
+        return query.page(values, snapshot: ReminderReadSnapshot.init(from:))
+    }
+
     func listReminderSnapshots(completed: Bool?, calendarName: String?, calendarSource: String?) async throws -> [ReminderReadSnapshot] {
         let reminders = try await listReminders(completed: completed, calendarName: calendarName, calendarSource: calendarSource)
         return reminders.map(ReminderReadSnapshot.init(from:))
