@@ -23,29 +23,36 @@ final class ReminderCompletionTests: XCTestCase {
         )
     }
 
+    func testStatusWireValuesRemainStable() {
+        XCTAssertEqual(NextOccurrenceStatus.confirmed.rawValue, "confirmed")
+        XCTAssertEqual(NextOccurrenceStatus.unknown.rawValue, "unknown")
+        XCTAssertEqual(NextOccurrenceStatus.notApplicable.rawValue, "not_applicable")
+        XCTAssertEqual(ReminderNextOccurrence.notApplicable.dictionary["status"] as? String, "not_applicable")
+    }
+
     func testObservedDateOnlySuccessorIsConfirmed() {
         let next = ReminderNextOccurrence.evaluate(
             before: snapshot(), observed: snapshot(day: 6), requestedCompleted: true)
-        XCTAssertEqual(next.status, "confirmed")
+        XCTAssertEqual(next.status, .confirmed)
         XCTAssertEqual(next.reminder?.due, snapshot(day: 6).due)
     }
 
     func testPastDueSuccessorCanStillBeConfirmed() {
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(day: 1), observed: snapshot(day: 2),
-            requestedCompleted: true).status, "confirmed")
+            requestedCompleted: true).status, .confirmed)
     }
 
     func testNoObservationIsUnknown() {
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
-            before: snapshot(), observed: nil, requestedCompleted: true).status, "unknown")
+            before: snapshot(), observed: nil, requestedCompleted: true).status, .unknown)
     }
 
     func testUnchangedAndEarlierDueDatesAreUnknown() {
         for day in [4, 5] {
             XCTAssertEqual(ReminderNextOccurrence.evaluate(
                 before: snapshot(), observed: snapshot(day: day),
-                requestedCompleted: true).status, "unknown")
+                requestedCompleted: true).status, .unknown)
         }
     }
 
@@ -53,40 +60,40 @@ final class ReminderCompletionTests: XCTestCase {
         for observed in [snapshot(id: "other", day: 6), snapshot(calendar: "other", day: 6),
                          snapshot(source: "other", day: 6), snapshot(day: 6, interval: 2)] {
             XCTAssertEqual(ReminderNextOccurrence.evaluate(
-                before: snapshot(), observed: observed, requestedCompleted: true).status, "unknown")
+                before: snapshot(), observed: observed, requestedCompleted: true).status, .unknown)
         }
     }
 
     func testCompletedObservationAndMissingDueAreUnknown() {
         for observed in [snapshot(completed: true, day: 6), snapshot(day: nil)] {
             XCTAssertEqual(ReminderNextOccurrence.evaluate(
-                before: snapshot(), observed: observed, requestedCompleted: true).status, "unknown")
+                before: snapshot(), observed: observed, requestedCompleted: true).status, .unknown)
         }
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(day: nil), observed: snapshot(day: 6),
-            requestedCompleted: true).status, "unknown")
+            requestedCompleted: true).status, .unknown)
     }
 
     func testPrecisionAndTimeZoneChangesAreNotConfirmed() {
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(), observed: snapshot(day: 6, hour: 9),
-            requestedCompleted: true).status, "unknown")
+            requestedCompleted: true).status, .unknown)
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(hour: 9, zone: "Asia/Tokyo"),
             observed: snapshot(day: 6, hour: 9, zone: "Europe/London"),
-            requestedCompleted: true).status, "unknown")
+            requestedCompleted: true).status, .unknown)
     }
 
     func testOneTimeReopenAndAlreadyCompletedDoNotResolveSuccessors() {
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(recurring: false), observed: nil,
-            requestedCompleted: true).status, "not_applicable")
+            requestedCompleted: true).status, .notApplicable)
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(completed: true), observed: nil,
-            requestedCompleted: false).status, "not_applicable")
+            requestedCompleted: false).status, .notApplicable)
         XCTAssertEqual(ReminderNextOccurrence.evaluate(
             before: snapshot(completed: true), observed: nil,
-            requestedCompleted: true).status, "not_applicable")
+            requestedCompleted: true).status, .notApplicable)
     }
 
     func testCompletionResponseSeparatesSuccessfulOperationFromIncompleteSavedState() throws {

@@ -63,21 +63,27 @@ struct ReminderCompletionSnapshot: Equatable, Sendable {
 }
 
 /// An observation, never a recurrence calculation or an inferred series end.
+enum NextOccurrenceStatus: String, Sendable {
+    case confirmed
+    case unknown
+    case notApplicable = "not_applicable"
+}
+
 struct ReminderNextOccurrence: Equatable, Sendable {
-    let status: String
+    let status: NextOccurrenceStatus
     let reason: String?
     let reminder: ReminderCompletionSnapshot?
 
-    private init(status: String, reason: String? = nil, reminder: ReminderCompletionSnapshot? = nil) {
+    private init(status: NextOccurrenceStatus, reason: String? = nil, reminder: ReminderCompletionSnapshot? = nil) {
         self.status = status
         self.reason = reason
         self.reminder = reminder
     }
 
-    static let notApplicable = Self(status: "not_applicable")
+    static let notApplicable = Self(status: .notApplicable)
 
     static func unknown(reason: String) -> Self {
-        Self(status: "unknown", reason: reason)
+        Self(status: .unknown, reason: reason)
     }
 
     static func evaluate(before: ReminderCompletionSnapshot,
@@ -102,11 +108,11 @@ struct ReminderNextOccurrence: Equatable, Sendable {
             return .unknown(reason: "due_not_comparable")
         }
         guard observedDate > originalDate else { return .unknown(reason: "due_not_advanced") }
-        return Self(status: "confirmed", reminder: observed)
+        return Self(status: .confirmed, reminder: observed)
     }
 
     var dictionary: [String: Any] {
-        var value: [String: Any] = ["status": status, "reminder": NSNull()]
+        var value: [String: Any] = ["status": status.rawValue, "reminder": NSNull()]
         if let reason { value["reason"] = reason }
         if let reminder {
             value["reminder"] = [
@@ -144,11 +150,11 @@ struct ReminderCompletionResult: Sendable {
         } else if before.isCompleted {
             message = "This reminder was already completed; the requested state was saved successfully."
         } else if before.hasRecurrence {
-            if nextOccurrence.status == "confirmed",
+            if nextOccurrence.status == .confirmed,
                let dueText = Self.dueDescription(nextOccurrence.reminder?.due) {
                 // #194 asks for "completed; next occurrence <date>".
                 message = "This occurrence was completed successfully. Next occurrence: \(dueText) (observed, still incomplete)."
-            } else if nextOccurrence.status == "confirmed" {
+            } else if nextOccurrence.status == .confirmed {
                 message = "This occurrence was completed successfully. The observed next occurrence remains incomplete."
             } else {
                 message = "This occurrence was completed successfully. The next occurrence could not be confirmed."
