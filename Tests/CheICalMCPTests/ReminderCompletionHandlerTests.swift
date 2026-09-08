@@ -17,13 +17,13 @@ private actor CompletionFake: ReminderCompletionSource {
             func snap(day: Int) -> ReminderCompletionSnapshot {
                 ReminderCompletionSnapshot(id: identifier, title: "Repeat", calendarID: "list", sourceID: "source",
                                            isCompleted: false, hasRecurrence: true,
-                                           due: ReminderDueValue(components: DateComponents(year: 2026, month: 9, day: day)), rules: [rule])
+                                           due: ReminderDueValue(components: DateComponents(year: 2026, month: 9, day: day)), rules: [rule], completionDate: nil)
             }
             let before = snap(day: 5), after = snap(day: 6)
             return ReminderCompletionResult(before: before, afterSave: after, requestedCompleted: completed,
                                             nextOccurrence: .evaluate(before: before, observed: after, requestedCompleted: completed))
         }
-        let before = ReminderCompletionSnapshot(id: identifier, title: "Repeat", calendarID: "list", sourceID: "source", isCompleted: false, hasRecurrence: true, due: nil, rules: nil)
+        let before = ReminderCompletionSnapshot(id: identifier, title: "Repeat", calendarID: "list", sourceID: "source", isCompleted: false, hasRecurrence: true, due: nil, rules: nil, completionDate: nil)
         return ReminderCompletionResult(before: before, afterSave: before, requestedCompleted: completed, nextOccurrence: completed ? .unknown(reason: "not_observed") : .notApplicable)
     }
 }
