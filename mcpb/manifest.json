@@ -145,7 +145,7 @@
     },
     {
       "name": "undo",
-      "description": "Undo the most recent calendar/reminder operation"
+      "description": "Undo the last operation, or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
@@ -153,7 +153,7 @@
     },
     {
       "name": "undo_history",
-      "description": "List undoable operations with timestamps"
+      "description": "List undoable operations with stable record IDs, timestamps and undo/redo counts"
     }
   ],
   "compatibility": {

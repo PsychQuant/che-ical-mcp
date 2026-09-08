@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- undo(discard_id) can explicitly remove a blocked top history record by the stable ID from undo_history; stale IDs and active history execution are rejected (#206, #214).
+
 - Explicit event_recurrence_rules and reminder_recurrence_rules read fields distinguish the entity-specific rule formats while retaining legacy recurrence_rules aliases. Event frequency formatting handles unknown values without trapping (#198).
 
 ### Fixed

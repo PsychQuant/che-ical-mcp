@@ -178,6 +178,7 @@ enum UndoOperation {
 
 /// Timestamped record of an operation.
 struct UndoRecord {
+    let id = UUID()
     let operation: UndoOperation
     let timestamp: Date
 
@@ -197,12 +198,53 @@ actor CalendarUndoManager {
     private var undoStack: [UndoRecord] = []
     private var redoStack: [UndoRecord] = []
     private let maxStackSize = 50
+    private var activeHistoryID: UUID?
 
     /// Production code uses `shared`. The internal initializer is a test seam
     /// for the stack-discipline tests (`ReminderCompletionUndoTests`): nothing
     /// injects a manager into a handler, so a `*Source` protocol would have no
     /// consumer — the tests exercise this actor's own stack semantics.
     init() {}
+
+    struct HistorySnapshot: Sendable {
+        let entries: [(index: Int, id: String, description: String, timestamp: Date)]
+        let undoCount: Int
+        let redoCount: Int
+    }
+    struct DiscardResult: Sendable {
+        let id: String
+        let description: String
+        let undoCount: Int
+        let redoCount: Int
+    }
+
+    func historySnapshot() -> HistorySnapshot {
+        HistorySnapshot(entries: history(), undoCount: undoStack.count, redoCount: redoStack.count)
+    }
+
+    func beginUndo() throws -> UndoRecord? {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        let record = popUndo()
+        activeHistoryID = record?.id
+        return record
+    }
+    func beginRedo() throws -> UndoRecord? {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        let record = popRedo()
+        activeHistoryID = record?.id
+        return record
+    }
+    func finishHistoryOperation(_ record: UndoRecord) {
+        if activeHistoryID == record.id { activeHistoryID = nil }
+    }
+    func discardUndo(expectedID: UUID) throws -> DiscardResult {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        guard let record = undoStack.last else { throw UndoHistoryError.empty }
+        guard record.id == expectedID else { throw UndoHistoryError.stale }
+        undoStack.removeLast()
+        return DiscardResult(id: record.id.uuidString, description: record.operation.description,
+                             undoCount: undoStack.count, redoCount: redoStack.count)
+    }
 
     /// Record a mutation. Clears the redo stack.
     func record(_ operation: UndoOperation) {
@@ -226,13 +268,15 @@ actor CalendarUndoManager {
     /// popUndo moved the record to the redo stack, so drop that copy and
     /// re-append the record to the undo stack.
     func restoreFailedUndo(_ record: UndoRecord) {
-        if !redoStack.isEmpty { redoStack.removeLast() }
+        finishHistoryOperation(record)
+        redoStack.removeAll { $0.id == record.id }
         undoStack.append(record)
     }
 
     /// #191 — symmetric restore for a failed executeRedo (same call contract).
     func restoreFailedRedo(_ record: UndoRecord) {
-        if !undoStack.isEmpty { undoStack.removeLast() }
+        finishHistoryOperation(record)
+        undoStack.removeAll { $0.id == record.id }
         redoStack.append(record)
     }
 
@@ -241,14 +285,16 @@ actor CalendarUndoManager {
     /// jams every older entry behind an always-failing head. Same call contract
     /// as `restoreFailedUndo` — only immediately after the popUndo that threw.
     func discardFailedUndo(_ record: UndoRecord) {
+        finishHistoryOperation(record)
         // Destructive, so verify it is the record popUndo just moved: a
         // contract slip must not destroy an unrelated entry.
-        if let top = redoStack.last, top.timestamp == record.timestamp { redoStack.removeLast() }
+        if let top = redoStack.last, top.id == record.id { redoStack.removeLast() }
     }
 
     /// Symmetric discard for a permanently failed executeRedo.
     func discardFailedRedo(_ record: UndoRecord) {
-        if let top = undoStack.last, top.timestamp == record.timestamp { undoStack.removeLast() }
+        finishHistoryOperation(record)
+        if let top = undoStack.last, top.id == record.id { undoStack.removeLast() }
     }
 
     func popRedo() -> UndoRecord? {
@@ -258,9 +304,9 @@ actor CalendarUndoManager {
     }
 
     /// Get undo history (newest first).
-    func history() -> [(index: Int, description: String, timestamp: Date)] {
+    func history() -> [(index: Int, id: String, description: String, timestamp: Date)] {
         return undoStack.enumerated().reversed().map { (index, record) in
-            (index: index, description: record.operation.description, timestamp: record.timestamp)
+            (index: index, id: record.id.uuidString, description: record.operation.description, timestamp: record.timestamp)
         }
     }
 
@@ -332,5 +378,17 @@ enum UndoFailureDisposition: Equatable {
 
     static func of(_ error: Error) -> Self {
         error is UnrecoverableUndoError ? .discard : .restore
+    }
+}
+
+/// Fixed, author-controlled errors; a failed request leaves the stacks unchanged.
+enum UndoHistoryError: LocalizedError, Sendable, TrustedErrorMessage {
+    case busy, empty, stale
+    var errorDescription: String? {
+        switch self {
+        case .busy: return "An undo or redo is in progress. Retry after it finishes."
+        case .empty: return "No undo history record is available to discard."
+        case .stale: return "The undo history changed. Read undo_history and select the current top record ID."
+        }
     }
 }
