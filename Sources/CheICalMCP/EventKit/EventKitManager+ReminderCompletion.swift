@@ -12,8 +12,7 @@ extension EventKitManager {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
-        reminder.isCompleted = completed
-        reminder.completionDate = completed ? Date() : nil
+        ReminderCompletionWrite.applyRequest(to: reminder, completed: completed, now: Date())
         try eventStore.save(reminder, commit: true)
         // Observe exactly once, synchronously, before any suspension point. On
         // iCloud (on-device probe, PR #195) save advances a recurring reminder in
