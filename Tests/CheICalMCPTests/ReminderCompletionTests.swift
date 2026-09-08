@@ -18,7 +18,8 @@ final class ReminderCompletionTests: XCTestCase {
             id: id, title: "Task", calendarID: calendar, sourceID: source,
             isCompleted: completed, hasRecurrence: recurring,
             due: ReminderDueValue(components: components),
-            rules: recurring ? [ReminderRecurrenceRuleValue(from: rule)] : []
+            rules: recurring ? [ReminderRecurrenceRuleValue(from: rule)] : [],
+            completionDate: completed ? Date(timeIntervalSince1970: 1_756_900_000) : nil
         )
     }
 
@@ -214,11 +215,11 @@ final class ReminderCompletionTests: XCTestCase {
         XCTAssertTrue(snapshot(day: 32).matchesOccurrence(snapshot(day: 32)))
         let noRules = ReminderCompletionSnapshot(
             id: "r", title: "t", calendarID: "c", sourceID: "s", isCompleted: false,
-            hasRecurrence: true, due: snapshot().due, rules: nil)
+            hasRecurrence: true, due: snapshot().due, rules: nil, completionDate: nil)
         XCTAssertFalse(noRules.isIdentifiable)
         let emptyRules = ReminderCompletionSnapshot(
             id: "r", title: "t", calendarID: "c", sourceID: "s", isCompleted: false,
-            hasRecurrence: true, due: snapshot().due, rules: [])
+            hasRecurrence: true, due: snapshot().due, rules: [], completionDate: nil)
         XCTAssertFalse(emptyRules.isIdentifiable)
         XCTAssertFalse(snapshot(day: nil).matchesOccurrence(snapshot(day: nil)))
     }
