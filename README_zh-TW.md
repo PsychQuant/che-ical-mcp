@@ -97,7 +97,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `list_reminder_tags` | 列出所有已使用的標籤及使用次數（v1.3.0） |
 
 
-**重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
+**重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
 
 </details>
 
@@ -630,3 +630,5 @@ MIT License - 詳見 [LICENSE](LICENSE)。
 由 **鄭澈** ([@kiki830621](https://github.com/kiki830621)) 建立
 
 如果覺得有用，請給個 Star 支持一下！
+
+**週期讀取欄位（#198，未發布）：** 事件使用 `event_recurrence_rules`，提醒事項使用 `reminder_recurrence_rules`；兩者都是規則陣列，但缺值與結束日期格式不同。舊 `recurrence_rules` 保留為相容別名。拒絕未知欄位的用戶端需更新解碼器。詳見[格式對照](docs/REMINDER_RECURRENCE.md#recurrence-read-formats-198)。

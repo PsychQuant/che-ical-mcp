@@ -232,7 +232,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -253,7 +253,7 @@ class CheICalMCPServer {
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (use list_calendars to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190).")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
@@ -327,7 +327,7 @@ class CheICalMCPServer {
                         "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
@@ -371,7 +371,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove recurrence rule from event")
+                            "description": .string("Set to true to remove recurrence rule from event Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "structured_location": .object([
                             "type": .string("object"),
@@ -387,7 +387,7 @@ class CheICalMCPServer {
                         "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone)")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -462,7 +462,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public recurrence_rules and due date precision.",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -571,7 +571,7 @@ class CheICalMCPServer {
                         "due_date": .object(["type": .string("string"), "description": .string("New due date")]),
                         "clear_due_date": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove due date from reminder")
+                            "description": .string("Set to true to remove due date from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
@@ -594,7 +594,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove location trigger from reminder")
+                            "description": .string("Set to true to remove location trigger from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "tags": .object([
                             "type": .string("array"),
@@ -603,7 +603,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_tags": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove all tags from reminder")
+                            "description": .string("Set to true to remove all tags from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ])
                     ]),
                     "required": .array([.string("reminder_id")])
@@ -637,7 +637,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public recurrence_rules and due date precision.",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -705,7 +705,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ])
                 ]),
@@ -753,7 +753,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("range")])
@@ -781,7 +781,7 @@ class CheICalMCPServer {
                                     "location": .object(["type": .string("string")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
-                                    "all_day": .object(["type": .string("boolean")]),
+                                    "all_day": .object(["type": .string("boolean"), "description": .string("Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
                                         "description": .string("Recurrence rule"),
@@ -846,7 +846,7 @@ class CheICalMCPServer {
                         "event_id": .object(["type": .string("string"), "description": .string("The event identifier to copy")]),
                         "target_calendar": .object(["type": .string("string"), "description": .string("Target calendar name to copy to")]),
                         "target_calendar_source": .object(["type": .string("string"), "description": .string("Target calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "delete_original": .object(["type": .string("boolean"), "description": .string("If true, delete the original event after copying (effectively a move)")])
+                        "delete_original": .object(["type": .string("boolean"), "description": .string("If true, delete the original event after copying (effectively a move) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ]),
                     "required": .array([.string("event_id"), .string("target_calendar")])
                 ]),
@@ -903,7 +903,7 @@ class CheICalMCPServer {
                         ]),
                         "dry_run": .object([
                             "type": .string("boolean"),
-                            "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")
+                            "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -1004,7 +1004,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional: only scan tags from this reminder list")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
-                        "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete)")])
+                        "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -1019,7 +1019,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional (filter mode): scope cleanup to this reminder list only. Omit to clean across all lists on all accounts. Ignored when reminder_ids is supplied.")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Only meaningful together with calendar_name — used to disambiguate when multiple calendars share the same name. calendar_source alone (without calendar_name) is rejected because EventKit cannot scope cleanup to 'any calendar from this source'.")]),
-                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion.")]),
+                        "dry_run": .object(["type": .string("boolean"), "description": .string("Preview deletion without actually deleting (default: true). Set to false to execute deletion. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "limit": .object(["type": .string("integer"), "description": .string("Maximum number of reminders to process in this call (default: 1000). If more completed reminders exist, the response includes remaining so callers know to re-invoke. Use to cap blast radius on large backlogs and to avoid multi-MB responses / long-running delete loops. Ignored when reminder_ids is supplied.")]),
                         "reminder_ids": .object([
                             "type": .string("array"),
@@ -1322,7 +1322,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let isAllDay = arguments["all_day"]?.boolValue ?? false
+        let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day") ?? false
         try rejectAllDayTimezoneConflict(allDay: isAllDay, timezone: timezone)   // #190
 
         var alarmOffsets: [Int]?
@@ -1388,7 +1388,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
-        let isAllDay = arguments["all_day"]?.boolValue
+        let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
         let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
 
@@ -1411,9 +1411,9 @@ class CheICalMCPServer {
         }
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
-        let clearRecurrence = arguments["clear_recurrence"]?.boolValue ?? false
+        let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
         let structuredLocation = parseStructuredLocation(from: arguments)
-        let clearTimezone = arguments["clear_timezone"]?.boolValue ?? false
+        let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
@@ -1566,53 +1566,13 @@ class CheICalMCPServer {
             completed = legacyCompleted
         }
 
-        var reminders = try await reminderReadSource.listReminderSnapshots(
-            completed: completed,
-            calendarName: calendarName,
-            calendarSource: calendarSource
-        )
-
-        let totalFetched = reminders.count
-        let now = Date()
-
-        // Apply overdue filter (incomplete + past due date)
-        if filterMode == "overdue" {
-            reminders = reminders.filter { reminder in
-                !reminder.isCompleted &&
-                safeDateFromComponents(reminder.dueDateComponents).map { $0 < now } == true
-            }
-        }
-
-        let totalAfterFilter = reminders.count
-
-        // Apply sort
-        reminders.sort { r1, r2 in
-            switch sortMode {
-            case "priority":
-                // Priority sort: 1(high) → 5(medium) → 9(low) → 0(none)
-                let p1 = r1.priority == 0 ? Int.max : r1.priority
-                let p2 = r2.priority == 0 ? Int.max : r2.priority
-                return p1 < p2
-            case "title":
-                return (r1.title ?? "").localizedCaseInsensitiveCompare(r2.title ?? "") == .orderedAscending
-            case "creation_date":
-                let d1 = r1.creationDate ?? Date.distantPast
-                let d2 = r2.creationDate ?? Date.distantPast
-                return d1 < d2
-            default: // "due_date"
-                let d1 = safeDateFromComponents(r1.dueDateComponents)
-                let d2 = safeDateFromComponents(r2.dueDateComponents)
-                if d1 == nil && d2 == nil { return false }
-                if d1 == nil { return false }  // nulls last
-                if d2 == nil { return true }
-                return d1! < d2!
-            }
-        }
-
-        // Apply limit
-        if let limit = limit, reminders.count > limit {
-            reminders = Array(reminders.prefix(limit))
-        }
+        let page = try await reminderReadSource.listReminderPage(
+            completed: completed, calendarName: calendarName, calendarSource: calendarSource,
+            query: ReminderPageQuery(overdueOnly: filterMode == "overdue", sort: sortMode, limit: limit))
+        let now = page.referenceDate
+        let reminders = page.reminders
+        let totalFetched = page.totalFetched
+        let totalAfterFilter = page.totalAfterFilter
 
         let result = reminders.map { [self] reminder -> [String: Any] in
             let (cleanNotes, tags) = extractTags(from: reminder.notes)
@@ -1711,9 +1671,9 @@ class CheICalMCPServer {
         try InputValidation.validateReminderTextInput(title: title, notes: userNotes)
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
-        let clearTags = arguments["clear_tags"]?.boolValue ?? false
+        let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
         let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
-        let clearDueDate = arguments["clear_due_date"]?.boolValue ?? false
+        let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
         if clearDueDate && dueDate != nil {
             throw ToolError.invalidParameter("Cannot specify both due_date and clear_due_date")
         }
@@ -1722,7 +1682,7 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
-        let clearLocationTrigger = arguments["clear_location_trigger"]?.boolValue ?? false
+        let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
 
         // Determine final notes:
         // If user provides notes, use their notes as the base (replacing existing notes content)
@@ -1841,30 +1801,12 @@ class CheICalMCPServer {
         // Uses requireOptionalLimit (cap=10000) — same defense-in-depth as search_events.
         let limit = try InputValidation.requireOptionalLimit(arguments)
 
-        // If only tag filter (no keywords), pass empty to get all reminders, then filter by tag
-        var reminders = try await reminderReadSource.searchReminderSnapshots(
-            keywords: keywords,
-            matchMode: matchMode,
-            calendarName: calendarName,
-            calendarSource: calendarSource,
-            completed: completed
-        )
-
-        // Apply tag filter
-        if let tagFilter = tagFilter {
-            let normalizedTag = tagFilter.hasPrefix("#") ? String(tagFilter.dropFirst()) : tagFilter
-            reminders = reminders.filter { reminder in
-                let (_, tags) = extractTags(from: reminder.notes)
-                return tags.contains(where: { $0.caseInsensitiveCompare(normalizedTag) == .orderedSame })
-            }
-        }
-
-        // #107: capture pre-limit total BEFORE prefix truncation.
-        // reminder_count semantic = pre-limit total (aligned with search_events).
-        let totalCount = reminders.count
-        if let limit = limit, reminders.count > limit {
-            reminders = Array(reminders.prefix(limit))
-        }
+        let page = try await reminderReadSource.searchReminderPage(
+            keywords: keywords, matchMode: matchMode, calendarName: calendarName,
+            calendarSource: calendarSource, completed: completed,
+            query: ReminderPageQuery(tag: tagFilter, limit: limit))
+        let reminders = page.reminders
+        let totalCount = page.totalAfterFilter
 
         let result = reminders.map { [self] reminder -> [String: Any] in
             let (cleanNotes, tags) = extractTags(from: reminder.notes)
@@ -2008,7 +1950,7 @@ class CheICalMCPServer {
         let calendarName = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_name")
         let calendarSource = try ReminderCleanup.requireStringIfPresent(arguments, key: "calendar_source")
         try ReminderCleanup.rejectSourceWithoutName(name: calendarName, source: calendarSource)
-        let includeCompleted = arguments["include_completed"]?.boolValue ?? false
+        let includeCompleted = try InputValidation.requireOptionalBool(arguments, key: "include_completed") ?? false
 
         let completed: Bool? = includeCompleted ? nil : false
 
@@ -2047,7 +1989,7 @@ class CheICalMCPServer {
     }
 
     private func handleCleanupCompletedReminders(arguments: [String: Value]) async throws -> String {
-        let dryRun = arguments["dry_run"]?.boolValue ?? true
+        let dryRun = try InputValidation.requireOptionalBool(arguments, key: "dry_run") ?? true
 
         // #28 binding mode: caller supplied exact reminder_ids. Skip the
         // list/dedupe/slice pipeline entirely — we act on the caller's list
@@ -2394,7 +2336,23 @@ class CheICalMCPServer {
             }
 
             do {
-                try rejectAllDayTimezoneConflict(allDay: eventDict["all_day"]?.boolValue ?? false, timezone: batchTimezone)   // #190
+                // #207: strict boolean per item, reported like every other per-item error.
+                let itemAllDay: Bool
+                do {
+                    itemAllDay = try InputValidation.requireOptionalBool(eventDict, key: "all_day") ?? false
+                } catch {
+                    results.append([
+                        "index": index,
+                        "success": false,
+                        "error": EventKitErrorSanitizer.writeFailureLog(
+                            handler: "createEventsBatch",
+                            identifier: "\(index)",
+                            error: error
+                        )
+                    ])
+                    continue
+                }
+                try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
                 let batchStructuredLocation = parseStructuredLocation(from: eventDict)
@@ -2412,7 +2370,7 @@ class CheICalMCPServer {
                     url: nil,
                     calendarName: eventDict["calendar_name"]?.stringValue,
                     calendarSource: eventDict["calendar_source"]?.stringValue,
-                    isAllDay: eventDict["all_day"]?.boolValue ?? false,
+                    isAllDay: itemAllDay,
                     alarmOffsets: nil,
                     recurrenceRule: batchRecurrence,
                     structuredLocation: batchStructuredLocation,
@@ -2548,7 +2506,7 @@ class CheICalMCPServer {
         }
 
         let targetCalendarSource = arguments["target_calendar_source"]?.stringValue
-        let deleteOriginal = arguments["delete_original"]?.boolValue ?? false
+        let deleteOriginal = try InputValidation.requireOptionalBool(arguments, key: "delete_original") ?? false
 
         let newEvent = try await eventKitManager.copyEvent(
             identifier: eventId,
@@ -2666,7 +2624,7 @@ class CheICalMCPServer {
 
     /// Feature 8: Delete multiple events at once (by IDs or by date range)
     private func handleDeleteEventsBatch(arguments: [String: Value]) async throws -> String {
-        let dryRun = arguments["dry_run"]?.boolValue ?? true
+        let dryRun = try InputValidation.requireOptionalBool(arguments, key: "dry_run") ?? true
         let spanStr = arguments["span"]?.stringValue ?? "this"
 
         // Determine mode: by event_ids or by calendar + date range
@@ -2882,6 +2840,7 @@ class CheICalMCPServer {
             if let rulesFragment = event.recurrenceRulesFragment {
                 dict["is_recurring"] = true
                 dict["recurrence_rules"] = rulesFragment
+                dict["event_recurrence_rules"] = rulesFragment
             }
             if let structuredFragment = event.structuredLocationFragment {
                 dict["structured_location"] = structuredFragment
@@ -3220,60 +3179,7 @@ class CheICalMCPServer {
 
     /// Extract #tags from notes string, returning (clean notes without tag line, array of tags)
     private func extractTags(from notes: String?) -> (cleanNotes: String?, tags: [String]) {
-        guard let notes = notes, !notes.isEmpty else {
-            return (nil, [])
-        }
-
-        // Tags are stored as a line of #hashtags (typically the last line)
-        let tagPattern = #"#(\S+)"#
-        let regex = try! NSRegularExpression(pattern: tagPattern)
-
-        // Split into lines and find the tag line (a line where ALL non-whitespace content is #tags)
-        let lines = notes.components(separatedBy: "\n")
-        var tagLine: String?
-        var tagLineIndex: Int?
-
-        // Search from the end for a line that is entirely #tags
-        let tagLinePattern = #"^\s*(#\S+\s*)+$"#
-        let tagLineRegex = try! NSRegularExpression(pattern: tagLinePattern)
-
-        for i in stride(from: lines.count - 1, through: 0, by: -1) {
-            let line = lines[i]
-            if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-            let range = NSRange(line.startIndex..., in: line)
-            if tagLineRegex.firstMatch(in: line, range: range) != nil {
-                tagLine = line
-                tagLineIndex = i
-            }
-            break  // Only check the last non-empty line
-        }
-
-        guard let foundTagLine = tagLine, let foundIndex = tagLineIndex else {
-            return (notes, [])
-        }
-
-        // Extract individual tags
-        let range = NSRange(foundTagLine.startIndex..., in: foundTagLine)
-        let matches = regex.matches(in: foundTagLine, range: range)
-        let tags = matches.compactMap { match -> String? in
-            guard let tagRange = Range(match.range(at: 1), in: foundTagLine) else { return nil }
-            return String(foundTagLine[tagRange])
-        }
-
-        if tags.isEmpty {
-            return (notes, [])
-        }
-
-        // Rebuild notes without the tag line
-        var cleanLines = lines
-        cleanLines.remove(at: foundIndex)
-        // Remove trailing empty lines
-        while let last = cleanLines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
-            cleanLines.removeLast()
-        }
-        let cleanNotes = cleanLines.isEmpty ? nil : cleanLines.joined(separator: "\n")
-
-        return (cleanNotes, tags)
+        ReminderTags.extract(from: notes)
     }
 
     /// Build notes string by combining user notes with tags

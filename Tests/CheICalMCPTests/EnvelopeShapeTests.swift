@@ -115,9 +115,8 @@ final class EnvelopeShapeTests: XCTestCase {
         // #107 B1: limit param added
         XCTAssertTrue(body.contains("requireOptionalLimit"),
             "handleSearchReminders should call requireOptionalLimit for new limit parameter (#107 B1)")
-        // #107 B1: prefix truncation present
-        XCTAssertTrue(body.contains("reminders.prefix(limit)"),
-            "handleSearchReminders should truncate via prefix(limit) (#107 B1)")
+        // Page truncation now lives inside the read source (#197); its output
+        // and pre-limit count are exercised by ReminderRecurrenceHandlerTests.
         // #107 B1: limit echo when present
         XCTAssertTrue(body.contains("response[\"limit\"] = limit"),
             "handleSearchReminders should echo limit when caller specified (#107 B1)")

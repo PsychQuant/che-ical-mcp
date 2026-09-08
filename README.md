@@ -98,7 +98,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `cleanup_completed_reminders` | Delete all completed reminders in one call, dry_run preview by default (v1.7.2) |
 
 
-**Recurring reminders (#194):** list/search include `has_recurrence`, complete public `recurrence_rules`, and precision-aware `due`. Completion adds `operation` (write outcome) and `next_occurrence` (confirmed/unknown/not_applicable). Use `operation.status` rather than legacy `is_completed`: a successful completion may leave the next occurrence incomplete. Unknown successor information must not trigger a second write. A different-ID or unconfirmable successor is reported as `unknown`, never as the series having ended. Undo of a recurring completion is identity-guarded (#204): once the identifier no longer resolves to the recorded occurrence it refuses explicitly and drops its history entry instead of jamming the stack. **Breaking (#205):** `completed` must be a JSON boolean on `complete_reminder` / `list_reminders` / `search_reminders` — strings and numbers are rejected; omit or `null` keeps the old meaning. See [response contract and limitations](docs/REMINDER_RECURRENCE.md).
+**Recurring reminders (#194):** list/search include `has_recurrence`, complete public `recurrence_rules`, and precision-aware `due`. Completion adds `operation` (write outcome) and `next_occurrence` (confirmed/unknown/not_applicable). Use `operation.status` rather than legacy `is_completed`: a successful completion may leave the next occurrence incomplete. Unknown successor information must not trigger a second write. A different-ID or unconfirmable successor is reported as `unknown`, never as the series having ended. Undo of a recurring completion is identity-guarded (#204): once the identifier no longer resolves to the recorded occurrence it refuses explicitly and drops its history entry instead of jamming the stack. **Breaking (#205):** `completed` must be a JSON boolean on `complete_reminder` / `list_reminders` / `search_reminders` — strings and numbers are rejected; omit or `null` keeps the old meaning. **Breaking (#207, unreleased):** the same contract now applies to every boolean tool argument (`all_day`, `clear_*`, `include_completed`, `dry_run`, `delete_original`). See [response contract and limitations](docs/REMINDER_RECURRENCE.md).
 
 </details>
 
@@ -676,3 +676,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 Created by **Che Cheng** ([@kiki830621](https://github.com/kiki830621))
 
 If you find this useful, please consider giving it a star!
+
+**Recurrence read names (#198, unreleased):** use `event_recurrence_rules` for events and `reminder_recurrence_rules` for reminders. Both are rule arrays, but missing selectors and end-date rendering differ. The legacy `recurrence_rules` alias is retained. Clients rejecting unknown fields need decoder updates. See [the format comparison](docs/REMINDER_RECURRENCE.md#recurrence-read-formats-198).
