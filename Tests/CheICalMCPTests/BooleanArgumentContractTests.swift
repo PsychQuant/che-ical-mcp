@@ -21,6 +21,7 @@ final class BooleanArgumentContractTests: XCTestCase {
     /// (tool, boolean key, the other arguments needed so the boolean check is the first thing that can fail)
     private let sites: [(tool: String, key: String, extra: [String: Value])] = [
         ("create_event", "all_day", ["title": .string("T"), "start_time": .string("2026-09-10T10:00:00+08:00"), "end_time": .string("2026-09-10T11:00:00+08:00")]),
+        ("update_event", "all_day", ["event_id": .string("e")]),
         ("update_event", "clear_recurrence", ["event_id": .string("e")]),
         ("update_event", "clear_timezone", ["event_id": .string("e")]),
         ("update_reminder", "clear_tags", ["reminder_id": .string("r")]),
