@@ -1481,8 +1481,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    struct CreateReminderResult {
-        let reminder: EKReminder
+    struct CreateReminderResult: Sendable {
+        let reminder: ReminderWriteSnapshot
         let isDuplicate: Bool
     }
 
@@ -1543,7 +1543,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Idempotency: check for existing reminder with same title (+due date) on same list
         if let existing = await findDuplicateReminder(title: title, dueDate: dueDate, calendar: calendar) {
-            return CreateReminderResult(reminder: existing, isDuplicate: true)
+            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true)
         }
 
         let reminder = EKReminder(eventStore: eventStore)
@@ -1594,8 +1594,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.createReminder(id: reminder.calendarItemIdentifier, title: reminder.title ?? title))
-        return CreateReminderResult(reminder: reminder, isDuplicate: false)
+        let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
+        await CalendarUndoManager.shared.record(.createReminder(id: result.reminder.calendarItemIdentifier, title: result.reminder.title ?? title))
+        return result
     }
 
     func updateReminder(
@@ -1610,7 +1611,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false
-    ) async throws -> EKReminder {
+    ) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
@@ -1681,18 +1682,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
+        let result = ReminderWriteSnapshot(from: reminder)
         await CalendarUndoManager.shared.record(.updateReminder(id: identifier, oldSnapshot: oldSnapshot))
-        return reminder
+        return result
     }
 
-    func getReminder(identifier: String) async throws -> EKReminder {
+    func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
-        return reminder
+        return ReminderWriteSnapshot(from: reminder)
     }
 
     func deleteReminder(identifier: String) async throws {
