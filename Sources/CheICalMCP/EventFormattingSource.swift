@@ -111,9 +111,12 @@ func formatRecurrenceRule(
     dateFormatter: DateFormatter
 ) -> [String: Any] {
     var dict: [String: Any] = [
-        "frequency": ["daily", "weekly", "monthly", "yearly"][rule.frequency.rawValue],
+        "frequency": eventRecurrenceFrequencyName(rawValue: rule.frequency.rawValue),
         "interval": rule.interval
     ]
+    if eventRecurrenceFrequencyName(rawValue: rule.frequency.rawValue) == "unknown" {
+        dict["frequency_raw_value"] = rule.frequency.rawValue
+    }
     if let end = rule.recurrenceEnd {
         if let endDate = end.endDate {
             dict["end_date"] = dateFormatter.string(from: endDate)
@@ -128,4 +131,15 @@ func formatRecurrenceRule(
         dict["days_of_month"] = days.map { $0.intValue }
     }
     return dict
+}
+
+/// Unknown future EventKit values must not index outside a fixed table (#198).
+func eventRecurrenceFrequencyName(rawValue: Int) -> String {
+    switch rawValue {
+    case EKRecurrenceFrequency.daily.rawValue: return "daily"
+    case EKRecurrenceFrequency.weekly.rawValue: return "weekly"
+    case EKRecurrenceFrequency.monthly.rawValue: return "monthly"
+    case EKRecurrenceFrequency.yearly.rawValue: return "yearly"
+    default: return "unknown"
+    }
 }

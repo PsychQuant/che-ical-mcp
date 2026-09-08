@@ -99,7 +99,7 @@ enum InputValidation {
     static let validEventFields: Set<String> = [
         "id", "title", "start_date", "start_date_local", "end_date", "end_date_local",
         "timezone", "is_all_day", "calendar", "location", "notes", "url",
-        "is_recurring", "recurrence_rules", "structured_location", "attendees", "organizer"
+        "is_recurring", "recurrence_rules", "event_recurrence_rules", "structured_location", "attendees", "organizer"
     ]
 
     // (#103) `formatEventDictKeys` manual mirror removed — drift detection is now

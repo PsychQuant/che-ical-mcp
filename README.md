@@ -676,3 +676,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 Created by **Che Cheng** ([@kiki830621](https://github.com/kiki830621))
 
 If you find this useful, please consider giving it a star!
+
+**Recurrence read names (#198, unreleased):** use `event_recurrence_rules` for events and `reminder_recurrence_rules` for reminders. Both are rule arrays, but missing selectors and end-date rendering differ. The legacy `recurrence_rules` alias is retained. Clients rejecting unknown fields need decoder updates. See [the format comparison](docs/REMINDER_RECURRENCE.md#recurrence-read-formats-198).

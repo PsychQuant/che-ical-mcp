@@ -1,5 +1,24 @@
 # Reminder recurrence and completion results (#194)
 
+## Recurrence read formats (#198)
+
+New clients should use `event_recurrence_rules` for events and `reminder_recurrence_rules` for reminders. Both are arrays of rule objects when available. `recurrence_rules` remains a legacy alias of the same value within each entity; its meaning is entity-specific. The two formats are not interchangeable.
+
+| Dimension | Events | Reminders |
+| --- | --- | --- |
+| Named field | `event_recurrence_rules` | `reminder_recurrence_rules` |
+| No recurrence | Field omitted | `[]` |
+| Recurring, rules unavailable | Field omitted | `null` (also for an empty observed rule list) |
+| Missing selectors/end bound | Keys omitted | Keys present as `null` |
+| `end_date` | Host-local `yyyy-MM-dd'T'HH:mm:ss`, no offset | UTC instant with `Z` |
+| Rule fields | frequency, interval, optional end_date/occurrence_count/days_of_week/days_of_month | Those fields plus frequency_raw_value, calendar_identifier, first_day_of_week, days_of_week_details, months_of_year, weeks_of_year, days_of_year, set_positions |
+| Unknown frequency | `unknown` plus `frequency_raw_value` | `unknown` plus `frequency_raw_value` (raw value is always present) |
+
+An event example is `[{"frequency":"weekly","interval":1}]`; a reminder rule additionally contains its public selector keys and explicit nulls. Neither array should be indexed as a single object. The older diagnosis for #198 confused the event's single-rule formatter with its outer array; the event container has always been an array.
+
+Event `summary` detail omits recurrence; explicit `fields` can select `event_recurrence_rules` without selecting the legacy alias. New aliases add response fields: clients that reject unknown fields must update their decoders. No existing field is removed or reformatted, and recurrence write parameters are unchanged.
+
+
 `list_reminders` and `search_reminders` now return these additive fields:
 
 | Field | Meaning |

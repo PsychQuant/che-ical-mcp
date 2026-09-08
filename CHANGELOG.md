@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Explicit event_recurrence_rules and reminder_recurrence_rules read fields distinguish the entity-specific rule formats while retaining legacy recurrence_rules aliases. Event frequency formatting handles unknown values without trapping (#198).
+
 ### Fixed
 
 - Reminder list/search now filter, sort and limit inside the EventKit actor before building full recurrence/alarm snapshots. Pre-limit counts and response fields are preserved; snapshots tolerate a missing calendar (#197).

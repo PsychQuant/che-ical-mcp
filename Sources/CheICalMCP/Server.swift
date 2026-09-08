@@ -232,7 +232,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -462,7 +462,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public recurrence_rules and due date precision.",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -637,7 +637,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public recurrence_rules and due date precision.",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -705,7 +705,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ])
                 ]),
@@ -753,7 +753,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("range")])
@@ -2840,6 +2840,7 @@ class CheICalMCPServer {
             if let rulesFragment = event.recurrenceRulesFragment {
                 dict["is_recurring"] = true
                 dict["recurrence_rules"] = rulesFragment
+                dict["event_recurrence_rules"] = rulesFragment
             }
             if let structuredFragment = event.structuredLocationFragment {
                 dict["structured_location"] = structuredFragment

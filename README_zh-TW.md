@@ -630,3 +630,5 @@ MIT License - 詳見 [LICENSE](LICENSE)。
 由 **鄭澈** ([@kiki830621](https://github.com/kiki830621)) 建立
 
 如果覺得有用，請給個 Star 支持一下！
+
+**週期讀取欄位（#198，未發布）：** 事件使用 `event_recurrence_rules`，提醒事項使用 `reminder_recurrence_rules`；兩者都是規則陣列，但缺值與結束日期格式不同。舊 `recurrence_rules` 保留為相容別名。拒絕未知欄位的用戶端需更新解碼器。詳見[格式對照](docs/REMINDER_RECURRENCE.md#recurrence-read-formats-198)。
