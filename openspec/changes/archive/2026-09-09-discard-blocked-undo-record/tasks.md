@@ -7,4 +7,4 @@
 - [x] 2.2 串接 undo(discard_id) 與 undo_history，透過注入的歷史 manager 做 handler tests，無 EventKit 存取。
 - [x] 2.3 更新工具描述、manifest 與文件，固定 opt-in 操作與錯誤語意；對照規格審閱。
 ## 3. 驗證
-- [ ] 3.1 完整 swift test、獨立 reviewer、spectra analyze/validate 通過；各 issue 寫回 Implementation Complete 與驗證紀錄。
+- [x] 3.1 完整 swift test、獨立 reviewer、spectra analyze/validate 通過；各 issue 寫回 Implementation Complete 與驗證紀錄。
