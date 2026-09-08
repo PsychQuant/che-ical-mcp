@@ -2162,8 +2162,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
 // MARK: - Input Types
 
-struct RecurrenceRuleInput {
-    enum Frequency {
+struct RecurrenceRuleInput: Sendable {
+    enum Frequency: Sendable {
         case daily, weekly, monthly, yearly
     }
 
@@ -2186,7 +2186,7 @@ struct StructuredLocationInput {
     let radius: Double?  // meters, default 100
 }
 
-struct LocationTriggerInput {
+struct LocationTriggerInput: Sendable {
     let title: String
     let latitude: Double
     let longitude: Double

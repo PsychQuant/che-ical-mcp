@@ -38,6 +38,8 @@ class CheICalMCPServer {
     // uses the shared singleton (D1 in design.md: protocol covers only the
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
+    private let eventCopySource: any EventCopySource
+    private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
     private let reminderCompletionSource: any ReminderCompletionSource
@@ -72,12 +74,16 @@ class CheICalMCPServer {
     /// rather than widening `EventKitManaging`.
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
+         eventCopySource: any EventCopySource = EventKitManager.shared,
+         reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
         self.reminderReadSource = reminderReadSource
         self.reminderCompletionSource = reminderCompletionSource
         self.undoManager = undoManager
+        self.reminderWriteSource = reminderWriteSource
+        self.eventCopySource = eventCopySource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -1658,7 +1664,7 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let locationTrigger = try parseLocationTrigger(from: arguments)
 
-        let result = try await eventKitManager.createReminder(
+        let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
             title: title,
             notes: notes,
             dueDate: dueDate,
@@ -1667,7 +1673,7 @@ class CheICalMCPServer {
             calendarSource: calendarSource,
             recurrenceRule: recurrenceRule,
             locationTrigger: locationTrigger
-        )
+        ))
 
         if result.isDuplicate {
             return try actionResult(["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier])
@@ -1711,7 +1717,7 @@ class CheICalMCPServer {
 
         if hasNotesChange || hasTagChange {
             // Need to read existing reminder to get current notes for tag merging
-            let existingReminder = try await eventKitManager.getReminder(identifier: reminderId)
+            let existingReminder = try await reminderWriteSource.getReminder(identifier: reminderId)
             let baseNotes: String?
             if hasNotesChange {
                 // User is replacing notes content; use their new notes as base
@@ -1733,7 +1739,7 @@ class CheICalMCPServer {
             }
         }
 
-        let reminder = try await eventKitManager.updateReminder(
+        let reminder = try await reminderWriteSource.updateReminder(ReminderUpdateRequest(
             identifier: reminderId,
             title: title,
             notes: finalNotes,
@@ -1744,7 +1750,7 @@ class CheICalMCPServer {
             locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger,
             clearDueDate: clearDueDate
-        )
+        ))
 
         return try actionResult(["action": "updated", "title": reminder.title ?? "", "id": reminderId])
     }
@@ -1888,14 +1894,14 @@ class CheICalMCPServer {
                 let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
                 let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
-                let result = try await eventKitManager.createReminder(
+                let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
                     title: title,
                     notes: batchNotes,
                     dueDate: batchDueDate,
                     priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
-                )
+                ))
                 var entry: [String: Any] = [
                     "index": index,
                     "success": true,
@@ -2526,7 +2532,7 @@ class CheICalMCPServer {
         let targetCalendarSource = arguments["target_calendar_source"]?.stringValue
         let deleteOriginal = try InputValidation.requireOptionalBool(arguments, key: "delete_original") ?? false
 
-        let newEvent = try await eventKitManager.copyEvent(
+        let newEvent = try await eventCopySource.copyEventValue(
             identifier: eventId,
             toCalendarName: targetCalendar,
             toCalendarSource: targetCalendarSource,
@@ -2556,7 +2562,7 @@ class CheICalMCPServer {
 
         for eventId in ids {
             do {
-                let event = try await eventKitManager.copyEvent(
+                let event = try await eventCopySource.copyEventValue(
                     identifier: eventId,
                     toCalendarName: targetCalendar,
                     toCalendarSource: targetCalendarSource,

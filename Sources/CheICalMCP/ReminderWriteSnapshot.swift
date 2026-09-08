@@ -6,6 +6,12 @@ struct ReminderWriteSnapshot: Sendable {
     let title: String?
     let notes: String?
 
+    init(id: String, title: String?, notes: String?) {
+        calendarItemIdentifier = id
+        self.title = title
+        self.notes = notes
+    }
+
     init(from reminder: EKReminder) {
         calendarItemIdentifier = reminder.calendarItemIdentifier
         title = reminder.title
