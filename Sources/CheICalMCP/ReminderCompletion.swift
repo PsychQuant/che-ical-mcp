@@ -200,9 +200,15 @@ struct ReminderCompletionWrite: Equatable, Sendable {
     let isCompleted: Bool
     let completionDate: Date?
 
-    /// Completed → the recorded instant when there is one, else `now` (redo has no
-    /// recorded instant: a completion re-applied is a fresh completion). Incomplete →
-    /// no instant.
+    /// An idempotent request must not make EventKit stamp a new completion date.
+    static func applyRequest(to reminder: EKReminder, completed: Bool, now: Date) {
+        guard reminder.isCompleted != completed else { return }
+        plan(isCompleted: completed, recorded: nil, now: now).apply(to: reminder)
+    }
+
+    /// Completed → the recorded instant when available, else `now` for an
+    /// unobserved instant. Redo records capture the saved instant (#212).
+    /// Incomplete → no instant.
     static func plan(isCompleted: Bool, recorded: Date?, now: Date) -> ReminderCompletionWrite {
         isCompleted ? ReminderCompletionWrite(isCompleted: true, completionDate: recorded ?? now)
                     : ReminderCompletionWrite(isCompleted: false, completionDate: nil)

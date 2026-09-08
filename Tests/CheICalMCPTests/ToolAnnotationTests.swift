@@ -11,6 +11,18 @@ import XCTest
 /// client that auto-approves non-destructive tools must therefore be told the
 /// truth here, exactly as it is for `delete_reminder`.
 final class ToolAnnotationTests: XCTestCase {
+    func testEveryToolHasAnExplicitAnnotationPolicy() {
+        let reads: Set<String> = ["list_calendars", "list_events", "undo_history", "list_reminders", "search_reminders", "search_events", "list_events_quick", "check_conflicts", "find_duplicate_events", "list_reminder_tags"]
+        let additive: Set<String> = ["create_calendar", "create_event", "create_reminder", "create_events_batch", "create_reminders_batch"]
+        let destructive: Set<String> = ["delete_calendar", "update_calendar", "update_event", "delete_event", "undo", "redo", "update_reminder", "complete_reminder", "delete_reminder", "copy_event", "move_events_batch", "delete_events_batch", "delete_reminders_batch", "cleanup_completed_reminders"]
+        let tools = CheICalMCPServer.defineTools()
+        XCTAssertEqual(Set(tools.map(\.name)), reads.union(additive).union(destructive), "New tools need an explicit policy")
+        for tool in tools {
+            XCTAssertEqual(tool.annotations.readOnlyHint, reads.contains(tool.name), tool.name)
+            XCTAssertEqual(tool.annotations.destructiveHint, destructive.contains(tool.name), tool.name)
+        }
+    }
+
     private func tool(named name: String) throws -> Tool {
         try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == name },
                       "tool \(name) is not declared by defineTools()")

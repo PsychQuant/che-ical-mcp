@@ -61,7 +61,7 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "delete_event",
@@ -77,7 +77,7 @@
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date)"
+      "description": "Update an existing reminder (including tags, clear_due_date) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "complete_reminder",
@@ -105,11 +105,11 @@
     },
     {
       "name": "copy_event",
-      "description": "Copy an event to another calendar (with optional move)"
+      "description": "Copy an event; optional source deletion is destructive and undo restores the source occurrence while keeping the copy"
     },
     {
       "name": "move_events_batch",
-      "description": "Move multiple events to another calendar"
+      "description": "Move events between calendars; source deletions are destructive and recorded for undo"
     },
     {
       "name": "delete_events_batch",
@@ -121,7 +121,7 @@
     },
     {
       "name": "update_calendar",
-      "description": "Update a calendar's properties (rename or change color)"
+      "description": "Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "search_reminders",
@@ -145,7 +145,7 @@
     },
     {
       "name": "undo",
-      "description": "Undo the most recent calendar/reminder operation"
+      "description": "Undo the last operation, or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
@@ -153,7 +153,7 @@
     },
     {
       "name": "undo_history",
-      "description": "List undoable operations with timestamps"
+      "description": "List undoable operations with stable record IDs, timestamps and undo/redo counts"
     }
   ],
   "compatibility": {

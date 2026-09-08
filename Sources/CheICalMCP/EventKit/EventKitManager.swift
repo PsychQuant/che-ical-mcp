@@ -1390,16 +1390,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
 
-        // Save the new event
-        try eventStore.save(newEvent, span: .thisEvent)
-
-        // Optionally delete the original
-        if deleteOriginal {
-            try eventStore.remove(sourceEvent, span: .thisEvent)
+        // A move removes one occurrence (.thisEvent), so undo restores a standalone
+        // occurrence rather than duplicating the original recurring series (#208).
+        if deleteOriginal && sourceEvent.calendar == nil {
+            throw EventKitError.calendarNotFound(identifier: "source event calendar")
         }
-
-        markNeedsRefresh()
-        return newEvent
+        let sourceSnapshot = deleteOriginal ? EventSnapshot(from: sourceEvent, includeRecurrence: false) : nil
+        defer { markNeedsRefresh() } // save may succeed even if removing the source fails
+        let outcome = try EventCopyOperation.execute(source: sourceSnapshot, saveCopy: {
+            try eventStore.save(newEvent, span: .thisEvent)
+            return newEvent
+        }, removeSource: {
+            try eventStore.remove(sourceEvent, span: .thisEvent)
+        })
+        if let undo = outcome.undo { await CalendarUndoManager.shared.record(undo) }
+        return outcome.value
     }
 
     // MARK: - Reminders
@@ -1481,8 +1486,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    struct CreateReminderResult {
-        let reminder: EKReminder
+    struct CreateReminderResult: Sendable {
+        let reminder: ReminderWriteSnapshot
         let isDuplicate: Bool
     }
 
@@ -1543,7 +1548,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Idempotency: check for existing reminder with same title (+due date) on same list
         if let existing = await findDuplicateReminder(title: title, dueDate: dueDate, calendar: calendar) {
-            return CreateReminderResult(reminder: existing, isDuplicate: true)
+            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true)
         }
 
         let reminder = EKReminder(eventStore: eventStore)
@@ -1594,8 +1599,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.createReminder(id: reminder.calendarItemIdentifier, title: reminder.title ?? title))
-        return CreateReminderResult(reminder: reminder, isDuplicate: false)
+        let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
+        await CalendarUndoManager.shared.record(.createReminder(id: result.reminder.calendarItemIdentifier, title: result.reminder.title ?? title))
+        return result
     }
 
     func updateReminder(
@@ -1610,7 +1616,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false
-    ) async throws -> EKReminder {
+    ) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
@@ -1681,18 +1687,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
+        let result = ReminderWriteSnapshot(from: reminder)
         await CalendarUndoManager.shared.record(.updateReminder(id: identifier, oldSnapshot: oldSnapshot))
-        return reminder
+        return result
     }
 
-    func getReminder(identifier: String) async throws -> EKReminder {
+    func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
-        return reminder
+        return ReminderWriteSnapshot(from: reminder)
     }
 
     func deleteReminder(identifier: String) async throws {
@@ -1933,7 +1940,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .deleteEvent(let snapshot):
             // Undo delete = recreate from snapshot
             let event = EKEvent(eventStore: eventStore)
-            applySnapshot(snapshot, to: event)
+            try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
@@ -1943,7 +1950,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let event = eventStore.event(withIdentifier: id) else {
                 throw EventKitError.eventNotFound(identifier: id)
             }
-            applySnapshot(oldSnapshot, to: event)
+            try applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
@@ -1989,7 +1996,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .completeReminder(let id, let wasCompleted, _, _, let title):
+        case .completeReminder(let id, let wasCompleted, _, _, let title, _):
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
             let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
@@ -2005,7 +2012,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(wasCompleted)"
 
-        case .completeRecurringReminder(let before, _):
+        case .completeRecurringReminder(let before, _, _):
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
@@ -2041,7 +2048,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(let id, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
-        case .completeReminder(let id, _, let requestedCompleted, _, let title):
+        case .completeReminder(let id, _, let requestedCompleted, _, let title, _):
             // Redo re-applies the recorded request (#196: never the opposite of
             // wasCompleted — that reopened an idempotently completed reminder).
             try await ensureReminderAccess()
@@ -2059,7 +2066,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Redone: set reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' completion to \(requestedCompleted)"
 
-        case .completeRecurringReminder(let before, let requestedCompleted):
+        case .completeRecurringReminder(let before, let requestedCompleted, _):
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
 
         case .batch(let ops):
@@ -2073,7 +2080,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Apply an EventSnapshot to an EKEvent.
-    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) {
+    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
+        let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
         event.title = snapshot.title
         event.startDate = snapshot.startDate
         event.endDate = snapshot.endDate
@@ -2083,9 +2091,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         event.isAllDay = snapshot.isAllDay
 
         // Calendar
-        if let cal = eventStore.calendars(for: .event).first(where: { $0.title == snapshot.calendarTitle }) {
-            event.calendar = cal
-        }
+        event.calendar = originalCalendar
 
         // Alarms
         if let existingAlarms = event.alarms {
@@ -2156,8 +2162,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
 // MARK: - Input Types
 
-struct RecurrenceRuleInput {
-    enum Frequency {
+struct RecurrenceRuleInput: Sendable {
+    enum Frequency: Sendable {
         case daily, weekly, monthly, yearly
     }
 
@@ -2180,7 +2186,7 @@ struct StructuredLocationInput {
     let radius: Double?  // meters, default 100
 }
 
-struct LocationTriggerInput {
+struct LocationTriggerInput: Sendable {
     let title: String
     let latitude: Double
     let longitude: Double

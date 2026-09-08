@@ -67,6 +67,7 @@ struct EventSnapshot {
     let title: String
     let startDate: Date
     let endDate: Date
+    let calendarIdentifier: String
     let calendarTitle: String
     let calendarSource: String?
     let notes: String?
@@ -82,10 +83,11 @@ struct EventSnapshot {
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
 
-    init(from event: EKEvent) {
+    init(from event: EKEvent, includeRecurrence: Bool = true) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
+        self.calendarIdentifier = event.calendar.calendarIdentifier
         self.calendarTitle = event.calendar.title
         self.calendarSource = event.calendar.source?.title
         self.notes = event.notes
@@ -97,9 +99,18 @@ struct EventSnapshot {
         self.structuredLocationLat = event.structuredLocation?.geoLocation?.coordinate.latitude
         self.structuredLocationLon = event.structuredLocation?.geoLocation?.coordinate.longitude
         self.structuredLocationRadius = event.structuredLocation?.radius
-        self.recurrenceRules = event.recurrenceRules?.map(RecurrenceRuleSnapshot.init)
+        self.recurrenceRules = includeRecurrence ? event.recurrenceRules?.map(RecurrenceRuleSnapshot.init) : nil
         self.timeZone = event.timeZone
     }
+    /// Names can be duplicated across accounts; history restores only its original calendar.
+    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
+        guard !calendarIdentifier.isEmpty,
+              let calendar = calendars.first(where: { identifier($0) == calendarIdentifier }) else {
+            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+        }
+        return calendar
+    }
+
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
@@ -141,8 +152,8 @@ enum UndoOperation {
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
     /// pre-write instant undo restores. Neither has a default: dropping them must not compile.
-    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String)
-    case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool)
+    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?)
+    case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -165,9 +176,9 @@ enum UndoOperation {
             return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateReminder(_, let old):
             return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
-        case .completeReminder(_, _, _, _, let title):
+        case .completeReminder(_, _, _, _, let title, _):
             return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
-        case .completeRecurringReminder(let before, let requestedCompleted):
+        case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
             return "\(action) recurring reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))"
         case .batch(let ops):
@@ -178,6 +189,7 @@ enum UndoOperation {
 
 /// Timestamped record of an operation.
 struct UndoRecord {
+    let id = UUID()
     let operation: UndoOperation
     let timestamp: Date
 
@@ -197,12 +209,53 @@ actor CalendarUndoManager {
     private var undoStack: [UndoRecord] = []
     private var redoStack: [UndoRecord] = []
     private let maxStackSize = 50
+    private var activeHistoryID: UUID?
 
     /// Production code uses `shared`. The internal initializer is a test seam
     /// for the stack-discipline tests (`ReminderCompletionUndoTests`): nothing
     /// injects a manager into a handler, so a `*Source` protocol would have no
     /// consumer — the tests exercise this actor's own stack semantics.
     init() {}
+
+    struct HistorySnapshot: Sendable {
+        let entries: [(index: Int, id: String, description: String, timestamp: Date)]
+        let undoCount: Int
+        let redoCount: Int
+    }
+    struct DiscardResult: Sendable {
+        let id: String
+        let description: String
+        let undoCount: Int
+        let redoCount: Int
+    }
+
+    func historySnapshot() -> HistorySnapshot {
+        HistorySnapshot(entries: history(), undoCount: undoStack.count, redoCount: redoStack.count)
+    }
+
+    func beginUndo() throws -> UndoRecord? {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        let record = popUndo()
+        activeHistoryID = record?.id
+        return record
+    }
+    func beginRedo() throws -> UndoRecord? {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        let record = popRedo()
+        activeHistoryID = record?.id
+        return record
+    }
+    func finishHistoryOperation(_ record: UndoRecord) {
+        if activeHistoryID == record.id { activeHistoryID = nil }
+    }
+    func discardUndo(expectedID: UUID) throws -> DiscardResult {
+        guard activeHistoryID == nil else { throw UndoHistoryError.busy }
+        guard let record = undoStack.last else { throw UndoHistoryError.empty }
+        guard record.id == expectedID else { throw UndoHistoryError.stale }
+        undoStack.removeLast()
+        return DiscardResult(id: record.id.uuidString, description: record.operation.description,
+                             undoCount: undoStack.count, redoCount: redoStack.count)
+    }
 
     /// Record a mutation. Clears the redo stack.
     func record(_ operation: UndoOperation) {
@@ -226,13 +279,15 @@ actor CalendarUndoManager {
     /// popUndo moved the record to the redo stack, so drop that copy and
     /// re-append the record to the undo stack.
     func restoreFailedUndo(_ record: UndoRecord) {
-        if !redoStack.isEmpty { redoStack.removeLast() }
+        finishHistoryOperation(record)
+        redoStack.removeAll { $0.id == record.id }
         undoStack.append(record)
     }
 
     /// #191 — symmetric restore for a failed executeRedo (same call contract).
     func restoreFailedRedo(_ record: UndoRecord) {
-        if !undoStack.isEmpty { undoStack.removeLast() }
+        finishHistoryOperation(record)
+        undoStack.removeAll { $0.id == record.id }
         redoStack.append(record)
     }
 
@@ -241,14 +296,16 @@ actor CalendarUndoManager {
     /// jams every older entry behind an always-failing head. Same call contract
     /// as `restoreFailedUndo` — only immediately after the popUndo that threw.
     func discardFailedUndo(_ record: UndoRecord) {
+        finishHistoryOperation(record)
         // Destructive, so verify it is the record popUndo just moved: a
         // contract slip must not destroy an unrelated entry.
-        if let top = redoStack.last, top.timestamp == record.timestamp { redoStack.removeLast() }
+        if let top = redoStack.last, top.id == record.id { redoStack.removeLast() }
     }
 
     /// Symmetric discard for a permanently failed executeRedo.
     func discardFailedRedo(_ record: UndoRecord) {
-        if let top = undoStack.last, top.timestamp == record.timestamp { undoStack.removeLast() }
+        finishHistoryOperation(record)
+        if let top = undoStack.last, top.id == record.id { undoStack.removeLast() }
     }
 
     func popRedo() -> UndoRecord? {
@@ -258,9 +315,9 @@ actor CalendarUndoManager {
     }
 
     /// Get undo history (newest first).
-    func history() -> [(index: Int, description: String, timestamp: Date)] {
+    func history() -> [(index: Int, id: String, description: String, timestamp: Date)] {
         return undoStack.enumerated().reversed().map { (index, record) in
-            (index: index, description: record.operation.description, timestamp: record.timestamp)
+            (index: index, id: record.id.uuidString, description: record.operation.description, timestamp: record.timestamp)
         }
     }
 
@@ -298,12 +355,12 @@ extension UndoOperation {
     /// (`isIdentifiable`); otherwise the legacy identifier-keyed record, which
     /// restores an unchanged item correctly instead of being discarded on its
     /// first undo with a misleading reason.
-    static func forCompletion(before: ReminderCompletionSnapshot, requestedCompleted: Bool, savedTitle: String) -> UndoOperation {
+    static func forCompletion(before: ReminderCompletionSnapshot, requestedCompleted: Bool, savedTitle: String, savedCompletionDate: Date?) -> UndoOperation {
         if before.hasRecurrence && before.isIdentifiable {
-            return .completeRecurringReminder(before: before, requestedCompleted: requestedCompleted)
+            return .completeRecurringReminder(before: before, requestedCompleted: requestedCompleted, redoCompletionDate: savedCompletionDate)
         }
         return .completeReminder(id: before.id, wasCompleted: before.isCompleted, requestedCompleted: requestedCompleted,
-                                 completionDate: before.completionDate, title: savedTitle)
+                                 completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate)
     }
 }
 
@@ -314,12 +371,12 @@ extension UndoOperation {
     /// reopening a reminder on device. `nil` for records that are not completions.
     func completionWrite(undo: Bool, now: Date) -> ReminderCompletionWrite? {
         switch self {
-        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _):
+        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _, let redoCompletionDate):
             return undo ? ReminderCompletionWrite.plan(isCompleted: wasCompleted, recorded: completionDate, now: now)
-                        : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: nil, now: now)
-        case .completeRecurringReminder(let before, let requestedCompleted):
+                        : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: redoCompletionDate, now: now)
+        case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
             return undo ? ReminderCompletionWrite.plan(isCompleted: before.isCompleted, recorded: before.completionDate, now: now)
-                        : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: nil, now: now)
+                        : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: redoCompletionDate, now: now)
         default:
             return nil
         }
@@ -332,5 +389,17 @@ enum UndoFailureDisposition: Equatable {
 
     static func of(_ error: Error) -> Self {
         error is UnrecoverableUndoError ? .discard : .restore
+    }
+}
+
+/// Fixed, author-controlled errors; a failed request leaves the stacks unchanged.
+enum UndoHistoryError: LocalizedError, Sendable, TrustedErrorMessage {
+    case busy, empty, stale
+    var errorDescription: String? {
+        switch self {
+        case .busy: return "An undo or redo is in progress. Retry after it finishes."
+        case .empty: return "No undo history record is available to discard."
+        case .stale: return "The undo history changed. Read undo_history and select the current top record ID."
+        }
     }
 }

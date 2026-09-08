@@ -12,8 +12,8 @@ extension EventKitManager {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
-        reminder.isCompleted = completed
-        reminder.completionDate = completed ? Date() : nil
+        ReminderCompletionWrite.applyRequest(to: reminder, completed: completed, now: Date())
+        let writtenCompletionDate = reminder.completionDate
         try eventStore.save(reminder, commit: true)
         // Observe exactly once, synchronously, before any suspension point. On
         // iCloud (on-device probe, PR #195) save advances a recurring reminder in
@@ -28,7 +28,7 @@ extension EventKitManager {
         // Identity-guarded record for identifiable recurring items (undo refuses and
         // is discarded once the identifier resolves to a later occurrence — see
         // executeUndo); legacy identifier-keyed record for everything else.
-        await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: afterSave.title))
+        await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: afterSave.title, savedCompletionDate: completed ? (afterSave.completionDate ?? writtenCompletionDate) : nil))
         return ReminderCompletionResult(before: before, afterSave: afterSave,
                                         requestedCompleted: completed, nextOccurrence: next)
     }

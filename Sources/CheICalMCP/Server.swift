@@ -38,7 +38,10 @@ class CheICalMCPServer {
     // uses the shared singleton (D1 in design.md: protocol covers only the
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
+    private let eventCopySource: any EventCopySource
+    private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
+    private let undoManager: CalendarUndoManager
     private let reminderCompletionSource: any ReminderCompletionSource
     private let dateFormatter: ISO8601DateFormatter
 
@@ -71,10 +74,16 @@ class CheICalMCPServer {
     /// rather than widening `EventKitManaging`.
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
+         eventCopySource: any EventCopySource = EventKitManager.shared,
+         reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
+         undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
         self.reminderReadSource = reminderReadSource
         self.reminderCompletionSource = reminderCompletionSource
+        self.undoManager = undoManager
+        self.reminderWriteSource = reminderWriteSource
+        self.eventCopySource = eventCopySource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -119,7 +128,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_calendar",
@@ -180,7 +189,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Event Tools
@@ -237,7 +246,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_event",
@@ -401,7 +410,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
             Tool(
                 name: "delete_event",
@@ -431,7 +440,9 @@ class CheICalMCPServer {
                 description: "Undo the most recent calendar or reminder operation. Returns what was undone. Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
-                    "properties": .object([:])
+                    "properties": .object([
+                        "discard_id": .object(["type": .string("string"), "description": .string("Explicitly discard only the current top undo record with this UUID from undo_history. Does not modify events/reminders or create redo history; cannot be reversed. Omit for normal undo.")])
+                    ])
                 ]),
                 annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
@@ -485,7 +496,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
             Tool(
                 name: "create_reminder",
@@ -608,7 +619,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("reminder_id")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
             Tool(
                 name: "complete_reminder",
@@ -662,7 +673,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // New Feature Tools
@@ -709,7 +720,7 @@ class CheICalMCPServer {
                         ])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 3: Quick Time Range
@@ -758,7 +769,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("range")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 4: Batch Create Events
@@ -833,13 +844,13 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_time"), .string("end_time")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The original event is preserved.",
+                description: "Copy an event to another calendar. The original event is preserved unless delete_original is true. Undo of a move restores the deleted source occurrence; the copy remains. If deletion fails after copying, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -850,7 +861,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_id"), .string("target_calendar")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Feature 7: Move Events Batch
@@ -870,7 +881,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
                 ]),
-                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
+                annotations: .init(readOnlyHint: false, destructiveHint: true, openWorldHint: false)
             ),
 
             // Feature 8: Delete Events Batch
@@ -942,7 +953,7 @@ class CheICalMCPServer {
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Reminder Batch Operations
@@ -1007,7 +1018,7 @@ class CheICalMCPServer {
                         "include_completed": .object(["type": .string("boolean"), "description": .string("Include completed reminders (default: false, only scans incomplete) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")])
                     ])
                 ]),
-                annotations: .init(readOnlyHint: true, openWorldHint: false)
+                annotations: .init(readOnlyHint: true, destructiveHint: false, openWorldHint: false)
             ),
 
             // Cleanup Tool
@@ -1109,7 +1120,7 @@ class CheICalMCPServer {
 
         // Undo/Redo Tools
         case "undo":
-            return try await handleUndo()
+            return try await handleUndo(arguments: arguments)
         case "redo":
             return try await handleRedo()
         case "undo_history":
@@ -1465,14 +1476,23 @@ class CheICalMCPServer {
 
     // MARK: - Undo/Redo Handlers
 
-    private func handleUndo() async throws -> String {
-        guard let record = await CalendarUndoManager.shared.popUndo() else {
+    private func handleUndo(arguments: [String: Value]) async throws -> String {
+        if let value = arguments["discard_id"] {
+            guard let text = value.stringValue, let id = UUID(uuidString: text) else {
+                throw ToolError.invalidParameter("discard_id must be a nonempty UUID string from undo_history")
+            }
+            let result = try await undoManager.discardUndo(expectedID: id)
+            return try actionResult(["action": "discarded_undo", "success": true,
+                                     "id": result.id, "description": result.description,
+                                     "undo_available": result.undoCount, "redo_available": result.redoCount])
+        }
+        guard let record = try await undoManager.beginUndo() else {
             return try actionResult(["action": "undo", "success": false, "message": "Nothing to undo"])
         }
         // #191 — catch scope covers ONLY the execution (R2 fix): a response-
         // serialization failure after a SUCCESSFUL undo must not restore the
-        // record (the operation really was undone). MCP handlers run serially,
-        // so no other pop can interleave between pop and restore.
+        // record (the operation really was undone). The active history record prevents
+        // another undo/redo or explicit discard while execution is suspended.
         let message: String
         do {
             message = try await eventKitManager.executeUndo(record.operation)
@@ -1482,19 +1502,20 @@ class CheICalMCPServer {
                 // A failed undo must not consume the entry: put it back so the user
                 // can fix the environment and retry (previously the record was lost
                 // and a retry undid the WRONG, older operation).
-                await CalendarUndoManager.shared.restoreFailedUndo(record)
+                await undoManager.restoreFailedUndo(record)
             case .discard:
                 // Permanent: re-appending would jam every older entry behind an
                 // always-failing head (verify round 1 on PR #195, row 1).
-                await CalendarUndoManager.shared.discardFailedUndo(record)
+                await undoManager.discardFailedUndo(record)
             }
             throw error
         }
+        await undoManager.finishHistoryOperation(record)
         return try actionResult(["action": "undo", "success": true, "message": message])
     }
 
     private func handleRedo() async throws -> String {
-        guard let record = await CalendarUndoManager.shared.popRedo() else {
+        guard let record = try await undoManager.beginRedo() else {
             return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo"])
         }
         // #191 — same catch-scope discipline as handleUndo (execution only).
@@ -1503,19 +1524,21 @@ class CheICalMCPServer {
             message = try await eventKitManager.executeRedo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
-            case .restore: await CalendarUndoManager.shared.restoreFailedRedo(record)
-            case .discard: await CalendarUndoManager.shared.discardFailedRedo(record)
+            case .restore: await undoManager.restoreFailedRedo(record)
+            case .discard: await undoManager.discardFailedRedo(record)
             }
             throw error
         }
+        await undoManager.finishHistoryOperation(record)
         return try actionResult(["action": "redo", "success": true, "message": message])
     }
 
     private func handleUndoHistory(arguments: [String: Value]) async throws -> String {
-        let limit = try InputValidation.requireIntIfPresent(arguments, key: "limit", default: 10)
-        let history = await CalendarUndoManager.shared.history()
-        let undoCount = await CalendarUndoManager.shared.undoCount
-        let redoCount = await CalendarUndoManager.shared.redoCount
+        let limit = try InputValidation.requireOptionalLimit(arguments) ?? 10
+        let snapshot = await undoManager.historySnapshot()
+        let history = snapshot.entries
+        let undoCount = snapshot.undoCount
+        let redoCount = snapshot.redoCount
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "HH:mm:ss"
@@ -1523,6 +1546,7 @@ class CheICalMCPServer {
         let entries = history.prefix(limit).map { entry -> [String: Any] in
             [
                 "index": entry.index,
+                "id": entry.id,
                 "description": entry.description,
                 "time": dateFormatter.string(from: entry.timestamp)
             ]
@@ -1640,7 +1664,7 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let locationTrigger = try parseLocationTrigger(from: arguments)
 
-        let result = try await eventKitManager.createReminder(
+        let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
             title: title,
             notes: notes,
             dueDate: dueDate,
@@ -1649,7 +1673,7 @@ class CheICalMCPServer {
             calendarSource: calendarSource,
             recurrenceRule: recurrenceRule,
             locationTrigger: locationTrigger
-        )
+        ))
 
         if result.isDuplicate {
             return try actionResult(["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier])
@@ -1693,7 +1717,7 @@ class CheICalMCPServer {
 
         if hasNotesChange || hasTagChange {
             // Need to read existing reminder to get current notes for tag merging
-            let existingReminder = try await eventKitManager.getReminder(identifier: reminderId)
+            let existingReminder = try await reminderWriteSource.getReminder(identifier: reminderId)
             let baseNotes: String?
             if hasNotesChange {
                 // User is replacing notes content; use their new notes as base
@@ -1715,7 +1739,7 @@ class CheICalMCPServer {
             }
         }
 
-        let reminder = try await eventKitManager.updateReminder(
+        let reminder = try await reminderWriteSource.updateReminder(ReminderUpdateRequest(
             identifier: reminderId,
             title: title,
             notes: finalNotes,
@@ -1726,7 +1750,7 @@ class CheICalMCPServer {
             locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger,
             clearDueDate: clearDueDate
-        )
+        ))
 
         return try actionResult(["action": "updated", "title": reminder.title ?? "", "id": reminderId])
     }
@@ -1870,14 +1894,14 @@ class CheICalMCPServer {
                 let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
                 let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
-                let result = try await eventKitManager.createReminder(
+                let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
                     title: title,
                     notes: batchNotes,
                     dueDate: batchDueDate,
                     priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
-                )
+                ))
                 var entry: [String: Any] = [
                     "index": index,
                     "success": true,
@@ -2508,7 +2532,7 @@ class CheICalMCPServer {
         let targetCalendarSource = arguments["target_calendar_source"]?.stringValue
         let deleteOriginal = try InputValidation.requireOptionalBool(arguments, key: "delete_original") ?? false
 
-        let newEvent = try await eventKitManager.copyEvent(
+        let newEvent = try await eventCopySource.copyEventValue(
             identifier: eventId,
             toCalendarName: targetCalendar,
             toCalendarSource: targetCalendarSource,
@@ -2538,7 +2562,7 @@ class CheICalMCPServer {
 
         for eventId in ids {
             do {
-                let event = try await eventKitManager.copyEvent(
+                let event = try await eventCopySource.copyEventValue(
                     identifier: eventId,
                     toCalendarName: targetCalendar,
                     toCalendarSource: targetCalendarSource,
