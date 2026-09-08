@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Undo restores the recorded `completion_date`** (#196): every undo that returns a reminder to the completed state — the completion records, and the update / delete records through their snapshot — now carries the pre-write completion instant and writes it back instead of letting EventKit stamp the undo time. Redo re-applies the recorded request: the legacy record no longer infers it as the opposite of the prior state, which reopened an idempotently completed reminder. The record-to-write mapping (`UndoOperation.completionWrite`), the write (`ReminderCompletionWrite.apply`) and both snapshot captures are unit-tested against in-memory EventKit objects; the on-device undo round-trip is still pending (Refs #196).
 
+### Changed
+
+- **`complete_reminder` is now annotated `destructiveHint: true`** (#202): completing a recurring reminder advances the series irreversibly, and the finished occurrence cannot be restored by undo once the identifier has rolled over (#204), so the annotation now matches `delete_reminder`. The hint is per-tool, so clients that gate on tool annotations will ask before any `complete_reminder` call, including reopening and non-recurring completions. Regression guard: `ToolAnnotationTests` (Refs #202).
+
 ## [1.17.0] - 2026-09-07
 
 **#194 — reminder recurrence on read, and explicit completion results.**
