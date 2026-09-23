@@ -24,6 +24,26 @@ import XCTest
 /// The dup2-deadlock fix is centralized in the helper.
 final class CLIRunnerStderrTests: XCTestCase {
 
+    /// The formatter `main.swift` passes to `CLIRunner.run` (#223): this server's legacy
+    /// `{"error":true,"message":…}` line with `EventKitErrorSanitizer` codes. Every call here uses
+    /// it so the tests exercise what production runs.
+    static let productionFormatter: CLIRunner.ErrorFormatter = { KitConfiguration.formatCLIError($0).jsonMessage }
+
+    /// #223 verify: the production combination end to end — stdout keeps the legacy shape and the
+    /// EventKit code without framework text; stderr carries the escaped framework text.
+    func testProductionFormatterKeepsLegacyStdoutAndEscapedStderr() {
+        let appleErr = NSError(domain: EKErrorDomain, code: 5,
+                               userInfo: [NSLocalizedDescriptionKey: "Apple text\nforged line"])
+        var stdoutLine = ""
+        let stderr = capturedStderr {
+            stdoutLine = CLIRunner.handleRunError(appleErr, toolName: "list_events", formatter: Self.productionFormatter)
+        }
+        XCTAssertEqual(stdoutLine, #"{"error":true,"message":"eventkit_error_5"}"#)
+        XCTAssertTrue(stderr.hasPrefix("CLIRunner(list_events) failed: Apple text\\nforged line"),
+                      "got: \(stderr.debugDescription)")
+        XCTAssertEqual(stderr.filter { $0 == "\n" }.count, 1, "one stderr line; got: \(stderr.debugDescription)")
+    }
+
     // MARK: - Trusted-branch carve-out (#41 inheritance)
 
     func testCLIErrorCarveOutSuppressesStderr() {
@@ -33,7 +53,7 @@ final class CLIRunnerStderrTests: XCTestCase {
         let stderr = capturedStderr {
             CLIRunner.handleRunError(
                 CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP"),
-                toolName: nil
+                toolName: nil, formatter: Self.productionFormatter
             )
         }
         XCTAssertTrue(
@@ -47,7 +67,7 @@ final class CLIRunnerStderrTests: XCTestCase {
         let stderr = capturedStderr {
             CLIRunner.handleRunError(
                 ToolError.invalidParameter("calendar_name is required"),
-                toolName: "list_events"
+                toolName: "list_events", formatter: Self.productionFormatter
             )
         }
         XCTAssertTrue(
@@ -70,7 +90,7 @@ final class CLIRunnerStderrTests: XCTestCase {
         )
 
         let stderr = capturedStderr {
-            CLIRunner.handleRunError(evilError, toolName: "list_events")
+            CLIRunner.handleRunError(evilError, toolName: "list_events", formatter: Self.productionFormatter)
         }
 
         XCTAssertFalse(
@@ -112,7 +132,7 @@ final class CLIRunnerStderrTests: XCTestCase {
         )
 
         let stderr = capturedStderr {
-            CLIRunner.handleRunError(untrusted, toolName: nil)
+            CLIRunner.handleRunError(untrusted, toolName: nil, formatter: Self.productionFormatter)
         }
 
         XCTAssertTrue(
