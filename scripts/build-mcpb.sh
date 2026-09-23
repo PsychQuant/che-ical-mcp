@@ -129,7 +129,7 @@ lipo -info "$UNIVERSAL_BINARY"
 
 # SHA-256 companion file (#98 self-update verification).
 # Written next to the binary so `gh release create` can upload both as assets;
-# `--self-update` (SelfUpdate.swift) downloads BOTH and verifies before install.
+# `--self-update` (`SelfUpdate` in che-mcp-kit-swift) downloads BOTH and verifies before install.
 # Format: single-line hex hash (matches `shasum -a 256` / `sha256sum` output).
 # We hash the SIGNED + NOTARIZED universal binary, so the .sha256 file
 # is generated AFTER signing — see post-Step-6 SHA write below for the

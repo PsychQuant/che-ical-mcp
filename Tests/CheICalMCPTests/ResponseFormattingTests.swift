@@ -1,3 +1,4 @@
+import CheMCPKit
 import XCTest
 @testable import CheICalMCP
 
@@ -71,30 +72,33 @@ final class ResponseFormattingTests: XCTestCase {
         // (ObjC exception, not Swift Error) and crash the process.
         let payload: [String: Any] = ["date": Date()]
         XCTAssertThrowsError(try formatJSON(payload)) { error in
-            guard case ToolError.invalidParameter = error else {
-                XCTFail("Expected ToolError.invalidParameter, got \(error)")
-                return
-            }
+            // #223: the package throws `ResponseFormattingError` instead of this server's
+            // `ToolError.invalidParameter`; what reaches the client is the same text.
+            XCTAssertEqual(error as? ResponseFormattingError, .nonSerializableValue)
+            XCTAssertEqual(EventKitErrorSanitizer.sanitizeForResponse(error).code,
+                           "Invalid parameter: response payload contains non-JSON-serializable value (developer bug)")
         }
     }
 
     func testThrowsOnNaN() {
         let payload: [String: Any] = ["value": Double.nan]
         XCTAssertThrowsError(try formatJSON(payload)) { error in
-            guard case ToolError.invalidParameter = error else {
-                XCTFail("Expected ToolError.invalidParameter, got \(error)")
-                return
-            }
+            // #223: the package throws `ResponseFormattingError` instead of this server's
+            // `ToolError.invalidParameter`; what reaches the client is the same text.
+            XCTAssertEqual(error as? ResponseFormattingError, .nonSerializableValue)
+            XCTAssertEqual(EventKitErrorSanitizer.sanitizeForResponse(error).code,
+                           "Invalid parameter: response payload contains non-JSON-serializable value (developer bug)")
         }
     }
 
     func testThrowsOnInfinity() {
         let payload: [String: Any] = ["value": Double.infinity]
         XCTAssertThrowsError(try formatJSON(payload)) { error in
-            guard case ToolError.invalidParameter = error else {
-                XCTFail("Expected ToolError.invalidParameter, got \(error)")
-                return
-            }
+            // #223: the package throws `ResponseFormattingError` instead of this server's
+            // `ToolError.invalidParameter`; what reaches the client is the same text.
+            XCTAssertEqual(error as? ResponseFormattingError, .nonSerializableValue)
+            XCTAssertEqual(EventKitErrorSanitizer.sanitizeForResponse(error).code,
+                           "Invalid parameter: response payload contains non-JSON-serializable value (developer bug)")
         }
     }
 
@@ -112,10 +116,11 @@ final class ResponseFormattingTests: XCTestCase {
 
     func testActionResultPropagatesFormatJSONError() {
         XCTAssertThrowsError(try actionResult(["date": Date()])) { error in
-            guard case ToolError.invalidParameter = error else {
-                XCTFail("Expected ToolError.invalidParameter, got \(error)")
-                return
-            }
+            // #223: the package throws `ResponseFormattingError` instead of this server's
+            // `ToolError.invalidParameter`; what reaches the client is the same text.
+            XCTAssertEqual(error as? ResponseFormattingError, .nonSerializableValue)
+            XCTAssertEqual(EventKitErrorSanitizer.sanitizeForResponse(error).code,
+                           "Invalid parameter: response payload contains non-JSON-serializable value (developer bug)")
         }
     }
 }

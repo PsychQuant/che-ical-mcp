@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "che-mcp-kit-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PsychQuant/che-mcp-kit-swift.git",
+      "state" : {
+        "revision" : "a15c8e0c7ff31890737d04f8b7311dd26ca8438d",
+        "version" : "0.2.0"
+      }
+    },
+    {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/eventsource.git",

@@ -246,7 +246,7 @@ Plugin wrapper 在**全新安裝**時會自動下載，但**不會**取代既有
 ~/bin/CheICalMCP --self-update
 ```
 
-會查詢 GitHub Releases 最新 tag、下載新 binary、原子地取代舊版。若 binary 正在當 MCP server 跑，升級後請重啟 MCP host（Claude Desktop / Claude Code）讓新版本生效。手動替代方案：`rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`。
+會查詢 GitHub Releases 最新 tag、下載新 binary，依序檢查發布的 SHA-256、維護者的 Developer ID 簽章與 Apple 公證，全部通過才原子地取代舊版（任一檢查失敗，既有安裝都不會被動到）。若 binary 正在當 MCP server 跑，升級後請重啟 MCP host（Claude Desktop / Claude Code）讓新版本生效。手動替代方案：`rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`。
 
 ### CLI 模式（不啟動 MCP server）
 

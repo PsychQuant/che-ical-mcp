@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 import Foundation
 import XCTest
@@ -181,7 +182,7 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let ekErr: any Error = EventKitError.eventNotFound(identifier: "abc")
         XCTAssertTrue(ekErr is TrustedErrorMessage)
 
-        let cliErr: any Error = CLIRunner.CLIError.missingToolName
+        let cliErr: any Error = CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP")
         XCTAssertTrue(cliErr is TrustedErrorMessage)
     }
 
@@ -212,7 +213,7 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let ekErr: any Error = EventKitError.eventNotFound(identifier: "abc")
         XCTAssertTrue(ekErr is TrustedErrorMessage, "EventKitError must conform")
 
-        let cliErr: any Error = CLIRunner.CLIError.missingToolName
+        let cliErr: any Error = CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP")
         XCTAssertTrue(cliErr is TrustedErrorMessage, "CLIRunner.CLIError must conform")
 
         let undoErr: any Error = UnrecoverableUndoError(message: "x")

@@ -1,3 +1,4 @@
+import CheMCPKit
 import XCTest
 
 @testable import CheICalMCP
@@ -70,10 +71,19 @@ final class SelfUpdateTests: XCTestCase {
         XCTAssertTrue(SelfUpdate.isNewer(candidate: "1.0.0-rc.2", than: "1.0.0-rc.1"))
     }
 
-    // MARK: - makeAssetDownloadURL
+    /// #223 (intended change): SemVer §11 precedence. The old split-on-"." compare read
+    /// `"0-beta"` as a string above `"0"`, so a user on `1.0.0-beta` was never offered `1.0.0`.
+    func testIsNewerOffersTheFinalReleaseToAPrerelease() {
+        XCTAssertTrue(SelfUpdate.isNewer(candidate: "1.0.0", than: "1.0.0-beta"))
+        XCTAssertFalse(SelfUpdate.isNewer(candidate: "1.0.0-beta", than: "1.0.0"))
+        XCTAssertTrue(SelfUpdate.isNewer(candidate: "1.0.0-beta.11", than: "1.0.0-beta.2"))
+        XCTAssertFalse(SelfUpdate.isNewer(candidate: "1.0.0+build.7", than: "1.0.0+build.3"))
+    }
+
+    // MARK: - asset download URL (built by the package from `KitConfiguration`)
 
     func testMakeAssetDownloadURLProducesExpectedShape() {
-        let url = SelfUpdate.makeAssetDownloadURL(tag: "v1.7.1", assetName: "CheICalMCP")
+        let url = KitConfiguration.selfUpdate().assetDownloadURL(tag: "v1.7.1", assetName: "CheICalMCP")
         XCTAssertEqual(
             url.absoluteString,
             "https://github.com/PsychQuant/che-ical-mcp/releases/download/v1.7.1/CheICalMCP"
@@ -83,7 +93,7 @@ final class SelfUpdateTests: XCTestCase {
     func testMakeAssetDownloadURLPreservesTagPrefix() {
         // `v` is part of the tag in the URL path — stripTagPrefix is for
         // display + comparison, NOT for URL construction.
-        let url = SelfUpdate.makeAssetDownloadURL(tag: "v1.7.1", assetName: "CheICalMCP")
+        let url = KitConfiguration.selfUpdate().assetDownloadURL(tag: "v1.7.1", assetName: "CheICalMCP")
         XCTAssertTrue(url.absoluteString.contains("/v1.7.1/"))
     }
 
@@ -91,53 +101,50 @@ final class SelfUpdateTests: XCTestCase {
 
     /// Pin: bare hex hash on its own line is the canonical companion format
     /// (matches what `shasum -a 256 binary | awk '{print $1}'` writes).
-    func testParseSHA256CompanionFileBareHex() throws {
+    func testParseSHA256CompanionFileBareHex() {
         let raw = "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
-        XCTAssertEqual(try SelfUpdate.parseSHA256CompanionFile(raw), raw.lowercased())
+        XCTAssertEqual(SelfUpdate.parseSHA256CompanionFile(raw), raw.lowercased())
     }
 
     /// Pin: `shasum -a 256` standard output format (`hash  filename`) also
     /// accepted — the first valid 64-hex token wins.
-    func testParseSHA256CompanionFileShasumFormat() throws {
+    func testParseSHA256CompanionFileShasumFormat() {
         let raw = "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12  CheICalMCP"
         XCTAssertEqual(
-            try SelfUpdate.parseSHA256CompanionFile(raw),
+            SelfUpdate.parseSHA256CompanionFile(raw),
             "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
         )
     }
 
     /// Pin: trailing newlines + uppercase normalized to lowercase output.
-    func testParseSHA256CompanionFileTrimsAndLowercases() throws {
+    func testParseSHA256CompanionFileTrimsAndLowercases() {
         let raw = "  ABC1234567890DEF1234567890ABCDEF1234567890ABCDEF1234567890ABCD12  \n\n"
         XCTAssertEqual(
-            try SelfUpdate.parseSHA256CompanionFile(raw),
+            SelfUpdate.parseSHA256CompanionFile(raw),
             "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
         )
     }
 
     /// Pin: BOM stripped (some `shasum` variants include it).
-    func testParseSHA256CompanionFileStripsBOM() throws {
+    func testParseSHA256CompanionFileStripsBOM() {
         let raw = "\u{FEFF}abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
         XCTAssertEqual(
-            try SelfUpdate.parseSHA256CompanionFile(raw),
+            SelfUpdate.parseSHA256CompanionFile(raw),
             "abc1234567890def1234567890abcdef1234567890abcdef1234567890abcd12"
         )
     }
 
-    /// Pin: file with no valid 64-hex token throws — refuse-on-unparseable.
-    func testParseSHA256CompanionFileThrowsOnNoHashFound() {
-        XCTAssertThrowsError(try SelfUpdate.parseSHA256CompanionFile("not a hash")) { error in
-            guard case SelfUpdate.SelfUpdateError.checksumUnavailable = error else {
-                return XCTFail("expected checksumUnavailable, got \(error)")
-            }
-        }
+    /// Pin: file with no valid 64-hex token yields nil — the package's fetch step turns that
+    /// into `checksumUnavailable` and refuses to install (refuse-on-unparseable).
+    func testParseSHA256CompanionFileReturnsNilOnNoHashFound() {
+        XCTAssertNil(SelfUpdate.parseSHA256CompanionFile("not a hash"))
     }
 
     /// Pin: file with only a 63-char hex (1 short of SHA-256 length) is
     /// rejected — must be exactly 64 chars.
     func testParseSHA256CompanionFileRejectsShortHash() {
         let short = String(repeating: "a", count: 63)
-        XCTAssertThrowsError(try SelfUpdate.parseSHA256CompanionFile(short))
+        XCTAssertNil(SelfUpdate.parseSHA256CompanionFile(short))
     }
 
     // MARK: - sha256OfFile (#98)

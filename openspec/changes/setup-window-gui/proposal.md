@@ -28,7 +28,7 @@
 - Affected code:
   - `Sources/CheICalMCP/SetupWindow.swift`（新檔：`SetupView` + `SetupModel` + 視窗 host）
   - `Sources/CheICalMCP/SetupRunner.swift`（`runInteractive()` 改為呈現視窗；`evaluateEntity` / `requestBoth` 沿用）
-  - `Sources/CheICalMCP/SetupAccessDecision.swift`、`EventKit/BinaryPathResolver.swift`（沿用）
+  - `Sources/CheICalMCP/SetupAccessDecision.swift`（沿用）；`BinaryPathResolver` 自 #223 起由 che-mcp-kit-swift 提供（`import CheMCPKit`），原 `EventKit/BinaryPathResolver.swift` 已移除
   - `Tests/CheICalMCPTests/`（`SetupModel` 狀態映射 / grant 結果 → 狀態 / 路徑 的單元測試；SwiftUI view 本身不單測）
   - `Version.swift` / `Info.plist` / `mcpb/manifest.json` / `.claude-plugin/marketplace.json` / `plugin/.claude-plugin/plugin.json`（版本同步，由既有一致性檢查綁定）
 - 關聯 issue：#164（本體）、#163（前置 NSApplication）；模式參照 che-apple-mail-mcp#213。

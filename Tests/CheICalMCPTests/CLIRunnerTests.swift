@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 import Foundation
 import MCP
@@ -11,7 +12,7 @@ final class CLIRunnerTests: XCTestCase {
 
     func testParseFlagArgs() throws {
         let args = ["--cli", "list_events", "--start_date", "2026-03-29", "--end_date", "2026-03-30"]
-        let (tool, arguments) = try CLIRunner.parseArgs(args)
+        let (tool, arguments) = try CLIRunner.parseArgs(args, usageName: "CheICalMCP")
         XCTAssertEqual(tool, "list_events")
         XCTAssertEqual(arguments["start_date"], "2026-03-29")
         XCTAssertEqual(arguments["end_date"], "2026-03-30")
@@ -19,14 +20,14 @@ final class CLIRunnerTests: XCTestCase {
 
     func testParseFlagArgsNoArguments() throws {
         let args = ["--cli", "list_calendars"]
-        let (tool, arguments) = try CLIRunner.parseArgs(args)
+        let (tool, arguments) = try CLIRunner.parseArgs(args, usageName: "CheICalMCP")
         XCTAssertEqual(tool, "list_calendars")
         XCTAssertTrue(arguments.isEmpty)
     }
 
     func testParseFlagArgsBooleanFlag() throws {
         let args = ["--cli", "delete_events_batch", "--dry_run", "true", "--calendar_name", "Work"]
-        let (tool, arguments) = try CLIRunner.parseArgs(args)
+        let (tool, arguments) = try CLIRunner.parseArgs(args, usageName: "CheICalMCP")
         XCTAssertEqual(tool, "delete_events_batch")
         XCTAssertEqual(arguments["dry_run"], "true")
         XCTAssertEqual(arguments["calendar_name"], "Work")
@@ -34,7 +35,7 @@ final class CLIRunnerTests: XCTestCase {
 
     func testParseFlagArgsMissingToolName() {
         let args = ["--cli"]
-        XCTAssertThrowsError(try CLIRunner.parseArgs(args)) { error in
+        XCTAssertThrowsError(try CLIRunner.parseArgs(args, usageName: "CheICalMCP")) { error in
             let msg = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             XCTAssertTrue(
                 msg.contains("tool name") || msg.contains("Tool"),
@@ -44,7 +45,7 @@ final class CLIRunnerTests: XCTestCase {
 
     func testParseFlagArgsDanglingKey() {
         let args = ["--cli", "list_events", "--start_date"]
-        XCTAssertThrowsError(try CLIRunner.parseArgs(args)) { error in
+        XCTAssertThrowsError(try CLIRunner.parseArgs(args, usageName: "CheICalMCP")) { error in
             let msg = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             XCTAssertTrue(msg.contains("start_date"), "Error should mention the dangling key, got: \(msg)")
         }
@@ -97,7 +98,8 @@ final class CLIRunnerTests: XCTestCase {
 
     func testToMCPArgumentsTypeInference() {
         let args = ["dry_run": "true", "limit": "10", "name": "Work", "lat": "25.03"]
-        let mcpArgs = CLIRunner.toMCPArguments(args)
+        // A tool without a schema entry: every value goes through inference, as before #223.
+        let mcpArgs = CLIRunner.toMCPArguments(args, tool: "no_such_tool", tools: CheICalMCPServer.defineTools())
         XCTAssertEqual(mcpArgs["dry_run"]?.boolValue, true)
         XCTAssertEqual(mcpArgs["limit"]?.intValue, 10)
         XCTAssertEqual(mcpArgs["name"]?.stringValue, "Work")
@@ -163,7 +165,7 @@ final class CLIRunnerTests: XCTestCase {
             code: 5,
             userInfo: [NSLocalizedDescriptionKey: "Apple-produced text MUST NOT appear on stdout"]
         )
-        let (jsonMessage, rawLog) = CLIRunner.formatErrorForCLI(appleErr)
+        let (jsonMessage, rawLog) = KitConfiguration.formatCLIError(appleErr)
 
         XCTAssertTrue(
             jsonMessage.contains("eventkit_error_5"),
@@ -182,16 +184,50 @@ final class CLIRunnerTests: XCTestCase {
 
     func testFormatErrorForCLIPreservesTrustedToolErrorMessage() {
         let err = ToolError.invalidParameter("calendar_name is required")
-        let (jsonMessage, rawLog) = CLIRunner.formatErrorForCLI(err)
+        let (jsonMessage, rawLog) = KitConfiguration.formatCLIError(err)
 
         XCTAssertTrue(jsonMessage.contains("Invalid parameter: calendar_name is required"))
         XCTAssertEqual(rawLog, "Invalid parameter: calendar_name is required")
     }
 
     func testFormatErrorForCLIPreservesTrustedCLIErrorMessage() {
-        let err = CLIRunner.CLIError.missingToolName
-        let (jsonMessage, _) = CLIRunner.formatErrorForCLI(err)
+        let err = CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP")
+        let (jsonMessage, _) = KitConfiguration.formatCLIError(err)
         XCTAssertTrue(jsonMessage.contains("Missing tool name"))
+    }
+
+    /// #223: the `--cli` error line keeps this server's `{"error":true,"message":…}` shape, not
+    /// the package's `{"error":{"code","message"}}` envelope.
+    func testCLIErrorLineKeepsTheLegacyShape() {
+        let appleErr = NSError(domain: EKErrorDomain, code: 5, userInfo: [NSLocalizedDescriptionKey: "x"])
+        XCTAssertEqual(KitConfiguration.formatCLIError(appleErr).jsonMessage, #"{"error":true,"message":"eventkit_error_5"}"#)
+        XCTAssertEqual(KitConfiguration.formatCLIError(CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP")).jsonMessage,
+                       #"{"error":true,"message":"Missing tool name. Usage: CheICalMCP --cli <tool_name> [--key value ...]"}"#)
+    }
+
+    // MARK: - #223 intended changes
+
+    /// String-typed schema parameters keep their text: `--keyword 007` searches "007", not 7.
+    func testStringTypedParametersKeepNumericLookingValues() throws {
+        let (tool, raw) = try CLIRunner.parseArgs(["CheICalMCP", "--cli", "search_events", "--keyword", "007", "--limit", "3"],
+                                                  usageName: KitConfiguration.usageName)
+        let args = CLIRunner.toMCPArguments(raw, tool: tool, tools: CheICalMCPServer.defineTools())
+        XCTAssertEqual(args["keyword"], .string("007"))
+        XCTAssertTrue(CLIRunner.stringTypedParameters(for: "search_events", in: CheICalMCPServer.defineTools()).contains("keyword"))
+    }
+
+    /// A stray positional argument is an error instead of being skipped silently.
+    func testStrayPositionalArgumentIsRejected() {
+        XCTAssertThrowsError(try CLIRunner.parseArgs(["CheICalMCP", "--cli", "list_events", "oops"], usageName: "CheICalMCP")) { error in
+            XCTAssertEqual(error as? CLIRunner.CLIError, .unexpectedPositional)
+        }
+    }
+
+    /// One JSON object after the tool name is accepted as the arguments.
+    func testPositionalJSONObjectIsAccepted() throws {
+        let parsed = try XCTUnwrap(try CLIRunner.parsePositionalJSON(["CheICalMCP", "--cli", "list_events", #"{"limit": 2}"#]))
+        XCTAssertEqual(parsed.tool, "list_events")
+        XCTAssertEqual(parsed.arguments["limit"], .int(2))
     }
 
     func testStdinJSONNullBecomesValueNull() throws {

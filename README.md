@@ -245,7 +245,7 @@ The plugin wrapper auto-downloads on **fresh** installs but does not replace an 
 ~/bin/CheICalMCP --self-update
 ```
 
-This queries GitHub Releases for the latest tag, downloads the new binary, and atomically replaces the current one. If it is running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual fallback: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
+This queries GitHub Releases for the latest tag, downloads the new binary, checks it against the published SHA-256, the maintainer's Developer ID signature and Apple notarization, and only then atomically replaces the current one (any failed check leaves your install untouched). If it is running as an MCP server, restart your MCP host (Claude Desktop / Claude Code) afterward to pick up the new version. Manual fallback: `rm -f ~/bin/CheICalMCP && curl -L https://github.com/PsychQuant/che-ical-mcp/releases/latest/download/CheICalMCP -o ~/bin/CheICalMCP && chmod +x ~/bin/CheICalMCP`.
 
 ### CLI Mode (no MCP server)
 
