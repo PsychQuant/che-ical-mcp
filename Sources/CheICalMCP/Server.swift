@@ -1,3 +1,4 @@
+import CheMCPKit
 import CoreLocation
 import EventKit
 import Foundation
@@ -3258,3 +3259,6 @@ enum ToolError: LocalizedError {
 }
 
 extension ToolError: TrustedErrorMessage {}
+
+/// `--cli` runs tool calls through the same `executeToolCall` the MCP handler uses (#223).
+extension CheICalMCPServer: CLIToolExecutor {}

@@ -1,3 +1,4 @@
+import CheMCPKit
 import Foundation
 import XCTest
 @testable import CheICalMCP

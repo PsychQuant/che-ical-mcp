@@ -1,4 +1,5 @@
 import EventKit
+import CheMCPKit
 import Foundation
 import MCP
 
@@ -15,7 +16,7 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
 
 if CommandLine.arguments.contains("--self-update") {
     do {
-        try await SelfUpdate.run()
+        try await SelfUpdate.run(KitConfiguration.selfUpdate())
         exit(0)
     } catch {
         // #49 verify Finding 4: SelfUpdateError does NOT conform to
@@ -132,7 +133,9 @@ if CommandLine.arguments.contains("--setup") {
 // CLI mode: invoke tools directly without MCP server
 if CommandLine.arguments.contains("--cli") {
     let server = try await CheICalMCPServer()
-    await CLIRunner.run(server: server, args: CommandLine.arguments)
+    await CLIRunner.run(executor: server, tools: CheICalMCPServer.defineTools(),
+                        usageName: KitConfiguration.usageName, args: CommandLine.arguments,
+                        errorFormatter: { KitConfiguration.formatCLIError($0).jsonMessage })
     exit(0)
 }
 

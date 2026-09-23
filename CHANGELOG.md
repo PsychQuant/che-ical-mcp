@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `--self-update` now refuses a download unless it is Developer ID signed by team `6W377FS7BS` (`codesign --verify --strict` against a pinned designated requirement) and Gatekeeper reports it as `Notarized Developer ID` (`spctl -a -vvv -t install`, bounded by `SPCTL_TIMEOUT_SECONDS`, default 60 s, max 600; codesign has its own 30 s budget; a timeout refuses). The checks run after the SHA-256 check, and immediately before `rename(2)` the file must still be a regular file with the expected SHA-256. The installed binary is untouched on any refusal (#223).
+
+### Changed
+
+- The shared server skeleton (self-update, `--cli` runner, error sanitizer core, response formatting, binary path resolution) now comes from the public package [`PsychQuant/che-mcp-kit-swift`](https://github.com/PsychQuant/che-mcp-kit-swift) 0.2.x instead of files in this repo. `EventKitErrorSanitizer` remains as a thin wrapper that keeps the `eventkit_error_<N>` code, and `--cli` failures keep the `{"error":true,"message":"<code>"}` line (#223).
+- `--self-update` orders versions by SemVer precedence: a user on a prerelease (`1.0.0-beta`) is now offered the final `1.0.0`, prerelease identifiers compare numerically where numeric, and build metadata is ignored (#223).
+- `--cli` keeps values for string-typed tool parameters verbatim (`--keyword 007` searches `"007"`, not `7`); a single JSON object after the tool name is accepted as the arguments (`--cli list_events '{"limit": 2}'`); a stray positional argument is now an error instead of being skipped silently (#223).
+
 ## [1.18.0] - 2026-09-09
 
 ### Added

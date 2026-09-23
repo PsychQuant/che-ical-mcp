@@ -1,3 +1,4 @@
+import CheMCPKit
 import Foundation
 @preconcurrency import EventKit
 #if canImport(AppKit) && canImport(SwiftUI)

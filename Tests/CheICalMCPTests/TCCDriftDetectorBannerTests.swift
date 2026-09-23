@@ -15,6 +15,7 @@
 // CI=1, so the banner path (which only reads `authorizationStatus`, never
 // `requestFullAccess`) has no blocking primitive left to hang on.
 
+import CheMCPKit
 import XCTest
 import Darwin  // SIGKILL + kill(_:_:) for the SIGTERM→SIGKILL escalation in spawnAndCaptureStderr
 @testable import CheICalMCP

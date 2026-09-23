@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 import Foundation
 import XCTest
@@ -26,12 +27,12 @@ final class CLIRunnerStderrTests: XCTestCase {
     // MARK: - Trusted-branch carve-out (#41 inheritance)
 
     func testCLIErrorCarveOutSuppressesStderr() {
-        // CLIError conforms to TrustedErrorMessage (CLIRunner.swift:7).
+        // CLIError conforms to TrustedErrorMessage (che-mcp-kit-swift CLIRunner).
         // The wire response (stdout JSON) carries the same string, so
         // stderr would be a duplicate — writeFailureLog skips it.
         let stderr = capturedStderr {
             CLIRunner.handleRunError(
-                CLIRunner.CLIError.missingToolName,
+                CLIRunner.CLIError.missingToolName(usageName: "CheICalMCP"),
                 toolName: nil
             )
         }
