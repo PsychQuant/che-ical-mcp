@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `--self-update` installs exactly the file it verified: che-mcp-kit-swift 0.2.1 stages the download in a private directory (0700, inherited ACLs cleared), writes it `O_CREAT|O_EXCL|O_NOFOLLOW`, hashes and `chmod`s it through one descriptor, and requires the same file immediately before `rename(2)` (PsychQuant/che-mcp-kit-swift#1).
 - `--self-update` now refuses a download unless it is Developer ID signed by team `6W377FS7BS` (`codesign --verify --strict` against a pinned designated requirement) and Gatekeeper reports it as `Notarized Developer ID` (`spctl -a -vvv -t install`, bounded by `SPCTL_TIMEOUT_SECONDS`, default 60 s, max 600; codesign has its own 30 s budget; a timeout refuses). The checks run after the SHA-256 check, and immediately before `rename(2)` the file must still be a regular file with the expected SHA-256. The installed binary is untouched on any refusal (#223).
 
 ### Changed

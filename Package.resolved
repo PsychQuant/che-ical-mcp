@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/PsychQuant/che-mcp-kit-swift.git",
       "state" : {
-        "revision" : "a15c8e0c7ff31890737d04f8b7311dd26ca8438d",
-        "version" : "0.2.0"
+        "revision" : "bd80410a9c44098e7d42a1081d6f75baf85223cc",
+        "version" : "0.2.1"
       }
     },
     {
