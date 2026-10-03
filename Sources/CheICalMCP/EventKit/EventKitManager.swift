@@ -2149,15 +2149,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.calendar = cal
         }
 
-        // Alarms
-        if let existingAlarms = reminder.alarms {
-            for alarm in existingAlarms { reminder.removeAlarm(alarm) }
-        }
-        if let offsets = snapshot.alarmOffsets {
-            for offset in offsets {
-                reminder.addAlarm(EKAlarm(relativeOffset: offset))
-            }
-        }
+        // Start date and alarms (#227)
+        snapshot.applyDates(to: reminder)
     }
 }
 

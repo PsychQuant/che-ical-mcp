@@ -123,7 +123,13 @@ struct ReminderSnapshot {
     let isCompleted: Bool
     let priority: Int
     let dueDateComponents: DateComponents?
+    /// #227: `update_reminder` now moves the start date with the due date, so undo must restore it.
+    let startDateComponents: DateComponents?
+    /// Relative-offset alarms only. An absolute-date alarm has `relativeOffset == 0`, so recording
+    /// it here would bring it back as an alarm at the due time (#227).
     let alarmOffsets: [TimeInterval]?
+    /// #227: absolute-date alarms, restored at their own dates.
+    let absoluteAlarmDates: [Date]
     /// #196: restored by undo instead of letting EventKit re-stamp "now".
     let completionDate: Date?
 
@@ -135,8 +141,19 @@ struct ReminderSnapshot {
         self.isCompleted = reminder.isCompleted
         self.priority = reminder.priority
         self.dueDateComponents = reminder.dueDateComponents
-        self.alarmOffsets = reminder.alarms?.map { $0.relativeOffset }
+        self.startDateComponents = reminder.startDateComponents
+        self.alarmOffsets = reminder.alarms?.filter { $0.absoluteDate == nil }.map { $0.relativeOffset }
+        self.absoluteAlarmDates = reminder.alarms?.compactMap(\.absoluteDate) ?? []
         self.completionDate = reminder.completionDate
+    }
+
+    /// Restores the start date and the time-based alarms (#227). Location alarms are rebuilt
+    /// from `alarmOffsets` like any relative alarm; that loss is tracked separately (#228).
+    func applyDates(to reminder: EKReminder) {
+        reminder.startDateComponents = startDateComponents
+        reminder.alarms?.forEach(reminder.removeAlarm)
+        alarmOffsets?.forEach { reminder.addAlarm(EKAlarm(relativeOffset: $0)) }
+        absoluteAlarmDates.forEach { reminder.addAlarm(EKAlarm(absoluteDate: $0)) }
     }
 }
 
