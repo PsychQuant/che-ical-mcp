@@ -1361,51 +1361,138 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
-        // Find the target calendar
-        let targetCalendar = try findCalendar(name: toCalendarName, source: toCalendarSource, entityType: .event)
-
-        // Check if target calendar allows modifications
-        guard targetCalendar.allowsContentModifications else {
-            // #37 verify: `toCalendarName` is caller-supplied; keep it.
-            // The "(read-only)" suffix is author-controlled. Do NOT interpolate
-            // `targetCalendar.title` (CalendarStore-sourced).
-            throw EventKitError.calendarNotFound(identifier: "\(toCalendarName) (read-only)")
-        }
-
-        // Create a new event with the same properties
-        let newEvent = EKEvent(eventStore: eventStore)
-        newEvent.title = sourceEvent.title
-        newEvent.startDate = sourceEvent.startDate
-        newEvent.endDate = sourceEvent.endDate
-        newEvent.notes = sourceEvent.notes
-        newEvent.location = sourceEvent.location
-        newEvent.url = sourceEvent.url
-        newEvent.isAllDay = sourceEvent.isAllDay
-        newEvent.timeZone = sourceEvent.timeZone
-        newEvent.calendar = targetCalendar
-
-        // Copy alarms
-        if let alarms = sourceEvent.alarms {
-            for alarm in alarms {
-                newEvent.addAlarm(EKAlarm(relativeOffset: alarm.relativeOffset))
+        // #226: a "move" goes through moveEvent (in place first). copy_event has no
+        // occurrence_date, so a recurring event cannot be moved one occurrence at a time here.
+        if deleteOriginal {
+            if sourceEvent.hasRecurrenceRules {
+                throw EventKitError.moveRefused(reason: "copy_event cannot move a recurring event; use move_events_batch with span and occurrence_dates.")
             }
+            let moved = try await moveEvent(identifier: identifier, occurrenceDate: nil, span: .this,
+                                            toCalendarName: toCalendarName, toCalendarSource: toCalendarSource)
+            guard let event = eventStore.event(withIdentifier: moved.result.eventIdentifier) else {
+                throw EventKitError.eventNotFound(identifier: moved.result.eventIdentifier)
+            }
+            return event
         }
 
-        // A move removes one occurrence (.thisEvent), so undo restores a standalone
-        // occurrence rather than duplicating the original recurring series (#208).
-        if deleteOriginal && sourceEvent.calendar == nil {
+        let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
+        let newEvent = makeCopy(of: sourceEvent, in: targetCalendar)
+        defer { markNeedsRefresh() }
+        try eventStore.save(newEvent, span: .thisEvent)
+        return newEvent
+    }
+
+    /// #226: moves an event (or one occurrence) to another calendar. In place first, which
+    /// keeps the identifier within an account and every field; see `EventMovePolicy` for when
+    /// it splits, falls back to copy + delete, or refuses.
+    func moveEvent(
+        identifier: String,
+        occurrenceDate: Date?,
+        span: EventMovePolicy.Span,
+        toCalendarName: String,
+        toCalendarSource: String?
+    ) async throws -> (result: EventMoveResult, title: String?) {
+        try await ensureCalendarAccess()
+        guard let master = eventStore.event(withIdentifier: identifier) else {
+            throw EventKitError.eventNotFound(identifier: identifier)
+        }
+        let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
+        let isRecurring = master.hasRecurrenceRules
+
+        var subject = master
+        if isRecurring, span == .this, let date = occurrenceDate {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: master.timeZone) else {
+                throw EventKitError.moveRefused(reason: "No occurrence of this event falls on occurrence_date.")
+            }
+            subject = occurrence
+        }
+        guard let originalCalendar = subject.calendar else {
             throw EventKitError.calendarNotFound(identifier: "source event calendar")
         }
-        let sourceSnapshot = deleteOriginal ? EventSnapshot(from: sourceEvent, includeRecurrence: false) : nil
-        defer { markNeedsRefresh() } // save may succeed even if removing the source fails
-        let outcome = try EventCopyOperation.execute(source: sourceSnapshot, saveCopy: {
-            try eventStore.save(newEvent, span: .thisEvent)
-            return newEvent
-        }, removeSource: {
-            try eventStore.remove(sourceEvent, span: .thisEvent)
-        })
-        if let undo = outcome.undo { await CalendarUndoManager.shared.record(undo) }
-        return outcome.value
+        let input = EventMovePolicy.Input(isRecurring: isRecurring, span: span,
+                                          hasOccurrenceDate: occurrenceDate != nil,
+                                          attendeeCount: subject.attendees?.count ?? 0)
+        let title = subject.title
+        var undo: UndoOperation?
+        defer { markNeedsRefresh() }
+
+        let copyOut: () throws -> EventMoveExecutor.Copied = {
+            let copy = self.makeCopy(of: subject, in: targetCalendar)
+            // A copy removes one occurrence (.thisEvent), so undo restores a standalone
+            // occurrence rather than duplicating the original series (#208).
+            let snapshot = EventSnapshot(from: subject, includeRecurrence: false)
+            let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
+                try self.eventStore.save(copy, span: .thisEvent)
+                return copy
+            }, removeSource: {
+                try self.eventStore.remove(subject, span: .thisEvent)
+            })
+            undo = outcome.undo
+            return (outcome.value.eventIdentifier ?? "", Self.fieldsNotCarriedOver(from: subject, to: outcome.value))
+        }
+
+        let result = try EventMoveExecutor.run(
+            input,
+            inPlace: {
+                subject.calendar = targetCalendar
+                try self.eventStore.save(subject, span: isRecurring ? .futureEvents : .thisEvent)
+                let movedIdentifier = subject.eventIdentifier ?? identifier
+                undo = .moveEvent(id: movedIdentifier, fromCalendarIdentifier: originalCalendar.calendarIdentifier,
+                                  title: title ?? "", isSeries: isRecurring)
+                return movedIdentifier
+            },
+            restore: { subject.calendar = originalCalendar },
+            copy: copyOut,
+            split: copyOut)
+        if let undo { await CalendarUndoManager.shared.record(undo) }
+        return (result, title)
+    }
+
+    private func writableTargetCalendar(name: String, source: String?) throws -> EKCalendar {
+        let targetCalendar = try findCalendar(name: name, source: source, entityType: .event)
+        guard targetCalendar.allowsContentModifications else {
+            // #37 verify: `name` is caller-supplied; keep it. The "(read-only)" suffix is
+            // author-controlled. Do NOT interpolate `targetCalendar.title` (CalendarStore-sourced).
+            throw EventKitError.calendarNotFound(identifier: "\(name) (read-only)")
+        }
+        return targetCalendar
+    }
+
+    /// The fields a copy keeps. Recurrence and attendees are not among them; the move
+    /// policy refuses before a copy would drop those (#226).
+    private func makeCopy(of source: EKEvent, in calendar: EKCalendar) -> EKEvent {
+        let copy = EKEvent(eventStore: eventStore)
+        copy.title = source.title
+        copy.startDate = source.startDate
+        copy.endDate = source.endDate
+        copy.notes = source.notes
+        copy.location = source.location
+        copy.url = source.url
+        copy.isAllDay = source.isAllDay
+        copy.timeZone = source.timeZone
+        copy.calendar = calendar
+        for alarm in source.alarms ?? [] {
+            copy.addAlarm(EKAlarm(relativeOffset: alarm.relativeOffset))
+        }
+        return copy
+    }
+
+    /// Fields the source actually had that `makeCopy` did not keep (#226).
+    static func fieldsNotCarriedOver(from source: EKEvent, to copy: EKEvent) -> [String] {
+        lostFields(hasCoordinates: source.structuredLocation?.geoLocation != nil,
+                   hasAbsoluteAlarm: (source.alarms ?? []).contains(where: { $0.absoluteDate != nil }),
+                   sourceAvailability: source.availability,
+                   copyAvailability: copy.availability)
+    }
+
+    static func lostFields(hasCoordinates: Bool, hasAbsoluteAlarm: Bool,
+                           sourceAvailability: EKEventAvailability,
+                           copyAvailability: EKEventAvailability) -> [String] {
+        var lost: [String] = []
+        if hasCoordinates { lost.append("structured_location") }
+        if hasAbsoluteAlarm { lost.append("absolute_alarms") }
+        if sourceAvailability != copyAvailability { lost.append("availability") }
+        return lost
     }
 
     // MARK: - Reminders
