@@ -9,9 +9,15 @@ private actor WriteFake: ReminderWriteSource {
         created.append(request)
         return .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: request.notes), isDuplicate: request.title == "duplicate")
     }
-    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderWriteSnapshot {
+    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         updated.append(request)
-        return ReminderWriteSnapshot(id: request.identifier, title: request.title ?? "Saved", notes: request.notes)
+        let touchedDue = request.dueDate != nil || request.clearDueDate
+        let sync = request.clearDueDate
+            ? ReminderDateSync.Report(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1)
+            : ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0)
+        return ReminderUpdateResult(
+            reminder: ReminderWriteSnapshot(id: request.identifier, title: request.title ?? "Saved", notes: request.notes),
+            dateSync: touchedDue ? sync : nil)
     }
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         ReminderWriteSnapshot(id: identifier, title: "Old", notes: "original\n#old")
@@ -40,6 +46,30 @@ final class ReminderWriteHandlerTests: XCTestCase {
         let requests = await fake.updated
         XCTAssertEqual(requests[0].notes, "replacement\n#old")
         XCTAssertEqual(requests[1].notes, "original")
+    }
+    // #227: the response says what moved with the due date.
+    func testUpdateResponseReportsDateSyncWhenTheDueDateMoves() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "due_date": .string("2026-10-08T10:00:00+08:00")]))
+        let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
+        XCTAssertEqual(sync["start_date"] as? String, "shifted")
+        XCTAssertEqual(sync["absolute_alarms_shifted"] as? Int, 1)
+        XCTAssertEqual(sync["absolute_alarms_removed"] as? Int, 0)
+    }
+    func testUpdateResponseReportsRemovedAlarmsWhenTheDueDateIsCleared() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "clear_due_date": .bool(true)]))
+        let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
+        XCTAssertEqual(sync["start_date"] as? String, "cleared")
+        XCTAssertEqual(sync["absolute_alarms_removed"] as? Int, 1)
+    }
+    func testUpdateResponseOmitsDateSyncWhenTheDueDateIsUntouched() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "title": .string("Renamed")]))
+        XCTAssertNil(result["date_sync"])
     }
     func testBatchCountsDuplicateAndInvalidRows() async throws {
         let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())

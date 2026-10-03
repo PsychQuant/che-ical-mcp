@@ -30,7 +30,7 @@ struct ReminderUpdateResult: Sendable {
 }
 protocol ReminderWriteSource: Sendable {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult
-    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderWriteSnapshot
+    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot
 }
 extension EventKitManager: ReminderWriteSource {
@@ -40,11 +40,11 @@ extension EventKitManager: ReminderWriteSource {
                                  calendarSource: request.calendarSource, recurrenceRule: request.recurrenceRule,
                                  locationTrigger: request.locationTrigger)
     }
-    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderWriteSnapshot {
+    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         try await updateReminder(identifier: request.identifier, title: request.title, notes: request.notes,
                                  dueDate: request.dueDate, priority: request.priority,
                                  calendarName: request.calendarName, calendarSource: request.calendarSource,
                                  locationTrigger: request.locationTrigger, clearLocationTrigger: request.clearLocationTrigger,
-                                 clearDueDate: request.clearDueDate).reminder
+                                 clearDueDate: request.clearDueDate)
     }
 }
