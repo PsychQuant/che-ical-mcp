@@ -22,6 +22,12 @@ struct ReminderUpdateRequest: Sendable {
     var clearLocationTrigger = false
     var clearDueDate = false
 }
+/// #227: `update_reminder` reports how the start date and absolute alarms followed the due date.
+struct ReminderUpdateResult: Sendable {
+    let reminder: ReminderWriteSnapshot
+    /// `nil` when the update did not touch the due date.
+    let dateSync: ReminderDateSync.Report?
+}
 protocol ReminderWriteSource: Sendable {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderWriteSnapshot
@@ -39,6 +45,6 @@ extension EventKitManager: ReminderWriteSource {
                                  dueDate: request.dueDate, priority: request.priority,
                                  calendarName: request.calendarName, calendarSource: request.calendarSource,
                                  locationTrigger: request.locationTrigger, clearLocationTrigger: request.clearLocationTrigger,
-                                 clearDueDate: request.clearDueDate)
+                                 clearDueDate: request.clearDueDate).reminder
     }
 }

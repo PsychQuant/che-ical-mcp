@@ -163,6 +163,39 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(report, .init(startDate: .absent, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0))
     }
 
+    // MARK: - setDue (the update_reminder entry point)
+
+    func testSetDueWritesTheDueDateWithAnExplicitTimeZoneAndMovesStartAndAlarm() {
+        let oldDue = date(2026, 10, 4, 10, in: taipei)
+        let newDue = date(2026, 10, 8, 10, in: taipei)
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(oldDue, in: taipei)
+        reminder.startDateComponents = components(oldDue, in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: oldDue))
+
+        let report = ReminderDateSync.setDue(reminder, to: newDue)
+
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0))
+        XCTAssertNotNil(reminder.dueDateComponents?.timeZone, "#134: due components carry an explicit time zone")
+        XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), newDue)
+        XCTAssertEqual(absoluteDates(reminder), [newDue])
+    }
+
+    func testSetDueToNilClearsDueStartAndAbsoluteAlarms() {
+        let oldDue = date(2026, 10, 4, 10, in: taipei)
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(oldDue, in: taipei)
+        reminder.startDateComponents = components(oldDue, in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: oldDue))
+
+        let report = ReminderDateSync.setDue(reminder, to: nil)
+
+        XCTAssertEqual(report, .init(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1))
+        XCTAssertNil(reminder.dueDateComponents)
+        XCTAssertNil(reminder.startDateComponents)
+        XCTAssertEqual(absoluteDates(reminder), [])
+    }
+
     // MARK: - Response shape
 
     func testReportDictionaryUsesSnakeCaseKeys() {

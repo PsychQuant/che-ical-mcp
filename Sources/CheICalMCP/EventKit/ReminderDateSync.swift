@@ -31,6 +31,22 @@ enum ReminderDateSync {
         }
     }
 
+    /// The `update_reminder` entry point: writes the new due date (or clears it) and keeps the
+    /// start date and absolute alarms in step. `newDue == nil` clears the due date.
+    static func setDue(_ reminder: EKReminder, to newDue: Date?) -> Report {
+        let oldDue = safeDateFromComponents(reminder.dueDateComponents)
+        if let newDue {
+            // #134: always store an explicit time zone so iCloud Web / Today view don't
+            // re-interpret floating components as UTC.
+            var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: newDue)
+            components.timeZone = TimeZone.current
+            reminder.dueDateComponents = components
+        } else {
+            reminder.dueDateComponents = nil
+        }
+        return sync(reminder, from: oldDue, to: newDue)
+    }
+
     /// - Parameters:
     ///   - oldDue: the due instant before the update, or `nil` if the reminder had none.
     ///   - newDue: the due instant after the update, or `nil` when the due date is cleared.
