@@ -172,6 +172,9 @@ enum UndoOperation {
     /// pre-write instant undo restores. Neither has a default: dropping them must not compile.
     case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?)
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
+    /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
+    /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`.
+    case moveEvent(id: String, fromCalendarIdentifier: String, title: String, isSeries: Bool)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -188,6 +191,8 @@ enum UndoOperation {
             return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateEvent(_, let old):
             return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
+        case .moveEvent(_, _, let title, _):
+            return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .createReminder(_, let title):
             return "Created reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .deleteReminder(let snapshot):

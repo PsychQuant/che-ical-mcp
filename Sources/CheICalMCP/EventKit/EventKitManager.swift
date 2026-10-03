@@ -1937,6 +1937,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
+        case .moveEvent(let id, let fromCalendarIdentifier, let title, let isSeries):
+            // Undo an in-place move (#226) = move it back to the recorded calendar.
+            guard let event = eventStore.event(withIdentifier: id) else {
+                throw EventKitError.eventNotFound(identifier: id)
+            }
+            guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
+                throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
+            }
+            event.calendar = original
+            try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
+            markNeedsRefresh()
+            return "Undone: moved event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' back to its original calendar"
+
         case .createReminder(let id, let title):
             // Undo create = delete
             try await ensureReminderAccess()
@@ -2020,6 +2033,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .updateEvent(let id, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
+
+        case .moveEvent(_, _, let title, _):
+            return "Redo move: use move_events_batch to move '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again."
 
         case .createReminder(_, let title):
             return "Cannot redo reminder creation — please create '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again manually"
