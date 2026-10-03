@@ -62,3 +62,51 @@ enum EventMovePolicy {
         return .copy
     }
 }
+
+/// What one move did. `eventIdentifier` is the identifier after the move.
+struct EventMoveResult: Equatable, Sendable {
+    enum Method: String, Sendable {
+        case inPlace = "in_place"
+        case copied
+        case split
+    }
+    let method: Method
+    let eventIdentifier: String
+    /// Fields the source had that a copy did not keep. Always empty for in-place moves.
+    let notCarriedOver: [String]
+}
+
+/// Orders the writes for one move (#226). Closure seam like `ExclusionExecutor`, so the
+/// sequence is testable without EventKit:
+/// - a refusal from the policy writes nothing;
+/// - a failed in-place change is reverted (`restore`) before falling back or refusing.
+enum EventMoveExecutor {
+    typealias Copied = (identifier: String, notCarriedOver: [String])
+
+    static func run(_ input: EventMovePolicy.Input,
+                    inPlace: () throws -> String,
+                    restore: () -> Void,
+                    copy: () throws -> Copied,
+                    split: () throws -> Copied) throws -> EventMoveResult {
+        switch EventMovePolicy.plan(input) {
+        case .refuse(let reason):
+            throw EventKitError.moveRefused(reason: reason)
+        case .split:
+            let result = try split()
+            return EventMoveResult(method: .split, eventIdentifier: result.identifier, notCarriedOver: result.notCarriedOver)
+        case .inPlace:
+            do {
+                return EventMoveResult(method: .inPlace, eventIdentifier: try inPlace(), notCarriedOver: [])
+            } catch {
+                restore()
+                switch EventMovePolicy.afterInPlaceFailure(input) {
+                case .refuse(let reason):
+                    throw EventKitError.moveRefused(reason: reason)
+                case .copy:
+                    let result = try copy()
+                    return EventMoveResult(method: .copied, eventIdentifier: result.identifier, notCarriedOver: result.notCarriedOver)
+                }
+            }
+        }
+    }
+}

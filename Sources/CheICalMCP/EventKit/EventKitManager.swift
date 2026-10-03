@@ -2239,6 +2239,9 @@ enum EventKitError: LocalizedError {
     /// the all-day flag and shift occurrence days (defense-in-depth behind the
     /// handler-level guard).
     case allDayTimezoneConflict
+    /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
+    /// (no EventKit text, no user input), so it is safe to return verbatim.
+    case moveRefused(reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -2319,6 +2322,8 @@ enum EventKitError: LocalizedError {
             return "excluded_occurrence_dates: exclusion failed AND the compensating delete failed. The series (event ID \(masterId)) still exists with these exclusions already applied: [\(appliedDates.joined(separator: ", "))]. Delete it manually with delete_event span:\"all\" or retry."
         case .allDayTimezoneConflict:
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
+        case .moveRefused(let reason):
+            return reason
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
