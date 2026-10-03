@@ -105,11 +105,11 @@
     },
     {
       "name": "copy_event",
-      "description": "Copy an event; optional source deletion is destructive and undo restores the source occurrence while keeping the copy"
+      "description": "Copy an event (new identifier; recurrence and attendees not copied); with delete_original it moves the event in place like move_events_batch"
     },
     {
       "name": "move_events_batch",
-      "description": "Move events between calendars; source deletions are destructive and recorded for undo"
+      "description": "Move events between calendars in place (keeps recurrence, attendees and the identifier within an account); span this/all for recurring events; recorded for undo"
     },
     {
       "name": "delete_events_batch",

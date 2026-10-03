@@ -851,7 +851,7 @@ class CheICalMCPServer {
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The original event is preserved unless delete_original is true. Undo of a move restores the deleted source occurrence; the copy remains. If deletion fails after copying, inspect the target calendar before retrying.",
+                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees, coordinates and absolute-date alarms are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true); recurring events are refused here, use move_events_batch with span and occurrence_dates. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -868,7 +868,7 @@ class CheICalMCPServer {
             // Feature 7: Move Events Batch
             Tool(
                 name: "move_events_batch",
-                description: "PREFERRED: Move multiple events to another calendar in a single call. Use this instead of calling copy_event with delete_original multiple times - it's faster and more reliable. Returns detailed success/failure for each event.",
+                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series. Each result reports method (in_place / copied / split), id_changed and any not_carried_over fields.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -878,7 +878,17 @@ class CheICalMCPServer {
                             "description": .string("Array of event IDs to move")
                         ]),
                         "target_calendar": .object(["type": .string("string"), "description": .string("Target calendar name to move events to")]),
-                        "target_calendar_source": .object(["type": .string("string"), "description": .string("Target calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")])
+                        "target_calendar_source": .object(["type": .string("string"), "description": .string("Target calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "span": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("this"), .string("all")]),
+                            "description": .string("For recurring events: 'this' (default) moves one occurrence (requires occurrence_dates); 'all' moves the whole series in place.")
+                        ]),
+                        "occurrence_dates": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .array([.string("string"), .string("null")])]),
+                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'); null for the others. Must have the same length as event_ids when given.")
+                        ])
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
                 ]),
@@ -2544,7 +2554,10 @@ class CheICalMCPServer {
         )
 
         let action = deleteOriginal ? "moved" : "copied"
-        return try actionResult(["action": action, "title": newEvent.title ?? "", "target_calendar": targetCalendar, "new_id": newEvent.eventIdentifier ?? "unknown"])
+        var response: [String: Any] = ["action": action, "title": newEvent.title ?? "", "target_calendar": targetCalendar, "new_id": newEvent.eventIdentifier ?? "unknown"]
+        // #226: a move keeps the identifier within an account; say whether it changed.
+        if deleteOriginal { response["id_changed"] = newEvent.eventIdentifier != eventId }
+        return try actionResult(response)
     }
 
     /// Feature 7: Move multiple events to another calendar
@@ -2561,23 +2574,45 @@ class CheICalMCPServer {
         if ids.isEmpty {
             throw ToolError.invalidParameter("event_ids must contain at least one event ID")
         }
+        // #226: span ('this' default / 'all') and index-aligned occurrence dates, validated
+        // before any write.
+        let span = try EventMovePolicy.Span.parse(arguments["span"]?.stringValue)
+        var occurrenceDates = [Date?](repeating: nil, count: ids.count)
+        if let raw = arguments["occurrence_dates"]?.arrayValue {
+            guard raw.count == ids.count else {
+                throw ToolError.invalidParameter("occurrence_dates must have the same length as event_ids")
+            }
+            occurrenceDates = try raw.map { value in
+                if case .null = value { return nil }
+                guard let text = value.stringValue else {
+                    throw ToolError.invalidParameter("occurrence_dates entries must be date strings or null")
+                }
+                return text.isEmpty ? nil : try parseFlexibleDate(text)
+            }
+        }
 
         var results: [[String: Any]] = []
 
-        for eventId in ids {
+        for (index, eventId) in ids.enumerated() {
             do {
-                let event = try await eventCopySource.copyEventValue(
+                let moved = try await eventCopySource.moveEventValue(
                     identifier: eventId,
+                    occurrenceDate: occurrenceDates[index],
+                    span: span,
                     toCalendarName: targetCalendar,
-                    toCalendarSource: targetCalendarSource,
-                    deleteOriginal: true  // Move = copy + delete original
+                    toCalendarSource: targetCalendarSource
                 )
-                results.append([
+                let idChanged = moved.result.eventIdentifier != eventId
+                var row: [String: Any] = [
                     "event_id": eventId,
                     "success": true,
-                    "new_event_id": event.eventIdentifier ?? "",
-                    "title": event.title ?? ""
-                ])
+                    "method": moved.result.method.rawValue,
+                    "id_changed": idChanged,
+                    "title": moved.title ?? ""
+                ]
+                if idChanged { row["new_event_id"] = moved.result.eventIdentifier }
+                if !moved.result.notCarriedOver.isEmpty { row["not_carried_over"] = moved.result.notCarriedOver }
+                results.append(row)
             } catch {
                 results.append([
                     "event_id": eventId,
