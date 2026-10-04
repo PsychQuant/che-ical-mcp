@@ -6,7 +6,7 @@ final class ReminderWriteSnapshotTests: XCTestCase {
     private func requireSendable<T: Sendable>(_ type: T.Type) {}
     func testManagerSignaturesReturnOnlySnapshots() {
         let get: (String) async throws -> ReminderWriteSnapshot = { try await EventKitManager.shared.getReminder(identifier: $0) }
-        let update: (String) async throws -> ReminderWriteSnapshot = { try await EventKitManager.shared.updateReminder(identifier: $0) }
+        let update: (String) async throws -> ReminderUpdateResult = { try await EventKitManager.shared.updateReminder(identifier: $0) }
         let create: (String) async throws -> EventKitManager.CreateReminderResult = { try await EventKitManager.shared.createReminder(title: $0) }
         _ = (get, update, create)
     }
@@ -23,5 +23,6 @@ final class ReminderWriteSnapshotTests: XCTestCase {
         XCTAssertTrue(result.isDuplicate)
         requireSendable(ReminderWriteSnapshot.self)
         requireSendable(EventKitManager.CreateReminderResult.self)
+        requireSendable(ReminderUpdateResult.self)
     }
 }

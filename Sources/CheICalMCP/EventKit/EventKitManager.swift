@@ -1613,11 +1613,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         priority: Int? = nil,
         calendarName: String? = nil,
         calendarSource: String? = nil,
-        alarmOffsets: [Int]? = nil,
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false
-    ) async throws -> ReminderWriteSnapshot {
+    ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
@@ -1630,36 +1629,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let n = notes { reminder.notes = n }
         if let p = priority { reminder.priority = p }
 
+        // #227: the start date and absolute-date alarms follow the due date; Reminders.app
+        // displays the alarm's date, so leaving it behind keeps showing the old date.
+        var dateSync: ReminderDateSync.Report?
         if clearDueDate {
-            reminder.dueDateComponents = nil
+            dateSync = ReminderDateSync.setDue(reminder, to: nil)
         } else if let due = dueDate {
-            // #134: see createReminder for rationale — always store explicit
-            // timezone so iCloud Web / macOS Today-view don't re-interpret
-            // floating components as UTC.
-            var dueComponents = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute],
-                from: due
-            )
-            dueComponents.timeZone = TimeZone.current
-            reminder.dueDateComponents = dueComponents
+            dateSync = ReminderDateSync.setDue(reminder, to: due)
         }
 
         if let name = calendarName {
             let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
             reminder.calendar = calendar
-        }
-
-        // Update alarms
-        if let offsets = alarmOffsets {
-            if let existingAlarms = reminder.alarms {
-                for alarm in existingAlarms {
-                    reminder.removeAlarm(alarm)
-                }
-            }
-            for offset in offsets {
-                let alarm = EKAlarm(relativeOffset: TimeInterval(-offset * 60))
-                reminder.addAlarm(alarm)
-            }
         }
 
         // Update location trigger
@@ -1688,7 +1669,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        let result = ReminderWriteSnapshot(from: reminder)
+        let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)
         await CalendarUndoManager.shared.record(.updateReminder(id: identifier, oldSnapshot: oldSnapshot))
         return result
     }
@@ -2149,15 +2130,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.calendar = cal
         }
 
-        // Alarms
-        if let existingAlarms = reminder.alarms {
-            for alarm in existingAlarms { reminder.removeAlarm(alarm) }
-        }
-        if let offsets = snapshot.alarmOffsets {
-            for offset in offsets {
-                reminder.addAlarm(EKAlarm(relativeOffset: offset))
-            }
-        }
+        // Start date and alarms (#227)
+        snapshot.applyDates(to: reminder)
     }
 }
 

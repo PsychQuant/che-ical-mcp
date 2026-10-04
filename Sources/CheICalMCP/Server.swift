@@ -573,7 +573,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the alarm's date); clear_due_date also clears the start date and removes absolute-date alarms. Relative and location alarms are unchanged. The response's date_sync reports what moved.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1740,7 +1740,7 @@ class CheICalMCPServer {
             }
         }
 
-        let reminder = try await reminderWriteSource.updateReminder(ReminderUpdateRequest(
+        let update = try await reminderWriteSource.updateReminder(ReminderUpdateRequest(
             identifier: reminderId,
             title: title,
             notes: finalNotes,
@@ -1753,7 +1753,10 @@ class CheICalMCPServer {
             clearDueDate: clearDueDate
         ))
 
-        return try actionResult(["action": "updated", "title": reminder.title ?? "", "id": reminderId])
+        var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? "", "id": reminderId]
+        // #227: what moved with the due date (start date, absolute-date alarms).
+        if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
+        return try actionResult(response)
     }
 
     private func handleCompleteReminder(arguments: [String: Value]) async throws -> String {
