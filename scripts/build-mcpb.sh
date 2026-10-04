@@ -88,19 +88,45 @@ fi
 echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + plugin.json all at $SOURCE_VERSION"
 
 # Steps 3-4: Build for both architectures
+# #238: under the swiftbuild build system (Swift 6.4 default) both --arch builds write
+# to the same bin path, so each product is copied out right after its own build —
+# before the next build overwrites it — and checked to contain only that
+# architecture. The per-arch paths under .build/<triple>/release are no longer
+# written and must not be read: they hold whatever an older toolchain left there.
+STAGE_DIR="$PROJECT_DIR/.build/mcpb-stage"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR"
+
+build_arch() {
+    local arch="$1" bin_dir product archs
+    swift build -c release --arch "$arch" "${SWIFT_FALLBACK_FLAGS[@]}"
+    bin_dir=$(swift build -c release --arch "$arch" --show-bin-path "${SWIFT_FALLBACK_FLAGS[@]}")
+    product="$bin_dir/CheICalMCP"
+    if [[ ! -f "$product" ]]; then
+        echo "Error: no $arch product at $product"
+        exit 1
+    fi
+    archs=$(lipo -archs "$product")
+    if [[ "$archs" != "$arch" ]]; then
+        echo "Error: $product contains '$archs', expected '$arch' (#238)"
+        exit 1
+    fi
+    cp "$product" "$STAGE_DIR/CheICalMCP-$arch"
+}
+
 echo "[3/7] Building for Apple Silicon (arm64)..."
 cd "$PROJECT_DIR"
-swift build -c release --arch arm64 "${SWIFT_FALLBACK_FLAGS[@]}"
+build_arch arm64
 
 echo "[4/7] Building for Intel (x86_64)..."
-swift build -c release --arch x86_64 "${SWIFT_FALLBACK_FLAGS[@]}"
+build_arch x86_64
 
 # Step 5: Create Universal Binary
 echo "[5/7] Creating Universal Binary..."
 mkdir -p "$SERVER_DIR"
 
-ARM64_BINARY="$PROJECT_DIR/.build/arm64-apple-macosx/release/CheICalMCP"
-X64_BINARY="$PROJECT_DIR/.build/x86_64-apple-macosx/release/CheICalMCP"
+ARM64_BINARY="$STAGE_DIR/CheICalMCP-arm64"
+X64_BINARY="$STAGE_DIR/CheICalMCP-x86_64"
 UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 
 if [[ -f "$ARM64_BINARY" && -f "$X64_BINARY" ]]; then
@@ -112,6 +138,15 @@ if [[ -f "$ARM64_BINARY" && -f "$X64_BINARY" ]]; then
     lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
     chmod +x "$UNIVERSAL_BINARY"
     echo "Created Universal Binary: $UNIVERSAL_BINARY"
+    # #238: the packaged binary must report the version the sources declare. A stale
+    # product (left by an older toolchain) passes every later step — signing,
+    # notarization, the .mcpb check — so this is the only place it can be caught.
+    BUILT_VERSION=$("$UNIVERSAL_BINARY" --version 2>/dev/null | awk '{print $NF}')
+    if [[ "$BUILT_VERSION" != "$SOURCE_VERSION" ]]; then
+        echo "Error: the packaged binary reports '$BUILT_VERSION', but the sources are at $SOURCE_VERSION (stale build product, #238)"
+        exit 1
+    fi
+    echo "  ✓ packaged binary reports $BUILT_VERSION"
 else
     echo "Error: Could not find architecture-specific binaries"
     echo "  ARM64: $ARM64_BINARY (exists: $(test -f "$ARM64_BINARY" && echo yes || echo no))"
