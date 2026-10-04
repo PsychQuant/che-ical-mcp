@@ -28,11 +28,15 @@ enum EventMovePolicy {
         let span: Span
         let hasOccurrenceDate: Bool
         let attendeeCount: Int
+        /// The event (or occurrence) is already in the target calendar.
+        var alreadyInTarget = false
     }
 
     enum Plan: Equatable, Sendable {
         case inPlace
         case split
+        /// Nothing to move: no write, no undo entry (verify #1).
+        case unchanged
         case refuse(String)
     }
 
@@ -42,6 +46,12 @@ enum EventMovePolicy {
     }
 
     static func plan(_ input: Input) -> Plan {
+        if input.alreadyInTarget { return .unchanged }
+        if input.isRecurring, input.span == .all, input.hasOccurrenceDate {
+            // A date with span 'all' is a contradiction; moving the series would silently
+            // ignore it (verify #9).
+            return .refuse("occurrence_date was given with span 'all'. Use span 'this' to move that occurrence, or omit the date to move the whole series.")
+        }
         guard input.isRecurring, input.span == .this else { return .inPlace }
         guard input.hasOccurrenceDate else {
             return .refuse("For a recurring event, occurrence_date is required to move one occurrence; use span 'all' to move the whole series.")
@@ -69,6 +79,7 @@ struct EventMoveResult: Equatable, Sendable {
         case inPlace = "in_place"
         case copied
         case split
+        case unchanged
     }
     let method: Method
     let eventIdentifier: String
@@ -84,6 +95,7 @@ enum EventMoveExecutor {
     typealias Copied = (identifier: String, notCarriedOver: [String])
 
     static func run(_ input: EventMovePolicy.Input,
+                    currentIdentifier: String,
                     inPlace: () throws -> String,
                     restore: () -> Void,
                     copy: () throws -> Copied,
@@ -91,9 +103,13 @@ enum EventMoveExecutor {
         switch EventMovePolicy.plan(input) {
         case .refuse(let reason):
             throw EventKitError.moveRefused(reason: reason)
+        case .unchanged:
+            return EventMoveResult(method: .unchanged, eventIdentifier: currentIdentifier, notCarriedOver: [])
         case .split:
+            // The moved occurrence becomes a one-off; say so explicitly (verify #5).
             let result = try split()
-            return EventMoveResult(method: .split, eventIdentifier: result.identifier, notCarriedOver: result.notCarriedOver)
+            return EventMoveResult(method: .split, eventIdentifier: result.identifier,
+                                   notCarriedOver: ["recurrence"] + result.notCarriedOver)
         case .inPlace:
             do {
                 return EventMoveResult(method: .inPlace, eventIdentifier: try inPlace(), notCarriedOver: [])

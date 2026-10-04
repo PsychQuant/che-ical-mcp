@@ -105,11 +105,11 @@
     },
     {
       "name": "copy_event",
-      "description": "Copy an event (new identifier; recurrence and attendees not copied); with delete_original it moves the event in place like move_events_batch"
+      "description": "Copy an event (new identifier; recurrence and attendees not copied); with delete_original it moves the event like move_events_batch and refuses recurring events"
     },
     {
       "name": "move_events_batch",
-      "description": "Move events between calendars in place (keeps recurrence, attendees and the identifier within an account); span this/all for recurring events; recorded for undo"
+      "description": "Move events between calendars in place (keeps recurrence, attendees and the identifier within an account); span this/all for recurring events; reports method and fields not carried over; recorded for undo"
     },
     {
       "name": "delete_events_batch",

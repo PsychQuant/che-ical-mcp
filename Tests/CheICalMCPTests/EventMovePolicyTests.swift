@@ -8,8 +8,9 @@ import XCTest
 /// - Refuse only when the copy path would lose recurrence or attendees.
 final class EventMovePolicyTests: XCTestCase {
     private func input(recurring: Bool = false, span: EventMovePolicy.Span = .this,
-                       occurrence: Bool = false, attendees: Int = 0) -> EventMovePolicy.Input {
-        .init(isRecurring: recurring, span: span, hasOccurrenceDate: occurrence, attendeeCount: attendees)
+                       occurrence: Bool = false, attendees: Int = 0, alreadyInTarget: Bool = false) -> EventMovePolicy.Input {
+        .init(isRecurring: recurring, span: span, hasOccurrenceDate: occurrence, attendeeCount: attendees,
+              alreadyInTarget: alreadyInTarget)
     }
 
     // MARK: - Before the write
@@ -42,6 +43,23 @@ final class EventMovePolicyTests: XCTestCase {
             return XCTFail("splitting would drop the attendees")
         }
         XCTAssertTrue(reason.contains("attendees"))
+    }
+
+    // MARK: - Verify round 1 (PR #234)
+
+    /// Finding 1: nothing to move — no split, no copy, no undo entry.
+    func testEventAlreadyInTheTargetCalendarIsUnchanged() {
+        XCTAssertEqual(EventMovePolicy.plan(input(alreadyInTarget: true)), .unchanged)
+        XCTAssertEqual(EventMovePolicy.plan(input(recurring: true, occurrence: true, alreadyInTarget: true)), .unchanged)
+    }
+
+    /// Finding 9: a date with span 'all' is a contradiction; moving the series would ignore it.
+    func testOccurrenceDateWithSpanAllIsRefused() {
+        guard case .refuse(let reason) = EventMovePolicy.plan(input(recurring: true, span: .all, occurrence: true)) else {
+            return XCTFail("span 'all' with an occurrence_date must not silently move the whole series")
+        }
+        XCTAssertTrue(reason.contains("span"))
+        XCTAssertEqual(EventMovePolicy.plan(input(span: .all, occurrence: true)), .inPlace, "non-recurring: the date is irrelevant")
     }
 
     // MARK: - After an in-place failure

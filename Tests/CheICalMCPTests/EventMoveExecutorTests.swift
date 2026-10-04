@@ -12,13 +12,15 @@ final class EventMoveExecutorTests: XCTestCase {
     }
 
     private func input(recurring: Bool = false, span: EventMovePolicy.Span = .this,
-                       occurrence: Bool = false, attendees: Int = 0) -> EventMovePolicy.Input {
-        .init(isRecurring: recurring, span: span, hasOccurrenceDate: occurrence, attendeeCount: attendees)
+                       occurrence: Bool = false, attendees: Int = 0, alreadyInTarget: Bool = false) -> EventMovePolicy.Input {
+        .init(isRecurring: recurring, span: span, hasOccurrenceDate: occurrence, attendeeCount: attendees,
+              alreadyInTarget: alreadyInTarget)
     }
 
     private func run(_ input: EventMovePolicy.Input, inPlaceFails: Bool = false, _ rec: Recorder) throws -> EventMoveResult {
         try EventMoveExecutor.run(
             input,
+            currentIdentifier: "current-id",
             inPlace: {
                 rec.calls.append("inPlace")
                 if inPlaceFails { throw InPlaceFailed() }
@@ -64,6 +66,21 @@ final class EventMoveExecutorTests: XCTestCase {
         XCTAssertEqual(result.method, .split)
         XCTAssertEqual(result.eventIdentifier, "split-id")
         XCTAssertEqual(rec.calls, ["split"])
+    }
+
+    /// Finding 5: a split occurrence is a one-off; say so explicitly.
+    func testSplitReportsRecurrenceAsNotCarriedOver() throws {
+        let rec = Recorder()
+        let result = try run(input(recurring: true, occurrence: true), rec)
+        XCTAssertEqual(result.notCarriedOver.first, "recurrence")
+    }
+
+    /// Finding 1: an event already in the target calendar touches nothing.
+    func testUnchangedWritesNothing() throws {
+        let rec = Recorder()
+        let result = try run(input(alreadyInTarget: true), rec)
+        XCTAssertEqual(result, .init(method: .unchanged, eventIdentifier: "current-id", notCarriedOver: []))
+        XCTAssertEqual(rec.calls, [])
     }
 
     func testRefusalBeforeTheWriteTouchesNothing() {

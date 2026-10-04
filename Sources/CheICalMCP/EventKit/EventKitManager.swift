@@ -1348,38 +1348,42 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Copy an event to another calendar, optionally deleting the original
+    /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
+    /// fields it keeps. Moves go through `moveEvent` / `moveEventForCopyTool` (#226).
     func copyEvent(
         identifier: String,
         toCalendarName: String,
-        toCalendarSource: String? = nil,
-        deleteOriginal: Bool = false
+        toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-
-        // Find the source event
         guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
-
-        // #226: a "move" goes through moveEvent (in place first). copy_event has no
-        // occurrence_date, so a recurring event cannot be moved one occurrence at a time here.
-        if deleteOriginal {
-            if sourceEvent.hasRecurrenceRules {
-                throw EventKitError.moveRefused(reason: "copy_event cannot move a recurring event; use move_events_batch with span and occurrence_dates.")
-            }
-            let moved = try await moveEvent(identifier: identifier, occurrenceDate: nil, span: .this,
-                                            toCalendarName: toCalendarName, toCalendarSource: toCalendarSource)
-            guard let event = eventStore.event(withIdentifier: moved.result.eventIdentifier) else {
-                throw EventKitError.eventNotFound(identifier: moved.result.eventIdentifier)
-            }
-            return event
-        }
-
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
         let newEvent = makeCopy(of: sourceEvent, in: targetCalendar)
         defer { markNeedsRefresh() }
         try eventStore.save(newEvent, span: .thisEvent)
         return newEvent
+    }
+
+    /// `copy_event` with `delete_original` (#226). copy_event has no occurrence_date, so a
+    /// recurring event is refused here with a pointer to move_events_batch. The move result
+    /// is returned as is (verify #2, #3): no re-fetch by the new identifier, which may be empty
+    /// on the copy path or not yet resolvable after a move across accounts.
+    func moveEventForCopyTool(
+        identifier: String,
+        toCalendarName: String,
+        toCalendarSource: String?
+    ) async throws -> (result: EventMoveResult, title: String?) {
+        try await ensureCalendarAccess()
+        guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
+            throw EventKitError.eventNotFound(identifier: identifier)
+        }
+        if sourceEvent.hasRecurrenceRules {
+            throw EventKitError.moveRefused(reason: "copy_event cannot move a recurring event; use move_events_batch with span and occurrence_dates.")
+        }
+        return try await moveEvent(identifier: identifier, occurrenceDate: nil, span: .this,
+                                   toCalendarName: toCalendarName, toCalendarSource: toCalendarSource)
     }
 
     /// #226: moves an event (or one occurrence) to another calendar. In place first, which
@@ -1411,7 +1415,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         let input = EventMovePolicy.Input(isRecurring: isRecurring, span: span,
                                           hasOccurrenceDate: occurrenceDate != nil,
-                                          attendeeCount: subject.attendees?.count ?? 0)
+                                          attendeeCount: subject.attendees?.count ?? 0,
+                                          alreadyInTarget: originalCalendar.calendarIdentifier == targetCalendar.calendarIdentifier)
         let title = subject.title
         var undo: UndoOperation?
         defer { markNeedsRefresh() }
@@ -1433,6 +1438,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         let result = try EventMoveExecutor.run(
             input,
+            currentIdentifier: identifier,
             inPlace: {
                 subject.calendar = targetCalendar
                 try self.eventStore.save(subject, span: isRecurring ? .futureEvents : .thisEvent)
@@ -1441,7 +1447,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                   title: title ?? "", isSeries: isRecurring)
                 return movedIdentifier
             },
-            restore: { subject.calendar = originalCalendar },
+            restore: {
+                // Discard every unsaved change the failed save left on the object, not just the
+                // calendar, before the fallback copy reads it (verify #8).
+                subject.rollback()
+                subject.calendar = originalCalendar
+            },
             copy: copyOut,
             split: copyOut)
         if let undo { await CalendarUndoManager.shared.record(undo) }
