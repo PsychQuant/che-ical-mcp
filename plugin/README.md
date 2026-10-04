@@ -115,9 +115,9 @@ Or just ask naturally:
 - `list_events` / `list_events_quick` — list by range or shortcut
 - `search_events` — keyword search
 - `create_event` / `update_event` / `delete_event` — single ops
-- `copy_event` — copy or move event across calendars
+- `copy_event` — copy an event across calendars; `delete_original` moves it like `move_events_batch` and refuses recurring events (#226)
 - `check_conflicts` — time-overlap detection
-- `create_events_batch` / `move_events_batch` / `delete_events_batch` — batch ops
+- `create_events_batch` / `move_events_batch` / `delete_events_batch` — batch ops; `move_events_batch` moves in place (keeps recurrence and attendees), takes `span` / `occurrence_dates`, and reports `method` / `id_changed` per event (#226)
 - `find_duplicate_events` — surface duplicates for cleanup
 
 ### Reminders (10)

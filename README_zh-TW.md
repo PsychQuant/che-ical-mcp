@@ -112,12 +112,14 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `list_events_quick` | 快速捷徑：`today`、`tomorrow`、`this_week`、`next_7_days` 等 |
 | `create_events_batch` | 一次建立多個事件（支援個別時區） |
 | `check_conflicts` | 檢查指定時間範圍是否有重疊事件 |
-| `copy_event` | 複製事件到另一個日曆（可選擇移動） |
-| `move_events_batch` | 批次移動事件到另一個日曆 |
+| `copy_event` | 複製事件到另一個日曆；`delete_original` 時以 `move_events_batch` 的方式搬移（循環事件會被拒絕） |
+| `move_events_batch` | 原地把事件搬到另一個日曆，保留循環規則與與會者；循環事件用 `span` / `occurrence_dates`（#226） |
 | `delete_events_batch` | 依 ID 或日期範圍刪除事件，支援預覽模式（v1.0.0） |
 | `find_duplicate_events` | 跨日曆查找重複事件（v0.5.0） |
 | `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0） |
 | `delete_reminders_batch` | 批次刪除多個提醒事項（v0.9.0） |
+
+**搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
 
 </details>
 

@@ -113,12 +113,14 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `list_events_quick` | Quick shortcuts: `today`, `tomorrow`, `this_week`, `next_7_days`, etc. |
 | `create_events_batch` | Create multiple events at once (with per-event timezone) |
 | `check_conflicts` | Check for overlapping events in a time range |
-| `copy_event` | Copy an event to another calendar (with optional move) |
-| `move_events_batch` | Move multiple events to another calendar |
+| `copy_event` | Copy an event to another calendar; `delete_original` moves it like `move_events_batch` (recurring events refused) |
+| `move_events_batch` | Move events to another calendar in place, keeping recurrence and attendees; `span` / `occurrence_dates` for recurring events (#226) |
 | `delete_events_batch` | Delete events by IDs or date range, with dry-run preview (v1.0.0) |
 | `find_duplicate_events` | Find duplicate events across calendars (v0.5.0) |
 | `create_reminders_batch` | Create multiple reminders at once (v0.9.0) |
 | `delete_reminders_batch` | Delete multiple reminders at once (v0.9.0) |
+
+**Moving events (#226):** a move reassigns the event's calendar, so recurrence, attendees and every other field are kept. The identifier stays the same within an account and changes across accounts (each result reports `id_changed` and `new_event_id`). For a recurring event, `span: this` (default) moves only the occurrence named in `occurrence_dates`, which becomes a one-off; `span: all` moves the whole series; a recurring event without a date is refused. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`) and any `not_carried_over` fields.
 
 </details>
 
