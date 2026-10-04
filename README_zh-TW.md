@@ -99,6 +99,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
 
+**提醒事項改期（#227）：** Reminders.app 顯示的是絕對時間鬧鐘的日期，所以 `update_reminder` 改 `due_date` 時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。回應的 `date_sync` 說明移動了什麼，undo 會還原 start date 與鬧鐘。
+
 </details>
 
 <details>
