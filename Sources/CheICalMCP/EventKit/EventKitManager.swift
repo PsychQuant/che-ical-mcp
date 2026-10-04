@@ -1347,65 +1347,163 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Copy an event to another calendar, optionally deleting the original
+    /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
+    /// fields it keeps. Moves go through `moveEvent` / `moveEventForCopyTool` (#226).
     func copyEvent(
         identifier: String,
         toCalendarName: String,
-        toCalendarSource: String? = nil,
-        deleteOriginal: Bool = false
+        toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-
-        // Find the source event
         guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
+        let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
+        let newEvent = makeCopy(of: sourceEvent, in: targetCalendar)
+        defer { markNeedsRefresh() }
+        try eventStore.save(newEvent, span: .thisEvent)
+        return newEvent
+    }
 
-        // Find the target calendar
-        let targetCalendar = try findCalendar(name: toCalendarName, source: toCalendarSource, entityType: .event)
-
-        // Check if target calendar allows modifications
-        guard targetCalendar.allowsContentModifications else {
-            // #37 verify: `toCalendarName` is caller-supplied; keep it.
-            // The "(read-only)" suffix is author-controlled. Do NOT interpolate
-            // `targetCalendar.title` (CalendarStore-sourced).
-            throw EventKitError.calendarNotFound(identifier: "\(toCalendarName) (read-only)")
+    /// `copy_event` with `delete_original` (#226). copy_event has no occurrence_date, so a
+    /// recurring event is refused here with a pointer to move_events_batch. The move result
+    /// is returned as is (verify #2, #3): no re-fetch by the new identifier, which may be empty
+    /// on the copy path or not yet resolvable after a move across accounts.
+    func moveEventForCopyTool(
+        identifier: String,
+        toCalendarName: String,
+        toCalendarSource: String?
+    ) async throws -> (result: EventMoveResult, title: String?) {
+        try await ensureCalendarAccess()
+        guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
+            throw EventKitError.eventNotFound(identifier: identifier)
         }
+        if sourceEvent.hasRecurrenceRules {
+            throw EventKitError.moveRefused(reason: "copy_event cannot move a recurring event; use move_events_batch with span and occurrence_dates.")
+        }
+        return try await moveEvent(identifier: identifier, occurrenceDate: nil, span: .this,
+                                   toCalendarName: toCalendarName, toCalendarSource: toCalendarSource)
+    }
 
-        // Create a new event with the same properties
-        let newEvent = EKEvent(eventStore: eventStore)
-        newEvent.title = sourceEvent.title
-        newEvent.startDate = sourceEvent.startDate
-        newEvent.endDate = sourceEvent.endDate
-        newEvent.notes = sourceEvent.notes
-        newEvent.location = sourceEvent.location
-        newEvent.url = sourceEvent.url
-        newEvent.isAllDay = sourceEvent.isAllDay
-        newEvent.timeZone = sourceEvent.timeZone
-        newEvent.calendar = targetCalendar
+    /// #226: moves an event (or one occurrence) to another calendar. In place first, which
+    /// keeps the identifier within an account and every field; see `EventMovePolicy` for when
+    /// it splits, falls back to copy + delete, or refuses.
+    func moveEvent(
+        identifier: String,
+        occurrenceDate: Date?,
+        span: EventMovePolicy.Span,
+        toCalendarName: String,
+        toCalendarSource: String?
+    ) async throws -> (result: EventMoveResult, title: String?) {
+        try await ensureCalendarAccess()
+        guard let master = eventStore.event(withIdentifier: identifier) else {
+            throw EventKitError.eventNotFound(identifier: identifier)
+        }
+        let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
+        let isRecurring = master.hasRecurrenceRules
 
-        // Copy alarms
-        if let alarms = sourceEvent.alarms {
-            for alarm in alarms {
-                newEvent.addAlarm(EKAlarm(relativeOffset: alarm.relativeOffset))
+        var subject = master
+        if isRecurring, span == .this, let date = occurrenceDate {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: master.timeZone) else {
+                throw EventKitError.moveRefused(reason: "No occurrence of this event falls on occurrence_date.")
             }
+            subject = occurrence
         }
-
-        // A move removes one occurrence (.thisEvent), so undo restores a standalone
-        // occurrence rather than duplicating the original recurring series (#208).
-        if deleteOriginal && sourceEvent.calendar == nil {
+        guard let originalCalendar = subject.calendar else {
             throw EventKitError.calendarNotFound(identifier: "source event calendar")
         }
-        let sourceSnapshot = deleteOriginal ? EventSnapshot(from: sourceEvent, includeRecurrence: false) : nil
-        defer { markNeedsRefresh() } // save may succeed even if removing the source fails
-        let outcome = try EventCopyOperation.execute(source: sourceSnapshot, saveCopy: {
-            try eventStore.save(newEvent, span: .thisEvent)
-            return newEvent
-        }, removeSource: {
-            try eventStore.remove(sourceEvent, span: .thisEvent)
-        })
-        if let undo = outcome.undo { await CalendarUndoManager.shared.record(undo) }
-        return outcome.value
+        let input = EventMovePolicy.Input(isRecurring: isRecurring, span: span,
+                                          hasOccurrenceDate: occurrenceDate != nil,
+                                          attendeeCount: subject.attendees?.count ?? 0,
+                                          alreadyInTarget: originalCalendar.calendarIdentifier == targetCalendar.calendarIdentifier)
+        let title = subject.title
+        var undo: UndoOperation?
+        defer { markNeedsRefresh() }
+
+        let copyOut: () throws -> EventMoveExecutor.Copied = {
+            let copy = self.makeCopy(of: subject, in: targetCalendar)
+            // A copy removes one occurrence (.thisEvent), so undo restores a standalone
+            // occurrence rather than duplicating the original series (#208).
+            let snapshot = EventSnapshot(from: subject, includeRecurrence: false)
+            let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
+                try self.eventStore.save(copy, span: .thisEvent)
+                return copy
+            }, removeSource: {
+                try self.eventStore.remove(subject, span: .thisEvent)
+            })
+            undo = outcome.undo
+            return (outcome.value.eventIdentifier ?? "", Self.fieldsNotCarriedOver(from: subject, to: outcome.value))
+        }
+
+        let result = try EventMoveExecutor.run(
+            input,
+            currentIdentifier: identifier,
+            inPlace: {
+                subject.calendar = targetCalendar
+                try self.eventStore.save(subject, span: isRecurring ? .futureEvents : .thisEvent)
+                let movedIdentifier = subject.eventIdentifier ?? identifier
+                undo = .moveEvent(id: movedIdentifier, fromCalendarIdentifier: originalCalendar.calendarIdentifier,
+                                  title: title ?? "", isSeries: isRecurring)
+                return movedIdentifier
+            },
+            restore: {
+                // Discard every unsaved change the failed save left on the object, not just the
+                // calendar, before the fallback copy reads it (verify #8).
+                // rollback() also restores the calendar (checked on device 2026-10-04); assigning
+                // it again would mark the event dirty for nothing (verify round 2 #4).
+                subject.rollback()
+            },
+            copy: copyOut,
+            split: copyOut)
+        if let undo { await CalendarUndoManager.shared.record(undo) }
+        return (result, title)
+    }
+
+    private func writableTargetCalendar(name: String, source: String?) throws -> EKCalendar {
+        let targetCalendar = try findCalendar(name: name, source: source, entityType: .event)
+        guard targetCalendar.allowsContentModifications else {
+            // #37 verify: `name` is caller-supplied; keep it. The "(read-only)" suffix is
+            // author-controlled. Do NOT interpolate `targetCalendar.title` (CalendarStore-sourced).
+            throw EventKitError.calendarNotFound(identifier: "\(name) (read-only)")
+        }
+        return targetCalendar
+    }
+
+    /// The fields a copy keeps. Recurrence and attendees are not among them; the move
+    /// policy refuses before a copy would drop those (#226).
+    private func makeCopy(of source: EKEvent, in calendar: EKCalendar) -> EKEvent {
+        let copy = EKEvent(eventStore: eventStore)
+        copy.title = source.title
+        copy.startDate = source.startDate
+        copy.endDate = source.endDate
+        copy.notes = source.notes
+        copy.location = source.location
+        copy.url = source.url
+        copy.isAllDay = source.isAllDay
+        copy.timeZone = source.timeZone
+        copy.calendar = calendar
+        for alarm in source.alarms ?? [] {
+            copy.addAlarm(EKAlarm(relativeOffset: alarm.relativeOffset))
+        }
+        return copy
+    }
+
+    /// Fields the source actually had that `makeCopy` did not keep (#226).
+    static func fieldsNotCarriedOver(from source: EKEvent, to copy: EKEvent) -> [String] {
+        lostFields(hasCoordinates: source.structuredLocation?.geoLocation != nil,
+                   hasAbsoluteAlarm: (source.alarms ?? []).contains(where: { $0.absoluteDate != nil }),
+                   sourceAvailability: source.availability,
+                   copyAvailability: copy.availability)
+    }
+
+    static func lostFields(hasCoordinates: Bool, hasAbsoluteAlarm: Bool,
+                           sourceAvailability: EKEventAvailability,
+                           copyAvailability: EKEventAvailability) -> [String] {
+        var lost: [String] = []
+        if hasCoordinates { lost.append("structured_location") }
+        if hasAbsoluteAlarm { lost.append("absolute_alarms") }
+        if sourceAvailability != copyAvailability { lost.append("availability") }
+        return lost
     }
 
     // MARK: - Reminders
@@ -1937,6 +2035,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
+        case .moveEvent(let id, let fromCalendarIdentifier, let title, let isSeries):
+            // Undo an in-place move (#226) = move it back to the recorded calendar.
+            guard let event = eventStore.event(withIdentifier: id) else {
+                throw EventKitError.eventNotFound(identifier: id)
+            }
+            guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
+                throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
+            }
+            event.calendar = original
+            try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
+            markNeedsRefresh()
+            return "Undone: moved event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' back to its original calendar"
+
         case .createReminder(let id, let title):
             // Undo create = delete
             try await ensureReminderAccess()
@@ -2020,6 +2131,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .updateEvent(let id, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
+
+        case .moveEvent(_, _, let title, _):
+            return "Redo move: use move_events_batch to move '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again."
 
         case .createReminder(_, let title):
             return "Cannot redo reminder creation — please create '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again manually"
@@ -2223,6 +2337,9 @@ enum EventKitError: LocalizedError {
     /// the all-day flag and shift occurrence days (defense-in-depth behind the
     /// handler-level guard).
     case allDayTimezoneConflict
+    /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
+    /// (no EventKit text, no user input), so it is safe to return verbatim.
+    case moveRefused(reason: String)
 
     var errorDescription: String? {
         switch self {
@@ -2303,6 +2420,8 @@ enum EventKitError: LocalizedError {
             return "excluded_occurrence_dates: exclusion failed AND the compensating delete failed. The series (event ID \(masterId)) still exists with these exclusions already applied: [\(appliedDates.joined(separator: ", "))]. Delete it manually with delete_event span:\"all\" or retry."
         case .allDayTimezoneConflict:
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
+        case .moveRefused(let reason):
+            return reason
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
