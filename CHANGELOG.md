@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-10-04
+
 ### Changed
 
 - **BREAKING (behavior) — `move_events_batch` moves events in place** (#226): it used to copy each event and delete the original, which changed the identifier without saying so and dropped recurrence rules, attendees, coordinates and absolute-date alarms; a recurring event moved its *first* occurrence and became a one-off. Now the event's calendar is reassigned, which keeps every field. Within an account the identifier stays the same; across accounts (e.g. iCloud → Google) EventKit still moves the event, keeps its recurrence, and returns a new identifier. Only if the in-place change fails is the event copied and the original removed, and that fallback is refused when the event has recurrence or attendees. New parameters: `span` (`this` default, `all`) and index-aligned `occurrence_dates`. A recurring event with `span: this` and no occurrence date is now **refused** instead of silently moving its first occurrence; `span: all` moves the whole series. An occurrence date with `span: all` is refused rather than ignored (as is a recurring event with `span: this` and no date), whether or not the event is already in the target calendar; an event already in the target calendar is otherwise reported `unchanged` with nothing written. Every `event_ids` entry must be a string: a non-string entry is now rejected instead of silently dropped, because dropping it would pair `occurrence_dates` with the wrong event. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`), `id_changed`, `new_event_id` (only when it changed) and `not_carried_over` for a fallback copy or a split (a split occurrence lists `recurrence`: it becomes a one-off). Date-only `occurrence_dates` are read in the event's own time zone, as `delete_event` does. Undo of an in-place move moves the event back to its original calendar; undo of a split or a fallback copy restores the original, and the copy remains.
 - **BREAKING (behavior) — `copy_event` with `delete_original: true`** moves the same way and reports `id_changed`, `method` and `not_carried_over` (#226). It now **refuses recurring events** (there is no `occurrence_date` on this tool; use `move_events_batch`); it used to move the first occurrence. Moving an event to the calendar it is already in writes nothing and reports `action: unchanged` (it used to copy and delete, changing the identifier). When the move falls back to copy and delete, undo restores the original and the copy remains. A plain copy is unchanged.
+- The shared server skeleton (self-update, `--cli` runner, error sanitizer core, response formatting, binary path resolution) now comes from the public package [`PsychQuant/che-mcp-kit-swift`](https://github.com/PsychQuant/che-mcp-kit-swift) 0.2.x instead of files in this repo. `EventKitErrorSanitizer` remains as a thin wrapper that keeps the `eventkit_error_<N>` code, and `--cli` failures keep the `{"error":true,"message":"<code>"}` line (#223).
+- `--self-update` orders versions by SemVer precedence: a user on a prerelease (`1.0.0-beta`) is now offered the final `1.0.0`, prerelease identifiers compare numerically where numeric, and build metadata is ignored (#223).
+- `--cli` keeps values for string-typed tool parameters verbatim (`--keyword 007` searches `"007"`, not `7`); a single JSON object after the tool name is accepted as the arguments (`--cli list_events '{"limit": 2}'`); a stray positional argument is now an error instead of being skipped silently (#223).
 
 ### Fixed
 
@@ -21,12 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--self-update` installs exactly the file it verified: che-mcp-kit-swift 0.2.1 stages the download in a private directory (0700, inherited ACLs cleared), writes it `O_CREAT|O_EXCL|O_NOFOLLOW`, hashes and `chmod`s it through one descriptor, and requires the same file immediately before `rename(2)` (PsychQuant/che-mcp-kit-swift#1).
 - `--self-update` now refuses a download unless it is Developer ID signed by team `6W377FS7BS` (`codesign --verify --strict` against a pinned designated requirement) and Gatekeeper reports it as `Notarized Developer ID` (`spctl -a -vvv -t install`, bounded by `SPCTL_TIMEOUT_SECONDS`, default 60 s, max 600; codesign has its own 30 s budget; a timeout refuses). The checks run after the SHA-256 check, and immediately before `rename(2)` the file must still be a regular file with the expected SHA-256. The installed binary is untouched on any refusal (#223).
-
-### Changed
-
-- The shared server skeleton (self-update, `--cli` runner, error sanitizer core, response formatting, binary path resolution) now comes from the public package [`PsychQuant/che-mcp-kit-swift`](https://github.com/PsychQuant/che-mcp-kit-swift) 0.2.x instead of files in this repo. `EventKitErrorSanitizer` remains as a thin wrapper that keeps the `eventkit_error_<N>` code, and `--cli` failures keep the `{"error":true,"message":"<code>"}` line (#223).
-- `--self-update` orders versions by SemVer precedence: a user on a prerelease (`1.0.0-beta`) is now offered the final `1.0.0`, prerelease identifiers compare numerically where numeric, and build metadata is ignored (#223).
-- `--cli` keeps values for string-typed tool parameters verbatim (`--keyword 007` searches `"007"`, not `7`); a single JSON object after the tool name is accepted as the arguments (`--cli list_events '{"limit": 2}'`); a stray positional argument is now an error instead of being skipped silently (#223).
 
 ## [1.18.0] - 2026-09-09
 

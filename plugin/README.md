@@ -137,9 +137,15 @@ This plugin requires macOS permissions:
 
 ## Version
 
-Plugin version: 1.18.0 (matches MCP server version)
+Plugin version: 1.19.0 (matches MCP server version)
 
 ### Changelog
+
+**1.19.0** (2026-10-04)
+- **BREAKING (behavior) — `move_events_batch` moves events in place (#226)**: the calendar is reassigned, so recurrence, attendees and every other field are kept; the identifier stays the same within an account and changes across accounts (`id_changed` / `new_event_id`). `span` (`this` default / `all`) and `occurrence_dates` handle recurring events; a recurring event without a date is refused. Each result reports `method` and `not_carried_over`; an event already in the target calendar is `unchanged`.
+- **BREAKING (behavior) — `copy_event` with `delete_original`** moves the same way and refuses recurring events (#226).
+- **`update_reminder` moves the start date and absolute-date alarms with `due_date` (#227)**, so Reminders.app shows the new date; `clear_due_date` also clears them; the response reports `date_sync`. Undo restores start dates and absolute-date alarms.
+- **`--self-update` installs only a Developer ID signed, notarized binary** and the shared server skeleton now comes from `che-mcp-kit-swift` 0.2.x (#223/#225).
 
 **1.18.0** (2026-09-09)
 - **`undo(discard_id)` clears a jammed history head (#206/#214)**: a blocked top record can be removed explicitly by the stable ID shown in `undo_history`; a missing target is no longer kept as a permanently transient entry. Stale IDs and active history execution are rejected.
