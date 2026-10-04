@@ -207,7 +207,7 @@ final class ReminderDateSyncTests: XCTestCase {
         reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 4, 9, in: taipei)))
         reminder.startDateComponents = components(oldDue, in: taipei, time: false)
 
-        let report = ReminderDateSync.sync(reminder, from: oldDue, to: newDue, oldDueIsDateOnly: true, dayTimeZone: taipei)
+        let report = ReminderDateSync.sync(reminder, from: oldDue, to: newDue, oldDueIsDateOnly: true, dueDayShift: 4)
 
         XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0))
         XCTAssertEqual(absoluteDates(reminder), [date(2026, 10, 8, 9, in: taipei)])
@@ -292,6 +292,102 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(startComponents(reminder), components(oldDue, in: taipei))
         XCTAssertEqual(absoluteDates(reminder), [oldDue])
         XCTAssertEqual((reminder.alarms ?? []).filter { $0.absoluteDate == nil }.map(\.relativeOffset), [-900])
+    }
+
+    // MARK: - Verify round 2 (PR #232)
+
+    private func local(_ y: Int, _ m: Int, _ d: Int, _ h: Int) -> Date {
+        date(y, m, d, h, in: .current)
+    }
+
+    /// The date-only detection in setDue (hour == nil, confirmed on device) is exercised.
+    func testSetDueFromADateOnlyDueMovesAlarmsByCalendarDays() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 4)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 4, 9)))
+
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+
+        XCTAssertEqual(report.absoluteAlarmsShifted, 1)
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 8, 9)])
+    }
+
+    /// Days are counted from the stored year/month/day, not from instants in one zone: 22:00 on
+    /// Oct 4 in New York is already Oct 5 in Taipei, but the due date moved two calendar days.
+    func testDayShiftCountsStoredCalendarDaysAcrossZones() {
+        let old = components(date(2026, 10, 4, 22, in: newYork), in: newYork)
+        let new = components(date(2026, 10, 6, 10, in: taipei), in: taipei)
+        XCTAssertEqual(ReminderDateSync.dayShift(from: old, to: new), 2)
+        XCTAssertNil(ReminderDateSync.dayShift(from: nil, to: new))
+    }
+
+    func testDateOnlyStartMovesByTheDueDayShift() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = DateComponents(timeZone: newYork, year: 2026, month: 10, day: 4)
+
+        _ = ReminderDateSync.sync(reminder, from: date(2026, 10, 4, 22, in: newYork),
+                                  to: date(2026, 10, 6, 10, in: taipei), dueDayShift: 2)
+
+        XCTAssertEqual(startComponents(reminder), DateComponents(timeZone: newYork, year: 2026, month: 10, day: 6))
+    }
+
+    func testAStartThatStaysOnTheSameDayIsReportedUnchanged() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = DateComponents(timeZone: .current, year: 2026, month: 10, day: 4)
+
+        let report = ReminderDateSync.sync(reminder, from: local(2026, 10, 4, 9), to: local(2026, 10, 4, 15), dueDayShift: 0)
+
+        XCTAssertEqual(report.startDate, .unchanged)
+    }
+
+    /// EventKit couples start and due: in memory, writing a date-only start turns the due date
+    /// date-only. setDue therefore moves the start first and writes the due date last.
+    func testSetDueKeepsTheNewTimeWhenTheStartIsDateOnly() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 4)   // start becomes date-only Oct 4
+
+        _ = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 10, "the due time must survive the start shift")
+        XCTAssertEqual(reminder.dueDateComponents?.day, 8)
+        XCTAssertEqual(reminder.startDateComponents?.day, 8)
+    }
+
+    /// Date-only to timed on the same day: the calendar day did not change, so nothing moves.
+    func testDateOnlyDueGivenATimeOnTheSameDayMovesNothing() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 4)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 4, 9)))
+
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 4, 10))
+
+        XCTAssertNotEqual(report.startDate, .shifted)
+        XCTAssertEqual(report.absoluteAlarmsShifted, 0)
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 4, 9)])
+    }
+
+    func testSetDueToNilWithoutADueDateKeepsStartAndAlarms() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = components(local(2026, 10, 1, 9), in: .current)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 1, 9)))
+
+        let report = ReminderDateSync.setDue(reminder, to: nil)
+
+        XCTAssertEqual(report, .init(startDate: .unchanged, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0))
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 1, 9)])
+    }
+
+    /// The clear guard keys on whether a due date existed, not on whether it parsed. (EventKit
+    /// rejects due components without year/month/day, so the guard is driven directly.)
+    func testClearKeysOnWhetherADueDateExistedNotOnParsing() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = components(local(2026, 10, 1, 9), in: .current)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 1, 9)))
+
+        let report = ReminderDateSync.sync(reminder, from: nil, to: nil, hadDueDate: true)
+
+        XCTAssertEqual(report, .init(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1))
+        XCTAssertNil(reminder.startDateComponents)
     }
 
     // MARK: - Response shape
