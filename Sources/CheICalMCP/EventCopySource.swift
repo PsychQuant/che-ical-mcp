@@ -29,7 +29,11 @@ extension EventKitManager: EventCopySource {
         return EventCopyValue(eventIdentifier: event.eventIdentifier, title: event.title)
     }
     func eventTimeZone(identifier: String) async -> TimeZone? {
-        getEventTimezone(identifier: identifier)
+        // Ensure access first: before access was ever granted the lookup finds nothing and the
+        // date would be read in the server zone (verify round 2 #2). A denial surfaces from the
+        // move itself, so it is not reported here.
+        try? await ensureCalendarAccess()
+        return getEventTimezone(identifier: identifier)
     }
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
                         toCalendarName: String, toCalendarSource: String?) async throws -> EventMoveValue {

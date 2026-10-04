@@ -46,16 +46,18 @@ enum EventMovePolicy {
     }
 
     static func plan(_ input: Input) -> Plan {
-        if input.alreadyInTarget { return .unchanged }
+        // Argument contradictions first, so the answer does not depend on where the event
+        // currently is (verify round 2 #1).
         if input.isRecurring, input.span == .all, input.hasOccurrenceDate {
             // A date with span 'all' is a contradiction; moving the series would silently
             // ignore it (verify #9).
             return .refuse("occurrence_date was given with span 'all'. Use span 'this' to move that occurrence, or omit the date to move the whole series.")
         }
-        guard input.isRecurring, input.span == .this else { return .inPlace }
-        guard input.hasOccurrenceDate else {
+        if input.isRecurring, input.span == .this, !input.hasOccurrenceDate {
             return .refuse("For a recurring event, occurrence_date is required to move one occurrence; use span 'all' to move the whole series.")
         }
+        if input.alreadyInTarget { return .unchanged }
+        guard input.isRecurring, input.span == .this else { return .inPlace }
         guard input.attendeeCount == 0 else {
             return .refuse("This occurrence has attendees; moving it alone would copy it and drop the attendees. Use span 'all' to move the whole series in place.")
         }

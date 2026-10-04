@@ -62,6 +62,17 @@ final class EventMovePolicyTests: XCTestCase {
         XCTAssertEqual(EventMovePolicy.plan(input(span: .all, occurrence: true)), .inPlace, "non-recurring: the date is irrelevant")
     }
 
+    /// Round 2 #1: argument contradictions are refused even when nothing would move, so the
+    /// answer does not depend on where the event currently is.
+    func testContradictoryArgumentsAreRefusedEvenWhenAlreadyInTarget() {
+        guard case .refuse = EventMovePolicy.plan(input(recurring: true, span: .all, occurrence: true, alreadyInTarget: true)) else {
+            return XCTFail("span 'all' with an occurrence date must be refused wherever the series is")
+        }
+        guard case .refuse = EventMovePolicy.plan(input(recurring: true, span: .this, occurrence: false, alreadyInTarget: true)) else {
+            return XCTFail("a recurring event with span 'this' and no date must be refused wherever it is")
+        }
+    }
+
     // MARK: - After an in-place failure
 
     func testFailedInPlaceMoveFallsBackToCopyWhenNothingWouldBeLost() {

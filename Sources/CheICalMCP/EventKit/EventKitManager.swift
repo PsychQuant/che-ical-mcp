@@ -1347,7 +1347,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Copy an event to another calendar, optionally deleting the original
     /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
     /// fields it keeps. Moves go through `moveEvent` / `moveEventForCopyTool` (#226).
     func copyEvent(
@@ -1450,8 +1449,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             restore: {
                 // Discard every unsaved change the failed save left on the object, not just the
                 // calendar, before the fallback copy reads it (verify #8).
+                // rollback() also restores the calendar (checked on device 2026-10-04); assigning
+                // it again would mark the event dirty for nothing (verify round 2 #4).
                 subject.rollback()
-                subject.calendar = originalCalendar
             },
             copy: copyOut,
             split: copyOut)

@@ -166,6 +166,27 @@ final class EventCopyHandlerTests: XCTestCase {
         XCTAssertEqual(result["not_carried_over"] as? [String], ["structured_location"])
     }
 
+    /// Round 2 #5: copy_event to the event's own calendar did nothing; say so.
+    func testCopyEventMoveToTheCurrentCalendarReportsUnchanged() async throws {
+        let result = try await copyMove("same-calendar")
+        XCTAssertEqual(result["action"] as? String, "unchanged")
+        XCTAssertEqual(result["method"] as? String, "unchanged")
+        XCTAssertEqual(result["id_changed"] as? Bool, false)
+    }
+
+    /// Round 2 #3: non-string ids would shift occurrence_dates onto the wrong event.
+    func testNonStringEventIdsAreRejected() async throws {
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        do {
+            _ = try await move(server, ["event_ids": .array([.string("a"), .int(1), .string("b")]),
+                                        "occurrence_dates": .array([.string("2026-10-21"), .string("2026-10-28")])])
+            XCTFail("a non-string event id must be rejected")
+        } catch {}
+        let calls = await fake.moveCalls
+        XCTAssertEqual(calls, [])
+    }
+
     /// Round 1 #1: an event already in the target calendar is reported unchanged.
     func testMoveToTheCurrentCalendarIsReportedUnchanged() async throws {
         let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))

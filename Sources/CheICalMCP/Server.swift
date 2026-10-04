@@ -851,7 +851,7 @@ class CheICalMCPServer {
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees, coordinates and absolute-date alarms are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method and any not_carried_over fields); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
+                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees, coordinates and absolute-date alarms are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method and any not_carried_over fields; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2553,7 +2553,8 @@ class CheICalMCPServer {
             deleteOriginal: deleteOriginal
         )
 
-        let action = deleteOriginal ? "moved" : "copied"
+        // A move to the event's own calendar writes nothing; report that (verify round 2 #5).
+        let action = !deleteOriginal ? "copied" : (newEvent.move?.method == .unchanged ? "unchanged" : "moved")
         var response: [String: Any] = ["action": action, "title": newEvent.title ?? "", "target_calendar": targetCalendar, "new_id": newEvent.eventIdentifier ?? "unknown"]
         // #226: a move keeps the identifier within an account; say whether it changed, how the
         // event was moved, and what a fallback copy did not keep (verify #2).
@@ -2575,7 +2576,14 @@ class CheICalMCPServer {
         }
 
         let targetCalendarSource = arguments["target_calendar_source"]?.stringValue
-        let ids = eventIds.compactMap { $0.stringValue }
+        // Every entry must be a string: dropping one would shift occurrence_dates onto the wrong
+        // event (verify round 2 #3).
+        let ids = try eventIds.map { value -> String in
+            guard let id = value.stringValue else {
+                throw ToolError.invalidParameter("event_ids entries must be strings")
+            }
+            return id
+        }
         if ids.isEmpty {
             throw ToolError.invalidParameter("event_ids must contain at least one event ID")
         }
