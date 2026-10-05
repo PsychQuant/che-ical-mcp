@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`update_reminder` `realign_to_due` (#235)**: puts the start date and absolute-date alarms onto the due date (new or current) whatever it moved by, anchored on the earliest absolute-date alarm, the date Reminders.app displays; refused with `clear_due_date` or when there is no due date at all. `date_sync.aligned` reports whether the start date and that alarm agree with the due date, and a start date EventKit creates during the write reads `set` instead of `absent`.
+- **A timed due date written to a floating reminder keeps its explicit time zone (#237)**, so iCloud Web no longer shows it shifted by the UTC offset.
+
 ## [1.19.0] - 2026-10-04
 
 - **BREAKING (behavior) — `move_events_batch` moves events in place (#226)**: the calendar is reassigned, so recurrence, attendees and every other field are kept; the identifier stays the same within an account and changes across accounts (`id_changed` / `new_event_id`). `span` (`this` default / `all`) and `occurrence_dates` handle recurring events; a recurring event without a date is refused. Each result reports `method` and `not_carried_over`; an event already in the target calendar is `unchanged`.
