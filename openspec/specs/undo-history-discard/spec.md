@@ -31,7 +31,7 @@ undo with discard_id SHALL remove only the current top undo record with that id.
 
 ---
 ### Requirement: Stale and busy protection
-The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236).
+The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the two discard scenarios below (#204 identity lost, and the successor shape of a recurring completion without an occurrence snapshot); no other refusal discards its record.
 
 #### Scenario: Item changed after the operation
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
@@ -43,10 +43,14 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Recurring occurrence identity lost (#204)
 - **WHEN** undo or redo of an identity-guarded recurring completion finds that the identifier resolves to another occurrence
-- **THEN** nothing is written and the record is discarded, so older records stay reachable; this is the one refusal that does not keep the record
+- **THEN** nothing is written and the record is discarded, so older records stay reachable
 
-#### Scenario: Recurring completion without an occurrence snapshot
-- **WHEN** undo or redo of a recurring completion recorded without the #204 snapshot finds the reminder in any state other than the one it expects
+#### Scenario: Recurring completion without an occurrence snapshot, successor shape
+- **WHEN** undo or redo of a recurring completion recorded without the #204 snapshot finds that the identifier resolves to a reminder that still repeats and whose completion is the opposite of the state the undo or redo expects (what EventKit leaves when it advances a recurring reminder in place)
+- **THEN** nothing is written and the record is discarded, as for #204, so older records stay reachable
+
+#### Scenario: Recurring completion without an occurrence snapshot, other mismatch
+- **WHEN** undo or redo of such a record finds the reminder in any other state than the one it expects (the same completion at another time, or a reminder that no longer repeats)
 - **THEN** nothing is written and the record is kept, even when the reminder already looks like what the write would produce
 
 #### Scenario: Redo refused

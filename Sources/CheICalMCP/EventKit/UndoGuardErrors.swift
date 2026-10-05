@@ -1,4 +1,5 @@
 import CheMCPKit
+import EventKit
 import Foundation
 
 /// #236 — the step every undo / redo arm runs before it writes, and the errors it produces.
@@ -129,16 +130,33 @@ struct UndoTargetMissingError: LocalizedError, Sendable {
 extension UndoTargetMissingError: TrustedErrorMessage {}
 
 extension UndoOperation {
-    /// The error for a post-state refusal. Always kept (`.restore`): even a record that cannot
-    /// confirm its occurrence is not proof that the occurrence is gone, and the spec keeps refused
-    /// records. Which situation applies comes from the record, not from the item's current rules
-    /// (PR #259 round 2, findings 2, 9, 13, 21).
-    func postStateRefusal(verb: UndoHistoryVerb, changedFields: [String]) -> Error {
+    /// The error for a post-state refusal of `item`. Kept (`.restore`), as the spec keeps refused
+    /// records, with one exception: a completion record of a recurring reminder kept without the
+    /// #204 occurrence snapshot whose identifier resolves to a reminder that still repeats and has
+    /// the opposite completion of what the record expects. That is the shape a rollover leaves
+    /// (EventKit advances the series in place), the record can never match it again, and keeping
+    /// it would block every older entry until `discard_id`; it is discarded, as #204 does (PR #259
+    /// round 3, finding 8). Which situation applies otherwise comes from the record, not from the
+    /// item's current rules (round 2, findings 2, 9, 13, 21).
+    func postStateRefusal(verb: UndoHistoryVerb, changedFields: [String], current item: EKCalendarItem?) -> Error {
         let expected = verb == .undo ? undoPostState : redoPostState
         var situation: UndoTargetChangedError.Situation?
-        if case .completeReminder(_, _, _, _, _, _, true) = self { situation = .unconfirmedOccurrence }
+        if case .completeReminder(_, _, _, _, let title, _, true) = self {
+            if let reminder = item as? EKReminder, reminder.hasRecurrenceRules,
+               case .reminderCompletion(_, _, let state, _)? = expected, reminder.isCompleted != state.isCompleted {
+                return Self.successorShapeRefusal(title: title, verb: verb)
+            }
+            situation = .unconfirmedOccurrence
+        }
         return UndoTargetChangedError(verb: verb, kind: expected?.kind ?? .reminder, title: expected?.title ?? "",
                                       changedFields: changedFields, situation: situation)
+    }
+
+    /// Round 3, finding 8: the unconfirmed recurring completion in the successor shape. Permanent,
+    /// like #204's identity refusal.
+    static func successorShapeRefusal(title: String, verb: UndoHistoryVerb) -> UnrecoverableUndoError {
+        let entry = verb == .undo ? "This history entry was discarded" : "This redo entry was discarded"
+        return UnrecoverableUndoError(message: "Cannot \(verb.rawValue) the completion of the recurring reminder '\(undoShownTitle(title))': its identifier now resolves to an occurrence with the opposite completion of what this operation expects, which is what EventKit leaves when it advances a recurring reminder in place, and this record kept no occurrence snapshot to tell which occurrence that is. Nothing was written. \(entry) so earlier operations remain undoable. Act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder).")
     }
 
     /// #204: the identity-guarded record's identifier no longer resolves to the recorded

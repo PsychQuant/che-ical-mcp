@@ -157,16 +157,66 @@ final class UndoRefusalTests: XCTestCase {
     /// the occurrence, so the undo refuses instead of writing to the successor.
     func testRolloverUndoDoesNotWriteToTheSuccessor() throws {
         let op = legacyRecurring(was: false, requested: true)
-        let successor = reminder(completed: false)
+        let successor = recurring(reminder(completed: false))
+
+        XCTAssertEqual(try XCTUnwrap(op.undoPostState).changedFields(in: successor), ["completed"], "refused: nothing is written")
+    }
+
+    private func recurring(_ reminder: EKReminder) -> EKReminder {
+        reminder.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil))
+        return reminder
+    }
+
+    /// The successor shape: the identifier resolves to the same recurring reminder with the
+    /// opposite completion of what the record left, which is what a rollover produces. Such a
+    /// record can never match again, so it is discarded, as #204 does, and earlier operations stay
+    /// undoable (round 3, finding 8).
+    func testUndoInTheSuccessorShapeIsDiscarded() throws {
+        let op = legacyRecurring(was: false, requested: true)
+        let successor = recurring(reminder(completed: false))
 
         let fields = try XCTUnwrap(op.undoPostState).changedFields(in: successor)
-        XCTAssertEqual(fields, ["completed"])
-        let error = op.postStateRefusal(verb: .undo, changedFields: fields)
-        XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "kept: the spec keeps refused records, and nothing proves the advance")
+        let error = op.postStateRefusal(verb: .undo, changedFields: fields, current: successor)
+        XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
         let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
-        XCTAssertTrue(message.contains("later occurrence"), message)
-        XCTAssertFalse(message.contains("change it back"), "there is no change to revert")
-        XCTAssertTrue(message.contains("discard_id"), message)
+        XCTAssertTrue(message.contains("discarded"), message)
+        XCTAssertTrue(message.contains("earlier operations remain undoable"), message)
+        XCTAssertFalse(message.contains("discard_id"), "nothing is left to discard")
+        XCTAssertTrue(message.contains("complete_reminder"), message)
+    }
+
+    func testRedoInTheSuccessorShapeIsDiscarded() throws {
+        let op = legacyRecurring(was: true, requested: false)
+        let opposite = recurring(reminder(completed: false))
+
+        let fields = try XCTUnwrap(op.redoPostState).changedFields(in: opposite)
+        XCTAssertEqual(fields, ["completed"])
+        let error = op.postStateRefusal(verb: .redo, changedFields: fields, current: opposite)
+        XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        XCTAssertTrue(EventKitErrorSanitizer.sanitizeForResponse(error).code.hasPrefix("Cannot redo"))
+    }
+
+    /// Every other mismatch is refused and kept: the same flag at another instant, or a reminder
+    /// that no longer repeats.
+    func testOtherMismatchesOfAnUnconfirmedRecordAreKept() throws {
+        let op = legacyRecurring(was: false, requested: true)
+        let completedLater = recurring(reminder(completed: true, at: start.addingTimeInterval(3600)))
+        let noLongerRecurring = reminder(completed: false)
+
+        for item in [completedLater, noLongerRecurring] {
+            let fields = try XCTUnwrap(op.undoPostState).changedFields(in: item)
+            XCTAssertFalse(fields.isEmpty)
+            let error = op.postStateRefusal(verb: .undo, changedFields: fields, current: item)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "kept: the spec keeps refused records")
+            let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
+            XCTAssertTrue(message.contains("later occurrence"), message)
+            XCTAssertFalse(message.contains("change it back"), "there is no change to revert")
+            XCTAssertTrue(message.contains("discard_id"), message)
+        }
+        let completedOnce = reminder(completed: true, at: start)
+        let redoFields = try XCTUnwrap(op.redoPostState).changedFields(in: completedOnce)
+        XCTAssertEqual(redoFields, ["completed"])
+        XCTAssertEqual(UndoFailureDisposition.of(op.postStateRefusal(verb: .redo, changedFields: redoFields, current: completedOnce)), .restore)
     }
 
     /// Redo writes the request again; it too goes ahead only on the state the undo left, never on
@@ -191,7 +241,7 @@ final class UndoRefusalTests: XCTestCase {
         let op = UndoOperation.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                                                 title: "Once", redoCompletionDate: start, wasRecurring: false)
         XCTAssertEqual(try XCTUnwrap(op.undoPostState).changedFields(in: reminder(completed: false)), [], "unchecked by hand")
-        let error = op.postStateRefusal(verb: .undo, changedFields: ["completed"])
+        let error = op.postStateRefusal(verb: .undo, changedFields: ["completed"], current: reminder(completed: false))
         XCTAssertFalse(EventKitErrorSanitizer.sanitizeForResponse(error).code.contains("later occurrence"))
     }
 
@@ -208,7 +258,7 @@ final class UndoRefusalTests: XCTestCase {
 
     func testOtherRefusalsKeepTheRecord() {
         let update = UndoOperation.updateReminder(id: "r", oldSnapshot: UndoSnapshotFixtures.reminder(), saved: UndoSnapshotFixtures.reminder())
-        XCTAssertEqual(UndoFailureDisposition.of(update.postStateRefusal(verb: .undo, changedFields: ["title"])), .restore)
+        XCTAssertEqual(UndoFailureDisposition.of(update.postStateRefusal(verb: .undo, changedFields: ["title"], current: nil)), .restore)
     }
 
     // MARK: - Series create-undo (verify #1)
