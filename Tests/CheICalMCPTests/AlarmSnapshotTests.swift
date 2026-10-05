@@ -68,13 +68,51 @@ final class AlarmSnapshotTests: XCTestCase {
         XCTAssertEqual(AlarmSnapshot(from: alarm).rebuild().soundName, "Ping")
     }
 
+    /// A place with coordinates but no name: `structuredLocation.title` reads back nil.
+    private func untitledLocationAlarm() -> EKAlarm {
+        let place = EKStructuredLocation()
+        place.geoLocation = CLLocation(latitude: 25.04, longitude: 121.61)
+        let alarm = EKAlarm()
+        alarm.structuredLocation = place
+        alarm.proximity = .leave
+        return alarm
+    }
+
+    private func emailAndSoundAlarm() -> EKAlarm {
+        let alarm = emailAlarm()
+        alarm.soundName = "Ping"
+        return alarm
+    }
+
     /// The property #236's post-state check relies on: reading a rebuilt alarm gives back
     /// the snapshot it was rebuilt from.
     func testEveryKindRebuildsToAnEqualSnapshot() {
-        for alarm in [EKAlarm(relativeOffset: -900), EKAlarm(absoluteDate: absoluteDate), locationAlarm(), emailAlarm()] {
+        for alarm in [EKAlarm(relativeOffset: -900), EKAlarm(absoluteDate: absoluteDate), locationAlarm(),
+                      untitledLocationAlarm(), emailAlarm(), emailAndSoundAlarm()] {
             let snapshot = AlarmSnapshot(from: alarm)
             XCTAssertEqual(AlarmSnapshot(from: snapshot.rebuild()), snapshot)
         }
+    }
+
+    /// Round-1 verify #6: a location without a name came back named "".
+    func testUntitledLocationStaysUntitled() {
+        let rebuilt = AlarmSnapshot(from: untitledLocationAlarm()).rebuild()
+        XCTAssertNotNil(rebuilt.structuredLocation)
+        XCTAssertNil(rebuilt.structuredLocation?.title)
+    }
+
+    /// Round-1 verify #6, pinned: the header says setting a sound clears the email address,
+    /// but EventKit (macOS 27) keeps both on one alarm and reports it as an email alarm,
+    /// whichever is set last. `rebuild` sets the email address first, then the sound.
+    func testEmailAndSoundOnOneAlarmBothComeBackAsAnEmailAlarm() {
+        let snapshot = AlarmSnapshot(from: emailAndSoundAlarm())
+        XCTAssertEqual(snapshot.emailAddress, "owner@example.com")
+        XCTAssertEqual(snapshot.soundName, "Ping")
+
+        let rebuilt = snapshot.rebuild()
+        XCTAssertEqual(rebuilt.type, .email)
+        XCTAssertEqual(rebuilt.emailAddress, "owner@example.com")
+        XCTAssertEqual(rebuilt.soundName, "Ping")
     }
 
     func testAbsoluteAndLocationAlarmsHaveDistinctSnapshots() {
@@ -106,6 +144,36 @@ final class AlarmSnapshotTests: XCTestCase {
         XCTAssertTrue(AlarmSnapshot.restore(recorded, to: edited))
         XCTAssertEqual(snapshots(edited).count, 4)
         XCTAssertEqual(Set(snapshots(edited)), Set(recorded))
+    }
+
+    /// Round-1 verify #5: when one alarm differs, only that alarm is rewritten. An alarm the
+    /// snapshot cannot rebuild (a procedure alarm: its URL is not recorded) must survive an
+    /// unrelated alarm change. `EKAlarm.url` cannot be set in Swift on macOS (the assignment
+    /// is ignored), so the unchanged alarm's object identity stands in for its URL.
+    func testRestoreKeepsTheUnchangedAlarmObjectWhenAnotherAlarmDiffers() {
+        let event = EKEvent(eventStore: store)
+        let unchanged = EKAlarm(relativeOffset: -900)
+        event.addAlarm(unchanged)
+        event.addAlarm(EKAlarm(relativeOffset: -60))
+        let recorded = [AlarmSnapshot(from: EKAlarm(relativeOffset: -900)), AlarmSnapshot(from: locationAlarm())]
+
+        XCTAssertTrue(AlarmSnapshot.restore(recorded, to: event))
+        XCTAssertEqual(event.alarms?.count, 2)
+        XCTAssertEqual(Set(snapshots(event)), Set(recorded))
+        XCTAssertTrue(event.alarms?.contains { $0 === unchanged } ?? false,
+                      "the alarm equal to its snapshot must stay in place, not be rebuilt")
+    }
+
+    func testRestoreRemovesOnlySurplusDuplicates() {
+        let item = EKEvent(eventStore: store)
+        let first = EKAlarm(relativeOffset: -900)
+        item.addAlarm(first)
+        item.addAlarm(EKAlarm(relativeOffset: -900))
+        let recorded = [AlarmSnapshot(from: EKAlarm(relativeOffset: -900))]
+
+        XCTAssertTrue(AlarmSnapshot.restore(recorded, to: item))
+        XCTAssertEqual(item.alarms?.count, 1)
+        XCTAssertTrue(item.alarms?.first === first)
     }
 
     func testRestoreCountsDuplicateAlarms() {

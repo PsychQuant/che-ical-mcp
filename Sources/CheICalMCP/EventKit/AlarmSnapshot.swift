@@ -10,7 +10,8 @@ import Foundation
 /// No EventKit object is kept: `EKAlarm.copy()` of an alarm fetched through another
 /// `EKEventStore` aborts the process when it is added (checked on device), and stored rule
 /// objects already broke undo once (#191). What cannot be rebuilt in Swift on macOS (a
-/// procedure alarm's URL) is not carried; `restore` keeps such alarms when they are unchanged.
+/// procedure alarm's URL) is not carried: `restore` leaves such an alarm in place while it
+/// is unchanged, and a rebuilt or copied one becomes a display alarm at the same time.
 struct AlarmSnapshot: Hashable {
     struct Location: Hashable {
         let title: String?
@@ -45,7 +46,8 @@ struct AlarmSnapshot: Hashable {
     func rebuild() -> EKAlarm {
         let alarm = absoluteDate.map { EKAlarm(absoluteDate: $0) } ?? EKAlarm(relativeOffset: relativeOffset)
         if let location {
-            let structured = EKStructuredLocation(title: location.title ?? "")
+            // A place without a name stays without one; "" would read back as a different snapshot.
+            let structured = location.title.map(EKStructuredLocation.init(title:)) ?? EKStructuredLocation()
             if let latitude = location.latitude, let longitude = location.longitude {
                 structured.geoLocation = CLLocation(latitude: latitude, longitude: longitude)
             }
@@ -54,20 +56,40 @@ struct AlarmSnapshot: Hashable {
         }
         alarm.proximity = proximity
         // Assigning an email address or a sound changes the alarm's type, so only when present.
+        // EventKit keeps both on one alarm and reports it as an email alarm, whichever is set
+        // last (checked on macOS 27; the header says each clears the other), so the order
+        // below does not decide the type.
         if let emailAddress { alarm.emailAddress = emailAddress }
         if let soundName { alarm.soundName = soundName }
         return alarm
     }
 
-    /// Rewrites `item`'s alarms only when they differ from `snapshots`, compared as a multiset
-    /// (EventKit returns alarms in no fixed order). Leaving equal alarms in place also keeps
-    /// what no snapshot can rebuild. Returns whether the alarms were rewritten.
+    /// Makes `item`'s alarms equal `snapshots` as a multiset (EventKit returns alarms in no
+    /// fixed order), touching only the alarms that differ: an alarm with no wanted snapshot
+    /// left is removed, a wanted snapshot with no alarm left is rebuilt and added. An alarm
+    /// equal to its snapshot stays the same object, so what no snapshot can rebuild (a
+    /// procedure alarm's URL) survives a change to another alarm (#253 verify #5). Returns
+    /// whether anything was written.
     @discardableResult
     static func restore(_ snapshots: [AlarmSnapshot], to item: EKCalendarItem) -> Bool {
-        let current = (item.alarms ?? []).map(AlarmSnapshot.init(from:))
-        guard counts(current) != counts(snapshots) else { return false }
-        item.alarms?.forEach(item.removeAlarm)
-        snapshots.forEach { item.addAlarm($0.rebuild()) }
+        var unmatched = counts(snapshots)
+        var surplus: [EKAlarm] = []
+        for alarm in item.alarms ?? [] {
+            let snapshot = AlarmSnapshot(from: alarm)
+            if unmatched[snapshot, default: 0] > 0 {
+                unmatched[snapshot, default: 0] -= 1
+            } else {
+                surplus.append(alarm)
+            }
+        }
+        let missing = snapshots.filter { snapshot in
+            guard unmatched[snapshot, default: 0] > 0 else { return false }
+            unmatched[snapshot, default: 0] -= 1
+            return true
+        }
+        guard !surplus.isEmpty || !missing.isEmpty else { return false }
+        surplus.forEach(item.removeAlarm)
+        missing.forEach { item.addAlarm($0.rebuild()) }
         return true
     }
 
