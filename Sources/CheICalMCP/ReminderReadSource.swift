@@ -27,6 +27,23 @@ struct ReminderReadSnapshot: Sendable {
             return value
         }
     }
+    /// A time-based alarm (#231). Location alarms are `locationTrigger`, not one of these.
+    enum Alarm: Equatable, Sendable {
+        /// EventKit's `relativeOffset`: negative is before the due date.
+        case relative(seconds: TimeInterval)
+        case absolute(Date)
+
+        /// `EKCalendarItem.alarms` order changes between process launches, so the read
+        /// output sorts: absolute alarms by date, then relative alarms earliest first.
+        static func listedBefore(_ lhs: Alarm, _ rhs: Alarm) -> Bool {
+            switch (lhs, rhs) {
+            case let (.absolute(a), .absolute(b)): return a < b
+            case let (.relative(a), .relative(b)): return a < b
+            case (.absolute, .relative): return true
+            case (.relative, .absolute): return false
+            }
+        }
+    }
     let calendarItemIdentifier: String
     let title: String?
     let notes: String?
@@ -34,16 +51,20 @@ struct ReminderReadSnapshot: Sendable {
     let priority: Int
     let calendar: List
     let dueDateComponents: DateComponents?
+    let startDateComponents: DateComponents?
     let completionDate: Date?
     let creationDate: Date?
     let hasRecurrence: Bool
     let rules: [ReminderRecurrenceRuleValue]?
     let locationTrigger: LocationTrigger?
+    let alarms: [Alarm]
 
     init(id: String, title: String?, notes: String? = nil, isCompleted: Bool = false,
          priority: Int = 0, calendarTitle: String = "Reminders", dueDateComponents: DateComponents? = nil,
+         startDateComponents: DateComponents? = nil,
          completionDate: Date? = nil, creationDate: Date? = nil, hasRecurrence: Bool = false,
-         rules: [ReminderRecurrenceRuleValue]? = nil, locationTrigger: LocationTrigger? = nil) {
+         rules: [ReminderRecurrenceRuleValue]? = nil, locationTrigger: LocationTrigger? = nil,
+         alarms: [Alarm] = []) {
         self.calendarItemIdentifier = id
         self.title = title
         self.notes = notes
@@ -51,11 +72,13 @@ struct ReminderReadSnapshot: Sendable {
         self.priority = priority
         self.calendar = List(title: calendarTitle)
         self.dueDateComponents = dueDateComponents
+        self.startDateComponents = startDateComponents
         self.completionDate = completionDate
         self.creationDate = creationDate
         self.hasRecurrence = hasRecurrence
         self.rules = rules
         self.locationTrigger = locationTrigger
+        self.alarms = alarms
     }
 
     init(from reminder: EKReminder) {
@@ -74,13 +97,21 @@ struct ReminderReadSnapshot: Sendable {
                                       radius: location.radius > 0 ? location.radius : nil,
                                       proximity: proximity)
         }
+        // A location alarm reads back with absoluteDate nil and relativeOffset 0, so
+        // it has to be set aside before the absolute/relative split (#231).
+        let alarms: [Alarm] = (reminder.alarms ?? []).compactMap { alarm in
+            guard alarm.structuredLocation == nil else { return nil }
+            if let date = alarm.absoluteDate { return .absolute(date) }
+            return .relative(seconds: alarm.relativeOffset)
+        }.sorted(by: Alarm.listedBefore)
         self.init(id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
                   isCompleted: reminder.isCompleted, priority: reminder.priority,
                   calendarTitle: reminder.calendar?.title ?? "", dueDateComponents: reminder.dueDateComponents,
+                  startDateComponents: reminder.startDateComponents,
                   completionDate: reminder.completionDate, creationDate: reminder.creationDate,
                   hasRecurrence: reminder.hasRecurrenceRules,
                   rules: reminder.recurrenceRules?.map(ReminderRecurrenceRuleValue.init(from:)),
-                  locationTrigger: trigger)
+                  locationTrigger: trigger, alarms: alarms)
     }
 
     var recurrenceMetadata: [String: Any] {
