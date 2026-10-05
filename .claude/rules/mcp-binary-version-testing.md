@@ -79,3 +79,19 @@ v1.16.0。追查發現 plugin server 連線被 15 分鐘 failure cache 跳過、
 spawn（上節整條鏈）。手動執行 plugin cache 的 wrapper 一次即完成下載。若當時未探測
 而直接在 session MCP 表面驗 v1.16.1 的新行為，會拿舊 binary 的結果當新版證據 —
 正是本規則鐵律要防的方向之二。
+
+## Release gate：undo post-state guard（#236）
+
+#236 的 guard（item 在操作之後被改過時，undo / redo 拒絕寫入）只有純邏輯部分有單元測試：
+欄位比對、resolve → refresh → compare 的順序（`UndoTargetCheck`）、拒絕方式的選擇、batch
+順序。`executeUndo` / `executeRedo` 裡圍繞它們的 EventKit 呼叫沒有任何自動測試，而 undo 是
+stateful，`--cli` 走不到（見上表）。**出 #236 的那個版本打 tag 之前**，在重啟後的 session
+MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的拋棄式日曆與清單，至少驗：
+
+1. `create_event` → undo 刪掉它；`create_event` → 在 Calendar.app 改標題 → undo 拒絕並列出
+   `title`、`undo_history` 仍有該筆、`discard_id` 可移除。
+2. 每週系列 → 在 Calendar.app 單獨改其中一個場次 → undo 以 `modified_occurrences` 拒絕，什麼都沒刪。
+3. `update_event` → 手動把欄位改回原值 → undo 成功。
+4. `complete_reminder` → undo 還原；redo 再完成一次。
+
+結果記在 #236。結束後刪掉拋棄式日曆與清單。

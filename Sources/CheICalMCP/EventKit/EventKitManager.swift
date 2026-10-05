@@ -974,7 +974,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = eventStore.event(withIdentifier: identifier) else {
+        guard let masterEvent = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
@@ -1004,7 +1004,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEventSeries(identifier: String) async throws {
         try await ensureCalendarAccess()
 
-        guard let event = eventStore.event(withIdentifier: identifier) else {
+        guard let event = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
@@ -1364,7 +1364,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
+        guard let sourceEvent = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
@@ -1396,7 +1396,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
+        guard let sourceEvent = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         if sourceEvent.hasRecurrenceRules {
@@ -1417,7 +1417,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let master = eventStore.event(withIdentifier: identifier) else {
+        guard let master = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
@@ -1833,7 +1833,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteReminder(identifier: String) async throws {
         try await ensureReminderAccess()
 
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
+        guard let reminder = freshReminder(id: identifier) else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
