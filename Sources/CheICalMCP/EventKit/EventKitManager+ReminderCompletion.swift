@@ -56,7 +56,7 @@ extension EventKitManager {
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        return "Undone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(before.isCompleted)"
+        return "Undone: set recurring reminder '\(undoShownTitle(before.title))' completion to \(before.isCompleted)"
     }
 
     func redoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot, requestedCompleted: Bool) async throws -> String {
@@ -64,6 +64,6 @@ extension EventKitManager {
         try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        return "Redone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(requestedCompleted)"
+        return "Redone: set recurring reminder '\(undoShownTitle(before.title))' completion to \(requestedCompleted)"
     }
 }

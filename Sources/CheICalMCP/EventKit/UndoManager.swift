@@ -273,32 +273,32 @@ enum UndoOperation {
     /// through the `undo_history` MCP tool's response field**, so any
     /// user-controlled title here flows through the same wire path as
     /// `executeUndo`/`executeRedo` arms — and shares the same CWE-117
-    /// log-injection surface. Each title interpolation must go through
-    /// `EventKitErrorSanitizer.sanitizeForInterpolation` (#74 verify DA1).
+    /// log-injection surface. Each title interpolation goes through `undoShownTitle`, like the
+    /// undo errors (#74 verify DA1; PR #259 round 6).
     var description: String {
         switch self {
         case .createEvent(_, let title, _):
-            return "Created event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Created event: \(undoShownTitle(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
+            return "Deleted event: \(undoShownTitle(snapshot.title))"
         case .updateEvent(_, let old, _):
-            return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
+            return "Updated event: \(undoShownTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
             // #236 round 5: shown like the undo errors (a new record type, no older format to keep).
             return "Updated recurring event: \(undoShownTitle(title)) (undo not available)"
         case .moveEvent(_, _, _, let title, _):
-            return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Moved event: \(undoShownTitle(title))"
         case .createReminder(_, let title, _):
-            return "Created reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Created reminder: \(undoShownTitle(title))"
         case .deleteReminder(let snapshot):
-            return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
+            return "Deleted reminder: \(undoShownTitle(snapshot.title))"
         case .updateReminder(_, let old, _):
-            return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
+            return "Updated reminder: \(undoShownTitle(old.title))"
         case .completeReminder(_, _, _, _, let title, _, _):
-            return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Completed reminder: \(undoShownTitle(title))"
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
-            return "\(action) recurring reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))"
+            return "\(action) recurring reminder: \(undoShownTitle(before.title))"
         case .batch(let ops):
             return "Batch (\(ops.count) operations)"
         }

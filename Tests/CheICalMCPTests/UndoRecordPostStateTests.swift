@@ -64,6 +64,32 @@ final class UndoRecordPostStateTests: XCTestCase {
         XCTAssertEqual(expected.changedFields(in: event), ["title"])
     }
 
+    /// Round 6 findings 14, 23: every undo_history description shows its title like the undo
+    /// errors (bidirectional and zero-width characters dropped, quotes replaced).
+    func testHistoryDescriptionsShowTitlesLikeTheErrors() {
+        let title = "Stand\u{202E}up\u{200B} 'x'"
+        let shown = "Standup \u{2019}x\u{2019}"
+        let event = UndoSnapshotFixtures.event(title: title)
+        let reminder = UndoSnapshotFixtures.reminder(title: title)
+        let completion = ReminderCompletionSnapshot(id: "r", title: title, calendarID: "c", sourceID: "s", isCompleted: false,
+                                                    hasRecurrence: true, due: nil, rules: [], completionDate: nil)
+        let ops: [(UndoOperation, String)] = [
+            (.createEvent(id: "e", title: title, created: event), "Created event: \(shown)"),
+            (.deleteEvent(snapshot: event), "Deleted event: \(shown)"),
+            (.updateEvent(id: "e", oldSnapshot: event, saved: event), "Updated event: \(shown)"),
+            (.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false), "Moved event: \(shown)"),
+            (.createReminder(id: "r", title: title, created: reminder), "Created reminder: \(shown)"),
+            (.deleteReminder(snapshot: reminder), "Deleted reminder: \(shown)"),
+            (.updateReminder(id: "r", oldSnapshot: reminder, saved: reminder), "Updated reminder: \(shown)"),
+            (.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: title,
+                               redoCompletionDate: nil, wasRecurring: false), "Completed reminder: \(shown)"),
+            (.completeRecurringReminder(before: completion, requestedCompleted: true, redoCompletionDate: nil), "Completed recurring reminder: \(shown)"),
+        ]
+        for (op, expected) in ops {
+            XCTAssertEqual(op.description, expected)
+        }
+    }
+
     func testMoveEventUndoComparesOnlyTheCalendarItWasMovedTo() throws {
         let event = makeEvent(title: "Standup")
         let op = UndoOperation.moveEvent(id: "moved", fromCalendarIdentifier: "from",

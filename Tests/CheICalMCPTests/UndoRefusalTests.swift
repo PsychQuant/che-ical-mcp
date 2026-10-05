@@ -584,10 +584,19 @@ final class UndoRefusalTests: XCTestCase {
     /// Round 5 findings 15, 18, 27: every format (Cf) character is dropped except a short keep-list,
     /// and so are the listed invisible characters of other categories.
     func testEveryFormatCharacterOutsideTheKeepListIsDropped() {
-        XCTAssertEqual(undoShownTitle("a\u{206A}b\u{206F}c\u{180E}d\u{FFF9}e\u{FFFB}f\u{1D173}g\u{1D17A}h\u{070F}i"), "abcdefghi",
-                       "deprecated format controls, Mongolian vowel separator, annotation marks, musical format controls, other Cf")
-        XCTAssertEqual(undoShownTitle("a\u{17B4}b\u{17B5}c\u{180B}d\u{180D}e\u{2800}f"), "abcdef",
+        XCTAssertEqual(undoShownTitle("a\u{206A}b\u{206F}c\u{180E}d\u{FFF9}e\u{FFFB}f\u{1D173}g\u{1D17A}h"), "abcdefgh",
+                       "deprecated format controls, Mongolian vowel separator, annotation marks, musical format controls")
+        XCTAssertEqual(undoShownTitle("a\u{17B4}b\u{17B5}c\u{180B}d\u{180D}e\u{2800}f\u{180F}g"), "abcdefg",
                        "Khmer inherent vowels, Mongolian variation selectors, braille blank")
+        XCTAssertEqual(undoShownTitle("a\u{2065}b\u{FFF0}c\u{FFF8}d\u{E01F0}e\u{E0FFF}f"), "abcdef",
+                       "unassigned default-ignorable code points (round 6)")
+    }
+
+    /// Round 6 findings 8, 11, 13, 20: visible format marks stay (Syriac abbreviation mark, Arabic
+    /// pound and piastre marks above).
+    func testVisibleFormatMarksAreKept() {
+        let marks = "\u{070F}\u{0710}\u{0712} \u{0890}\u{0661} \u{0891}\u{0662}"
+        XCTAssertEqual(undoShownTitle(marks), marks)
     }
 
     /// Joiners and format characters that show something stay: ZWJ builds emoji sequences, ZWNJ

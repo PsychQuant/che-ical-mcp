@@ -28,29 +28,32 @@ enum UndoTargetCheck {
     }
 }
 
-/// The title as an undo error or the undo history shows it. The errors are `TrustedErrorMessage`,
-/// so the store-derived title reaches the client verbatim, between quotes and next to
-/// instructions. Best effort (PR #259 round 5 findings 15, 18, 27; round 4 decision):
+/// The title as an undo error, the undo history or a redo instruction shows it. The errors are
+/// `TrustedErrorMessage`, so the store-derived title reaches the client verbatim, between quotes
+/// and next to instructions. Best effort (PR #259 rounds 4–6), not a guarantee:
 /// - every format character (general category Cf: zero-width, bidirectional controls, soft
 ///   hyphen, invisible operators, tags, annotation marks…) is dropped, except a keep-list of the
 ///   ones that show or join something: ZWNJ U+200C and ZWJ U+200D (Persian words, emoji
-///   sequences) and the visible number and abbreviation signs U+0600–0605, U+06DD, U+08E2,
+///   sequences) and the visible marks U+0600–0605, U+06DD, U+070F, U+0890, U+0891, U+08E2,
 ///   U+110BD, U+110CD;
 /// - controls (Cc), line and paragraph separators (Zl, Zp), and these invisible characters of
-///   other categories: U+034F, U+115F, U+1160, U+17B4, U+17B5, U+180B–180E, U+2800, U+3164,
-///   U+FFA0, the variation selectors U+FE00–FE0F and U+E0100–E01EF, the tag block U+E0000–E007F,
-///   U+1D173–1D17A and U+FFF9–FFFB.
-/// Cf membership is stable across Unicode versions, so this does not depend on unassigned code
-/// points in the toolchain's tables. A quote is replaced so the title cannot close its quotes,
-/// and the length is capped at 120 Unicode scalars, so combining marks cannot stretch it (round 1
-/// finding 19, round 2 finding 11). A visible title can still read like an instruction.
+///   other categories or not yet assigned: U+034F, U+115F, U+1160, U+17B4, U+17B5,
+///   U+180B–180F, U+2065, U+2800, U+3164, U+FFA0, U+FFF0–FFF8, U+FFF9–FFFB, the variation
+///   selectors U+FE00–FE0F and U+E0100–E01EF, U+E01F0–E0FFF, the tag block U+E0000–E007F and
+///   U+1D173–1D17A.
+/// General-category membership changes between Unicode versions (U+180E left Zs for Cf; U+0890
+/// and U+0891 are recent Cf), so what the toolchain's tables say decides the rest. A quote is
+/// replaced so the title cannot close its quotes, and the length is capped at 120 Unicode
+/// scalars, so combining marks cannot stretch it. A visible title can still read like an
+/// instruction.
 func undoShownTitle(_ title: String) -> String {
     let dropped: (Unicode.Scalar) -> Bool = { scalar in
         switch scalar.value {
-        case 0x200C, 0x200D, 0x0600...0x0605, 0x06DD, 0x08E2, 0x110BD, 0x110CD:   // keep-list
+        case 0x200C, 0x200D, 0x0600...0x0605, 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD:   // keep-list
             return false
-        case 0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B...0x180E, 0x2800, 0x3164, 0xFFA0,
-             0xFE00...0xFE0F, 0xE0100...0xE01EF, 0xE0000...0xE007F, 0x1D173...0x1D17A, 0xFFF9...0xFFFB:
+        case 0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B...0x180F, 0x2065, 0x2800, 0x3164, 0xFFA0,
+             0xFFF0...0xFFF8, 0xFFF9...0xFFFB, 0xFE00...0xFE0F, 0xE0100...0xE01EF, 0xE01F0...0xE0FFF,
+             0xE0000...0xE007F, 0x1D173...0x1D17A:
             return true
         default:
             switch scalar.properties.generalCategory {
