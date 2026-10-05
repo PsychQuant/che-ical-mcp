@@ -294,13 +294,14 @@ enum ReminderDateSync {
             guard let date = alarm.absoluteDate else { continue }
             let newDate = target(date)
             guard newDate != date else { continue }
-            // Copy, then change only the date, so the alarm's other settings survive (verify #6).
-            // `EKAlarm.copy()` drops `soundName` (checked 2026-10-04), so sound and email are
-            // carried over explicitly; if the copy fails a fresh alarm carries them instead.
-            let replacement = (alarm.copy() as? EKAlarm) ?? EKAlarm(absoluteDate: newDate)
+            // A new alarm, not `alarm.copy()` (#235): a copy keeps the original's UUID, and on device
+            // (2026-10-05) a save that also wrote the start date without changing the due date kept
+            // both rows in the Reminders store, so the app went on displaying the old alarm while
+            // EventKit read back only the new one. Sound and email, the other settings an absolute
+            // alarm has, are carried over (verify #6; `copy()` dropped `soundName` anyway).
+            let replacement = EKAlarm(absoluteDate: newDate)
             replacement.soundName = alarm.soundName
             replacement.emailAddress = alarm.emailAddress
-            replacement.absoluteDate = newDate
             reminder.removeAlarm(alarm)
             reminder.addAlarm(replacement)
             moved += 1

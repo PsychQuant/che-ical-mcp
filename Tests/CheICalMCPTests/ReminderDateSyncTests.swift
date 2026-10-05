@@ -273,6 +273,46 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(reminder.alarms?.first?.emailAddress, "owner@example.com")
     }
 
+    /// The identifier EventKit gives an alarm (`UUID`, not public API). `EKAlarm.copy()` keeps it.
+    private func alarmUUID(_ alarm: EKAlarm?) throws -> String? {
+        guard let alarm else { return nil }
+        try XCTSkipUnless(alarm.responds(to: NSSelectorFromString("UUID")), "EKAlarm no longer exposes UUID")
+        return alarm.value(forKey: "UUID") as? String
+    }
+
+    /// #235, on device 2026-10-05: an alarm moved as a `copy()` keeps the original's UUID. When the
+    /// start date is written in the same save and the due date is not changed (realign alone, or the
+    /// same due re-sent), the Reminders store kept both rows, and Reminders.app went on displaying
+    /// the old alarm while EventKit read back only the new one. A new alarm is removed and inserted
+    /// cleanly, so a moved alarm must not share the original's UUID.
+    func testAMovedAlarmIsANewAlarmNotACopyOfTheOldOne() throws {
+        let due = date(2026, 10, 8, 10, in: taipei)
+        let reminder = makeReminder()
+        reminder.startDateComponents = components(date(2026, 10, 4, 10, in: taipei), in: taipei)
+        let alarm = EKAlarm(absoluteDate: date(2026, 10, 4, 10, in: taipei))
+        reminder.addAlarm(alarm)
+        reminder.dueDateComponents = components(due, in: taipei)
+        let originalUUID = try alarmUUID(alarm)
+        XCTAssertNotNil(originalUUID)
+
+        _ = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual(absoluteDates(reminder), [due])
+        XCTAssertNotEqual(try alarmUUID(reminder.alarms?.first), originalUUID)
+    }
+
+    func testAnAlarmShiftedWithTheDueIsANewAlarmToo() throws {
+        let oldDue = date(2026, 10, 4, 10, in: taipei)
+        let reminder = makeReminder()
+        let alarm = EKAlarm(absoluteDate: oldDue)
+        reminder.addAlarm(alarm)
+        let originalUUID = try alarmUUID(alarm)
+
+        _ = ReminderDateSync.sync(reminder, from: oldDue, to: date(2026, 10, 8, 10, in: taipei))
+
+        XCTAssertNotEqual(try alarmUUID(reminder.alarms?.first), originalUUID)
+    }
+
     /// Finding 7: the whole chain — snapshot, update, undo — returns the reminder to its state.
     func testUndoSnapshotTakenBeforeSetDueRestoresTheOriginalDates() {
         let store = EKEventStore()
