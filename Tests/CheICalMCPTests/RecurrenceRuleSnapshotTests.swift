@@ -88,6 +88,22 @@ final class RecurrenceRuleSnapshotTests: XCTestCase {
         XCTAssertEqual(RecurrenceRuleSnapshot(from: rebuilt), snapshot)
     }
 
+    /// Verify round 3 canary: the week-start tests skip when the run-time setter is missing or
+    /// ignored (`setWeekStart(_:on:)`). On macOS 26 and later it exists (CI macos-26 and
+    /// macOS 27 locally), so its absence fails here rather than silently skipping them, and
+    /// `RecurrenceRuleSnapshot.rebuild` would be leaving the default week start.
+    func testWeekStartSetterExistsOnMacOS26AndLater() throws {
+        guard ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)) else {
+            throw XCTSkip("the canary covers macOS 26 and later")
+        }
+        let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 2, end: nil)
+        XCTAssertTrue(rule.responds(to: NSSelectorFromString("setFirstDayOfTheWeek:")),
+                      "EKRecurrenceRule lost its week-start setter; the week-start tests now skip")
+        guard rule.responds(to: NSSelectorFromString("setFirstDayOfTheWeek:")) else { return }
+        rule.setValue(1, forKey: "firstDayOfTheWeek")
+        XCTAssertEqual(rule.firstDayOfTheWeek, 1, "EKRecurrenceRule ignores its week-start setter; the week-start tests now skip")
+    }
+
     /// Equality decides whether update-undo rewrites the rules, so it must see the week start.
     func testRulesThatDifferOnlyInWeekStartAreNotEqual() throws {
         let sunday = try everyOtherWeekStartingSunday()

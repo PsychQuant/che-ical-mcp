@@ -15,6 +15,7 @@ private actor CopyFake: EventCopySource {
             return EventCopyValue(eventIdentifier: moved.result.eventIdentifier, title: moved.title, move: moved.result)
         }
         if identifier == "save-fail" { throw Failure.failed }
+        if identifier == "refused-alarms" { throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]) }
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
 
@@ -109,6 +110,17 @@ final class EventCopyHandlerTests: XCTestCase {
         let error = try XCTUnwrap(row["error"] as? String)
         XCTAssertTrue(error.contains("location_alarms, email_alarms"), error)
         XCTAssertTrue(error.contains("eventkit_error_1"), error)
+    }
+
+    /// Verify round 3 #7: a plain copy_event returns the refusal message as it is.
+    func testARefusedPlainCopyReturnsTheMessageVerbatim() async throws {
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let result = await server.handleToolCallForTesting(name: "copy_event", arguments: [
+            "event_id": .string("refused-alarms"), "target_calendar": .string("Work")])
+        XCTAssertEqual(result.isError, true)
+        guard case let .text(text, _, _)? = result.content.first else { return XCTFail("no text content") }
+        let expected = try XCTUnwrap(EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]).errorDescription)
+        XCTAssertTrue(text.contains(expected), text)
     }
 
     func testSpanAndIndexAlignedOccurrenceDatesReachTheSource() async throws {

@@ -59,7 +59,7 @@ struct AlarmSnapshot: Hashable {
 
     /// #253 verify round 2 (D1): the kinds of alarm in `alarms` that a calendar outside iCloud
     /// may refuse (unverified), in a fixed order: `location_alarms`, `email_alarms`,
-    /// `alarm_sounds`. A refused copy names them.
+    /// `alarm_sounds`. A copy that fails to save names them as a possible cause.
     static func kindsSomeCalendarsMayRefuse(_ alarms: [AlarmSnapshot]) -> [String] {
         var kinds: [String] = []
         if alarms.contains(where: { $0.location != nil }) { kinds.append("location_alarms") }
@@ -71,9 +71,10 @@ struct AlarmSnapshot: Hashable {
     /// #253 verify round 2 (D2): the alarms for one occurrence copied out of its series
     /// (`span: this`). A series carries one date per absolute alarm, which a later occurrence
     /// has already passed, so the copy would get an alarm that never fires. The occurrence's
-    /// own date would need the series start, which EventKit does not report reliably (it
-    /// documents the event fetched by identifier as the first occurrence; a detached
-    /// occurrence carries its own date). So an absolute alarm goes to the occurrence start,
+    /// own date would need the series start: Apple documents the event fetched by identifier
+    /// as the first occurrence, iCloud was seen to report the series start (checked once, on
+    /// device), other providers are unchecked, and a detached occurrence carries its own
+    /// date. So an absolute alarm goes to the occurrence start,
     /// as every copied alarm did before #230, and `absolute_alarms` is reported. Other alarms
     /// are unchanged.
     static func forSplitOccurrence(_ alarms: [AlarmSnapshot]) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
