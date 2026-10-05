@@ -121,17 +121,17 @@ final class UndoFailureRestoreTests: XCTestCase {
     func testRestoreFailedUndoPutsRecordBackExactlyOnce() async {
         let mgr = CalendarUndoManager.shared
         let id = probeId("undo")
-        await mgr.record(.createEvent(id: id, title: "t"))
+        await mgr.record(.createEvent(id: id, title: "t", created: UndoSnapshotFixtures.event(title: "t")))
         guard let record = await mgr.popUndo() else { return XCTFail("expected a record") }
         await mgr.restoreFailedUndo(record)
         // back on top of the undo stack…
         guard let again = await mgr.popUndo() else { return XCTFail("record must be back on the undo stack") }
-        guard case .createEvent(let gotId, _) = again.operation, gotId == id else {
+        guard case .createEvent(let gotId, _, _) = again.operation, gotId == id else {
             return XCTFail("wrong record restored")
         }
         // …and exactly once: the next undo entry (if any) must not be the same probe.
         if let next = await mgr.popUndo() {
-            if case .createEvent(let dupId, _) = next.operation {
+            if case .createEvent(let dupId, _, _) = next.operation {
                 XCTAssertNotEqual(dupId, id, "restore must not duplicate the entry")
             }
             await mgr.restoreFailedUndo(next)   // put the unrelated entry back untouched
@@ -141,13 +141,13 @@ final class UndoFailureRestoreTests: XCTestCase {
     func testRestoreFailedRedoPutsRecordBack() async {
         let mgr = CalendarUndoManager.shared
         let id = probeId("redo")
-        await mgr.record(.createEvent(id: id, title: "t"))
+        await mgr.record(.createEvent(id: id, title: "t", created: UndoSnapshotFixtures.event(title: "t")))
         guard let undoRec = await mgr.popUndo() else { return XCTFail("expected a record") }
         _ = undoRec   // probe now sits on the redo stack
         guard let redoRec = await mgr.popRedo() else { return XCTFail("expected a redo record") }
         await mgr.restoreFailedRedo(redoRec)
         guard let again = await mgr.popRedo() else { return XCTFail("record must be back on the redo stack") }
-        if case .createEvent(let gotId, _) = again.operation {
+        if case .createEvent(let gotId, _, _) = again.operation {
             XCTAssertEqual(gotId, id)
         } else {
             XCTFail("wrong record restored")

@@ -175,3 +175,64 @@ extension ReminderSnapshot {
         }
     }
 }
+
+extension UndoOperation {
+    /// What an undo of this record must find before it writes: the state the recorded write
+    /// left. `nil` for the delete records (undo recreates; there is no item to overwrite, #247)
+    /// and for a batch, whose sub-operations are checked one by one before any of them runs.
+    var undoPostState: UndoPostState? {
+        switch self {
+        case .createEvent(let id, let title, let created):
+            return .event(id: id, title: title, state: created, restoring: nil)
+        case .updateEvent(let id, let oldSnapshot, let saved):
+            return .event(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
+        case .moveEvent(let id, _, let toCalendarIdentifier, let title, _):
+            return .eventCalendar(id: id, title: title, calendarIdentifier: toCalendarIdentifier)
+        case .createReminder(let id, let title, let created):
+            return .reminder(id: id, title: title, state: created)
+        case .updateReminder(let id, _, let saved):
+            return .reminder(id: id, title: saved.title, state: saved)
+        case .completeReminder(let id, _, let requestedCompleted, _, let title, let redoCompletionDate):
+            return .reminderCompletion(id: id, title: title, isCompleted: requestedCompleted,
+                                       completionDate: requestedCompleted ? redoCompletionDate : nil)
+        case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
+            return .reminderCompletion(id: before.id, title: before.title, isCompleted: requestedCompleted,
+                                       completionDate: requestedCompleted ? redoCompletionDate : nil)
+        case .deleteEvent, .deleteReminder, .batch:
+            return nil
+        }
+    }
+
+    /// What a redo must find: the state the undo left. Only the completion records write on
+    /// redo; the others return an instruction (#247).
+    var redoPostState: UndoPostState? {
+        switch self {
+        case .completeReminder(let id, let wasCompleted, _, let completionDate, let title, _):
+            return .reminderCompletion(id: id, title: title, isCompleted: wasCompleted,
+                                       completionDate: wasCompleted ? completionDate : nil)
+        case .completeRecurringReminder(let before, _, _):
+            return .reminderCompletion(id: before.id, title: before.title, isCompleted: before.isCompleted,
+                                       completionDate: before.isCompleted ? before.completionDate : nil)
+        default:
+            return nil
+        }
+    }
+}
+
+/// D4: a batch is checked whole before its first write, so a refusal never leaves it half undone
+/// (a failure *during* the writes is #248). Generic over the operation so the ordering is
+/// unit-tested without EventKit (the closure-seam variant, like `ExclusionExecutor`).
+enum UndoBatchRunner {
+    static func run<Operation>(_ operations: [Operation],
+                               check: (Operation) async throws -> Void,
+                               execute: (Operation) async throws -> String) async rethrows -> [String] {
+        for operation in operations {
+            try await check(operation)
+        }
+        var results: [String] = []
+        for operation in operations {
+            results.append(try await execute(operation))
+        }
+        return results
+    }
+}

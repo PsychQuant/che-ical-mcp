@@ -237,21 +237,27 @@ struct ReminderSnapshot {
 // MARK: - Operations
 
 /// A recorded mutation operation that can be undone/redone.
+///
+/// #236: the create / update / move records also carry the state the write *left*, which undo
+/// compares the item with before it writes (`undoPostState`). No defaults: a record site that
+/// drops the post-state must not compile (#196 convention).
 enum UndoOperation {
-    case createEvent(id: String, title: String)
+    case createEvent(id: String, title: String, created: EventSnapshot)
     case deleteEvent(snapshot: EventSnapshot)
-    case updateEvent(id: String, oldSnapshot: EventSnapshot)
-    case createReminder(id: String, title: String)
+    /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
+    case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
+    case createReminder(id: String, title: String, created: ReminderSnapshot)
     case deleteReminder(snapshot: ReminderSnapshot)
-    case updateReminder(id: String, oldSnapshot: ReminderSnapshot)
+    case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
     /// pre-write instant undo restores. Neither has a default: dropping them must not compile.
     case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?)
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
-    /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`.
-    case moveEvent(id: String, fromCalendarIdentifier: String, title: String, isSeries: Bool)
+    /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
+    /// the event is still in `toCalendarIdentifier` (#236).
+    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -262,19 +268,19 @@ enum UndoOperation {
     /// `EventKitErrorSanitizer.sanitizeForInterpolation` (#74 verify DA1).
     var description: String {
         switch self {
-        case .createEvent(_, let title):
+        case .createEvent(_, let title, _):
             return "Created event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .deleteEvent(let snapshot):
             return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
-        case .updateEvent(_, let old):
+        case .updateEvent(_, let old, _):
             return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
-        case .moveEvent(_, _, let title, _):
+        case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
-        case .createReminder(_, let title):
+        case .createReminder(_, let title, _):
             return "Created reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .deleteReminder(let snapshot):
             return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
-        case .updateReminder(_, let old):
+        case .updateReminder(_, let old, _):
             return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
         case .completeReminder(_, _, _, _, let title, _):
             return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"

@@ -226,7 +226,7 @@ final class ReminderCompletionUndoTests: XCTestCase {
         let recurring = UndoOperation.completeRecurringReminder(before: snapshot(completed: true), requestedCompleted: false, redoCompletionDate: nil)
         XCTAssertEqual(recurring.completionWrite(undo: true, now: now),
                        ReminderCompletionWrite(isCompleted: true, completionDate: Self.recordedCompletion))
-        XCTAssertNil(UndoOperation.createReminder(id: "x", title: "x").completionWrite(undo: true, now: now))
+        XCTAssertNil(UndoOperation.createReminder(id: "x", title: "x", created: UndoSnapshotFixtures.reminder(title: "x")).completionWrite(undo: true, now: now))
     }
 
     func testRedoWriteReplaysTheRequestNeverTheOppositeOfThePriorState() {

@@ -666,7 +666,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try applyExclusions(to: event, dates: excluded, timezone: timezone)
         }
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.createEvent(id: event.eventIdentifier ?? "", title: event.title ?? title))
+        let createdID = event.eventIdentifier ?? ""
+        await CalendarUndoManager.shared.record(.createEvent(id: createdID, title: event.title ?? title,
+                                                             created: postWriteSnapshot(eventID: createdID, saved: event)))
         return CreateEventResult(event: event, isDuplicate: false)
     }
 
@@ -935,7 +937,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(event, span: span)
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.updateEvent(id: identifier, oldSnapshot: oldSnapshot))
+        // #246: a calendar change across accounts changes the identifier, so the record keeps the
+        // one the event has now; #236: and the state the update left.
+        let savedID = event.eventIdentifier ?? identifier
+        await CalendarUndoManager.shared.record(.updateEvent(id: savedID, oldSnapshot: oldSnapshot,
+                                                             saved: postWriteSnapshot(eventID: savedID, saved: event)))
         return event
     }
 
@@ -1468,6 +1474,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 try self.eventStore.save(subject, span: isRecurring ? .futureEvents : .thisEvent)
                 let movedIdentifier = subject.eventIdentifier ?? identifier
                 undo = .moveEvent(id: movedIdentifier, fromCalendarIdentifier: originalCalendar.calendarIdentifier,
+                                  toCalendarIdentifier: targetCalendar.calendarIdentifier,
                                   title: title ?? "", isSeries: isRecurring)
                 return movedIdentifier
             },
@@ -1738,7 +1745,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
-        await CalendarUndoManager.shared.record(.createReminder(id: result.reminder.calendarItemIdentifier, title: result.reminder.title ?? title))
+        let createdID = result.reminder.calendarItemIdentifier
+        await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
+                                                                created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
         return result
     }
 
@@ -1807,7 +1816,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
         let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)
-        await CalendarUndoManager.shared.record(.updateReminder(id: identifier, oldSnapshot: oldSnapshot))
+        // Same reason as update_event (#246): the identifier the reminder has after the save.
+        let savedID = reminder.calendarItemIdentifier
+        await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
+                                                                saved: postWriteSnapshot(reminderID: savedID, saved: reminder)))
         return result
     }
 
@@ -2043,7 +2055,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Execute the reverse of an operation (for undo).
     func executeUndo(_ operation: UndoOperation) async throws -> String {
         switch operation {
-        case .createEvent(let id, let title):
+        case .createEvent(let id, let title, _):
             // Undo create = delete. #182 verify: the record is already popped, so a
             // missing event MUST surface as an error — silently returning "Undone"
             // reports success for a no-op.
@@ -2064,7 +2076,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
-        case .updateEvent(let id, let oldSnapshot):
+        case .updateEvent(let id, let oldSnapshot, _):
             // Undo update = restore old values
             guard let event = eventStore.event(withIdentifier: id) else {
                 throw EventKitError.eventNotFound(identifier: id)
@@ -2074,7 +2086,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .moveEvent(let id, let fromCalendarIdentifier, let title, let isSeries):
+        case .moveEvent(let id, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar.
             guard let event = eventStore.event(withIdentifier: id) else {
                 throw EventKitError.eventNotFound(identifier: id)
@@ -2087,7 +2099,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: moved event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' back to its original calendar"
 
-        case .createReminder(let id, let title):
+        case .createReminder(let id, let title, _):
             // Undo create = delete
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
@@ -2111,7 +2123,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
-        case .updateReminder(let id, let oldSnapshot):
+        case .updateReminder(let id, let oldSnapshot, _):
             // Undo update = restore old values
             try await ensureReminderAccess()
             let predicate = eventStore.predicateForReminders(in: nil)
@@ -2160,7 +2172,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Execute an operation again (for redo). Same as the original mutation.
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
-        case .createEvent(_, let title):
+        case .createEvent(_, let title, _):
             return "Cannot redo creation of event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' — please create it again manually"
 
         case .deleteEvent(let snapshot):
@@ -2168,19 +2180,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // The restored event's ID was stored via updateLastRedoEventId
             return "Redo delete: please use delete_event to remove '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
-        case .updateEvent(let id, _):
+        case .updateEvent(let id, _, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
 
-        case .moveEvent(_, _, let title, _):
+        case .moveEvent(_, _, _, let title, _):
             return "Redo move: use move_events_batch to move '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again."
 
-        case .createReminder(_, let title):
+        case .createReminder(_, let title, _):
             return "Cannot redo reminder creation — please create '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again manually"
 
         case .deleteReminder(let snapshot):
             return "Redo delete: please use delete_reminder to remove '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
-        case .updateReminder(let id, _):
+        case .updateReminder(let id, _, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
         case .completeReminder(let id, _, let requestedCompleted, _, let title, _):
