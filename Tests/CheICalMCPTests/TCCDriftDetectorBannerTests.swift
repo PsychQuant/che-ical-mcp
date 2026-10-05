@@ -44,10 +44,17 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         throw XCTSkip("CheICalMCP binary not found at \(candidates). Run `swift build` first.")
     }
 
-    /// Spawn the binary, give it up to `maxWait` seconds to emit a banner, then terminate.
-    /// Returns (stderr_text, exit_status). Stdin is wired to `/dev/null` so the MCP server
-    /// loop has no JSON-RPC to read; we don't expect graceful shutdown, just the banner
-    /// to land on stderr before we kill.
+    /// Spawn the binary, close its stdin, and wait for it to exit, terminating it if it is
+    /// still running after `maxWait` seconds. Returns (stderr_text, exit_status). With stdin
+    /// at EOF the MCP server loop has no JSON-RPC to read and exits by itself right after
+    /// the banner, so a normal run returns in well under a second.
+    ///
+    /// `maxWait` is a cap for a hung child, not the time a child gets to emit its output
+    /// (#233). The banner is a single write at the end of `emitStartupBanner()`, after up
+    /// to three 500 ms subprocess caps (#126); under host CPU contention it lands after
+    /// 1 s, and the former 1.0 s default SIGTERM'd the child before that write (no SIGTERM
+    /// handler, so the default action kills it), which read as "no banner". The 10 s
+    /// default sits well above the slowest arrival measured under contention (~1.5 s).
     ///
     /// CI hang note (#122 R3): the GitHub Actions macos-latest runner can leave the MCP
     /// loop in a state where SIGTERM is ignored (ad-hoc-signed binary + TCC sandbox quirks),
@@ -58,7 +65,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         binary: URL,
         arguments: [String] = [],
         environment: [String: String]? = nil,
-        maxWait: TimeInterval = 1.0,
+        maxWait: TimeInterval = 10.0,
         sigtermGrace: TimeInterval = 0.5
     ) throws -> (stderr: String, terminationStatus: Int32) {
         let process = Process()
@@ -175,6 +182,25 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         let stderrText = String(data: stderrBuffer, encoding: .utf8) ?? ""
         stderrLock.unlock()
         return (stderrText, process.terminationStatus)
+    }
+
+    // MARK: - Helper contract (#233)
+
+    /// A child that is slow to start must not be reported as silent. #233: under host CPU
+    /// contention the banner can land after 1 s, and a fixed 1.0 s wait killed the child
+    /// before its single banner write, so the test read "no banner". With the default
+    /// arguments the helper must wait for the child, not for a fixed interval.
+    func testSpawnHelperCapturesChildThatWritesAfterOneSecond() throws {
+        let (stderr, status) = try spawnAndCaptureStderr(
+            binary: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "sleep 1.2; printf '[late] written after 1.2s\\n' >&2"]
+        )
+
+        XCTAssertTrue(
+            stderr.contains("[late] written after 1.2s"),
+            "A child that writes after 1.2 s must be captured with the default wait. Got stderr: \(stderr)"
+        )
+        XCTAssertEqual(status, 0, "The child should exit by itself, not by the helper's SIGTERM")
     }
 
     // MARK: - Tests
