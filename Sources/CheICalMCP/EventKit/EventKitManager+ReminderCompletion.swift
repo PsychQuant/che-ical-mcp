@@ -39,7 +39,7 @@ extension EventKitManager {
     /// (on-device probe, PR #195). Acting on the advanced item would mutate the
     /// wrong occurrence, and no retry can make the identity match again, so
     /// the failure is permanent and the caller discards the history entry.
-    private func resolveRecurringOccurrence(_ before: ReminderCompletionSnapshot, verb: String) throws -> EKReminder {
+    func resolveRecurringOccurrence(_ before: ReminderCompletionSnapshot, verb: String) throws -> EKReminder {
         let title = EventKitErrorSanitizer.sanitizeForInterpolation(before.title)
         // Same refresh discipline as the read paths: the guard must compare
         // against the store's current state, not the cache this completion
@@ -49,7 +49,8 @@ extension EventKitManager {
         // retry, exactly like the legacy arms (#191); a deleted item therefore
         // stays on the stack until the user clears it, same as every other arm.
         // Only a resolved-but-different occurrence is permanent.
-        guard let reminder = eventStore.calendarItem(withIdentifier: before.id) as? EKReminder else {
+        // #236: refreshed, like every undo target, before the identity and post-state checks.
+        guard let reminder = eventStore.calendarItem(withIdentifier: before.id) as? EKReminder, reminder.refresh() else {
             throw EventKitError.reminderNotFound(identifier: before.id)
         }
         guard before.matchesOccurrence(ReminderCompletionSnapshot(from: reminder)) else {
@@ -58,9 +59,10 @@ extension EventKitManager {
         return reminder
     }
 
+    /// #236: `verifiedReminder` runs the identity guard above, then the completion post-state
+    /// check (a mismatch there is transient and keeps the record).
     func undoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot) async throws -> String {
-        try await ensureReminderAccess()
-        let reminder = try resolveRecurringOccurrence(before, verb: "undo")
+        let reminder = try await verifiedReminder(of: operation, verb: .undo)
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
@@ -68,8 +70,7 @@ extension EventKitManager {
     }
 
     func redoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot, requestedCompleted: Bool) async throws -> String {
-        try await ensureReminderAccess()
-        let reminder = try resolveRecurringOccurrence(before, verb: "redo")
+        let reminder = try await verifiedReminder(of: operation, verb: .redo)
         try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()

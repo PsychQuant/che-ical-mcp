@@ -43,6 +43,7 @@ class CheICalMCPServer {
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
+    private let undoExecutionSource: any UndoExecutionSource
     private let reminderCompletionSource: any ReminderCompletionSource
     private let dateFormatter: ISO8601DateFormatter
 
@@ -78,11 +79,13 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
-         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared) async throws {
+         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
+         undoExecutionSource: any UndoExecutionSource = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
         self.reminderReadSource = reminderReadSource
         self.reminderCompletionSource = reminderCompletionSource
         self.undoManager = undoManager
+        self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
 
@@ -1506,7 +1509,7 @@ class CheICalMCPServer {
         // another undo/redo or explicit discard while execution is suspended.
         let message: String
         do {
-            message = try await eventKitManager.executeUndo(record.operation)
+            message = try await undoExecutionSource.executeUndo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:
@@ -1532,7 +1535,7 @@ class CheICalMCPServer {
         // #191 — same catch-scope discipline as handleUndo (execution only).
         let message: String
         do {
-            message = try await eventKitManager.executeRedo(record.operation)
+            message = try await undoExecutionSource.executeRedo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore: await undoManager.restoreFailedRedo(record)

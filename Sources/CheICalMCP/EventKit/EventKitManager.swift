@@ -2052,16 +2052,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     // MARK: - Undo/Redo Execution
 
-    /// Execute the reverse of an operation (for undo).
+    /// Execute the reverse of an operation (for undo). #236: every arm that writes to an existing
+    /// item first gets it from `verifiedEvent` / `verifiedReminder`, which refuse when the item
+    /// no longer holds the state the operation left, and writes to that refreshed object.
     func executeUndo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent(let id, let title, _):
             // Undo create = delete. #182 verify: the record is already popped, so a
             // missing event MUST surface as an error — silently returning "Undone"
             // reports success for a no-op.
-            guard let event = eventStore.event(withIdentifier: id) else {
-                throw EventKitError.eventNotFound(identifier: id.isEmpty ? "(created event had no identifier)" : id)
+            guard !id.isEmpty else {
+                throw EventKitError.eventNotFound(identifier: "(created event had no identifier)")
             }
+            let event = try await verifiedEvent(of: operation, verb: .undo)
             // #182 verify: a recurring master needs .futureEvents to remove the whole
             // series (mirrors deleteEventSeries); .thisEvent strands N-1 occurrences.
             try eventStore.remove(event, span: event.hasRecurrenceRules ? .futureEvents : .thisEvent)
@@ -2076,21 +2079,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
-        case .updateEvent(let id, let oldSnapshot, _):
+        case .updateEvent(_, let oldSnapshot, _):
             // Undo update = restore old values
-            guard let event = eventStore.event(withIdentifier: id) else {
-                throw EventKitError.eventNotFound(identifier: id)
-            }
+            let event = try await verifiedEvent(of: operation, verb: .undo)
             try applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .moveEvent(let id, let fromCalendarIdentifier, _, let title, let isSeries):
-            // Undo an in-place move (#226) = move it back to the recorded calendar.
-            guard let event = eventStore.event(withIdentifier: id) else {
-                throw EventKitError.eventNotFound(identifier: id)
-            }
+        case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
+            // Undo an in-place move (#226) = move it back to the recorded calendar, while the
+            // event is still in the calendar it was moved to (#236).
+            let event = try await verifiedEvent(of: operation, verb: .undo)
             guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
                 throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
             }
@@ -2099,19 +2099,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: moved event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' back to its original calendar"
 
-        case .createReminder(let id, let title, _):
-            // Undo create = delete
-            try await ensureReminderAccess()
-            let predicate = eventStore.predicateForReminders(in: nil)
-            let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
-                eventStore.fetchReminders(matching: predicate) { reminders in
-                    cont.resume(returning: reminders ?? [])
-                }
-            }
-            if let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) {
-                try eventStore.remove(reminder, commit: true)
-                markNeedsRefresh()
-            }
+        case .createReminder(_, let title, _):
+            // Undo create = delete. #236: a missing reminder is not found (the record is kept),
+            // as for events since #182; this arm used to report "Undone" for a no-op.
+            let reminder = try await verifiedReminder(of: operation, verb: .undo)
+            try eventStore.remove(reminder, commit: true)
+            markNeedsRefresh()
             return "Undone: removed created reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))'"
 
         case .deleteReminder(let snapshot):
@@ -2123,34 +2116,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))'"
 
-        case .updateReminder(let id, let oldSnapshot, _):
+        case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
-            try await ensureReminderAccess()
-            let predicate = eventStore.predicateForReminders(in: nil)
-            let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
-                eventStore.fetchReminders(matching: predicate) { reminders in
-                    cont.resume(returning: reminders ?? [])
-                }
-            }
-            guard let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) else {
-                throw EventKitError.reminderNotFound(identifier: id)
-            }
+            let reminder = try await verifiedReminder(of: operation, verb: .undo)
             applyReminderSnapshot(oldSnapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .completeReminder(let id, let wasCompleted, _, _, let title, _):
-            try await ensureReminderAccess()
-            let predicate = eventStore.predicateForReminders(in: nil)
-            let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
-                eventStore.fetchReminders(matching: predicate) { reminders in
-                    cont.resume(returning: reminders ?? [])
-                }
-            }
-            guard let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) else {
-                throw EventKitError.reminderNotFound(identifier: id)
-            }
+        case .completeReminder(_, let wasCompleted, _, _, let title, _):
+            let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
@@ -2160,11 +2135,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
-            var results: [String] = []
-            for op in ops.reversed() {
-                let result = try await executeUndo(op)
-                results.append(result)
-            }
+            // #236 D4: every sub-operation is checked before the first write.
+            let results = try await UndoBatchRunner.run(
+                Array(ops.reversed()),
+                check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
+                execute: { try await self.executeUndo($0) })
             return "Undone batch (\(results.count) operations)"
         }
     }
@@ -2195,19 +2170,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(let id, _, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
-        case .completeReminder(let id, _, let requestedCompleted, _, let title, _):
+        case .completeReminder(_, _, let requestedCompleted, _, let title, _):
             // Redo re-applies the recorded request (#196: never the opposite of
-            // wasCompleted — that reopened an idempotently completed reminder).
-            try await ensureReminderAccess()
-            let predicate = eventStore.predicateForReminders(in: nil)
-            let reminders = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[EKReminder], Error>) in
-                eventStore.fetchReminders(matching: predicate) { reminders in
-                    cont.resume(returning: reminders ?? [])
-                }
-            }
-            guard let reminder = reminders.first(where: { $0.calendarItemIdentifier == id }) else {
-                throw EventKitError.reminderNotFound(identifier: id)
-            }
+            // wasCompleted — that reopened an idempotently completed reminder), and only
+            // while the reminder is in the state the undo left (#236).
+            let reminder = try await verifiedReminder(of: operation, verb: .redo)
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
@@ -2217,11 +2184,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
 
         case .batch(let ops):
-            var results: [String] = []
-            for op in ops {
-                let result = try await executeRedo(op)
-                results.append(result)
-            }
+            let results = try await UndoBatchRunner.run(
+                ops,
+                check: { try await self.verifyHistoryTarget(of: $0, verb: .redo) },
+                execute: { try await self.executeRedo($0) })
             return "Redone batch (\(results.count) operations)"
         }
     }
