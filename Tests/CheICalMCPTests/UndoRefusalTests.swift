@@ -478,19 +478,57 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertTrue(message.contains("discard_id"), message)
     }
 
-    /// Round 5 findings 8, 12, 31, 34: a create-undo refused on `recurrence` cannot be fixed by
-    /// changing it back (a span "future" update splits the series and shortens its rule; the split
-    /// cannot be merged), so the message offers only giving up the undo.
-    func testACreateUndoRefusedOnRecurrenceOffersOnlyTheDiscard() {
-        let create = UndoOperation.createEvent(id: "e", title: "Standup", created: UndoSnapshotFixtures.event(title: "Standup"))
-        for fields in [["recurrence"], ["title", "recurrence"]] {
-            let message = EventKitErrorSanitizer.sanitizeForResponse(create.postStateRefusal(verb: .undo, changedFields: fields, current: nil)).code
-            XCTAssertTrue(message.contains("recurrence"), message)
-            XCTAssertTrue(message.contains("split"), message)
-            XCTAssertFalse(message.contains("change it back"), "\(fields): \(message)")
-            XCTAssertTrue(message.contains("discard_id"), message)
-            XCTAssertEqual(UndoFailureDisposition.of(create.postStateRefusal(verb: .undo, changedFields: fields, current: nil)), .restore,
-                           "kept until the user gives it up")
+    /// Round 5 findings 8, 12, 31, 34 and round 6 findings 7, 10, 16, 18: a create-undo refused on
+    /// `recurrence` offers only giving up the undo when the rule was shortened, the shape a span
+    /// "future" update leaves (on iCloud, 2026-10-06: count 6 → 2, end 05-30 → 04-10, open → end
+    /// 04-10, same frequency and interval). A split cannot be merged back. Any other change of the
+    /// rule can be changed back, so it keeps the revertable wording.
+    private func series(_ end: EKRecurrenceEnd?, _ frequency: EKRecurrenceFrequency = .weekly) -> EKEvent {
+        let event = EKEvent(eventStore: store)
+        event.calendar = calendarA
+        event.title = "Standup"
+        event.startDate = start
+        event.endDate = start.addingTimeInterval(3600)
+        event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: frequency, interval: 1, end: end))
+        return event
+    }
+
+    private func refusal(created: EKEvent, current: EKEvent, fields: [String] = ["recurrence"]) -> String {
+        let create = UndoOperation.createEvent(id: "e", title: "Standup", created: EventSnapshot(from: created))
+        return EventKitErrorSanitizer.sanitizeForResponse(create.postStateRefusal(verb: .undo, changedFields: fields, current: current)).code
+    }
+
+    func testAShortenedRuleOffersOnlyTheDiscard() {
+        let early = start.addingTimeInterval(7 * 86_400), late = start.addingTimeInterval(60 * 86_400)
+        let splits: [(String, EKEvent, EKEvent)] = [
+            ("count", series(EKRecurrenceEnd(occurrenceCount: 6)), series(EKRecurrenceEnd(occurrenceCount: 2))),
+            ("end", series(EKRecurrenceEnd(end: late)), series(EKRecurrenceEnd(end: early))),
+            ("open", series(nil), series(EKRecurrenceEnd(end: early))),
+        ]
+        for (shape, created, current) in splits {
+            for fields in [["recurrence"], ["title", "recurrence"]] {
+                let message = refusal(created: created, current: current, fields: fields)
+                XCTAssertTrue(message.contains("split"), "\(shape): \(message)")
+                XCTAssertFalse(message.contains("change it back"), "\(shape) \(fields): \(message)")
+                XCTAssertTrue(message.contains("discard_id"), message)
+            }
+        }
+    }
+
+    func testOtherRuleChangesCanBeChangedBack() {
+        let oneOff = EKEvent(eventStore: store)
+        oneOff.calendar = calendarA
+        oneOff.title = "Standup"
+        oneOff.startDate = start
+        oneOff.endDate = start.addingTimeInterval(3600)
+        let cases: [(String, EKEvent, EKEvent)] = [
+            ("rule added elsewhere", oneOff, series(nil)),
+            ("frequency changed", series(EKRecurrenceEnd(occurrenceCount: 6)), series(EKRecurrenceEnd(occurrenceCount: 6), .daily)),
+            ("rule lengthened", series(EKRecurrenceEnd(occurrenceCount: 2)), series(EKRecurrenceEnd(occurrenceCount: 6))),
+        ]
+        for (label, created, current) in cases {
+            let message = refusal(created: created, current: current)
+            XCTAssertTrue(message.contains("change it back"), "\(label): \(message)")
         }
         let reminderUpdate = UndoOperation.updateReminder(id: "r", oldSnapshot: UndoSnapshotFixtures.reminder(), saved: UndoSnapshotFixtures.reminder())
         let message = EventKitErrorSanitizer.sanitizeForResponse(reminderUpdate.postStateRefusal(verb: .undo, changedFields: ["recurrence"], current: nil)).code

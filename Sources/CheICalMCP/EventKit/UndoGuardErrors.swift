@@ -87,8 +87,8 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
         case uncheckedOccurrences
         /// A recurring reminder's completion, on a record that cannot confirm the occurrence.
         case unconfirmedOccurrence
-        /// The recurrence of a created event changed (round 5): a span "future" update splits the
-        /// series and shortens its rule, which cannot be merged back.
+        /// The rule of a created event was shortened the way a span "future" update leaves it
+        /// (rounds 5–6): the split cannot be merged back.
         case changedRecurrence
     }
 
@@ -114,7 +114,7 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
         case .uncheckedOccurrences:
             message = "Cannot \(verb.rawValue): the occurrences of the \(item) could not be checked for individual edits (\(fields)), and undoing would delete every occurrence of the series, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
         case .changedRecurrence:
-            message = "Cannot \(verb.rawValue): the recurrence of the \(item) changed after it was created (\(fields)), for example because an update of an occurrence and the following ones split the series and shortened its rule. Undoing would delete the series as it is now, and a split series cannot be put back together, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
+            message = "Cannot \(verb.rawValue): the recurrence of the \(item) was shortened after it was created (\(fields)), the way an update of an occurrence and the following ones leaves it when it splits the series. Undoing would delete the series as it is now, and a split series cannot be put back together, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
         case .unconfirmedOccurrence:
             message = "Cannot \(verb.rawValue): the completion of the recurring \(item) differs from the state this operation expects (\(fields)), and the record cannot confirm which occurrence its identifier points at now: it may be a later occurrence of the series (EventKit advances a recurring reminder in place). Nothing was written and \(kept). To go on, \(giveUp), and act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder)."
         }
@@ -161,7 +161,14 @@ extension UndoOperation {
     func postStateRefusal(verb: UndoHistoryVerb, changedFields: [String], current item: EKCalendarItem?) -> Error {
         let expected = verb == .undo ? undoPostState : redoPostState
         var situation: UndoTargetChangedError.Situation?
-        if case .createEvent = self, changedFields.contains("recurrence") { situation = .changedRecurrence }
+        // Discard-only for a rule shortened the way a split leaves it (round 6); any other change
+        // of the rule can be changed back.
+        if case .createEvent(_, _, let created) = self, changedFields.contains("recurrence"),
+           let event = item as? EKEvent,
+           RecurrenceRuleSnapshot.wasShortened(recorded: created.recurrenceRules,
+                                               current: event.recurrenceRules?.map(RecurrenceRuleSnapshot.init(from:))) {
+            situation = .changedRecurrence
+        }
         if case .completeReminder(_, _, _, _, let title, _, true) = self {
             if let reminder = item as? EKReminder, reminder.hasRecurrenceRules,
                case .reminderCompletion(_, _, let state, _)? = expected, reminder.isCompleted != state.isCompleted {

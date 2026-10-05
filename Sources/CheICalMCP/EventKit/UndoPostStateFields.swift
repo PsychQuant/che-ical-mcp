@@ -131,18 +131,41 @@ extension RecurrenceRuleSnapshot {
     /// The day lists compare as sets (EventKit and CalDAV keep no fixed order), the end to the
     /// second, or to the day for an all-day event (CalDAV can store its end as a date).
     func isSameRule(as other: RecurrenceRuleSnapshot, allDay: Bool) -> Bool {
+        hasSamePattern(as: other)
+            && occurrenceCount == other.occurrenceCount
+            && Self.sameEnd(endDate, other.endDate, allDay: allDay)
+    }
+
+    /// Everything but the end: frequency, interval, week start and the day lists.
+    func hasSamePattern(as other: RecurrenceRuleSnapshot) -> Bool {
         func set<T: Hashable>(_ values: [T]?) -> Set<T> { Set(values ?? []) }
         return frequency == other.frequency
             && interval == other.interval
             && firstDayOfTheWeek == other.firstDayOfTheWeek
-            && occurrenceCount == other.occurrenceCount
             && set(daysOfTheWeek?.map { "\($0.day):\($0.weekNumber)" }) == set(other.daysOfTheWeek?.map { "\($0.day):\($0.weekNumber)" })
             && set(daysOfTheMonth) == set(other.daysOfTheMonth)
             && set(monthsOfTheYear) == set(other.monthsOfTheYear)
             && set(weeksOfTheYear) == set(other.weeksOfTheYear)
             && set(daysOfTheYear) == set(other.daysOfTheYear)
             && set(setPositions) == set(other.setPositions)
-            && Self.sameEnd(endDate, other.endDate, allDay: allDay)
+    }
+
+    /// The shape a span "future" update leaves on the original series (PR #259 round 6, checked
+    /// on iCloud 2026-10-06): one rule before and after, the same pattern, ended earlier: a
+    /// smaller count (6 → 2), an earlier end date (05-30 → 04-10), or an end where there was none
+    /// (open → 04-10); a count that became an end date counts as ended earlier. A split series
+    /// cannot be merged back.
+    static func wasShortened(recorded: [RecurrenceRuleSnapshot]?, current: [RecurrenceRuleSnapshot]?) -> Bool {
+        guard let recorded, let current, recorded.count == 1, current.count == 1,
+              recorded[0].hasSamePattern(as: current[0]) else { return false }
+        let (old, new) = (recorded[0], current[0])
+        switch (old.occurrenceCount, old.endDate, new.occurrenceCount, new.endDate) {
+        case let (oldCount?, _, newCount?, _): return newCount < oldCount
+        case let (nil, oldEnd?, nil, newEnd?): return newEnd < oldEnd
+        case (nil, nil, _, _): return new.occurrenceCount != nil || new.endDate != nil
+        case (_?, _, nil, _?): return true
+        default: return false
+        }
     }
 
     private static func sameEnd(_ a: Date?, _ b: Date?, allDay: Bool) -> Bool {
