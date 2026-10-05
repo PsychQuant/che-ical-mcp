@@ -145,11 +145,11 @@
     },
     {
       "name": "undo",
-      "description": "Undo the last operation, or explicitly discard the current top history record using discard_id from undo_history"
+      "description": "Undo the last operation (refused, record kept, when the item was changed since), or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
-      "description": "Redo the last undone operation"
+      "description": "Redo the last undone operation (a completion redo is refused when the reminder changed since the undo)"
     },
     {
       "name": "undo_history",

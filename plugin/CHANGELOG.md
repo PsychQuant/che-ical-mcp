@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **BREAKING (behavior) — `undo` / `redo` refuse to overwrite a change made after the operation (#236)**: undo re-reads the item and refuses, writing nothing and keeping the entry, when a field it would overwrite or delete was changed since (fields already changed back do not count; for a recurring event created here, individually edited occurrences count too). The error names the fields; revert and retry, or drop the entry with `undo` + `discard_id` if the user agrees. A missing item's error now names it and `discard_id`.
+
 ## [1.19.0] - 2026-10-04
 
 - **BREAKING (behavior) — `move_events_batch` moves events in place (#226)**: the calendar is reassigned, so recurrence, attendees and every other field are kept; the identifier stays the same within an account and changes across accounts (`id_changed` / `new_event_id`). `span` (`this` default / `all`) and `occurrence_dates` handle recurring events; a recurring event without a date is refused. Each result reports `method` and `not_carried_over`; an event already in the target calendar is `unchanged`.
