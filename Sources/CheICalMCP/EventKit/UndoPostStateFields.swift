@@ -153,8 +153,8 @@ extension RecurrenceRuleSnapshot {
     /// The shape a span "future" update leaves on the original series (PR #259 round 6, checked
     /// on iCloud 2026-10-06): one rule before and after, the same pattern, ended earlier: a
     /// smaller count (6 → 2), an earlier end date (05-30 → 04-10), or an end where there was none
-    /// (open → 04-10); a count that became an end date counts as ended earlier. A split series
-    /// cannot be merged back.
+    /// (open → 04-10). A count that became an end date is not compared (it can lengthen the series)
+    /// and is not counted as shortened (PR #259 round 7). The shortened series cannot be put back.
     static func wasShortened(recorded: [RecurrenceRuleSnapshot]?, current: [RecurrenceRuleSnapshot]?) -> Bool {
         guard let recorded, let current, recorded.count == 1, current.count == 1,
               recorded[0].hasSamePattern(as: current[0]) else { return false }
@@ -163,7 +163,6 @@ extension RecurrenceRuleSnapshot {
         case let (oldCount?, _, newCount?, _): return newCount < oldCount
         case let (nil, oldEnd?, nil, newEnd?): return newEnd < oldEnd
         case (nil, nil, _, _): return new.occurrenceCount != nil || new.endDate != nil
-        case (_?, _, nil, _?): return true
         default: return false
         }
     }

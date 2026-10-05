@@ -525,6 +525,8 @@ final class UndoRefusalTests: XCTestCase {
             ("rule added elsewhere", oneOff, series(nil)),
             ("frequency changed", series(EKRecurrenceEnd(occurrenceCount: 6)), series(EKRecurrenceEnd(occurrenceCount: 6), .daily)),
             ("rule lengthened", series(EKRecurrenceEnd(occurrenceCount: 2)), series(EKRecurrenceEnd(occurrenceCount: 6))),
+            ("count 6 → a later end date", series(EKRecurrenceEnd(occurrenceCount: 6)),
+             series(EKRecurrenceEnd(end: start.addingTimeInterval(365 * 86_400)))),
         ]
         for (label, created, current) in cases {
             let message = refusal(created: created, current: current)
