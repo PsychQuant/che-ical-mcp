@@ -37,6 +37,10 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
 - **THEN** nothing is written, the error names the changed fields, the record stays on top with the same id, and undo with that id as discard_id removes it
 
+#### Scenario: Series occurrences could not be checked
+- **WHEN** undo of `create_event` for a recurring event cannot look for occurrences edited on their own (the series has no identifier or calendar)
+- **THEN** nothing is written, the error names `unchecked_occurrences`, and the record stays on top with the same id until it is discarded
+
 #### Scenario: Item not found
 - **WHEN** undo cannot find the item under its recorded identifier
 - **THEN** nothing is written, the record stays on top with the same id, and the error names the item and discard_id

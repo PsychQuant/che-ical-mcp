@@ -93,5 +93,16 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 2. 每週系列 → 在 Calendar.app 單獨改其中一個場次 → undo 以 `modified_occurrences` 拒絕，什麼都沒刪。
 3. `update_event` → 手動把欄位改回原值 → undo 成功。
 4. `complete_reminder` → undo 還原；redo 再完成一次。
+5. 帶欄位建立 → 等至少 60 秒 → 不做任何修改 → undo 要成功刪掉：(a) 有鬧鐘、`location` 字串、
+   非本機 `timezone` 的事件；(b) 全天事件（EventKit 存檔前就會自動加一個預設鬧鐘，紀錄裡已有它）；
+   (c) 有 `due_date` 與 `location_trigger` 的提醒事項。任何一個以 `calendar` / `timezone` /
+   `alarms` / `structured_location` / `list` 拒絕，就是有欄位在同步後自己變了，要加豁免。
+6. 用 `recurrence.excluded_occurrence_dates` 建立的系列 → undo 一次刪掉整個系列，不出現
+   `modified_occurrences`。#182 的「排除日是被移除的場次、不是被單獨修改的場次」只在 iCloud
+   看過（2026-10-05）；有其他來源（Google、Exchange）的帳號時，在那裡再做一次。
+7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次的標題 → undo → undo：
+   見 #236 round 4 的決定（本步驟的預期結果依 update-undo 對單一場次的處理而定）。
+8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
+   successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。

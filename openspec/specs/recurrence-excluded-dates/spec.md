@@ -69,7 +69,7 @@ The `.createEvent` undo entry SHALL be recorded only after the exclusion pass co
 
 #### Scenario: Excluded dates do not block the undo; edited occurrences do
 
-- **GIVEN** a series created with exclusions, whose excluded dates read back as removed occurrences and not as edited (detached) ones (checked on iCloud, 2026-10-05)
+- **GIVEN** a series created with exclusions on iCloud, where excluded dates read back as removed occurrences and not as edited (detached) ones (checked on iCloud, 2026-10-05; other stores were not checked, and a store that returned an excluded date as a detached occurrence differing from the series would make this undo refuse with `modified_occurrences`)
 - **WHEN** `undo` is invoked and no occurrence was edited on its own since
 - **THEN** the series is removed; had an occurrence been edited on its own, the undo would refuse and keep the record (#236)
 
