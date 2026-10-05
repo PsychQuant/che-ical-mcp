@@ -298,11 +298,16 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// non-zero when access is denied/skipped (host-TCC-state dependent), and under this
     /// non-interactive spawn `.notDetermined` is skipped (never calls the blocking request,
     /// so no hang).
+    ///
+    /// `maxWait: 1.0` is explicit (#233): in a GUI session `--setup` runs the interactive
+    /// SetupWindow `NSApplication`, which never exits by itself (#249), so the 10 s default
+    /// cap would keep that window on screen for 10 s on every run.
     func testNoBannerForSetupFlag() throws {
         let binary = try locateBuiltBinary()
         let (stderr, _) = try spawnAndCaptureStderr(
             binary: binary,
-            arguments: ["--setup"]
+            arguments: ["--setup"],
+            maxWait: 1.0
         )
 
         XCTAssertFalse(
