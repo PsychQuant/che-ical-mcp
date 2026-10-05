@@ -455,33 +455,6 @@ struct UnrecoverableUndoError: LocalizedError, Sendable {
 /// this the explicit permanent-failure message flattens to `error_unknown`.
 extension UnrecoverableUndoError: TrustedErrorMessage {}
 
-/// #236: the item an undo or redo would write to no longer holds the state the recorded
-/// operation (for a redo: the undo) left. Nothing is written, and the record is kept: the user
-/// can revert the change and retry, so the refusal is not permanent (D2, the #206 posture for
-/// not-found), and `UndoFailureDisposition.of` maps it to `.restore`.
-///
-/// The message is author-controlled text: the verb, the item kind and the field names come from
-/// closed sets in this module, and the store-derived title passes
-/// `EventKitErrorSanitizer.sanitizeForInterpolation`. That is the condition under which this
-/// type conforms to `TrustedErrorMessage`.
-struct UndoTargetChangedError: LocalizedError, Sendable {
-    let message: String
-    var errorDescription: String? { message }
-
-    init(verb: UndoHistoryVerb, kind: UndoPostState.Kind, title: String, changedFields: [String]) {
-        let item = "\(kind.rawValue) '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))'"
-        let fields = changedFields.joined(separator: ", ")
-        switch verb {
-        case .undo:
-            message = "Cannot undo: the \(item) was changed after this operation (\(fields)). Undoing now would overwrite that change, so nothing was written and this history entry was kept. Revert the change and run undo again, or drop the entry: read undo_history and call undo with discard_id set to its id."
-        case .redo:
-            message = "Cannot redo: the \(item) was changed after the undo (\(fields)). Redoing now would overwrite that change, so nothing was written and this redo entry was kept. Revert the change and run redo again; any new change clears the redo history."
-        }
-    }
-}
-
-extension UndoTargetChangedError: TrustedErrorMessage {}
-
 extension UndoOperation {
     /// The record for a completion write. A recurring snapshot gets the
     /// identity-guarded record only when it can ever match again

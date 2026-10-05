@@ -794,7 +794,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = eventStore.event(withIdentifier: identifier) else {
+        // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
+        // that would write back over an edit made elsewhere before this call.
+        guard let masterEvent = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
@@ -1765,7 +1767,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
+        // #236 (PR #259 verify #5): refreshed before the undo snapshot, as in update_event.
+        guard let reminder = freshReminder(id: identifier) else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
@@ -2057,13 +2060,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// no longer holds the state the operation left, and writes to that refreshed object.
     func executeUndo(_ operation: UndoOperation) async throws -> String {
         switch operation {
-        case .createEvent(let id, let title, _):
+        case .createEvent(_, let title, _):
             // Undo create = delete. #182 verify: the record is already popped, so a
             // missing event MUST surface as an error — silently returning "Undone"
-            // reports success for a no-op.
-            guard !id.isEmpty else {
-                throw EventKitError.eventNotFound(identifier: "(created event had no identifier)")
-            }
+            // reports success for a no-op. `verifiedEvent` throws UndoTargetMissingError,
+            // which keeps the record and names discard_id (also for an empty identifier).
+            // For a series it also refuses when an occurrence was edited on its own (#236).
             let event = try await verifiedEvent(of: operation, verb: .undo)
             // #182 verify: a recurring master needs .futureEvents to remove the whole
             // series (mirrors deleteEventSeries); .thisEvent strands N-1 occurrences.
@@ -2100,8 +2102,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: moved event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' back to its original calendar"
 
         case .createReminder(_, let title, _):
-            // Undo create = delete. #236: a missing reminder is not found (the record is kept),
-            // as for events since #182; this arm used to report "Undone" for a no-op.
+            // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:
+            // the record is kept and the message names discard_id), as for events since #182;
+            // this arm used to report "Undone" for a no-op. "Already gone" is not taken as done:
+            // the identifier may only be unresolvable (moved to another account, recreated under
+            // a new identifier by a delete-undo), and the spec keeps not-found records.
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try eventStore.remove(reminder, commit: true)
             markNeedsRefresh()

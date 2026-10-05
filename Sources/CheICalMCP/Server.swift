@@ -441,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation; the error names the changed fields and the record stays in undo_history for a retry or discard_id. Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete; the error names the changed fields and the record stays in undo_history for a retry, or for discard_id if the user agrees to give up that undo. Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -452,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo.",
+                description: "Redo the last undone operation. Only available after an undo. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])

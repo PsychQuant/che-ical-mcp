@@ -4,14 +4,18 @@ import Foundation
 /// #236 — the post-state guard. An undo record used to keep only the state *before* the write
 /// (or just an identifier), so undo wrote over whatever was there, including a change made
 /// elsewhere after the write. Each record now also keeps the state the write *left*, and before
-/// an undo or redo writes, the item is compared with it: the fields the undo would write must
-/// still hold the recorded values (diagnosis D1). A field projection rather than
-/// `lastModifiedDate`, because undoing a later write restores exactly the state an earlier one
-/// left, which a modification stamp never matches again.
+/// an undo or redo writes, the item is compared with it (diagnosis D1). A field projection rather
+/// than `lastModifiedDate`, because undoing a later write restores exactly the state an earlier
+/// one left, which a modification stamp never matches again.
+///
+/// A field blocks the undo only when it changed since the write **and** the undo would change it
+/// again: a field already back at the value the undo writes is not overwritten (PR #259 verify
+/// #9). A delete (create-undo) has no value to write, so every compared field that changed counts.
 ///
 /// Pure apart from reading EventKit objects, and free of `CheMCPKit`, so a standalone probe can
-/// compile this file as is. The manager side (resolve, `refresh()`, throw) is in
-/// `EventKitManager+UndoGuard.swift`; the refusal error is `UndoTargetChangedError`.
+/// compile this file as is. The field comparisons are in `UndoPostStateFields.swift`; the
+/// resolve-and-check step and the errors in `UndoGuardErrors.swift`; the EventKit side in
+/// `EventKitManager+UndoGuard.swift`.
 enum UndoHistoryVerb: String, Sendable {
     case undo, redo
 }
@@ -20,15 +24,31 @@ enum UndoHistoryVerb: String, Sendable {
 enum UndoPostState {
     enum Kind: String, Sendable { case event, reminder }
 
+    /// A reminder's completion as one value: the flag, and the instant when it was observed.
+    struct CompletionState: Equatable, Sendable {
+        let isCompleted: Bool
+        let completionDate: Date?
+
+        /// Equal flags, and for a completed item equal instants (to the second) when both are
+        /// known: an instant the record never observed (a write that stamped "now") cannot be
+        /// compared.
+        func matches(_ other: CompletionState) -> Bool {
+            guard isCompleted == other.isCompleted else { return false }
+            guard isCompleted, let completionDate, let other = other.completionDate else { return true }
+            return UndoPostState.sameInstant(completionDate, other)
+        }
+    }
+
     /// The event as the write left it. `restoring` is the snapshot an update-undo writes back;
-    /// `nil` when the undo deletes the event, so every recorded field counts.
+    /// `nil` when the undo deletes the event.
     case event(id: String, title: String, state: EventSnapshot, restoring: EventSnapshot?)
-    /// The calendar an in-place move left the event in; a move-undo writes only the calendar.
-    case eventCalendar(id: String, title: String, calendarIdentifier: String)
-    /// The reminder as the write left it; reminder undo writes every recorded field.
-    case reminder(id: String, title: String, state: ReminderSnapshot)
-    /// A completion write: the flag, and the instant when it was recorded.
-    case reminderCompletion(id: String, title: String, isCompleted: Bool, completionDate: Date?)
+    /// The calendar an in-place move left the event in, and the one the undo moves it back to;
+    /// a move-undo writes only the calendar.
+    case eventCalendar(id: String, title: String, calendarIdentifier: String, restoringCalendarIdentifier: String)
+    /// The reminder as the write left it; `restoring` as for events.
+    case reminder(id: String, title: String, state: ReminderSnapshot, restoring: ReminderSnapshot?)
+    /// A completion write: the state it left, and the state the undo (or redo) writes.
+    case reminderCompletion(id: String, title: String, state: CompletionState, restoring: CompletionState)
 
     var kind: Kind {
         switch self {
@@ -39,40 +59,39 @@ enum UndoPostState {
 
     var itemID: String {
         switch self {
-        case .event(let id, _, _, _), .eventCalendar(let id, _, _),
-             .reminder(let id, _, _), .reminderCompletion(let id, _, _, _):
+        case .event(let id, _, _, _), .eventCalendar(let id, _, _, _),
+             .reminder(let id, _, _, _), .reminderCompletion(let id, _, _, _):
             return id
         }
     }
 
     var title: String {
         switch self {
-        case .event(_, let title, _, _), .eventCalendar(_, let title, _),
-             .reminder(_, let title, _), .reminderCompletion(_, let title, _, _):
+        case .event(_, let title, _, _), .eventCalendar(_, let title, _, _),
+             .reminder(_, let title, _, _), .reminderCompletion(_, let title, _, _):
             return title
         }
     }
 
-    /// Names of the fields in which `item` no longer holds the recorded state; empty when the
-    /// undo may write. Field names are the tool parameter names, author-controlled.
+    /// Names of the fields that block the undo: changed since the write and not already at the
+    /// value the undo writes. Empty when the undo may write. Field names are the tool parameter
+    /// names, author-controlled.
     func changedFields(in item: EKCalendarItem) -> [String] {
         switch self {
         case .event(_, _, let state, let restoring):
             guard let event = item as? EKEvent else { return ["item_type"] }
             return state.changedFields(in: EventSnapshot(from: event), restoring: restoring)
-        case .eventCalendar(_, _, let calendarIdentifier):
-            return item.calendar?.calendarIdentifier == calendarIdentifier ? [] : ["calendar"]
-        case .reminder(_, _, let state):
+        case .eventCalendar(_, _, let calendarIdentifier, let restoringCalendarIdentifier):
+            let current = item.calendar?.calendarIdentifier
+            return current == calendarIdentifier || current == restoringCalendarIdentifier ? [] : ["calendar"]
+        case .reminder(_, _, let state, let restoring):
             guard let reminder = item as? EKReminder else { return ["item_type"] }
-            return state.changedFields(in: ReminderSnapshot(from: reminder))
-        case .reminderCompletion(_, _, let isCompleted, let completionDate):
+            return state.changedFields(in: ReminderSnapshot(from: reminder), restoring: restoring)
+        case .reminderCompletion(_, _, let state, let restoring):
             guard let reminder = item as? EKReminder else { return ["item_type"] }
-            if reminder.isCompleted != isCompleted { return ["completed"] }
-            // An instant the record never observed (a write that stamped "now") cannot be compared.
-            if isCompleted, let completionDate, !Self.sameInstant(completionDate, reminder.completionDate) {
-                return ["completion_date"]
-            }
-            return []
+            let current = CompletionState(isCompleted: reminder.isCompleted, completionDate: reminder.completionDate)
+            guard !state.matches(current), !restoring.matches(current) else { return [] }
+            return [state.isCompleted == current.isCompleted ? "completion_date" : "completed"]
         }
     }
 
@@ -86,142 +105,88 @@ enum UndoPostState {
         }
     }
 
-    /// Alarms come back from EventKit in no fixed order, so they are compared as a multiset,
-    /// with the equality `AlarmSnapshot.restore` uses.
-    static func sameAlarms(_ a: [AlarmSnapshot], _ b: [AlarmSnapshot]) -> Bool {
-        func counts(_ alarms: [AlarmSnapshot]) -> [AlarmSnapshot: Int] {
-            alarms.reduce(into: [:]) { $0[$1, default: 0] += 1 }
-        }
-        return counts(a) == counts(b)
-    }
-}
+    // MARK: - Series (PR #259 verify #1)
 
-extension EventSnapshot {
-    /// The fields of this recorded state that differ in `current`, limited to what the undo
-    /// writes (D1). `target` is the snapshot an update-undo restores; `nil` means the undo
-    /// deletes the event, so every recorded field counts.
-    ///
-    /// The structured location is always compared: `apply` writes `location` unconditionally,
-    /// and EventKit couples the two (a new location string replaces the place, `nil` clears it;
-    /// checked in memory), so the place round-trips. Recurrence is compared only when this state
-    /// recorded rules and, for an update-undo, the restored snapshot did too: `apply` leaves the
-    /// rules alone otherwise.
-    func changedFields(in current: EventSnapshot, restoring target: EventSnapshot?) -> [String] {
-        var changed: [String] = []
-        func check(_ field: String, _ same: Bool) {
-            if !same { changed.append(field) }
-        }
-        check("title", title == current.title)
-        check("start_time", UndoPostState.sameInstant(startDate, current.startDate))
-        check("end_time", UndoPostState.sameInstant(endDate, current.endDate))
-        check("all_day", isAllDay == current.isAllDay)
-        check("calendar", calendarIdentifier == current.calendarIdentifier)
-        check("notes", notes == current.notes)
-        check("location", location == current.location)
-        check("url", url?.absoluteString == current.url?.absoluteString)
-        check("timezone", timeZone?.identifier == current.timeZone?.identifier)
-        check("alarms", UndoPostState.sameAlarms(alarms, current.alarms))
-        check("structured_location", structuredLocationTitle == current.structuredLocationTitle
-              && structuredLocationLat == current.structuredLocationLat
-              && structuredLocationLon == current.structuredLocationLon
-              && structuredLocationRadius == current.structuredLocationRadius)
-        if let rules = recurrenceRules, target == nil || target?.recurrenceRules != nil {
-            check("recurrence", rules == (current.recurrenceRules ?? []))
-        }
-        return changed
-    }
-}
-
-extension ReminderSnapshot {
-    /// The fields of this recorded state that differ in `current`. Reminder undo writes every
-    /// recorded field (`apply(to:now:)` plus the list), so all of them count. A changed
-    /// completion flag is reported alone; the instant is compared only when the flag matches.
-    func changedFields(in current: ReminderSnapshot) -> [String] {
-        var changed: [String] = []
-        func check(_ field: String, _ same: Bool) {
-            if !same { changed.append(field) }
-        }
-        check("title", title == current.title)
-        check("list", calendarIdentifier == current.calendarIdentifier)
-        check("notes", notes == current.notes)
-        if isCompleted != current.isCompleted {
-            changed.append("completed")
-        } else {
-            check("completion_date", UndoPostState.sameInstant(completionDate, current.completionDate))
-        }
-        check("priority", priority == current.priority)
-        check("due_date", Self.sameDateComponents(dueDateComponents, current.dueDateComponents))
-        check("start_date", Self.sameDateComponents(startDateComponents, current.startDateComponents))
-        check("alarms", UndoPostState.sameAlarms(alarms, current.alarms))
-        check("recurrence", recurrenceRules == current.recurrenceRules)
-        check("url", url?.absoluteString == current.url?.absoluteString)
-        return changed
+    /// Undo of `create_event` on a series deletes every occurrence (`.futureEvents` on the first),
+    /// but `event(withIdentifier:)` returns only the first occurrence, so the field check alone
+    /// would miss an occurrence edited elsewhere. The scan looks for detached (individually
+    /// edited) occurrences from a day before the first occurrence to a day after the rule's end,
+    /// and at most 1460 days in all: EventKit matches at most four years per query, so an edit
+    /// further out than that is not seen.
+    static func seriesScanWindow(firstStart: Date, ruleEnd: Date?) -> DateInterval {
+        let day: TimeInterval = 86_400
+        let from = firstStart.addingTimeInterval(-day)
+        let cap = firstStart.addingTimeInterval(1460 * day)
+        let to = ruleEnd.map { min($0.addingTimeInterval(day), cap) } ?? cap
+        return DateInterval(start: from, end: max(to, from))
     }
 
-    /// Through `ReminderDueValue`, which drops the week / weekday fields EventKit can attach
-    /// after a save without changing the date. Components it cannot normalise (no year, month
-    /// or day) are compared as they are.
-    static func sameDateComponents(_ a: DateComponents?, _ b: DateComponents?) -> Bool {
-        switch (a, b) {
-        case (nil, nil):
-            return true
-        case let (a?, b?):
-            if let left = ReminderDueValue(components: a), let right = ReminderDueValue(components: b) {
-                return left == right
-            }
-            return a == b
-        default:
-            return false
+    /// The number of occurrences of `event`'s series that were edited on their own, in the scan
+    /// window. Reads only the series' own calendar.
+    static func modifiedOccurrenceCount(of event: EKEvent, in store: EKEventStore) -> Int {
+        guard event.hasRecurrenceRules, let id = event.eventIdentifier, let calendar = event.calendar else { return 0 }
+        let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
+        // Any open-ended rule leaves the series open.
+        let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
+        let window = seriesScanWindow(firstStart: event.startDate, ruleEnd: ruleEnd)
+        let predicate = store.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
+        var count = 0
+        store.enumerateEvents(matching: predicate) { occurrence, _ in
+            if occurrence.eventIdentifier == id, occurrence.isDetached { count += 1 }
         }
+        return count
     }
 }
 
 extension UndoOperation {
     /// What an undo of this record must find before it writes: the state the recorded write
-    /// left. `nil` for the delete records (undo recreates; there is no item to overwrite, #247)
-    /// and for a batch, whose sub-operations are checked one by one before any of them runs.
+    /// left, and what the undo writes back. `nil` for the delete records (undo recreates; there
+    /// is no item to overwrite, #247) and for a batch, whose sub-operations are checked one by
+    /// one before any of them runs.
     var undoPostState: UndoPostState? {
         switch self {
         case .createEvent(let id, let title, let created):
             return .event(id: id, title: title, state: created, restoring: nil)
         case .updateEvent(let id, let oldSnapshot, let saved):
             return .event(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
-        case .moveEvent(let id, _, let toCalendarIdentifier, let title, _):
-            return .eventCalendar(id: id, title: title, calendarIdentifier: toCalendarIdentifier)
+        case .moveEvent(let id, let fromCalendarIdentifier, let toCalendarIdentifier, let title, _):
+            return .eventCalendar(id: id, title: title, calendarIdentifier: toCalendarIdentifier,
+                                  restoringCalendarIdentifier: fromCalendarIdentifier)
         case .createReminder(let id, let title, let created):
-            return .reminder(id: id, title: title, state: created)
-        case .updateReminder(let id, _, let saved):
-            return .reminder(id: id, title: saved.title, state: saved)
-        case .completeReminder(let id, _, let requestedCompleted, _, let title, let redoCompletionDate):
-            return .reminderCompletion(id: id, title: title, isCompleted: requestedCompleted,
-                                       completionDate: requestedCompleted ? redoCompletionDate : nil)
+            return .reminder(id: id, title: title, state: created, restoring: nil)
+        case .updateReminder(let id, let oldSnapshot, let saved):
+            return .reminder(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
+        case .completeReminder(let id, let wasCompleted, let requestedCompleted, let completionDate, let title, let redoCompletionDate):
+            return .reminderCompletion(id: id, title: title,
+                                       state: .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
+                                       restoring: .init(isCompleted: wasCompleted, completionDate: wasCompleted ? completionDate : nil))
         case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
-            return .reminderCompletion(id: before.id, title: before.title, isCompleted: requestedCompleted,
-                                       completionDate: requestedCompleted ? redoCompletionDate : nil)
+            return .reminderCompletion(id: before.id, title: before.title,
+                                       state: .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
+                                       restoring: .init(isCompleted: before.isCompleted, completionDate: before.isCompleted ? before.completionDate : nil))
         case .deleteEvent, .deleteReminder, .batch:
             return nil
         }
     }
 
-    /// What a redo must find: the state the undo left. Only the completion records write on
-    /// redo; the others return an instruction (#247).
+    /// What a redo must find: the state the undo left, and the request it writes again. Only the
+    /// completion records write on redo; the others return an instruction (#247).
     var redoPostState: UndoPostState? {
-        switch self {
-        case .completeReminder(let id, let wasCompleted, _, let completionDate, let title, _):
-            return .reminderCompletion(id: id, title: title, isCompleted: wasCompleted,
-                                       completionDate: wasCompleted ? completionDate : nil)
-        case .completeRecurringReminder(let before, _, _):
-            return .reminderCompletion(id: before.id, title: before.title, isCompleted: before.isCompleted,
-                                       completionDate: before.isCompleted ? before.completionDate : nil)
-        default:
-            return nil
-        }
+        guard case .reminderCompletion(let id, let title, let state, let restoring)? = undoPostState else { return nil }
+        return .reminderCompletion(id: id, title: title, state: restoring, restoring: state)
     }
 }
 
 /// D4: a batch is checked whole before its first write, so a refusal never leaves it half undone
 /// (a failure *during* the writes is #248). Generic over the operation so the ordering is
 /// unit-tested without EventKit (the closure-seam variant, like `ExclusionExecutor`).
+///
+/// Only batch records reach this, and today every batch record is a list of `.deleteEvent`
+/// (multi-event and series deletes), whose undo writes to no existing item, so the pre-flight has
+/// nothing to check yet (PR #259 verify #12 / #25 / #28). It assumes the members touch different
+/// items: two members on one item would both be checked against the state before either is
+/// undone. It is not atomic: each member re-checks when it runs, and a store change in between
+/// can still stop the batch half way (#248).
 enum UndoBatchRunner {
     static func run<Operation>(_ operations: [Operation],
                                check: (Operation) async throws -> Void,

@@ -47,7 +47,7 @@ final class UndoGuardHandlerTests: XCTestCase {
 
         XCTAssertEqual(result.isError, true)
         let message = try text(result)
-        XCTAssertTrue(message.contains("Cannot undo: the event 'Standup' was changed after this operation (title, start_time)"), message)
+        XCTAssertTrue(message.contains("Cannot undo: the event 'Standup' was changed after this operation") && message.contains("(title, start_time)"), message)
         XCTAssertTrue(message.contains("discard_id"), message)
         let after = await history.historySnapshot()
         XCTAssertEqual(after.entries.map(\.id), before.entries.map(\.id), "the refused record stays on top, same id")
@@ -74,7 +74,7 @@ final class UndoGuardHandlerTests: XCTestCase {
 
         XCTAssertEqual(result.isError, true)
         let message = try text(result)
-        XCTAssertTrue(message.contains("Cannot redo: the reminder 'Pay rent' was changed after the undo (completed)"), message)
+        XCTAssertTrue(message.contains("Cannot redo: the reminder 'Pay rent' was changed after the undo") && message.contains("(completed)"), message)
         let after = await history.historySnapshot()
         XCTAssertEqual(after.redoCount, 1, "the refused redo record is kept")
         XCTAssertEqual(after.undoCount, 0)

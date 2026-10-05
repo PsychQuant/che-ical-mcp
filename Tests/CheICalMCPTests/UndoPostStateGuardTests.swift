@@ -5,9 +5,10 @@ import XCTest
 @testable import CheICalMCP
 
 /// #236: before an undo or redo writes, it compares the item with the state the recorded write
-/// left and refuses when they differ, instead of overwriting a later change. The comparison
-/// covers the fields the undo writes (diagnosis D1). Every EventKit object here is in memory
-/// (never fetched or saved), so no TCC prompt.
+/// left and refuses when a field changed since and the undo would change it again (diagnosis D1;
+/// PR #259 verify #9). An update-undo compares the fields it writes back; a create-undo, which
+/// deletes, compares the fields a person edits (verify #7). Every EventKit object here is in
+/// memory (never fetched or saved), so no TCC prompt.
 final class UndoPostStateGuardTests: XCTestCase {
     /// An item whose store was deallocated reads back no alarms, so the store lives as long as
     /// the test.
@@ -62,7 +63,7 @@ final class UndoPostStateGuardTests: XCTestCase {
         return reminder
     }
 
-    // MARK: - Events
+    // MARK: - Events: update-undo (restores a snapshot)
 
     func testUnchangedEventHasNoChangedFields() {
         let event = makeEvent()
@@ -72,7 +73,8 @@ final class UndoPostStateGuardTests: XCTestCase {
         XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), [])
     }
 
-    func testEachChangedEventFieldIsNamed() {
+    /// Restoring the recorded state itself, so every changed field also differs from the target.
+    func testEachChangedEventFieldIsNamedForAnUpdateUndo() {
         XCTAssertNotEqual(calendarA.calendarIdentifier, calendarB.calendarIdentifier, "precondition: distinct calendars")
         // A new location string replaces the place (EventKit couples the two), so it reports both.
         let edits: [(fields: [String], edit: (EKEvent) -> Void)] = [
@@ -92,7 +94,7 @@ final class UndoPostStateGuardTests: XCTestCase {
             let event = makeEvent()
             let saved = EventSnapshot(from: event)
             edit(event)
-            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), fields, fields[0])
+            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), fields, fields[0])
         }
     }
 
@@ -111,7 +113,21 @@ final class UndoPostStateGuardTests: XCTestCase {
         event.startDate = start.addingTimeInterval(0.4)
         event.endDate = start.addingTimeInterval(3600.4)
 
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [])
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), [])
+    }
+
+    /// verify #9: a field already back at the value the undo writes is not overwritten by it, so
+    /// it is no reason to refuse. A field changed to anything else still is.
+    func testUpdateUndoDoesNotRefuseATitleChangedBackByHand() {
+        let event = makeEvent()
+        let original = EventSnapshot(from: event)
+        event.title = "Retro"                                   // the update
+        let saved = EventSnapshot(from: event)
+
+        event.title = "Review"                                  // changed back in Calendar.app
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: original), [])
+        event.title = "Planning"                                // changed to something else
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: original), ["title"])
     }
 
     /// `applySnapshot` writes `location` unconditionally, and EventKit couples it with the
@@ -130,6 +146,31 @@ final class UndoPostStateGuardTests: XCTestCase {
         XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: restored), ["structured_location"])
     }
 
+    /// verify #7: a place recorded without coordinates that later gains them under the same name
+    /// (geocoding by the calendar app or server) is enrichment, not an edit.
+    func testCoordinatesAddedToAPlaceWithoutThemAreNotAChange() {
+        let event = makeEvent()
+        event.structuredLocation = nil
+        event.location = "Office"
+        let saved = EventSnapshot(from: event)
+        XCTAssertNil(saved.structuredLocationLat, "precondition: a location string carries no coordinates")
+        event.structuredLocation = office()
+
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), [])
+    }
+
+    /// verify #7: an alarm sound is cosmetic and a server may set a default one.
+    func testAnAlarmSoundIsNotAChange() {
+        let event = makeEvent()
+        let saved = EventSnapshot(from: event)
+        event.alarms?.forEach(event.removeAlarm)
+        let sounding = EKAlarm(relativeOffset: -900)
+        sounding.soundName = "Basso"
+        event.addAlarm(sounding)
+
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), [])
+    }
+
     /// A place added by a later update is cleared by restoring a snapshot without a location.
     func testPlaceAddedToAnEventWithoutLocationIsClearedByTheRestore() {
         let event = makeEvent()
@@ -140,37 +181,6 @@ final class UndoPostStateGuardTests: XCTestCase {
         snapshot.apply(to: event, calendar: calendarA)
 
         XCTAssertEqual(snapshot.changedFields(in: EventSnapshot(from: event), restoring: snapshot), [])
-    }
-
-    /// `applySnapshot` leaves the rules alone when the restored snapshot recorded none
-    /// (`includeRecurrence: false`), so update-undo does not compare them then.
-    func testUpdateUndoComparesRecurrenceOnlyWhenTheRestoredSnapshotRecordedRules() {
-        let restored = EventSnapshot(from: makeEvent(), includeRecurrence: false)
-        let event = makeEvent()
-        let saved = EventSnapshot(from: event)
-        event.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)]
-
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: restored), [])
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), ["recurrence"])
-    }
-
-    /// Create-undo deletes the event, so every recorded field counts.
-    func testDeleteScopeComparesStructuredLocationAndRecurrence() {
-        let event = makeEvent()
-        let saved = EventSnapshot(from: event)
-        event.structuredLocation = office(latitude: 24.0)
-        event.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)]
-
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), ["structured_location", "recurrence"])
-    }
-
-    /// A state recorded without rules cannot vouch for them.
-    func testRulesThatWereNotRecordedAreNotCompared() {
-        let event = makeEvent()
-        let saved = EventSnapshot(from: event, includeRecurrence: false)
-        event.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)]
-
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [])
     }
 
     /// D1 round trip: what the undo writes reads back equal to the snapshot it wrote.
@@ -215,16 +225,62 @@ final class UndoPostStateGuardTests: XCTestCase {
         XCTAssertEqual(event.title, "Review")
     }
 
+    // MARK: - Events: create-undo (deletes)
+
+    /// verify #7: the delete compares what a person edits. Fields a calendar server can rewrite
+    /// after the save (coordinates, alarms, time zone) or that change without an edit (the
+    /// calendar identifier after a resync) are left out, so they cannot block the undo for good.
+    func testCreateUndoComparesTheFieldsAPersonEdits() {
+        let compared: [(fields: [String], edit: (EKEvent) -> Void)] = [
+            (["title"], { $0.title = "Retro" }),
+            (["start_time"], { $0.startDate = $0.startDate.addingTimeInterval(1800) }),
+            (["end_time"], { $0.endDate = $0.endDate.addingTimeInterval(1800) }),
+            (["notes"], { $0.notes = "new agenda" }),
+            (["location"], { $0.location = "Lab" }),
+            (["url"], { $0.url = URL(string: "https://example.com/other") }),
+            (["recurrence"], { $0.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)] }),
+        ]
+        for (fields, edit) in compared {
+            let event = makeEvent()
+            let saved = EventSnapshot(from: event)
+            edit(event)
+            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), fields, fields[0])
+        }
+        let ignored: [(name: String, edit: (EKEvent) -> Void)] = [
+            ("calendar", { [calendarB] in $0.calendar = calendarB }),
+            ("timezone", { $0.timeZone = TimeZone(identifier: "America/New_York") }),
+            ("alarms", { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
+            ("coordinates", { [unowned self] in $0.structuredLocation = office(latitude: 24.0) }),
+        ]
+        for (name, edit) in ignored {
+            let event = makeEvent()
+            let saved = EventSnapshot(from: event)
+            edit(event)
+            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [], name)
+        }
+    }
+
+    /// The delete has no value to write, so a title changed back still counts (verify #9 does
+    /// not apply to create-undo): a changed-then-reverted event is the same event either way.
+    func testCreateUndoHasNoRestoredValueToMatch() {
+        let event = makeEvent()
+        let saved = EventSnapshot(from: event)
+        event.title = "Retro"
+
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), ["title"])
+    }
+
     // MARK: - Reminders
 
     func testUnchangedReminderHasNoChangedFields() {
         let reminder = makeReminder()
         let saved = ReminderSnapshot(from: reminder)
 
-        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder)), [])
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: saved), [])
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: nil), [])
     }
 
-    func testEachChangedReminderFieldIsNamed() {
+    func testEachChangedReminderFieldIsNamedForAnUpdateUndo() {
         XCTAssertNotEqual(listA.calendarIdentifier, listB.calendarIdentifier, "precondition: distinct lists")
         let edits: [(field: String, edit: (EKReminder) -> Void)] = [
             ("title", { $0.title = "Pay bills" }),
@@ -241,7 +297,37 @@ final class UndoPostStateGuardTests: XCTestCase {
             let reminder = makeReminder()
             let saved = ReminderSnapshot(from: reminder)
             edit(reminder)
-            XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder)), [field], field)
+            XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: saved), [field], field)
+        }
+    }
+
+    /// verify #7: as for events, the delete compares what a person edits.
+    func testCreateReminderUndoComparesTheFieldsAPersonEdits() {
+        let compared: [(field: String, edit: (EKReminder) -> Void)] = [
+            ("title", { $0.title = "Pay bills" }),
+            ("notes", { $0.notes = nil }),
+            ("completed", { $0.isCompleted = true }),
+            ("priority", { $0.priority = 5 }),
+            ("due_date", { [unowned self] in $0.dueDateComponents = components(hour: 11) }),
+            ("start_date", { [unowned self] in $0.startDateComponents = components(hour: 8) }),
+            ("recurrence", { $0.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: nil)] }),
+            ("url", { $0.url = nil }),
+        ]
+        for (field, edit) in compared {
+            let reminder = makeReminder()
+            let saved = ReminderSnapshot(from: reminder)
+            edit(reminder)
+            XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: nil), [field], field)
+        }
+        let ignored: [(name: String, edit: (EKReminder) -> Void)] = [
+            ("list", { [listB] in $0.calendar = listB }),
+            ("alarms", { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
+        ]
+        for (name, edit) in ignored {
+            let reminder = makeReminder()
+            let saved = ReminderSnapshot(from: reminder)
+            edit(reminder)
+            XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: nil), [], name)
         }
     }
 
@@ -250,7 +336,18 @@ final class UndoPostStateGuardTests: XCTestCase {
         let saved = ReminderSnapshot(from: reminder)
         reminder.dueDateComponents = components(hour: 11)
 
-        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder)), ["due_date"])
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: saved), ["due_date"])
+    }
+
+    /// verify #9: an update-undo of a reminder completed by hand and then unchecked by hand.
+    func testUpdateUndoDoesNotRefuseAFieldChangedBackByHand() {
+        let reminder = makeReminder()
+        let original = ReminderSnapshot(from: reminder)
+        reminder.title = "Pay bills"                        // the update
+        let saved = ReminderSnapshot(from: reminder)
+
+        reminder.title = "Pay rent"                         // changed back by hand
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: original), [])
     }
 
     func testCompletionInstantChangeIsNamed() {
@@ -260,7 +357,7 @@ final class UndoPostStateGuardTests: XCTestCase {
         let saved = ReminderSnapshot(from: reminder)
         reminder.completionDate = start.addingTimeInterval(60)
 
-        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder)), ["completion_date"])
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: saved), ["completion_date"])
     }
 
     /// Completion instants come from `now` and carry sub-second digits a synced store may drop.
@@ -271,17 +368,28 @@ final class UndoPostStateGuardTests: XCTestCase {
         let saved = ReminderSnapshot(from: reminder)
         reminder.completionDate = start
 
-        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder)), [])
+        XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: saved), [])
     }
 
-    /// EventKit can attach derived week / weekday fields after a save without changing the date.
-    func testDerivedDateComponentFieldsAreNotAChange() {
+    /// EventKit can attach derived week / weekday fields after a save without changing the date,
+    /// and a store can write the same wall-clock time with another time-zone representation
+    /// (verify #7): both compare by the moment (or the day, for a date-only value).
+    func testDateComponentsCompareByTheMomentTheyName() {
         var derived = components(hour: 9)
         derived.weekday = 7
         derived.weekOfYear = 41
+        var offsetZone = components(hour: 9)
+        offsetZone.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
+        var otherZone = components(hour: 9)
+        otherZone.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        let dateOnly = DateComponents(year: 2026, month: 10, day: 10)
 
         XCTAssertTrue(ReminderSnapshot.sameDateComponents(components(hour: 9), derived))
+        XCTAssertTrue(ReminderSnapshot.sameDateComponents(components(hour: 9), offsetZone))
+        XCTAssertFalse(ReminderSnapshot.sameDateComponents(components(hour: 9), otherZone), "another moment")
         XCTAssertFalse(ReminderSnapshot.sameDateComponents(components(hour: 9), components(hour: 10)))
+        XCTAssertFalse(ReminderSnapshot.sameDateComponents(components(hour: 9), dateOnly))
+        XCTAssertTrue(ReminderSnapshot.sameDateComponents(dateOnly, DateComponents(timeZone: taipei, year: 2026, month: 10, day: 10)))
         XCTAssertFalse(ReminderSnapshot.sameDateComponents(components(hour: 9), nil))
         XCTAssertTrue(ReminderSnapshot.sameDateComponents(nil, nil))
     }
@@ -299,7 +407,7 @@ final class UndoPostStateGuardTests: XCTestCase {
 
         snapshot.apply(to: reminder, now: start)
 
-        XCTAssertEqual(snapshot.changedFields(in: ReminderSnapshot(from: reminder)), [])
+        XCTAssertEqual(snapshot.changedFields(in: ReminderSnapshot(from: reminder), restoring: snapshot), [])
     }
 
     func testTwoConsecutiveReminderUpdatesUndoneInOrderBothPass() {
@@ -310,71 +418,10 @@ final class UndoPostStateGuardTests: XCTestCase {
         reminder.priority = 9                               // update 2
         let afterSecond = ReminderSnapshot(from: reminder)
 
-        XCTAssertEqual(afterSecond.changedFields(in: ReminderSnapshot(from: reminder)), [])
+        XCTAssertEqual(afterSecond.changedFields(in: ReminderSnapshot(from: reminder), restoring: afterFirst), [])
         afterFirst.apply(to: reminder, now: start)          // undo 2
-        XCTAssertEqual(afterFirst.changedFields(in: ReminderSnapshot(from: reminder)), [])
+        XCTAssertEqual(afterFirst.changedFields(in: ReminderSnapshot(from: reminder), restoring: original), [])
         original.apply(to: reminder, now: start)            // undo 1
         XCTAssertEqual(reminder.title, "Pay rent")
-    }
-
-    // MARK: - Completion and move checks
-
-    func testCompletionCheckNamesTheFlagAndTheInstant() {
-        let reminder = makeReminder()
-        reminder.isCompleted = true
-        reminder.completionDate = start
-        let check = { (isCompleted: Bool, date: Date?) in
-            UndoPostState.reminderCompletion(id: "r", title: "Pay rent", isCompleted: isCompleted, completionDate: date)
-                .changedFields(in: reminder)
-        }
-
-        XCTAssertEqual(check(true, start), [])
-        XCTAssertEqual(check(true, start.addingTimeInterval(0.5)), [])
-        XCTAssertEqual(check(true, nil), [], "an unrecorded instant is not compared")
-        XCTAssertEqual(check(true, start.addingTimeInterval(120)), ["completion_date"])
-        XCTAssertEqual(check(false, nil), ["completed"])
-    }
-
-    func testMoveCheckComparesOnlyTheCalendar() {
-        let event = makeEvent()
-        event.title = "Edited after the move"
-        let check = { (calendar: EKCalendar) in
-            UndoPostState.eventCalendar(id: "e", title: "Review", calendarIdentifier: calendar.calendarIdentifier)
-                .changedFields(in: event)
-        }
-
-        XCTAssertEqual(check(calendarA), [], "a move-undo writes only the calendar")
-        XCTAssertEqual(check(calendarB), ["calendar"])
-    }
-
-    // MARK: - Refusal
-
-    func testRefusalIsTrustedAndKeepsTheRecord() {
-        let error = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup", changedFields: ["title"])
-
-        XCTAssertTrue((error as Error) is TrustedErrorMessage, "otherwise the message flattens to error_unknown")
-        XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "the change can be reverted, so the refusal is not permanent (D2)")
-    }
-
-    func testUndoRefusalNamesTheFieldsAndTheEscapeHatch() {
-        let error = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup\u{1B}[31m", changedFields: ["title", "start_time"])
-        let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
-
-        XCTAssertTrue(message.hasPrefix("Cannot undo"), message)
-        XCTAssertTrue(message.contains("event 'Standup"), message)
-        XCTAssertFalse(message.contains("\u{1B}"), "titles are store-derived and must be sanitized")
-        XCTAssertTrue(message.contains("title, start_time"), message)
-        XCTAssertTrue(message.contains("undo_history"), message)
-        XCTAssertTrue(message.contains("discard_id"), message)
-    }
-
-    func testRedoRefusalSaysTheRedoEntryWasKept() {
-        let error = UndoTargetChangedError(verb: .redo, kind: .reminder, title: "Pay rent", changedFields: ["completed"])
-        let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
-
-        XCTAssertTrue(message.hasPrefix("Cannot redo"), message)
-        XCTAssertTrue(message.contains("reminder 'Pay rent'"), message)
-        XCTAssertTrue(message.contains("redo"), message)
-        XCTAssertFalse(message.contains("discard_id"), "discard_id removes undo records only")
     }
 }

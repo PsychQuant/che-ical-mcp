@@ -26,53 +26,74 @@ extension EventKitManager {
         return ReminderSnapshot(from: saved)
     }
 
-    /// The event an undo or redo writes to, by identifier and refreshed: a long-lived store can
-    /// return stale fields after an edit made elsewhere until the object is refreshed
-    /// (diagnosis evidence 2), and the guard must compare, and the arm write to, the current
-    /// state. A `false` from `refresh()` means the event is gone: not found, which keeps the
-    /// record for a retry (#191).
-    func historyEvent(id: String) throws -> EKEvent {
+    /// The event under `id`, refreshed, or nil when it is not there. `refresh()` because a
+    /// long-lived store can return stale fields after an edit made elsewhere until the object is
+    /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is
+    /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads.
+    func freshEvent(id: String) -> EKEvent? {
         refreshIfNeeded()
-        guard let event = eventStore.event(withIdentifier: id), event.refresh() else {
-            throw EventKitError.eventNotFound(identifier: id)
-        }
+        guard !id.isEmpty, let event = eventStore.event(withIdentifier: id), event.refresh() else { return nil }
         return event
     }
 
-    /// Reminder counterpart of `historyEvent(id:)`.
-    func historyReminder(id: String) throws -> EKReminder {
+    /// Reminder counterpart of `freshEvent(id:)`.
+    func freshReminder(id: String) -> EKReminder? {
         refreshIfNeeded()
-        guard let reminder = eventStore.calendarItem(withIdentifier: id) as? EKReminder, reminder.refresh() else {
-            throw EventKitError.reminderNotFound(identifier: id)
-        }
+        guard !id.isEmpty, let reminder = eventStore.calendarItem(withIdentifier: id) as? EKReminder,
+              reminder.refresh() else { return nil }
         return reminder
     }
 
     /// The item an undo (or redo) of `operation` writes to: resolved, refreshed, and checked
-    /// against the state the operation (for a redo: its undo) left. Throws
-    /// `UndoTargetChangedError` instead of returning an item that was changed since; `nil` for
-    /// records that write to no existing item. A recurring completion goes through the #204
-    /// identity guard first: a different occurrence is permanent, a changed completion is not.
+    /// against the state the operation (for a redo: its undo) left, through `UndoTargetCheck`.
+    /// Throws instead of returning an item the write would change again; `nil` for records that
+    /// write to no existing item. Per record:
+    /// - create_event on a series: the delete removes every occurrence, so occurrences edited on
+    ///   their own also block it (`modified_occurrences`, verify #1).
+    /// - a recurring completion: the #204 identity guard first (a different occurrence is
+    ///   permanent), then the completion check (transient).
+    /// - a legacy completion record on a recurring reminder: a mismatch is permanent
+    ///   (`postStateRefusal`, verify #4).
     func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb) async throws -> EKCalendarItem? {
         guard let expected = verb == .undo ? operation.undoPostState : operation.redoPostState else { return nil }
-        let item: EKCalendarItem
-        if case .completeRecurringReminder(let before, _, _) = operation {
+        let refusal: (EKCalendarItem, [String]) -> Error = { item, fields in
+            operation.postStateRefusal(verb: verb, changedFields: fields, itemIsRecurring: item.hasRecurrenceRules)
+        }
+        switch expected.kind {
+        case .event:
+            let deletesSeries: Bool
+            if case .createEvent = operation, verb == .undo { deletesSeries = true } else { deletesSeries = false }
+            return try UndoTargetCheck.check(
+                expected, verb: verb,
+                lookup: { () -> EKEvent? in
+                    refreshIfNeeded()
+                    return expected.itemID.isEmpty ? nil : eventStore.event(withIdentifier: expected.itemID)
+                },
+                refresh: { $0.refresh() },
+                conflicts: { event in
+                    let fields = expected.changedFields(in: event)
+                    guard deletesSeries, event.hasRecurrenceRules,
+                          UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore) > 0 else { return fields }
+                    return fields + ["modified_occurrences"]
+                },
+                refusal: refusal)
+        case .reminder:
             try await ensureReminderAccess()
-            item = try resolveRecurringOccurrence(before, verb: verb.rawValue)
-        } else {
-            switch expected.kind {
-            case .event:
-                item = try historyEvent(id: expected.itemID)
-            case .reminder:
-                try await ensureReminderAccess()
-                item = try historyReminder(id: expected.itemID)
-            }
+            var identity: ReminderCompletionSnapshot?
+            if case .completeRecurringReminder(let before, _, _) = operation { identity = before }
+            return try UndoTargetCheck.check(
+                expected, verb: verb,
+                lookup: { () -> EKReminder? in
+                    refreshIfNeeded()
+                    return expected.itemID.isEmpty ? nil : eventStore.calendarItem(withIdentifier: expected.itemID) as? EKReminder
+                },
+                refresh: { $0.refresh() },
+                conflicts: { reminder in
+                    if let identity { try ensureSameOccurrence(identity, reminder, verb: verb.rawValue) }
+                    return expected.changedFields(in: reminder)
+                },
+                refusal: refusal)
         }
-        let changed = expected.changedFields(in: item)
-        guard changed.isEmpty else {
-            throw UndoTargetChangedError(verb: verb, kind: expected.kind, title: expected.title, changedFields: changed)
-        }
-        return item
     }
 
     /// D4 pre-flight for one member of a batch (nested batches are walked).

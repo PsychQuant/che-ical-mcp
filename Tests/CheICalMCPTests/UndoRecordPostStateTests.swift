@@ -70,9 +70,10 @@ final class UndoRecordPostStateTests: XCTestCase {
                                          toCalendarIdentifier: calendar.calendarIdentifier, title: "Standup", isSeries: false)
 
         let expected = try XCTUnwrap(op.undoPostState)
-        guard case .eventCalendar(let id, _, let calendarIdentifier) = expected else { return XCTFail("\(expected)") }
+        guard case .eventCalendar(let id, _, let calendarIdentifier, let restoring) = expected else { return XCTFail("\(expected)") }
         XCTAssertEqual(id, "moved")
         XCTAssertEqual(calendarIdentifier, calendar.calendarIdentifier)
+        XCTAssertEqual(restoring, "from")
         event.title = "Edited after the move"
         XCTAssertEqual(expected.changedFields(in: event), [])
         event.calendar = EKCalendar(for: .event, eventStore: store)
@@ -86,8 +87,9 @@ final class UndoRecordPostStateTests: XCTestCase {
         let op = UndoOperation.createReminder(id: "r1", title: "Pay rent", created: ReminderSnapshot(from: reminder))
 
         let expected = try XCTUnwrap(op.undoPostState)
-        guard case .reminder(let id, _, _) = expected else { return XCTFail("\(expected)") }
+        guard case .reminder(let id, _, _, let restoring) = expected else { return XCTFail("\(expected)") }
         XCTAssertEqual(id, "r1")
+        XCTAssertNil(restoring, "deleting the reminder has no value to restore")
         XCTAssertEqual(expected.changedFields(in: reminder), [])
         reminder.priority = 1
         XCTAssertEqual(expected.changedFields(in: reminder), ["priority"])
@@ -100,9 +102,10 @@ final class UndoRecordPostStateTests: XCTestCase {
         let op = UndoOperation.updateReminder(id: "r1", oldSnapshot: old, saved: ReminderSnapshot(from: reminder))
 
         let expected = try XCTUnwrap(op.undoPostState)
-        guard case .reminder(_, let title, let state) = expected else { return XCTFail("\(expected)") }
+        guard case .reminder(_, let title, let state, let restoring) = expected else { return XCTFail("\(expected)") }
         XCTAssertEqual(title, "After")
         XCTAssertEqual(state.title, "After")
+        XCTAssertEqual(restoring?.title, "Before")
         XCTAssertEqual(op.description, "Updated reminder: Before")
         reminder.isCompleted = true
         XCTAssertEqual(expected.changedFields(in: reminder), ["completed"],
@@ -111,21 +114,23 @@ final class UndoRecordPostStateTests: XCTestCase {
 
     // MARK: - Completions
 
-    func testCompletionUndoExpectsTheRequestAndRedoExpectsThePriorState() throws {
-        let op = UndoOperation.completeReminder(id: "r1", wasCompleted: false, requestedCompleted: true,
-                                                completionDate: nil, title: "Once", redoCompletionDate: instant)
-        let reminder = makeReminder(title: "Once")
-        reminder.isCompleted = true
-        reminder.completionDate = instant
+    private func completionStates(_ state: UndoPostState?) -> (expected: UndoPostState.CompletionState, restoring: UndoPostState.CompletionState)? {
+        guard case .reminderCompletion(_, _, let expected, let restoring)? = state else { return nil }
+        return (expected, restoring)
+    }
 
-        let undo = try XCTUnwrap(op.undoPostState)
-        XCTAssertEqual(undo.itemID, "r1")
-        XCTAssertEqual(undo.changedFields(in: reminder), [])
-        let redo = try XCTUnwrap(op.redoPostState)
-        XCTAssertEqual(redo.changedFields(in: reminder), ["completed"], "redo expects the state the undo left")
-        reminder.isCompleted = false
-        XCTAssertEqual(redo.changedFields(in: reminder), [])
-        XCTAssertEqual(undo.changedFields(in: reminder), ["completed"])
+    func testCompletionUndoExpectsTheRequestAndRedoExpectsThePriorState() throws {
+        let earlier = instant.addingTimeInterval(-86_400)
+        let op = UndoOperation.completeReminder(id: "r1", wasCompleted: true, requestedCompleted: false,
+                                                completionDate: earlier, title: "Once", redoCompletionDate: nil)
+
+        let undo = try XCTUnwrap(completionStates(op.undoPostState))
+        XCTAssertEqual(op.undoPostState?.itemID, "r1")
+        XCTAssertEqual(undo.expected, UndoPostState.CompletionState(isCompleted: false, completionDate: nil), "the reopen it undoes")
+        XCTAssertEqual(undo.restoring, UndoPostState.CompletionState(isCompleted: true, completionDate: earlier), "what undo writes")
+        let redo = try XCTUnwrap(completionStates(op.redoPostState))
+        XCTAssertEqual(redo.expected, undo.restoring, "redo expects the state the undo left")
+        XCTAssertEqual(redo.restoring, undo.expected, "and writes the request again")
     }
 
     func testCompletionUndoComparesTheSavedInstant() throws {
@@ -148,8 +153,9 @@ final class UndoRecordPostStateTests: XCTestCase {
         let undo = try XCTUnwrap(op.undoPostState)
         XCTAssertEqual(undo.itemID, "recurring")
         XCTAssertEqual(undo.changedFields(in: reminder), [])
-        let redo = try XCTUnwrap(op.redoPostState)
-        XCTAssertEqual(redo.changedFields(in: reminder), ["completed"])
+        let redo = try XCTUnwrap(completionStates(op.redoPostState))
+        XCTAssertEqual(redo.expected, UndoPostState.CompletionState(isCompleted: false, completionDate: nil))
+        XCTAssertEqual(redo.restoring, UndoPostState.CompletionState(isCompleted: true, completionDate: instant))
     }
 
     // MARK: - Arms that check nothing

@@ -6,9 +6,10 @@ extension EventKitManager {
     func completeReminder(identifier: String, completed: Bool = true) async throws -> ReminderCompletionResult {
         try await ensureReminderAccess()
         // Same refresh discipline as the read paths, so the pre-save snapshot the
-        // successor comparison is anchored on is not stale from an earlier mutation.
-        refreshIfNeeded()
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
+        // successor comparison is anchored on is not stale from an earlier mutation;
+        // and the object refreshed (#236, PR #259 verify #5), so `before` (what undo
+        // restores) is not a stale copy either.
+        guard let reminder = freshReminder(id: identifier) else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
@@ -39,24 +40,14 @@ extension EventKitManager {
     /// (on-device probe, PR #195). Acting on the advanced item would mutate the
     /// wrong occurrence, and no retry can make the identity match again, so
     /// the failure is permanent and the caller discards the history entry.
-    func resolveRecurringOccurrence(_ before: ReminderCompletionSnapshot, verb: String) throws -> EKReminder {
+    /// #236: runs on the reminder `verifiedHistoryTarget` resolved and refreshed
+    /// (with the read paths' refresh discipline), before the completion check; not
+    /// found stays transient there, as for every other arm (#191).
+    func ensureSameOccurrence(_ before: ReminderCompletionSnapshot, _ reminder: EKReminder, verb: String) throws {
         let title = EventKitErrorSanitizer.sanitizeForInterpolation(before.title)
-        // Same refresh discipline as the read paths: the guard must compare
-        // against the store's current state, not the cache this completion
-        // itself marked dirty.
-        refreshIfNeeded()
-        // Not found is treated as transient (store lag) and keeps the entry for a
-        // retry, exactly like the legacy arms (#191); a deleted item therefore
-        // stays on the stack until the user clears it, same as every other arm.
-        // Only a resolved-but-different occurrence is permanent.
-        // #236: refreshed, like every undo target, before the identity and post-state checks.
-        guard let reminder = eventStore.calendarItem(withIdentifier: before.id) as? EKReminder, reminder.refresh() else {
-            throw EventKitError.reminderNotFound(identifier: before.id)
-        }
         guard before.matchesOccurrence(ReminderCompletionSnapshot(from: reminder)) else {
             throw UnrecoverableUndoError(message: "Cannot \(verb) recurring reminder completion of '\(title)': its identifier no longer resolves to the recorded occurrence — the series advanced (EventKit keeps the finished occurrence as a separate completed record) or the item's due, rules, list or source were edited since. Act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder). This history entry was discarded so earlier operations remain undoable.")
         }
-        return reminder
     }
 
     /// #236: `verifiedReminder` runs the identity guard above, then the completion post-state
