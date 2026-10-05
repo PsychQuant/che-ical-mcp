@@ -6,13 +6,12 @@ import Foundation
 /// delete (`restoring == nil`) has no value to write, so every compared field that changed counts.
 ///
 /// - An update-undo compares the fields its restore writes (diagnosis D1).
-/// - A create-undo deletes the item and compares the fields a person edits (PR #259 verify #7):
-///   values a calendar server can rewrite after the save (coordinates, alarms, time zone) or that
-///   change without an edit (a calendar identifier after a resync) are left out, because a false
-///   refusal there would block the undo until the entry is discarded.
-/// - Enrichment is not an edit: coordinates added to a place recorded without them, and an alarm
-///   sound, are not compared. Dates compare to the second, due and start components by the
-///   moment (or day) they name, recurrence rules as sets.
+/// - A create-undo deletes the item, so it compares every recorded field, the calendar or list
+///   and the alarms included (PR #259 round 2, finding 1).
+/// - Changes a calendar app or server makes on its own are not edits: an alarm sound, and
+///   coordinates added to a place recorded without them. Neither blocks an undo, and an
+///   update-undo then overwrites them with the recorded values. Dates compare to the second, due
+///   and start components by the moment (or day) they name, recurrence rules as sets.
 extension EventSnapshot {
     func changedFields(in current: EventSnapshot, restoring target: EventSnapshot?) -> [String] {
         var changed: [String] = []
@@ -21,23 +20,19 @@ extension EventSnapshot {
             if let target, same(target, current) { return }
             changed.append(name)
         }
-        let restores = target != nil
         check("title") { $0.title == $1.title }
         check("start_time") { UndoPostState.sameInstant($0.startDate, $1.startDate) }
         check("end_time") { UndoPostState.sameInstant($0.endDate, $1.endDate) }
         check("all_day") { $0.isAllDay == $1.isAllDay }
-        if restores { check("calendar") { $0.calendarIdentifier == $1.calendarIdentifier } }
+        check("calendar") { $0.calendarIdentifier == $1.calendarIdentifier }
         check("notes") { $0.notes == $1.notes }
         check("location") { $0.location == $1.location }
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
-        if restores {
-            check("timezone") { $0.timeZone?.identifier == $1.timeZone?.identifier }
-            check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
-            // `apply` writes `location` unconditionally, and EventKit couples it with the place
-            // (a new string replaces the place, `nil` clears it; checked in memory), so the place
-            // round-trips and is compared whenever the restore runs.
-            check("structured_location") { Self.samePlace(recorded: $0, current: $1) }
-        }
+        check("timezone") { $0.timeZone?.identifier == $1.timeZone?.identifier }
+        check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
+        // `apply` writes `location` unconditionally, and EventKit couples it with the place (a new
+        // string replaces the place, `nil` clears it; checked in memory), so the place round-trips.
+        check("structured_location") { Self.samePlace(recorded: $0, current: $1) }
         // `apply` writes rules only when the restored snapshot recorded them; a delete removes
         // them with the item. No rules and nil are the same (verify #2 / #6).
         if target == nil || target?.recurrenceRules != nil {
@@ -65,9 +60,8 @@ extension ReminderSnapshot {
             if let target, same(target, current) { return }
             changed.append(name)
         }
-        let restores = target != nil
         check("title") { $0.title == $1.title }
-        if restores { check("list") { $0.calendarIdentifier == $1.calendarIdentifier } }
+        check("list") { $0.calendarIdentifier == $1.calendarIdentifier }
         check("notes") { $0.notes == $1.notes }
         // The flag and the instant are one value, so a reminder completed again at another time
         // is not mistaken for "already restored"; the name says which part moved.
@@ -75,7 +69,7 @@ extension ReminderSnapshot {
         check("priority") { $0.priority == $1.priority }
         check("due_date") { Self.sameDateComponents($0.dueDateComponents, $1.dueDateComponents) }
         check("start_date") { Self.sameDateComponents($0.startDateComponents, $1.startDateComponents) }
-        if restores { check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) } }
+        check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
         check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules, allDay: false) }
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
         return changed
@@ -157,22 +151,36 @@ extension RecurrenceRuleSnapshot {
 }
 
 extension UndoPostState {
-    /// Alarms come back from EventKit in no fixed order, so they compare as a multiset; the sound
-    /// is left out (a server may set a default one, verify #7).
+    /// An alarm as the guard compares it: the sound is left out (a server may set a default one),
+    /// and an absolute date compares to the second, like every other date the guard compares.
+    struct AlarmKey {
+        let absoluteDate: Date?
+        let relativeOffset: TimeInterval
+        let location: AlarmSnapshot.Location?
+        let proximity: EKAlarmProximity
+        let emailAddress: String?
+
+        func matches(_ other: AlarmKey) -> Bool {
+            UndoPostState.sameInstant(absoluteDate, other.absoluteDate) && relativeOffset == other.relativeOffset
+                && location == other.location && proximity == other.proximity && emailAddress == other.emailAddress
+        }
+    }
+
+    /// Alarms come back from EventKit in no fixed order, so they compare as a multiset.
     static func sameAlarms(_ a: [AlarmSnapshot], _ b: [AlarmSnapshot]) -> Bool {
-        struct Key: Hashable {
-            let absoluteDate: Date?
-            let relativeOffset: TimeInterval
-            let location: AlarmSnapshot.Location?
-            let proximity: EKAlarmProximity
-            let emailAddress: String?
+        func keys(_ alarms: [AlarmSnapshot]) -> [AlarmKey] {
+            alarms.map { AlarmKey(absoluteDate: $0.absoluteDate, relativeOffset: $0.relativeOffset, location: $0.location,
+                                  proximity: $0.proximity, emailAddress: $0.emailAddress) }
         }
-        func counts(_ alarms: [AlarmSnapshot]) -> [Key: Int] {
-            alarms.reduce(into: [:]) {
-                $0[Key(absoluteDate: $1.absoluteDate, relativeOffset: $1.relativeOffset, location: $1.location,
-                       proximity: $1.proximity, emailAddress: $1.emailAddress), default: 0] += 1
-            }
+        return sameAlarmKeys(keys(a), keys(b))
+    }
+
+    static func sameAlarmKeys(_ a: [AlarmKey], _ b: [AlarmKey]) -> Bool {
+        var unmatched = b
+        for key in a {
+            guard let index = unmatched.firstIndex(where: { $0.matches(key) }) else { return false }
+            unmatched.remove(at: index)
         }
-        return counts(a) == counts(b)
+        return unmatched.isEmpty
     }
 }

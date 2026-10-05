@@ -227,17 +227,21 @@ final class UndoPostStateGuardTests: XCTestCase {
 
     // MARK: - Events: create-undo (deletes)
 
-    /// verify #7: the delete compares what a person edits. Fields a calendar server can rewrite
-    /// after the save (coordinates, alarms, time zone) or that change without an edit (the
-    /// calendar identifier after a resync) are left out, so they cannot block the undo for good.
-    func testCreateUndoComparesTheFieldsAPersonEdits() {
+    /// The delete removes everything the event holds, so every recorded field counts, a moved
+    /// calendar and an added alarm included (PR #259 round 2, finding 1). Only changes a calendar
+    /// server is known to make on its own are exempt (see the next test).
+    func testCreateUndoComparesEveryRecordedField() {
         let compared: [(fields: [String], edit: (EKEvent) -> Void)] = [
             (["title"], { $0.title = "Retro" }),
             (["start_time"], { $0.startDate = $0.startDate.addingTimeInterval(1800) }),
             (["end_time"], { $0.endDate = $0.endDate.addingTimeInterval(1800) }),
+            (["calendar"], { [calendarB] in $0.calendar = calendarB }),
             (["notes"], { $0.notes = "new agenda" }),
-            (["location"], { $0.location = "Lab" }),
+            (["location", "structured_location"], { $0.location = "Lab" }),
             (["url"], { $0.url = URL(string: "https://example.com/other") }),
+            (["timezone"], { $0.timeZone = TimeZone(identifier: "America/New_York") }),
+            (["alarms"], { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
+            (["structured_location"], { [unowned self] in $0.structuredLocation = office(latitude: 24.0) }),
             (["recurrence"], { $0.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)] }),
         ]
         for (fields, edit) in compared {
@@ -246,28 +250,32 @@ final class UndoPostStateGuardTests: XCTestCase {
             edit(event)
             XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), fields, fields[0])
         }
-        let ignored: [(name: String, edit: (EKEvent) -> Void)] = [
-            ("calendar", { [calendarB] in $0.calendar = calendarB }),
-            ("timezone", { $0.timeZone = TimeZone(identifier: "America/New_York") }),
-            ("alarms", { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
-            ("coordinates", { [unowned self] in $0.structuredLocation = office(latitude: 24.0) }),
-        ]
-        for (name, edit) in ignored {
-            let event = makeEvent()
-            let saved = EventSnapshot(from: event)
-            edit(event)
-            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [], name)
-        }
     }
 
-    /// The delete has no value to write, so a title changed back still counts (verify #9 does
-    /// not apply to create-undo): a changed-then-reverted event is the same event either way.
+    /// An alarm sound is the one change a server is known to make on its own; the alarm itself
+    /// (time, kind, place) still counts.
+    func testCreateUndoIgnoresOnlyTheAlarmSound() {
+        let event = makeEvent()
+        let saved = EventSnapshot(from: event)
+        event.alarms?.forEach(event.removeAlarm)
+        let sounding = EKAlarm(relativeOffset: -900)
+        sounding.soundName = "Basso"
+        event.addAlarm(sounding)
+
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [])
+    }
+
+    /// The delete has no value to write, so the "already at the value the undo writes" exemption
+    /// (finding 9 of round 1) does not apply: a changed field counts. A field changed and then
+    /// changed back equals the recorded state again and does not count, like any unchanged field.
     func testCreateUndoHasNoRestoredValueToMatch() {
         let event = makeEvent()
         let saved = EventSnapshot(from: event)
         event.title = "Retro"
-
         XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), ["title"])
+
+        event.title = "Review"
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [])
     }
 
     // MARK: - Reminders
@@ -301,15 +309,17 @@ final class UndoPostStateGuardTests: XCTestCase {
         }
     }
 
-    /// verify #7: as for events, the delete compares what a person edits.
-    func testCreateReminderUndoComparesTheFieldsAPersonEdits() {
+    /// As for events, the delete compares every recorded field, the list and the alarms included.
+    func testCreateReminderUndoComparesEveryRecordedField() {
         let compared: [(field: String, edit: (EKReminder) -> Void)] = [
             ("title", { $0.title = "Pay bills" }),
+            ("list", { [listB] in $0.calendar = listB }),
             ("notes", { $0.notes = nil }),
             ("completed", { $0.isCompleted = true }),
             ("priority", { $0.priority = 5 }),
             ("due_date", { [unowned self] in $0.dueDateComponents = components(hour: 11) }),
             ("start_date", { [unowned self] in $0.startDateComponents = components(hour: 8) }),
+            ("alarms", { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
             ("recurrence", { $0.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: nil)] }),
             ("url", { $0.url = nil }),
         ]
@@ -319,16 +329,19 @@ final class UndoPostStateGuardTests: XCTestCase {
             edit(reminder)
             XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: nil), [field], field)
         }
-        let ignored: [(name: String, edit: (EKReminder) -> Void)] = [
-            ("list", { [listB] in $0.calendar = listB }),
-            ("alarms", { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
-        ]
-        for (name, edit) in ignored {
-            let reminder = makeReminder()
-            let saved = ReminderSnapshot(from: reminder)
-            edit(reminder)
-            XCTAssertEqual(saved.changedFields(in: ReminderSnapshot(from: reminder), restoring: nil), [], name)
+    }
+
+    /// The documented tolerance applies to absolute alarm dates too (round 2, finding 10).
+    /// EventKit itself keeps whole seconds in memory, so the keys are built directly.
+    func testAbsoluteAlarmsCompareToTheSecond() {
+        func key(_ date: Date) -> UndoPostState.AlarmKey {
+            UndoPostState.AlarmKey(absoluteDate: date, relativeOffset: 0, location: nil, proximity: .none, emailAddress: nil)
         }
+        let alarmAt = start.addingTimeInterval(-3600)
+
+        XCTAssertTrue(UndoPostState.sameAlarmKeys([key(alarmAt.addingTimeInterval(0.6))], [key(alarmAt)]))
+        XCTAssertFalse(UndoPostState.sameAlarmKeys([key(alarmAt)], [key(alarmAt.addingTimeInterval(60))]))
+        XCTAssertFalse(UndoPostState.sameAlarmKeys([key(alarmAt), key(alarmAt)], [key(alarmAt)]), "still a multiset")
     }
 
     func testDueDateChangeIsNamed() {
