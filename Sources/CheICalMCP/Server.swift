@@ -330,7 +330,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -441,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for edited or unchecked occurrences). A recurring reminder completion whose identifier now resolves to another occurrence is discarded instead. Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for edited or unchecked occurrences). Two records are discarded instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores (revert it in Calendar if wanted), and a recurring reminder completion whose identifier now resolves to another occurrence. Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([

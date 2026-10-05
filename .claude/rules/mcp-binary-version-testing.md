@@ -91,7 +91,7 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 1. `create_event` → undo 刪掉它；`create_event` → 在 Calendar.app 改標題 → undo 拒絕並列出
    `title`、`undo_history` 仍有該筆、`discard_id` 可移除。
 2. 每週系列 → 在 Calendar.app 單獨改其中一個場次 → undo 以 `modified_occurrences` 拒絕，什麼都沒刪。
-3. `update_event` → 手動把欄位改回原值 → undo 成功。
+3. 一次性（不重複）事件的 `update_event` → 手動把欄位改回原值 → undo 成功。
 4. `complete_reminder` → undo 還原；redo 再完成一次。
 5. 帶欄位建立 → 等至少 60 秒 → 不做任何修改 → undo 要成功刪掉：(a) 有鬧鐘、`location` 字串、
    非本機 `timezone` 的事件；(b) 全天事件（EventKit 存檔前就會自動加一個預設鬧鐘，紀錄裡已有它）；
@@ -100,12 +100,13 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 6. 用 `recurrence.excluded_occurrence_dates` 建立的系列 → undo 一次刪掉整個系列，不出現
    `modified_occurrences`。#182 的「排除日是被移除的場次、不是被單獨修改的場次」只在 iCloud
    看過（2026-10-05）；有其他來源（Google、Exchange）的帳號時，在那裡再做一次。
-7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次的標題 → undo（該場次的
-   標題改回來，仍是 detached）→ undo（整個系列刪掉，不出現 `modified_occurrences`）。再用
-   `span: "all"` 改整個系列做一次：第一個 undo 之後系列的每個場次都還在、都是原值、沒有
-   detached 場次。round 4 之前的 binary 在這兩條路上分別是 `eventkit_error_39`（紀錄卡住）
-   與系列只剩一個 detached 場次（其餘場次消失，#262）。**`span: "all"` 的 update-undo 只在
-   拋棄式日曆上測**；含 #262 修正之前的 binary 會刪掉真實系列的其餘場次，不要拿真實資料試。
+7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次 → undo：拒絕、什麼都沒寫、
+   訊息說要改回請到行事曆，紀錄被丟棄（`undo_history` 原本列為 `Updated recurring event: …
+   (undo not available)`）→ 再 undo（create-undo）：以 `modified_occurrences` 拒絕，系列完整。
+   `span: "future"`、`span: "all"`、為一次性事件加上重複規則、移除重複規則也各做一次：update
+   的 undo 一律拒絕並丟棄、什麼都沒寫。**`span: "all"` 的 update-undo 只在拋棄式日曆上測**；
+   #262 修正之前的 binary 會刪掉真實系列的其餘場次。另外在別的 app（或另一個 process）只改一個
+   場次的時間、只改一個場次的鬧鐘 → create-undo 以 `modified_occurrences` 拒絕。
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 
