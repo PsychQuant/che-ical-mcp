@@ -137,16 +137,15 @@ enum ReminderDateSync {
     /// - with a date-only due they move by whole calendar days onto the due's day and keep
     ///   their time of day.
     /// An existing start date is set to the due's components; on a floating item without a zone,
-    /// so that `writeZonedDue` zones start and due together (#237). A start `isAligned` already
-    /// accepts as date-only (midnight or no time) on the due's day is left alone, so a reminder
-    /// that reads as aligned is a fixed point of realign (verify round 1). Relative and location
+    /// so that `writeZonedDue` zones start and due together (#237). A start that already agrees
+    /// with the due (`startAgrees`, the rule `isAligned` uses) is left alone, so a reminder that
+    /// reads as aligned is a fixed point of realign (verify rounds 1 and 2). Relative and location
     /// alarms are not touched. Returns the number of absolute alarms moved.
     ///
     /// The cost of the anchor: a stale alarm earlier than an intended early alarm becomes the
     /// anchor, and the early alarm then lands after the due by the same spacing.
     private static func realignDates(_ reminder: EKReminder, to due: DateComponents) -> Int {
-        if let current = reminder.startDateComponents,
-           !(isMidnightOrDateOnly(current) && dayShift(from: current, to: due) == 0) {
+        if let current = reminder.startDateComponents, !startAgrees(current, with: due) {
             var start = due
             start.calendar = nil
             if reminder.timeZone == nil { start.timeZone = nil }
@@ -165,28 +164,20 @@ enum ReminderDateSync {
 
     /// #235: whether the start date and the alarm Reminders.app displays agree with the due date.
     /// `nil` without a due date. True only if both hold:
-    /// - there is no start, or a date-only start (or any start under a date-only due) is on the
-    ///   due's day, or a timed start is at the due instant. A start at midnight counts as date-only:
-    ///   the store hands date-only starts back as `00:00` (on device 2026-10-05), as `startChange`
-    ///   also assumes;
+    /// - there is no start, or the start agrees with the due (`startAgrees`);
     /// - there is no absolute alarm, or the earliest one (the displayed one) is at the due
     ///   instant (timed due) or on the due's day (date-only due).
-    /// `requestedTime` is the precision the caller asked for (verify round 1): a timed due that is
-    /// held date-only, because the #237 fallback could not keep its time, is not aligned, whatever
-    /// the start and alarms say.
+    /// `requestedTime`: the caller asked for a timed due, and every timed due this tool writes
+    /// carries an explicit zone (#134). A due held without its time or without its zone, because
+    /// the #237 fallback could not keep them, is not aligned, whatever the start and alarms say
+    /// (verify rounds 1 and 2).
     /// An alarm set apart from the due on purpose reads as not aligned; this is a report, the
     /// tool cannot tell intent from a leftover.
     static func isAligned(_ reminder: EKReminder, requestedTime: Bool = false) -> Bool? {
         guard let due = reminder.dueDateComponents else { return nil }
         let dueIsDateOnly = due.hour == nil
-        if requestedTime && dueIsDateOnly { return false }
-        if let start = reminder.startDateComponents {
-            if dueIsDateOnly || isMidnightOrDateOnly(start) {
-                guard dayShift(from: start, to: due) == 0 else { return false }
-            } else {
-                guard sameInstant(safeDateFromComponents(start), safeDateFromComponents(due)) else { return false }
-            }
-        }
+        if requestedTime && dueLostTimeOrZone(due) { return false }
+        if let start = reminder.startDateComponents, !startAgrees(start, with: due) { return false }
         guard let earliest = (reminder.alarms ?? []).compactMap(\.absoluteDate).min() else { return true }
         if dueIsDateOnly {
             let day = calendar(due.timeZone ?? .current).dateComponents([.year, .month, .day], from: earliest)
@@ -198,9 +189,13 @@ enum ReminderDateSync {
     /// #235 / #237, verify round 1: judges an update on the reminder as saved. The caller saves
     /// first and then calls this; `reload` re-reads the reminder from the store
     /// (`EKObject.refresh()`).
+    /// - If `reload` returns false (the reminder was deleted or invalidated), it is not confirmed:
+    ///   `aligned: false`, and no fallback is written.
     /// - If the update wrote a timed due and it read back without its time or zone, the #237
-    ///   fallback (`writeDueAroundStart`) runs and the reminder is saved and read back again. A
-    ///   failed fallback save is rolled back and logged, not thrown: the update itself is saved and
+    ///   fallback (`writeDueAroundStart`) runs and the reminder is saved and read back again; the
+    ///   `due_date` path can therefore save twice. Both events are logged with constant text and,
+    ///   for a failure, the sanitized error code (`eventkit_error_<N>`), never the reminder's
+    ///   content. A failed fallback save is rolled back, not thrown: the update itself is saved and
     ///   recorded for undo, and the report then says `aligned: false`.
     /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
     ///   other fields describe the write and are kept.
@@ -209,23 +204,46 @@ enum ReminderDateSync {
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
     /// only one of them, so a reminder in that state reads as aligned here as well.
     static func confirmSaved(_ reminder: EKReminder, report: Report, save: () throws -> Void,
-                             reload: () -> Void, rollback: () -> Void) -> Report {
+                             reload: () -> Bool, rollback: () -> Void,
+                             log: (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) -> Report {
         guard let written = report.writtenDue else { return report }
-        reload()
+        var confirmed = report
         let requestedTime = written.hour != nil
+        // Round 2: a reminder that cannot be re-read (deleted or invalidated after the save) is not
+        // confirmed; nothing is written on top of state that was not re-read.
+        guard reload() else {
+            confirmed.aligned = false
+            return confirmed
+        }
         if requestedTime && dueLostTimeOrZone(reminder.dueDateComponents) {
+            log("update_reminder: the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
             do {
                 try save()
             } catch {
                 rollback()
-                FileHandle.standardError.write(Data("update_reminder: saving the #237 due-date fallback failed; rolled back\n".utf8))
+                log("update_reminder: saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
             }
-            reload()
+            guard reload() else {
+                confirmed.aligned = false
+                return confirmed
+            }
         }
-        var confirmed = report
         confirmed.aligned = isAligned(reminder, requestedTime: requestedTime)
         return confirmed
+    }
+
+    /// The start rule `isAligned` and `realignDates` share (verify round 2), so an aligned reminder
+    /// is a fixed point of realign:
+    /// - under a date-only due, a start on the due's day agrees, whatever its time;
+    /// - under a timed due, a start at the due instant agrees, and so does a start on the due's day
+    ///   at midnight or without a time: the store hands date-only starts back as `00:00` (on device
+    ///   2026-10-05), as `startChange` also assumes.
+    private static func startAgrees(_ start: DateComponents, with due: DateComponents) -> Bool {
+        if due.hour == nil || isMidnightOrDateOnly(start) {
+            return dayShift(from: start, to: due) == 0
+        }
+        return sameInstant(safeDateFromComponents(start), safeDateFromComponents(due))
     }
 
     private static func isMidnightOrDateOnly(_ components: DateComponents) -> Bool {

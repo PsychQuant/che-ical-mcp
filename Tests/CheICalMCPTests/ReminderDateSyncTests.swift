@@ -801,7 +801,7 @@ final class ReminderDateSyncTests: XCTestCase {
 
         let confirmed = ReminderDateSync.confirmSaved(reminder, report: report,
                                                       save: { saves += 1 },
-                                                      reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) } },
+                                                      reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) }; return true },
                                                       rollback: { XCTFail("nothing to roll back") })
 
         XCTAssertEqual(saves, 1, "the fallback is saved")
@@ -818,7 +818,7 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(report.aligned, true, "in memory")
 
         let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {},
-                                                      reload: { reminder.startDateComponents = self.components(self.date(2026, 10, 4, 10, in: self.taipei), in: self.taipei) },
+                                                      reload: { reminder.startDateComponents = self.components(self.date(2026, 10, 4, 10, in: self.taipei), in: self.taipei); return true },
                                                       rollback: {})
 
         XCTAssertEqual(confirmed.aligned, false)
@@ -834,7 +834,7 @@ final class ReminderDateSyncTests: XCTestCase {
         var saves = 0
 
         let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { saves += 1 },
-                                                      reload: { self.dropTime(reminder) }, rollback: {})
+                                                      reload: { self.dropTime(reminder); return true }, rollback: {})
 
         XCTAssertEqual(saves, 1, "the fallback is tried once")
         XCTAssertNil(reminder.dueDateComponents?.hour)
@@ -848,7 +848,7 @@ final class ReminderDateSyncTests: XCTestCase {
 
         let confirmed = ReminderDateSync.confirmSaved(reminder, report: report,
                                                       save: { throw NSError(domain: "test", code: 1) },
-                                                      reload: { self.dropTime(reminder) },
+                                                      reload: { self.dropTime(reminder); return true },
                                                       rollback: { rolledBack = true })
 
         XCTAssertTrue(rolledBack)
@@ -861,7 +861,7 @@ final class ReminderDateSyncTests: XCTestCase {
         var reloads = 0
 
         let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { XCTFail("no fallback") },
-                                                      reload: { reloads += 1 }, rollback: {})
+                                                      reload: { reloads += 1; return true }, rollback: {})
 
         XCTAssertNil(confirmed.aligned)
         XCTAssertEqual(confirmed, report)
@@ -958,5 +958,112 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertNil(reminder.dueDateComponents?.hour)
         XCTAssertNil(reminder.dueDateComponents?.timeZone)
         XCTAssertEqual(reminder.dueDateComponents?.day, 7)
+    }
+
+    // MARK: - PR #256 verify round 2
+
+    /// Round 2, item 1: a due that kept its hour but is still floating after the fallback is the
+    /// #237 failure itself, so it is not aligned.
+    func testConfirmSavedReportsNotAlignedWhileTheSavedDueStaysFloating() {
+        let reminder = floatingDateOnlyReminder()
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var saves = 0
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { saves += 1 },
+                                                      reload: { self.dropZone(reminder); return true },
+                                                      rollback: {}, log: { _ in })
+
+        XCTAssertEqual(saves, 1, "the fallback is tried once")
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 10)
+        XCTAssertNil(reminder.dueDateComponents?.timeZone)
+        XCTAssertEqual(confirmed.aligned, false)
+    }
+
+    /// Round 2, items 1 and 4: the zone is lost and the fallback save fails. Not aligned, and the
+    /// log line carries a stable code and nothing from the reminder.
+    func testConfirmSavedReportsNotAlignedWhenTheZoneIsLostAndTheFallbackSaveFails() {
+        let reminder = floatingDateOnlyReminder()
+        reminder.title = "Private title"
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var logged: [String] = []
+        var rolledBack = false
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report,
+                                                      save: { throw NSError(domain: EKErrorDomain, code: 1) },
+                                                      reload: { self.dropZone(reminder); return true },
+                                                      rollback: { rolledBack = true }, log: { logged.append($0) })
+
+        XCTAssertTrue(rolledBack)
+        XCTAssertEqual(confirmed.aligned, false)
+        XCTAssertTrue(logged.contains { $0.contains("eventkit_error_1") }, "\(logged)")
+        XCTAssertFalse(logged.joined().contains("Private title"))
+    }
+
+    /// Round 2, item 2: a reminder that cannot be read back after the save (`refresh()` returned
+    /// false: deleted or invalidated) is not confirmed, so it is not aligned, and no fallback is
+    /// written on top of state that was not re-read.
+    func testConfirmSavedReportsNotAlignedWhenTheReminderCannotBeReadBack() {
+        let reminder = divergedReminder()
+        let report = ReminderDateSync.realign(reminder)
+        XCTAssertEqual(report.aligned, true, "in memory")
+        var saves = 0
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { saves += 1 },
+                                                      reload: { false }, rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, false)
+        XCTAssertEqual(saves, 0)
+    }
+
+    /// Round 2, item 4: the second save is visible in the log, with constant text.
+    func testConfirmSavedLogsTheSecondSave() {
+        let reminder = floatingDateOnlyReminder()
+        reminder.title = "Private title"
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var reloads = 0
+        var logged: [String] = []
+
+        _ = ReminderDateSync.confirmSaved(reminder, report: report, save: {},
+                                          reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) }; return true },
+                                          rollback: {}, log: { logged.append($0) })
+
+        XCTAssertEqual(logged.count, 1, "\(logged)")
+        XCTAssertTrue(logged.first?.contains("saving again") ?? false, "\(logged)")
+        XCTAssertFalse(logged.joined().contains("Private title"))
+    }
+
+    func testATimedDueRequestedButHeldFloatingIsNotAligned() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 8, hour: 10, minute: 0)
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), true, "a floating timed due on its own")
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder, requestedTime: true), false)
+    }
+
+    /// Round 2, item 3: one predicate for `aligned` and realign. For a date-only due any start on
+    /// its day agrees, so realign leaves it, and the reminder is a fixed point of realign.
+    func testRealignLeavesAnyStartOnADateOnlyDuesDayAlone() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 8)
+        reminder.startDateComponents = DateComponents(year: 2026, month: 10, day: 8, hour: 15, minute: 0)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 8, 9)))
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), true)
+
+        let report = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual(report, .init(startDate: .unchanged, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0, aligned: true))
+        XCTAssertEqual(reminder.startDateComponents?.hour, 15)
+    }
+
+    func testRealignMovesAStartOnAnotherDayOntoADateOnlyDue() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 8)
+        reminder.startDateComponents = DateComponents(year: 2026, month: 10, day: 4, hour: 15, minute: 0)
+
+        let report = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual(report.startDate, .shifted)
+        XCTAssertEqual(reminder.startDateComponents?.day, 8)
+        XCTAssertEqual(report.aligned, true)
     }
 }

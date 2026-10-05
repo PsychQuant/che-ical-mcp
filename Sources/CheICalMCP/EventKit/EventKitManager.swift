@@ -1718,7 +1718,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
+        // PR #256 verify round 2: re-read before the first decision, so the no-due check, the
+        // realign anchor and the undo snapshot see edits made elsewhere (Reminders.app) since this
+        // store cached the reminder. `refresh() == false` means it is gone (the #236 convention).
+        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder,
+              reminder.refresh() else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let request = ReminderUpdateRequest(
@@ -1735,7 +1739,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let dateSync = try ReminderUpdateWrite.apply(
             request, to: reminder, calendar: calendar,
             save: { try store.save(reminder, commit: true) },
-            reload: { _ = reminder.refresh() },
+            reload: { reminder.refresh() },
             rollback: { reminder.rollback() })
         markNeedsRefresh()
         let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)

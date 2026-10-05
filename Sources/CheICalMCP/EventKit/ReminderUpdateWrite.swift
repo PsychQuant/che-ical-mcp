@@ -20,12 +20,14 @@ enum ReminderUpdateWrite {
 
     /// Applies `request` to `reminder`, saves it, and returns the date sync judged on the saved
     /// reminder (`ReminderDateSync.confirmSaved`), or `nil` when the due date was not touched.
-    /// `save` writes to the store, `reload` re-reads the reminder (`EKObject.refresh()`), and
+    /// `save` writes to the store, `reload` re-reads the reminder (`EKObject.refresh()`, false
+    /// when the reminder is gone), and
     /// `rollback` discards unsaved changes (`EKObject.rollback()`); when `save` throws, the
     /// changes are rolled back and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
-                      save: () throws -> Void, reload: () -> Void,
+                      save: () throws -> Void, reload: () -> Bool,
                       rollback: () -> Void) throws -> ReminderDateSync.Report? {
+        try checkRealign(request, existingDue: reminder.dueDateComponents)
         if let title = request.title { reminder.title = title }
         if let notes = request.notes { reminder.notes = notes }
         if let priority = request.priority { reminder.priority = priority }

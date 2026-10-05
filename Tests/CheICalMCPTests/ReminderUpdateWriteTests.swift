@@ -58,7 +58,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         let reminder = divergedReminder()
 
         let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", realignToDue: true), to: reminder,
-                                                   calendar: nil, save: {}, reload: {}, rollback: {})
+                                                   calendar: nil, save: {}, reload: { true }, rollback: {})
 
         XCTAssertEqual(report?.aligned, true)
         XCTAssertEqual(absoluteDates(reminder), [date(10, 8, 10)])
@@ -68,7 +68,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         let reminder = divergedReminder()
 
         let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", dueDate: date(10, 8, 10)), to: reminder,
-                                                   calendar: nil, save: {}, reload: {}, rollback: {})
+                                                   calendar: nil, save: {}, reload: { true }, rollback: {})
 
         XCTAssertEqual(report?.aligned, false)
         XCTAssertEqual(absoluteDates(reminder), [date(10, 4, 10)])
@@ -79,7 +79,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         var saves = 0
 
         let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", title: "Renamed"), to: reminder,
-                                                   calendar: nil, save: { saves += 1 }, reload: {}, rollback: {})
+                                                   calendar: nil, save: { saves += 1 }, reload: { true }, rollback: {})
 
         XCTAssertNil(report)
         XCTAssertEqual(reminder.title, "Renamed")
@@ -92,7 +92,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         let list = EKCalendar(for: .reminder, eventStore: store)
 
         _ = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r"), to: reminder, calendar: list,
-                                          save: {}, reload: {}, rollback: {})
+                                          save: {}, reload: { true }, rollback: {})
 
         XCTAssertTrue(reminder.calendar === list)
     }
@@ -108,7 +108,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         XCTAssertThrowsError(try ReminderUpdateWrite.apply(
             ReminderUpdateRequest(identifier: "r", realignToDue: true), to: reminder, calendar: nil,
             save: { throw NSError(domain: "test", code: 1) },
-            reload: { XCTFail("nothing to read back after a failed save") },
+            reload: { XCTFail("nothing to read back after a failed save"); return true },
             rollback: { rolledBack = true }))
 
         XCTAssertTrue(rolledBack)
@@ -122,10 +122,35 @@ final class ReminderUpdateWriteTests: XCTestCase {
         let report = try ReminderUpdateWrite.apply(
             ReminderUpdateRequest(identifier: "r", realignToDue: true), to: reminder, calendar: nil,
             save: { events.append("save") },
-            reload: { events.append("reload"); reminder.startDateComponents = self.components(self.date(10, 4, 10)) },
+            reload: { events.append("reload"); reminder.startDateComponents = self.components(self.date(10, 4, 10)); return true },
             rollback: { XCTFail("nothing to roll back") })
 
         XCTAssertEqual(events, ["save", "reload"])
+        XCTAssertEqual(report?.aligned, false)
+    }
+
+    // MARK: - PR #256 verify round 2
+
+    /// The no-due refusal holds inside `apply` as well, before anything is written.
+    func testApplyRefusesRealignWithNoDueBeforeWriting() {
+        let reminder = EKReminder(eventStore: EKEventStore())
+        reminder.title = "Old"
+        var saves = 0
+
+        XCTAssertThrowsError(try ReminderUpdateWrite.apply(
+            ReminderUpdateRequest(identifier: "r", title: "New", realignToDue: true), to: reminder, calendar: nil,
+            save: { saves += 1 }, reload: { true }, rollback: {}))
+
+        XCTAssertEqual(reminder.title, "Old")
+        XCTAssertEqual(saves, 0)
+    }
+
+    func testAReminderThatCannotBeReadBackAfterTheSaveIsNotAligned() throws {
+        let reminder = divergedReminder()
+
+        let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", realignToDue: true), to: reminder,
+                                                   calendar: nil, save: {}, reload: { false }, rollback: {})
+
         XCTAssertEqual(report?.aligned, false)
     }
 }
