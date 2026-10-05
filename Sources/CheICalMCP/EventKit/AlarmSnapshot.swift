@@ -41,6 +41,43 @@ struct AlarmSnapshot: Hashable {
         soundName = alarm.soundName
     }
 
+    private init(absoluteDate: Date?, relativeOffset: TimeInterval, location: Location?,
+                 proximity: EKAlarmProximity, emailAddress: String?, soundName: String?) {
+        self.absoluteDate = absoluteDate
+        self.relativeOffset = relativeOffset
+        self.location = location
+        self.proximity = proximity
+        self.emailAddress = emailAddress
+        self.soundName = soundName
+    }
+
+    /// The same alarm at another time.
+    private func timed(absoluteDate: Date?, relativeOffset: TimeInterval) -> AlarmSnapshot {
+        AlarmSnapshot(absoluteDate: absoluteDate, relativeOffset: relativeOffset, location: location,
+                      proximity: proximity, emailAddress: emailAddress, soundName: soundName)
+    }
+
+    /// #253 verify #1: the alarms for one occurrence copied out of its series (`span: this`).
+    /// A series carries one absolute date per alarm, tied to the series start; copied as is,
+    /// it would land before a later occurrence and never fire. With the series start known,
+    /// the alarm keeps its distance from the start, measured from the occurrence instead.
+    /// Without it, the alarm goes to the occurrence start as the copy did before #230, and
+    /// `absolute_alarms` is reported. Other alarms are unchanged.
+    static func forSplitOccurrence(_ alarms: [AlarmSnapshot], occurrenceStart: Date,
+                                   seriesStart: Date?) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
+        var movedToStart = false
+        let split = alarms.map { alarm -> AlarmSnapshot in
+            guard let date = alarm.absoluteDate else { return alarm }
+            guard let seriesStart else {
+                movedToStart = true
+                return alarm.timed(absoluteDate: nil, relativeOffset: 0)
+            }
+            return alarm.timed(absoluteDate: occurrenceStart.addingTimeInterval(date.timeIntervalSince(seriesStart)),
+                               relativeOffset: 0)
+        }
+        return (split, movedToStart ? ["absolute_alarms"] : [])
+    }
+
     /// A location alarm reads back with no absolute date and offset 0, so it is the attached
     /// location, not the time, that makes it one.
     func rebuild() -> EKAlarm {

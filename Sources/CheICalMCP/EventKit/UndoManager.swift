@@ -100,7 +100,8 @@ struct EventSnapshot {
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
 
-    init(from event: EKEvent, includeRecurrence: Bool = true) {
+    /// `alarms` replaces the event's own, for a split occurrence (#253 verify #1).
+    init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
@@ -111,7 +112,7 @@ struct EventSnapshot {
         self.location = event.location
         self.url = event.url
         self.isAllDay = event.isAllDay
-        self.alarms = (event.alarms ?? []).map(AlarmSnapshot.init(from:))
+        self.alarms = alarms ?? (event.alarms ?? []).map(AlarmSnapshot.init(from:))
         self.structuredLocationTitle = event.structuredLocation?.title
         self.structuredLocationLat = event.structuredLocation?.geoLocation?.coordinate.latitude
         self.structuredLocationLon = event.structuredLocation?.geoLocation?.coordinate.longitude

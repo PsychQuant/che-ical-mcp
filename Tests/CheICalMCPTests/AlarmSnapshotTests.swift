@@ -120,6 +120,44 @@ final class AlarmSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(kinds).count, 3)
     }
 
+    // MARK: - split occurrence (#253 verify #1)
+
+    /// `move_events_batch` with span 'this' copies one occurrence out of its series. An
+    /// absolute alarm on a series carries one date, tied to the series start; copied as is,
+    /// it lands at that date, possibly long before the occurrence, and never fires.
+    func testSplitKeepsAnAbsoluteAlarmsOffsetFromTheOccurrenceStart() {
+        let seriesStart = absoluteDate
+        let occurrenceStart = seriesStart.addingTimeInterval(14 * 86_400)
+        let alarm = AlarmSnapshot(from: EKAlarm(absoluteDate: seriesStart.addingTimeInterval(-3600)))
+
+        let split = AlarmSnapshot.forSplitOccurrence([alarm], occurrenceStart: occurrenceStart, seriesStart: seriesStart)
+
+        XCTAssertEqual(split.alarms.map(\.absoluteDate), [occurrenceStart.addingTimeInterval(-3600)])
+        XCTAssertEqual(split.notCarriedOver, [])
+    }
+
+    /// Without a reliable series start the alarm falls back to what the copy did before
+    /// #230: an alarm at the occurrence start, reported as not carried over.
+    func testSplitWithoutASeriesStartPutsTheAlarmAtTheOccurrenceStartAndSaysSo() {
+        let alarm = AlarmSnapshot(from: EKAlarm(absoluteDate: absoluteDate))
+
+        let split = AlarmSnapshot.forSplitOccurrence([alarm, alarm], occurrenceStart: absoluteDate.addingTimeInterval(86_400),
+                                                     seriesStart: nil)
+
+        XCTAssertEqual(split.alarms.map(\.absoluteDate), [nil, nil])
+        XCTAssertEqual(split.alarms.map(\.relativeOffset), [0, 0])
+        XCTAssertEqual(split.notCarriedOver, ["absolute_alarms"])
+    }
+
+    func testSplitLeavesRelativeLocationAndEmailAlarmsAsTheyAre() {
+        let alarms = [EKAlarm(relativeOffset: -900), locationAlarm(), emailAlarm()].map(AlarmSnapshot.init(from:))
+
+        let split = AlarmSnapshot.forSplitOccurrence(alarms, occurrenceStart: absoluteDate, seriesStart: nil)
+
+        XCTAssertEqual(split.alarms, alarms)
+        XCTAssertEqual(split.notCarriedOver, [])
+    }
+
     // MARK: - restore
 
     func testRestoreLeavesEqualAlarmsInPlaceWhateverTheirOrder() {
@@ -164,16 +202,17 @@ final class AlarmSnapshotTests: XCTestCase {
                       "the alarm equal to its snapshot must stay in place, not be rebuilt")
     }
 
+    /// Which of two equal alarms stays is not fixed (EventKit does not keep insertion order),
+    /// but it is one of the originals, not a rebuilt one.
     func testRestoreRemovesOnlySurplusDuplicates() {
         let item = EKEvent(eventStore: store)
-        let first = EKAlarm(relativeOffset: -900)
-        item.addAlarm(first)
-        item.addAlarm(EKAlarm(relativeOffset: -900))
+        let originals = [EKAlarm(relativeOffset: -900), EKAlarm(relativeOffset: -900)]
+        originals.forEach(item.addAlarm)
         let recorded = [AlarmSnapshot(from: EKAlarm(relativeOffset: -900))]
 
         XCTAssertTrue(AlarmSnapshot.restore(recorded, to: item))
         XCTAssertEqual(item.alarms?.count, 1)
-        XCTAssertTrue(item.alarms?.first === first)
+        XCTAssertTrue(originals.contains { $0 === item.alarms?.first })
     }
 
     func testRestoreCountsDuplicateAlarms() {
