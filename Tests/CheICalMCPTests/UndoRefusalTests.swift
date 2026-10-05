@@ -464,6 +464,25 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertTrue(message.contains("discard_id"), message)
     }
 
+    /// Round 5 findings 8, 12, 31, 34: a create-undo refused on `recurrence` cannot be fixed by
+    /// changing it back (a span "future" update splits the series and shortens its rule; the split
+    /// cannot be merged), so the message offers only giving up the undo.
+    func testACreateUndoRefusedOnRecurrenceOffersOnlyTheDiscard() {
+        let create = UndoOperation.createEvent(id: "e", title: "Standup", created: UndoSnapshotFixtures.event(title: "Standup"))
+        for fields in [["recurrence"], ["title", "recurrence"]] {
+            let message = EventKitErrorSanitizer.sanitizeForResponse(create.postStateRefusal(verb: .undo, changedFields: fields, current: nil)).code
+            XCTAssertTrue(message.contains("recurrence"), message)
+            XCTAssertTrue(message.contains("split"), message)
+            XCTAssertFalse(message.contains("change it back"), "\(fields): \(message)")
+            XCTAssertTrue(message.contains("discard_id"), message)
+            XCTAssertEqual(UndoFailureDisposition.of(create.postStateRefusal(verb: .undo, changedFields: fields, current: nil)), .restore,
+                           "kept until the user gives it up")
+        }
+        let reminderUpdate = UndoOperation.updateReminder(id: "r", oldSnapshot: UndoSnapshotFixtures.reminder(), saved: UndoSnapshotFixtures.reminder())
+        let message = EventKitErrorSanitizer.sanitizeForResponse(reminderUpdate.postStateRefusal(verb: .undo, changedFields: ["recurrence"], current: nil)).code
+        XCTAssertTrue(message.contains("change it back"), "a reminder's rule changed elsewhere can be changed back: \(message)")
+    }
+
     /// The revert is the user's call too (round 2, finding 12).
     func testARevertIsAlsoTheUsersCall() {
         let message = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup", changedFields: ["title"]).message
