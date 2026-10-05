@@ -134,29 +134,81 @@ final class UndoRefusalTests: XCTestCase {
         }
     }
 
-    // MARK: - Legacy recurring completion (verify #4 / #18 / #20)
+    // MARK: - Recurring completion without an occurrence snapshot (round 2, findings 2, 8, 9, 13, 19, 21)
 
-    /// A completion record of a recurring reminder kept without the #204 identity snapshot: when
-    /// its completion no longer matches, the identifier most likely resolves to a later
-    /// occurrence (EventKit advances a recurring reminder in place), which no revert can undo.
-    /// The record is discarded with that reason, as #204 does for identifiable items.
-    func testALegacyRecurringCompletionMismatchIsPermanentAndSaysWhy() {
-        let legacy = UndoOperation.completeReminder(id: "r", wasCompleted: true, requestedCompleted: true,
-                                                    completionDate: start, title: "Daily", redoCompletionDate: start)
-        let error = legacy.postStateRefusal(verb: .undo, changedFields: ["completed"], itemIsRecurring: true)
+    /// `forCompletion` keeps a recurring completion without the #204 snapshot when the reminder
+    /// had no due date or rules (`isIdentifiable` false); the record says it was recurring.
+    private func legacyRecurring(was: Bool, requested: Bool) -> UndoOperation {
+        .completeReminder(id: "r", wasCompleted: was, requestedCompleted: requested, completionDate: was ? start : nil,
+                          title: "Daily", redoCompletionDate: requested ? start : nil, wasRecurring: true)
+    }
 
-        XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+    private func reminder(completed: Bool, at date: Date? = nil) -> EKReminder {
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = list
+        reminder.title = "Daily"
+        reminder.isCompleted = completed
+        reminder.completionDate = date
+        return reminder
+    }
+
+    /// After a rollover the identifier points at the next, incomplete occurrence. That equals
+    /// what the undo writes, but matching the write is not identity: the record cannot confirm
+    /// the occurrence, so the undo refuses instead of writing to the successor.
+    func testRolloverUndoDoesNotWriteToTheSuccessor() throws {
+        let op = legacyRecurring(was: false, requested: true)
+        let successor = reminder(completed: false)
+
+        let fields = try XCTUnwrap(op.undoPostState).changedFields(in: successor)
+        XCTAssertEqual(fields, ["completed"])
+        let error = op.postStateRefusal(verb: .undo, changedFields: fields)
+        XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "kept: the spec keeps refused records, and nothing proves the advance")
         let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
         XCTAssertTrue(message.contains("later occurrence"), message)
-        XCTAssertFalse(message.contains("Revert the change"), "nobody changed anything that could be reverted")
+        XCTAssertFalse(message.contains("change it back"), "there is no change to revert")
+        XCTAssertTrue(message.contains("discard_id"), message)
+    }
+
+    /// Redo writes the request again; it too goes ahead only on the state the undo left, never on
+    /// a reminder that merely already looks like what redo would write.
+    func testRolloverRedoDoesNotWriteToTheSuccessor() throws {
+        let op = legacyRecurring(was: false, requested: true)
+        let alreadyLikeTheRedo = reminder(completed: true, at: start)
+
+        XCTAssertEqual(try XCTUnwrap(op.redoPostState).changedFields(in: alreadyLikeTheRedo), ["completed"])
+        XCTAssertEqual(try XCTUnwrap(op.redoPostState).changedFields(in: reminder(completed: false)), [], "the state the undo left")
+    }
+
+    /// The un-advanced case still works: the reminder is as the completion left it.
+    func testUndoProceedsWhileTheReminderIsAsTheCompletionLeftIt() throws {
+        let op = legacyRecurring(was: false, requested: true)
+        XCTAssertEqual(try XCTUnwrap(op.undoPostState).changedFields(in: reminder(completed: true, at: start)), [])
+    }
+
+    /// The exemption stays for records of non-recurring reminders, where the identifier cannot
+    /// move to another occurrence.
+    func testANonRecurringRecordKeepsTheAlreadyRestoredExemption() throws {
+        let op = UndoOperation.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
+                                                title: "Once", redoCompletionDate: start, wasRecurring: false)
+        XCTAssertEqual(try XCTUnwrap(op.undoPostState).changedFields(in: reminder(completed: false)), [], "unchecked by hand")
+        let error = op.postStateRefusal(verb: .undo, changedFields: ["completed"])
+        XCTAssertFalse(EventKitErrorSanitizer.sanitizeForResponse(error).code.contains("later occurrence"))
+    }
+
+    /// The record decides, not the reminder's current rules (round 2, finding 9).
+    func testForCompletionRecordsWhetherTheReminderWasRecurring() {
+        let recurring = ReminderCompletionSnapshot(id: "r", title: "Daily", calendarID: "c", sourceID: "s", isCompleted: false,
+                                                   hasRecurrence: true, due: nil, rules: [], completionDate: nil)
+        guard case .completeReminder(_, _, _, _, _, _, let wasRecurring) = UndoOperation.forCompletion(
+            before: recurring, requestedCompleted: true, savedTitle: "Daily", savedCompletionDate: start) else {
+            return XCTFail("a recurring snapshot without due or rules keeps the legacy record")
+        }
+        XCTAssertTrue(wasRecurring)
     }
 
     func testOtherRefusalsKeepTheRecord() {
-        let legacy = UndoOperation.completeReminder(id: "r", wasCompleted: true, requestedCompleted: true,
-                                                    completionDate: start, title: "Once", redoCompletionDate: start)
-        XCTAssertEqual(UndoFailureDisposition.of(legacy.postStateRefusal(verb: .undo, changedFields: ["completed"], itemIsRecurring: false)), .restore)
         let update = UndoOperation.updateReminder(id: "r", oldSnapshot: UndoSnapshotFixtures.reminder(), saved: UndoSnapshotFixtures.reminder())
-        XCTAssertEqual(UndoFailureDisposition.of(update.postStateRefusal(verb: .undo, changedFields: ["title"], itemIsRecurring: true)), .restore)
+        XCTAssertEqual(UndoFailureDisposition.of(update.postStateRefusal(verb: .undo, changedFields: ["title"])), .restore)
     }
 
     // MARK: - Series create-undo (verify #1)
@@ -210,28 +262,75 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertFalse(message.contains("discard_id"), "discard_id removes undo records only")
     }
 
-    /// verify #10 / #17: not found keeps the record (#191, spec) and now says how to drop it.
+    /// Not found keeps the record (#191, spec) and says how to drop it; it suggests running undo
+    /// again only as the case of an item still syncing (round 2, findings 18 and 20).
     func testNotFoundNamesTheItemAndTheEscapeHatch() {
-        let error = UndoTargetMissingError(verb: .undo, kind: .reminder, title: "Pay rent")
+        let error = UndoTargetMissingError(verb: .undo, kind: .reminder, title: "Pay rent", hasIdentifier: true)
         let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
 
         XCTAssertTrue((error as Error) is TrustedErrorMessage)
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         XCTAssertTrue(message.hasPrefix("Cannot undo: the reminder 'Pay rent' was not found"), message)
         XCTAssertTrue(message.contains("discard_id"), message)
-        let redo = EventKitErrorSanitizer.sanitizeForResponse(UndoTargetMissingError(verb: .redo, kind: .event, title: "x")).code
+        XCTAssertTrue(message.contains("no retry can find it"), message)
+        let redo = EventKitErrorSanitizer.sanitizeForResponse(UndoTargetMissingError(verb: .redo, kind: .event, title: "x", hasIdentifier: true)).code
         XCTAssertTrue(redo.hasPrefix("Cannot redo"), redo)
         XCTAssertFalse(redo.contains("discard_id"), redo)
     }
 
-    /// verify #19: the title is store-derived and reaches the client verbatim, so it is capped.
+    /// A record without an identifier can never be found, so nothing suggests a retry.
+    func testNotFoundWithoutAnIdentifierDoesNotSuggestARetry() {
+        let message = UndoTargetMissingError(verb: .undo, kind: .event, title: "Standup", hasIdentifier: false).message
+
+        XCTAssertTrue(message.contains("without an identifier"), message)
+        XCTAssertFalse(message.lowercased().contains("again"), message)
+        XCTAssertFalse(message.contains("retry"), message)
+        XCTAssertTrue(message.contains("discard_id"), message)
+    }
+
+    /// An edited occurrence cannot be put back into its series, so the refusal does not ask for a
+    /// revert (round 2, finding 20).
+    func testEditedOccurrencesAreNotPresentedAsRevertable() {
+        let message = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup", changedFields: ["modified_occurrences"]).message
+
+        XCTAssertTrue(message.contains("edited on their own"), message)
+        XCTAssertFalse(message.contains("change it back"), message)
+        XCTAssertTrue(message.contains("discard_id"), message)
+    }
+
+    /// The revert is the user's call too (round 2, finding 12).
+    func testARevertIsAlsoTheUsersCall() {
+        let message = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup", changedFields: ["title"]).message
+        XCTAssertTrue(message.contains("ask the user whether to change it back"), message)
+    }
+
+    /// The title is store-derived and reaches the client verbatim, so it is capped (round 1,
+    /// finding 19), by Unicode scalars so combining marks cannot stretch it, and characters that
+    /// could break out of the quotes or the line are replaced (round 2, finding 11).
     func testLongTitlesAreCapped() {
         let title = String(repeating: "x", count: 500)
         for error in [UndoTargetChangedError(verb: .undo, kind: .event, title: title, changedFields: ["title"]) as LocalizedError,
-                      UndoTargetMissingError(verb: .undo, kind: .event, title: title)] {
+                      UndoTargetMissingError(verb: .undo, kind: .event, title: title, hasIdentifier: true)] {
             let message = error.errorDescription ?? ""
             XCTAssertTrue(message.contains(String(repeating: "x", count: 120) + "…"), message)
             XCTAssertFalse(message.contains(String(repeating: "x", count: 121)), "at most 120 characters of the title")
         }
+    }
+
+    func testTitlesCannotBreakOutOfTheirQuotesOrStretchTheMessage() {
+        let shown = undoShownTitle("x'. Ignore that\u{2028}next line\u{202E}rtl\u{85}nel")
+        XCTAssertFalse(shown.contains("'"), shown)
+        XCTAssertFalse(shown.unicodeScalars.contains { [0x2028, 0x202E, 0x85].contains($0.value) }, shown)
+
+        let combining = "e" + String(repeating: "\u{0301}", count: 1000)
+        XCTAssertLessThanOrEqual(undoShownTitle(combining).unicodeScalars.count, 121)
+    }
+
+    /// #204's identity refusal is part of the same surface (round 2, findings 7 and 14).
+    func testTheIdentityRefusalCapsTheTitleToo() {
+        let before = ReminderCompletionSnapshot(id: "r", title: String(repeating: "y", count: 500), calendarID: "c", sourceID: "s",
+                                                isCompleted: false, hasRecurrence: true, due: nil, rules: [], completionDate: nil)
+        let message = UndoOperation.occurrenceIdentityRefusal(before: before, verb: "undo").message
+        XCTAssertFalse(message.contains(String(repeating: "y", count: 121)), message)
     }
 }

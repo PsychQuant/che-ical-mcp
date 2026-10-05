@@ -52,12 +52,13 @@ extension EventKitManager {
     ///   their own also block it (`modified_occurrences`, verify #1).
     /// - a recurring completion: the #204 identity guard first (a different occurrence is
     ///   permanent), then the completion check (transient).
-    /// - a legacy completion record on a recurring reminder: a mismatch is permanent
-    ///   (`postStateRefusal`, verify #4).
+    /// - a completion record of a recurring reminder without the #204 snapshot: no "already in
+    ///   the state the write gives" exemption, and a mismatch is refused and kept with the
+    ///   unconfirmed-occurrence message (`postStateRefusal`, PR #259 round 2 finding 2).
     func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb) async throws -> EKCalendarItem? {
         guard let expected = verb == .undo ? operation.undoPostState : operation.redoPostState else { return nil }
         let refusal: (EKCalendarItem, [String]) -> Error = { item, fields in
-            operation.postStateRefusal(verb: verb, changedFields: fields, itemIsRecurring: item.hasRecurrenceRules)
+            operation.postStateRefusal(verb: verb, changedFields: fields)
         }
         switch expected.kind {
         case .event:

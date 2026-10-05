@@ -47,8 +47,11 @@ enum UndoPostState {
     case eventCalendar(id: String, title: String, calendarIdentifier: String, restoringCalendarIdentifier: String)
     /// The reminder as the write left it; `restoring` as for events.
     case reminder(id: String, title: String, state: ReminderSnapshot, restoring: ReminderSnapshot?)
-    /// A completion write: the state it left, and the state the undo (or redo) writes.
-    case reminderCompletion(id: String, title: String, state: CompletionState, restoring: CompletionState)
+    /// A completion write: the state it left, and the state the undo (or redo) writes. `restoring`
+    /// is nil when reaching that state must not count as "already done": a record of a recurring
+    /// reminder without the #204 occurrence snapshot, where after a rollover the identifier points
+    /// at the next occurrence, which may look exactly like what the write would produce.
+    case reminderCompletion(id: String, title: String, state: CompletionState, restoring: CompletionState?)
 
     var kind: Kind {
         switch self {
@@ -90,7 +93,8 @@ enum UndoPostState {
         case .reminderCompletion(_, _, let state, let restoring):
             guard let reminder = item as? EKReminder else { return ["item_type"] }
             let current = CompletionState(isCompleted: reminder.isCompleted, completionDate: reminder.completionDate)
-            guard !state.matches(current), !restoring.matches(current) else { return [] }
+            if state.matches(current) { return [] }
+            if let restoring, restoring.matches(current) { return [] }
             return [state.isCompleted == current.isCompleted ? "completion_date" : "completed"]
         }
     }
@@ -164,14 +168,10 @@ extension UndoOperation {
             return .reminder(id: id, title: title, state: created, restoring: nil)
         case .updateReminder(let id, let oldSnapshot, let saved):
             return .reminder(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
-        case .completeReminder(let id, let wasCompleted, let requestedCompleted, let completionDate, let title, let redoCompletionDate):
-            return .reminderCompletion(id: id, title: title,
-                                       state: .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
-                                       restoring: .init(isCompleted: wasCompleted, completionDate: wasCompleted ? completionDate : nil))
-        case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
-            return .reminderCompletion(id: before.id, title: before.title,
-                                       state: .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
-                                       restoring: .init(isCompleted: before.isCompleted, completionDate: before.isCompleted ? before.completionDate : nil))
+        case .completeReminder, .completeRecurringReminder:
+            guard let completion = completionStates else { return nil }
+            return .reminderCompletion(id: completion.id, title: completion.title, state: completion.written,
+                                       restoring: completion.identityConfirmed ? completion.undoWrites : nil)
         case .deleteEvent, .deleteReminder, .batch:
             return nil
         }
@@ -180,8 +180,30 @@ extension UndoOperation {
     /// What a redo must find: the state the undo left, and the request it writes again. Only the
     /// completion records write on redo; the others return an instruction (#247).
     var redoPostState: UndoPostState? {
-        guard case .reminderCompletion(let id, let title, let state, let restoring)? = undoPostState else { return nil }
-        return .reminderCompletion(id: id, title: title, state: restoring, restoring: state)
+        guard let completion = completionStates else { return nil }
+        return .reminderCompletion(id: completion.id, title: completion.title, state: completion.undoWrites,
+                                   restoring: completion.identityConfirmed ? completion.written : nil)
+    }
+
+    /// A completion record's two states: what the completion wrote, and what undo writes back.
+    /// `identityConfirmed` is false for a record of a recurring reminder kept without the #204
+    /// occurrence snapshot (PR #259 round 2, finding 2).
+    private var completionStates: (id: String, title: String, written: UndoPostState.CompletionState,
+                                   undoWrites: UndoPostState.CompletionState, identityConfirmed: Bool)? {
+        switch self {
+        case .completeReminder(let id, let wasCompleted, let requestedCompleted, let completionDate, let title, let redoCompletionDate, let wasRecurring):
+            return (id, title,
+                    .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
+                    .init(isCompleted: wasCompleted, completionDate: wasCompleted ? completionDate : nil),
+                    !wasRecurring)
+        case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
+            return (before.id, before.title,
+                    .init(isCompleted: requestedCompleted, completionDate: requestedCompleted ? redoCompletionDate : nil),
+                    .init(isCompleted: before.isCompleted, completionDate: before.isCompleted ? before.completionDate : nil),
+                    true)
+        default:
+            return nil
+        }
     }
 }
 

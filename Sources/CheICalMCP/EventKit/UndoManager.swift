@@ -254,7 +254,10 @@ enum UndoOperation {
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
     /// pre-write instant undo restores. Neither has a default: dropping them must not compile.
-    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?)
+    /// #236: `wasRecurring` records that the reminder repeated at write time: such a record has no
+    /// #204 occurrence snapshot, so undo and redo cannot confirm which occurrence the identifier
+    /// points at after a rollover and go ahead only on the exact state they expect.
+    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?, wasRecurring: Bool)
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
     /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
@@ -284,7 +287,7 @@ enum UndoOperation {
             return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateReminder(_, let old, _):
             return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
-        case .completeReminder(_, _, _, _, let title, _):
+        case .completeReminder(_, _, _, _, let title, _, _):
             return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
@@ -468,7 +471,8 @@ extension UndoOperation {
             return .completeRecurringReminder(before: before, requestedCompleted: requestedCompleted, redoCompletionDate: savedCompletionDate)
         }
         return .completeReminder(id: before.id, wasCompleted: before.isCompleted, requestedCompleted: requestedCompleted,
-                                 completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate)
+                                 completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate,
+                                 wasRecurring: before.hasRecurrence)
     }
 }
 
@@ -479,7 +483,7 @@ extension UndoOperation {
     /// reopening a reminder on device. `nil` for records that are not completions.
     func completionWrite(undo: Bool, now: Date) -> ReminderCompletionWrite? {
         switch self {
-        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _, let redoCompletionDate):
+        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _, let redoCompletionDate, _):
             return undo ? ReminderCompletionWrite.plan(isCompleted: wasCompleted, recorded: completionDate, now: now)
                         : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: redoCompletionDate, now: now)
         case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):

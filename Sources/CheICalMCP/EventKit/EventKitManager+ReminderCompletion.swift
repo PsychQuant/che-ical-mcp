@@ -44,14 +44,13 @@ extension EventKitManager {
     /// (with the read paths' refresh discipline), before the completion check; not
     /// found stays transient there, as for every other arm (#191).
     func ensureSameOccurrence(_ before: ReminderCompletionSnapshot, _ reminder: EKReminder, verb: String) throws {
-        let title = EventKitErrorSanitizer.sanitizeForInterpolation(before.title)
         guard before.matchesOccurrence(ReminderCompletionSnapshot(from: reminder)) else {
-            throw UnrecoverableUndoError(message: "Cannot \(verb) recurring reminder completion of '\(title)': its identifier no longer resolves to the recorded occurrence — the series advanced (EventKit keeps the finished occurrence as a separate completed record) or the item's due, rules, list or source were edited since. Act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder). This history entry was discarded so earlier operations remain undoable.")
+            throw UndoOperation.occurrenceIdentityRefusal(before: before, verb: verb)
         }
     }
 
-    /// #236: `verifiedReminder` runs the identity guard above, then the completion post-state
-    /// check (a mismatch there is transient and keeps the record).
+    /// #236: `verifiedReminder` runs the identity guard above (a mismatch is permanent and
+    /// discards the record), then the completion post-state check (a mismatch keeps the record).
     func undoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot) async throws -> String {
         let reminder = try await verifiedReminder(of: operation, verb: .undo)
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)

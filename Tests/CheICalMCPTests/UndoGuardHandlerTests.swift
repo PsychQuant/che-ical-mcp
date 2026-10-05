@@ -65,7 +65,7 @@ final class UndoGuardHandlerTests: XCTestCase {
     func testRedoRefusalKeepsTheRedoRecord() async throws {
         let history = CalendarUndoManager()
         await history.record(.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true,
-                                               completionDate: nil, title: "Pay rent", redoCompletionDate: nil))
+                                               completionDate: nil, title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
         let undone = try await history.beginUndo()
         await history.finishHistoryOperation(try XCTUnwrap(undone))   // as after a successful undo
         let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: RefusingExecutor())

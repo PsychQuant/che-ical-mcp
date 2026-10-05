@@ -114,7 +114,7 @@ final class UndoRecordPostStateTests: XCTestCase {
 
     // MARK: - Completions
 
-    private func completionStates(_ state: UndoPostState?) -> (expected: UndoPostState.CompletionState, restoring: UndoPostState.CompletionState)? {
+    private func completionStates(_ state: UndoPostState?) -> (expected: UndoPostState.CompletionState, restoring: UndoPostState.CompletionState?)? {
         guard case .reminderCompletion(_, _, let expected, let restoring)? = state else { return nil }
         return (expected, restoring)
     }
@@ -122,7 +122,7 @@ final class UndoRecordPostStateTests: XCTestCase {
     func testCompletionUndoExpectsTheRequestAndRedoExpectsThePriorState() throws {
         let earlier = instant.addingTimeInterval(-86_400)
         let op = UndoOperation.completeReminder(id: "r1", wasCompleted: true, requestedCompleted: false,
-                                                completionDate: earlier, title: "Once", redoCompletionDate: nil)
+                                                completionDate: earlier, title: "Once", redoCompletionDate: nil, wasRecurring: false)
 
         let undo = try XCTUnwrap(completionStates(op.undoPostState))
         XCTAssertEqual(op.undoPostState?.itemID, "r1")
@@ -135,7 +135,7 @@ final class UndoRecordPostStateTests: XCTestCase {
 
     func testCompletionUndoComparesTheSavedInstant() throws {
         let op = UndoOperation.completeReminder(id: "r1", wasCompleted: false, requestedCompleted: true,
-                                                completionDate: nil, title: "Once", redoCompletionDate: instant)
+                                                completionDate: nil, title: "Once", redoCompletionDate: instant, wasRecurring: false)
         let reminder = makeReminder(title: "Once")
         reminder.isCompleted = true
         reminder.completionDate = instant.addingTimeInterval(3600)   // re-completed elsewhere

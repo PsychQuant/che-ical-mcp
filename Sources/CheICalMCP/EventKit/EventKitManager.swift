@@ -2123,7 +2123,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
-        case .completeReminder(_, let wasCompleted, _, _, let title, _):
+        case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
@@ -2169,7 +2169,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(let id, _, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
 
-        case .completeReminder(_, _, let requestedCompleted, _, let title, _):
+        case .completeReminder(_, _, let requestedCompleted, _, let title, _, _):
             // Redo re-applies the recorded request (#196: never the opposite of
             // wasCompleted — that reopened an idempotently completed reminder), and only
             // while the reminder is in the state the undo left (#236).
