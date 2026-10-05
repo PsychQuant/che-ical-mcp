@@ -89,18 +89,31 @@ fi
 
 echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + plugin.json all at $SOURCE_VERSION"
 
+# #238: files from an earlier run of this version (a stale .mcpb reported 1.18.0 in the
+# first v1.19.0 build) are removed before building, and again if this run fails, so a
+# failed run never leaves a file that looks shippable.
+PACKED_MCPB="$MCPB_DIR/che-ical-mcp-${SOURCE_VERSION}.mcpb"
+UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
+csp_clear_release_artifacts "$PACKED_MCPB" "$UNIVERSAL_BINARY"
+trap 'rc=$?; if [[ $rc -ne 0 ]]; then csp_clear_release_artifacts "$PACKED_MCPB" "$UNIVERSAL_BINARY"; echo "Build failed (exit $rc): removed $PACKED_MCPB and $UNIVERSAL_BINARY with their .sha256 files (#238)" >&2; fi' EXIT
+
+# The signing decision is made once, here, and used both for strict checking below and
+# for signing in step 6, so the two cannot disagree (csp_decide_signing in scripts/lib).
+csp_decide_signing
+
 # Steps 3-4: Build for both architectures
 # #238: under the swiftbuild build system (Swift 6.4 default) both --arch builds write
 # to the same bin path, so each product is copied out right after its own build —
 # before the next build overwrites it — and the staged copy (the file that gets
 # packaged) is checked by check_staged_product (scripts/lib): the file, exactly that
 # architecture, and a `--version` that matches AppVersion.current. For a build that will
-# be signed (csp_release_build: REQUIRE_CODESIGN=1/true, or DEVELOPER_ID set without
-# SKIP_CODESIGN) an architecture this host cannot run is an error; otherwise it is a
-# visible note. After lipo the packaged slices must equal the checked ones, and after
-# signing the final file is run again (check_final_binary). The per-arch paths under
-# .build/<triple>/release are no longer written and must not be read: they hold
-# whatever an older toolchain left there.
+# be signed, or must be (csp_release_build: the decision above chose to sign, or
+# REQUIRE_CODESIGN=1/true), an architecture this host cannot run is an error — so a
+# signed build on Apple Silicon needs Rosetta; otherwise it is a visible note. After lipo
+# the packaged slices must equal the checked ones, and after signing the final file must
+# still hold exactly those two slices and is run again (check_final_binary). The
+# per-arch paths under .build/<triple>/release are no longer written and must not be
+# read: they hold whatever an older toolchain left there.
 if csp_release_build; then
     export CHECK_STAGED_STRICT=1
 fi
@@ -134,7 +147,6 @@ mkdir -p "$SERVER_DIR"
 
 ARM64_BINARY="$STAGE_DIR/CheICalMCP-arm64"
 X64_BINARY="$STAGE_DIR/CheICalMCP-x86_64"
-UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 
 # Both staged products were checked in build_arch (#238), which exits on any failure.
 # rm -f forces fresh inode (see Makefile install: target for the rationale —
@@ -183,19 +195,8 @@ echo "  written to: $SHA256_FILE"
 #   No DEVELOPER_ID env or no cert in keychain → auto-skip with warning
 #     (default fork-friendly behavior for direct `./scripts/build-mcpb.sh`)
 #   Otherwise → run sign-and-notarize.sh
+#   (SHOULD_SIGN / SKIP_REASON come from csp_decide_signing, run before building.)
 echo ""
-SHOULD_SIGN=true
-SKIP_REASON=""
-if [[ "${SKIP_CODESIGN:-}" == "1" || "${SKIP_CODESIGN:-}" == "true" ]]; then
-    SHOULD_SIGN=false
-    SKIP_REASON="SKIP_CODESIGN=$SKIP_CODESIGN"
-elif [[ -z "${DEVELOPER_ID:-}" ]]; then
-    SHOULD_SIGN=false
-    SKIP_REASON="DEVELOPER_ID env not set"
-elif ! security find-identity -p codesigning -v 2>/dev/null | grep -qF "$DEVELOPER_ID"; then
-    SHOULD_SIGN=false
-    SKIP_REASON="codesigning identity '$DEVELOPER_ID' not in keychain"
-fi
 
 if [[ "$SHOULD_SIGN" == "false" ]]; then
     if [[ "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ]]; then
