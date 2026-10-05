@@ -851,7 +851,7 @@ class CheICalMCPServer {
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees, coordinates and absolute-date alarms are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method and any not_carried_over fields; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
+                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees and coordinates are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method and any not_carried_over fields; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([

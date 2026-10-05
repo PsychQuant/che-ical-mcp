@@ -1359,7 +1359,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
-        let newEvent = makeCopy(of: sourceEvent, in: targetCalendar)
+        let newEvent = Self.makeCopy(of: sourceEvent, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
         try eventStore.save(newEvent, span: .thisEvent)
         return newEvent
@@ -1421,7 +1421,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         defer { markNeedsRefresh() }
 
         let copyOut: () throws -> EventMoveExecutor.Copied = {
-            let copy = self.makeCopy(of: subject, in: targetCalendar)
+            let copy = Self.makeCopy(of: subject, in: targetCalendar, store: self.eventStore)
             // A copy removes one occurrence (.thisEvent), so undo restores a standalone
             // occurrence rather than duplicating the original series (#208).
             let snapshot = EventSnapshot(from: subject, includeRecurrence: false)
@@ -1471,8 +1471,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// The fields a copy keeps. Recurrence and attendees are not among them; the move
     /// policy refuses before a copy would drop those (#226).
-    private func makeCopy(of source: EKEvent, in calendar: EKCalendar) -> EKEvent {
-        let copy = EKEvent(eventStore: eventStore)
+    static func makeCopy(of source: EKEvent, in calendar: EKCalendar, store: EKEventStore) -> EKEvent {
+        let copy = EKEvent(eventStore: store)
         copy.title = source.title
         copy.startDate = source.startDate
         copy.endDate = source.endDate
@@ -1482,8 +1482,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         copy.isAllDay = source.isAllDay
         copy.timeZone = source.timeZone
         copy.calendar = calendar
+        // #230: whole alarms; rebuilt from offsets, absolute and location alarms landed at the
+        // event start and email alarms became display alarms.
         for alarm in source.alarms ?? [] {
-            copy.addAlarm(EKAlarm(relativeOffset: alarm.relativeOffset))
+            copy.addAlarm(AlarmSnapshot(from: alarm).rebuild())
         }
         return copy
     }
@@ -1491,17 +1493,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Fields the source actually had that `makeCopy` did not keep (#226).
     static func fieldsNotCarriedOver(from source: EKEvent, to copy: EKEvent) -> [String] {
         lostFields(hasCoordinates: source.structuredLocation?.geoLocation != nil,
-                   hasAbsoluteAlarm: (source.alarms ?? []).contains(where: { $0.absoluteDate != nil }),
                    sourceAvailability: source.availability,
                    copyAvailability: copy.availability)
     }
 
-    static func lostFields(hasCoordinates: Bool, hasAbsoluteAlarm: Bool,
+    static func lostFields(hasCoordinates: Bool,
                            sourceAvailability: EKEventAvailability,
                            copyAvailability: EKEventAvailability) -> [String] {
         var lost: [String] = []
         if hasCoordinates { lost.append("structured_location") }
-        if hasAbsoluteAlarm { lost.append("absolute_alarms") }
         if sourceAvailability != copyAvailability { lost.append("availability") }
         return lost
     }
