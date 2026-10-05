@@ -62,6 +62,51 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
         }
     }
 
+    /// A date-only start renders as a date-only due does: no time, no instant, and
+    /// the legacy strings fall on host-local midnight.
+    func testDateOnlyStartMirrorsADateOnlyDue() async throws {
+        let components = DateComponents(year: 2026, month: 10, day: 9)
+        let snapshot = ReminderReadSnapshot(id: "date-only", title: "R", dueDateComponents: components,
+                                            startDateComponents: components)
+        let midnight = try XCTUnwrap(Calendar.current.date(from: components))
+        for (tool, args) in tools {
+            let value = try await item(tool, args, snapshot)
+            let start = try XCTUnwrap(value["start"] as? [String: Any], tool)
+            let due = try XCTUnwrap(value["due"] as? [String: Any], tool)
+            XCTAssertEqual(start as NSDictionary, due as NSDictionary, tool)
+            XCTAssertEqual(start["date"] as? String, "2026-10-09", tool)
+            XCTAssertTrue(start["time"] is NSNull, tool)
+            XCTAssertTrue(start["date_time"] is NSNull, tool)
+            XCTAssertEqual(value["start_date"] as? String, ISO8601DateFormatter().string(from: midnight), tool)
+            XCTAssertEqual(value["start_date_local"] as? String, "2026-10-09T00:00:00", tool)
+            XCTAssertEqual(value["start_date"] as? String, value["due_date"] as? String, tool)
+            XCTAssertEqual(value["start_date_local"] as? String, value["due_date_local"] as? String, tool)
+        }
+    }
+
+    /// Pins today's output, not the wanted one (#252). A start that EventKit fills in
+    /// carries `nanosecond = 0`; the renderer shared with `due` prints that as `.000`,
+    /// so the same wall time reads `10:00:00.000` on `start` and `10:00:00` on `due`.
+    /// A fix for #252 has to change this test on purpose.
+    func testStartWithNanosecondZeroRendersMillisecondsWhereDueDoesNot() async throws {
+        let start = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9,
+                                   hour: 10, minute: 0, second: 0, nanosecond: 0)
+        let due = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9, hour: 10, minute: 0)
+        let snapshot = ReminderReadSnapshot(id: "nanos", title: "R", dueDateComponents: due,
+                                            startDateComponents: start)
+        for (tool, args) in tools {
+            let value = try await item(tool, args, snapshot)
+            let renderedStart = try XCTUnwrap(value["start"] as? [String: Any], tool)
+            let renderedDue = try XCTUnwrap(value["due"] as? [String: Any], tool)
+            XCTAssertEqual(renderedStart["time"] as? String, "10:00:00.000", tool)
+            XCTAssertEqual(renderedStart["date_time"] as? String, "2026-10-09T02:00:00.000Z", tool)
+            XCTAssertEqual(renderedDue["time"] as? String, "10:00:00", tool)
+            XCTAssertEqual(renderedDue["date_time"] as? String, "2026-10-09T02:00:00Z", tool)
+            // The legacy strings drop sub-seconds, so these two agree.
+            XCTAssertEqual(value["start_date"] as? String, value["due_date"] as? String, tool)
+        }
+    }
+
     func testStartWithoutADueDateIsStillReported() async throws {
         let start = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 11, hour: 9, minute: 30)
         let snapshot = ReminderReadSnapshot(id: "start-only", title: "R", startDateComponents: start)
