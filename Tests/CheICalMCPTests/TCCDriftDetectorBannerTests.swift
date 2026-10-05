@@ -8,11 +8,14 @@
 //
 // Both the compile-time `#if !CI_BUILD` exclusion AND the runtime `skipIfCI()` guard
 // are now removed: these binary-spawn tests run on CI. The precaution is no longer
-// load-bearing because `spawnAndCaptureStderr` bounds every wait — `maxWait` poll,
-// SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap with a force-reap
-// SIGKILL — so a stuck child fails fast (~6s/test worst case) instead of wedging the
-// 20m job timeout. The spawned binary also inherits the same EventKit fast-fail under
-// CI=1, so the banner path (which only reads `authorizationStatus`, never
+// load-bearing because `spawnAndCaptureStderr` bounds every wait — the `maxWait` cap
+// (10s by default; since #233 it caps a hung child instead of giving the child a fixed
+// 1s window to write), SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap
+// with a force-reap SIGKILL — so a stuck child costs at most ~16.5s per test (10 + 0.5s
+// SIGTERM grace + 3 + 1s force-reap + two 1s drain bounds) instead of wedging the 20m
+// job timeout. A healthy child exits on stdin EOF right after the banner, so normal runs
+// take well under a second. The spawned binary also inherits the same EventKit fast-fail
+// under CI=1, so the banner path (which only reads `authorizationStatus`, never
 // `requestFullAccess`) has no blocking primitive left to hang on.
 
 import CheMCPKit
@@ -45,9 +48,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     }
 
     /// Spawn the binary, close its stdin, and wait for it to exit, terminating it if it is
-    /// still running after `maxWait` seconds. Returns (stderr_text, exit_status). With stdin
-    /// at EOF the MCP server loop has no JSON-RPC to read and exits by itself right after
-    /// the banner, so a normal run returns in well under a second.
+    /// still running after `maxWait` seconds. Returns (stderr_text, exit_status,
+    /// untilMatchedAfter; see `until` below). With stdin at EOF the MCP server loop has no
+    /// JSON-RPC to read and exits by itself right after the banner, so a normal run returns
+    /// in well under a second.
     ///
     /// `maxWait` is a cap for a hung child, not the time a child gets to emit its output
     /// (#233). The banner is a single write at the end of `emitStartupBanner()`, after up
@@ -381,11 +385,12 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         // A freshly-copied binary at a never-seen path incurs a one-time macOS Gatekeeper
         // first-exec assessment before `main` runs — measured ~3.7s cold here (vs ~0.3s once
-        // assessed). The banner only emits after that, so the default 1.0s maxWait would
-        // SIGTERM the child before it ever prints. The continuous stderr drain captures the
-        // banner the moment it lands, so we just need a wait budget that comfortably exceeds
-        // cold-exec assessment; 10s gives margin for slower/CI hosts without risking a job hang
-        // (the post-kill waitUntilExit is independently capped at 3s).
+        // assessed). The banner only emits after that. The helper waits for the child to exit
+        // (it exits on stdin EOF right after the banner), so the cap only has to comfortably
+        // exceed cold-exec assessment; 10s gives margin for slower/CI hosts without risking a
+        // job hang (the post-kill waitUntilExit is independently capped at 3s). 10s has also
+        // been the helper's default since #233; it stays explicit so this test keeps its
+        // budget if the default changes.
         let (stderr, _, _) = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
 
         XCTAssertTrue(
