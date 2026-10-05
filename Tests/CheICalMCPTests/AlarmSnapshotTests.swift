@@ -103,9 +103,14 @@ final class AlarmSnapshotTests: XCTestCase {
 
     /// Round-1 verify #6, pinned: the header says setting a sound clears the email address,
     /// but EventKit (macOS 27) keeps both on one alarm and reports it as an email alarm,
-    /// whichever is set last. `rebuild` sets the email address first, then the sound.
-    func testEmailAndSoundOnOneAlarmBothComeBackAsAnEmailAlarm() {
-        let snapshot = AlarmSnapshot(from: emailAndSoundAlarm())
+    /// whichever is set last. `rebuild` sets the email address first, then the sound. Where
+    /// EventKit follows its header (verify round 2, 11), there is nothing to pin: skipped.
+    func testEmailAndSoundOnOneAlarmBothComeBackAsAnEmailAlarm() throws {
+        let alarm = emailAndSoundAlarm()
+        guard alarm.emailAddress != nil, alarm.soundName != nil else {
+            throw XCTSkip("EventKit on this macOS clears the email address when a sound is set")
+        }
+        let snapshot = AlarmSnapshot(from: alarm)
         XCTAssertEqual(snapshot.emailAddress, "owner@example.com")
         XCTAssertEqual(snapshot.soundName, "Ping")
 
@@ -120,29 +125,16 @@ final class AlarmSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(kinds).count, 3)
     }
 
-    // MARK: - split occurrence (#253 verify #1)
+    // MARK: - split occurrence (#253 verify round 2, D2)
 
-    /// `move_events_batch` with span 'this' copies one occurrence out of its series. An
-    /// absolute alarm on a series carries one date, tied to the series start; copied as is,
-    /// it lands at that date, possibly long before the occurrence, and never fires.
-    func testSplitKeepsAnAbsoluteAlarmsOffsetFromTheOccurrenceStart() {
-        let seriesStart = absoluteDate
-        let occurrenceStart = seriesStart.addingTimeInterval(14 * 86_400)
-        let alarm = AlarmSnapshot(from: EKAlarm(absoluteDate: seriesStart.addingTimeInterval(-3600)))
-
-        let split = AlarmSnapshot.forSplitOccurrence([alarm], occurrenceStart: occurrenceStart, seriesStart: seriesStart)
-
-        XCTAssertEqual(split.alarms.map(\.absoluteDate), [occurrenceStart.addingTimeInterval(-3600)])
-        XCTAssertEqual(split.notCarriedOver, [])
-    }
-
-    /// Without a reliable series start the alarm falls back to what the copy did before
-    /// #230: an alarm at the occurrence start, reported as not carried over.
-    func testSplitWithoutASeriesStartPutsTheAlarmAtTheOccurrenceStartAndSaysSo() {
+    /// `move_events_batch` with span 'this' copies one occurrence out of its series. A series
+    /// carries one date per absolute alarm, which a later occurrence has already passed. The
+    /// occurrence's own date cannot be worked out reliably (it needs the series start), so the
+    /// alarm goes to the occurrence start, as every copied alarm did before #230, and says so.
+    func testSplitPutsAnAbsoluteAlarmAtTheOccurrenceStartAndSaysSo() {
         let alarm = AlarmSnapshot(from: EKAlarm(absoluteDate: absoluteDate))
 
-        let split = AlarmSnapshot.forSplitOccurrence([alarm, alarm], occurrenceStart: absoluteDate.addingTimeInterval(86_400),
-                                                     seriesStart: nil)
+        let split = AlarmSnapshot.forSplitOccurrence([alarm, alarm])
 
         XCTAssertEqual(split.alarms.map(\.absoluteDate), [nil, nil])
         XCTAssertEqual(split.alarms.map(\.relativeOffset), [0, 0])
@@ -152,7 +144,7 @@ final class AlarmSnapshotTests: XCTestCase {
     func testSplitLeavesRelativeLocationAndEmailAlarmsAsTheyAre() {
         let alarms = [EKAlarm(relativeOffset: -900), locationAlarm(), emailAlarm()].map(AlarmSnapshot.init(from:))
 
-        let split = AlarmSnapshot.forSplitOccurrence(alarms, occurrenceStart: absoluteDate, seriesStart: nil)
+        let split = AlarmSnapshot.forSplitOccurrence(alarms)
 
         XCTAssertEqual(split.alarms, alarms)
         XCTAssertEqual(split.notCarriedOver, [])

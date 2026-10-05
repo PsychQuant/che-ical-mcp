@@ -68,7 +68,8 @@ struct RecurrenceRuleSnapshot: Equatable {
         // The initializer has no week-start parameter and picks its own default (Monday for
         // weekly rules), and the property is read-only. The setter exists at run time; check
         // for it so that a future EventKit without it leaves the default rather than raising
-        // an undefined-key exception.
+        // an undefined-key exception. Checked on device (iCloud list and calendar, macOS 27,
+        // 2026-10-05): a week start written this way is saved and reads back from a new store.
         if rule.firstDayOfTheWeek != firstDayOfTheWeek,
            rule.responds(to: NSSelectorFromString("setFirstDayOfTheWeek:")) {
             rule.setValue(firstDayOfTheWeek, forKey: "firstDayOfTheWeek")

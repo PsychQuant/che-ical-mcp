@@ -68,61 +68,49 @@ final class EventMoveFieldsTests: XCTestCase {
         XCTAssertEqual(copy.alarms?.count, 4)
     }
 
-    // MARK: - split (#253 verify #1)
+    // MARK: - copy-out alarms (#253 verify round 2, D2)
 
-    private let seriesStart = Date(timeIntervalSince1970: 1_800_086_400)
-
-    private func series() -> EKEvent {
-        let master = EKEvent(eventStore: store)
-        master.startDate = seriesStart
-        master.endDate = seriesStart.addingTimeInterval(3600)
-        master.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: nil))
-        return master
-    }
-
-    /// An occurrence two weeks in: it reads the series' alarm, with the series' date.
+    /// An occurrence two weeks into a series: it reads the series' absolute alarm, with the
+    /// series' date.
     private func occurrence() -> EKEvent {
         let event = EKEvent(eventStore: store)
-        event.startDate = seriesStart.addingTimeInterval(14 * 86_400)
+        event.startDate = Date(timeIntervalSince1970: 1_800_086_400 + 14 * 86_400)
         event.endDate = event.startDate.addingTimeInterval(3600)
-        event.addAlarm(EKAlarm(absoluteDate: seriesStart.addingTimeInterval(-3600)))
+        event.addAlarm(EKAlarm(absoluteDate: Date(timeIntervalSince1970: 1_800_082_800)))
         event.addAlarm(EKAlarm(relativeOffset: -900))
         return event
     }
 
-    func testSplitCopyMovesAnAbsoluteAlarmWithTheOccurrence() {
+    func testSplitCopyPutsAnAbsoluteAlarmAtTheOccurrenceStartAndSaysSo() {
         let subject = occurrence()
 
-        let split = EventKitManager.splitAlarms(of: subject, series: series())
-        let copy = EventKitManager.makeCopy(of: subject, alarms: split.alarms,
+        let planned = EventKitManager.copyOutAlarms(of: subject, isSplit: true)
+        let copy = EventKitManager.makeCopy(of: subject, alarms: planned.alarms,
                                             in: EKCalendar(for: .event, eventStore: store), store: store)
 
-        XCTAssertEqual(Set((copy.alarms ?? []).compactMap(\.absoluteDate)), [subject.startDate.addingTimeInterval(-3600)])
-        XCTAssertEqual(copy.alarms?.count, 2)
-        XCTAssertEqual(split.notCarriedOver, [])
+        XCTAssertEqual((copy.alarms ?? []).compactMap(\.absoluteDate), [])
+        XCTAssertEqual(Set((copy.alarms ?? []).map(\.relativeOffset)), [0, -900])
+        XCTAssertEqual(planned.notCarriedOver, ["absolute_alarms"])
     }
 
-    /// The series start is the start of the event fetched by identifier only while that
-    /// event still carries the rule.
-    func testSplitWithoutARecurringSeriesFallsBackAndReportsAbsoluteAlarms() {
-        let notASeries = EKEvent(eventStore: store)
-        notASeries.startDate = seriesStart
-        notASeries.endDate = seriesStart.addingTimeInterval(3600)
+    /// A fallback copy of a one-off event keeps the absolute date: it is the event's own.
+    func testFallbackCopyKeepsAnAbsoluteAlarmsDate() {
+        let subject = occurrence()
 
-        let split = EventKitManager.splitAlarms(of: occurrence(), series: notASeries)
+        let planned = EventKitManager.copyOutAlarms(of: subject, isSplit: false)
 
-        XCTAssertEqual(split.alarms.compactMap(\.absoluteDate), [])
-        XCTAssertEqual(split.notCarriedOver, ["absolute_alarms"])
+        XCTAssertEqual(planned.alarms.compactMap(\.absoluteDate), [Date(timeIntervalSince1970: 1_800_082_800)])
+        XCTAssertEqual(planned.notCarriedOver, [])
     }
 
-    /// The undo record of a split recreates the occurrence; its alarms follow the same rule.
-    func testSplitUndoSnapshotUsesTheSplitAlarms() {
+    /// Undo of a split recreates the occurrence with the alarms the copy was given.
+    func testSplitUndoSnapshotUsesTheCopiedAlarms() {
         let subject = occurrence()
         subject.calendar = EKCalendar(for: .event, eventStore: store)
-        let split = EventKitManager.splitAlarms(of: subject, series: series())
+        let planned = EventKitManager.copyOutAlarms(of: subject, isSplit: true)
 
-        let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: split.alarms)
+        let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
 
-        XCTAssertEqual(snapshot.alarms, split.alarms)
+        XCTAssertEqual(snapshot.alarms, planned.alarms)
     }
 }

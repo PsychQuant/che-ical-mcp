@@ -1356,35 +1356,33 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
-    /// fields it keeps, and `EventCopyOperation.saveCopy` for the time-only retry. Returns the
-    /// fields the source had that the copy did not keep. Moves go through `moveEvent` /
-    /// `moveEventForCopyTool` (#226).
+    /// fields it keeps, and `EventCopyOperation.saveCopy` for a refused copy. Moves go through
+    /// `moveEvent` / `moveEventForCopyTool` (#226).
     func copyEvent(
         identifier: String,
         toCalendarName: String,
         toCalendarSource: String? = nil
-    ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
+    ) async throws -> EKEvent {
         try await ensureCalendarAccess()
         guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
+        let alarms = (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:))
+        let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
-        let saved = try EventCopyOperation.saveCopy(
-            alarms: (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:)),
-            onRetry: { Self.logTimeOnlyRetry(identifier: identifier, error: $0) }
-        ) { alarms in
-            let copy = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
-            try eventStore.save(copy, span: .thisEvent)
-            return copy
+        try EventCopyOperation.saveCopy(carrying: alarms,
+                                        logFailure: { Self.logCopyFailure(identifier: identifier, error: $0) }) {
+            try eventStore.save(newEvent, span: .thisEvent)
         }
-        return (saved.value, Self.fieldsNotCarriedOver(from: sourceEvent, to: saved.value) + saved.notCarriedOver)
+        return newEvent
     }
 
-    /// The refused first save is not the tool's error (the retry decides that), so it goes to
-    /// stderr only, sanitized like any other write failure.
-    private static func logTimeOnlyRetry(identifier: String, error: Error) {
-        _ = EventKitErrorSanitizer.writeFailureLog(handler: "copyEvent.timeOnlyAlarmRetry", identifier: identifier, error: error)
+    /// A refused copy that carries location, email or sound alarms is reported by name
+    /// (`EventKitError.copyRefused`), a trusted message that is not logged; the underlying
+    /// error goes to stderr here, sanitized like any other write failure.
+    private static func logCopyFailure(identifier: String, error: Error) -> String {
+        EventKitErrorSanitizer.writeFailureLog(handler: "copyEvent", identifier: identifier, error: error)
     }
 
     /// `copy_event` with `delete_original` (#226). copy_event has no occurrence_date, so a
@@ -1443,18 +1441,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         defer { markNeedsRefresh() }
 
         let copyOut: (_ isSplit: Bool) throws -> EventMoveExecutor.Copied = { isSplit in
-            // A split occurrence's absolute alarms follow the occurrence (#253 verify #1).
-            let split = isSplit ? Self.splitAlarms(of: subject, series: master) : nil
+            // A split occurrence's absolute alarms go to its start (#253 verify round 2, D2).
+            let planned = Self.copyOutAlarms(of: subject, isSplit: isSplit)
             // A copy removes one occurrence (.thisEvent), so undo restores a standalone
-            // occurrence rather than duplicating the original series (#208).
-            let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: split?.alarms)
+            // occurrence rather than duplicating the original series (#208), with the alarms
+            // the copy was given.
+            let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
+            let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
-                // The source is removed only after a save succeeds, retry included (#253 verify #2).
-                try EventCopyOperation.saveCopy(
-                    alarms: split?.alarms ?? (subject.alarms ?? []).map(AlarmSnapshot.init(from:)),
-                    onRetry: { Self.logTimeOnlyRetry(identifier: identifier, error: $0) }
-                ) { alarms in
-                    let copy = Self.makeCopy(of: subject, alarms: alarms, in: targetCalendar, store: self.eventStore)
+                // A refused copy names its location, email or sound alarms; the source is removed
+                // only after the copy is saved (#253 verify round 2, D1).
+                try EventCopyOperation.saveCopy(carrying: planned.alarms,
+                                                logFailure: { Self.logCopyFailure(identifier: identifier, error: $0) }) {
                     try self.eventStore.save(copy, span: .thisEvent)
                     return copy
                 }
@@ -1462,10 +1460,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 try self.eventStore.remove(subject, span: .thisEvent)
             })
             undo = outcome.undo
-            let copy = outcome.value.value
-            return (copy.eventIdentifier ?? "",
-                    Self.fieldsNotCarriedOver(from: subject, to: copy) + (split?.notCarriedOver ?? [])
-                        + outcome.value.notCarriedOver)
+            return (outcome.value.eventIdentifier ?? "",
+                    Self.fieldsNotCarriedOver(from: subject, to: outcome.value) + planned.notCarriedOver)
         }
 
         let result = try EventMoveExecutor.run(
@@ -1526,16 +1522,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return copy
     }
 
-    /// #253 verify #1: the alarms for `occurrence` copied out of `series`, the event fetched
-    /// by identifier. Its start is taken as the series start only while it carries the rule
-    /// and is not itself a detached occurrence; otherwise absolute alarms go to the
-    /// occurrence start and are reported. Checked on device (iCloud, 2026-10-05): that event
-    /// reports the series start even after its first occurrence was moved or deleted, and a
-    /// later occurrence reads the series' absolute alarm date.
-    static func splitAlarms(of occurrence: EKEvent, series: EKEvent) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
-        let seriesStart: Date? = series.hasRecurrenceRules && !series.isDetached ? series.startDate : nil
-        return AlarmSnapshot.forSplitOccurrence((occurrence.alarms ?? []).map(AlarmSnapshot.init(from:)),
-                                                occurrenceStart: occurrence.startDate, seriesStart: seriesStart)
+    /// The alarms a copy-out writes: the source's own, or for an occurrence split out of its
+    /// series those of `AlarmSnapshot.forSplitOccurrence` (#253 verify round 2, D2).
+    static func copyOutAlarms(of source: EKEvent, isSplit: Bool) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
+        let alarms = (source.alarms ?? []).map(AlarmSnapshot.init(from:))
+        return isSplit ? AlarmSnapshot.forSplitOccurrence(alarms) : (alarms, [])
     }
 
     /// Fields the source actually had that `makeCopy` did not keep (#226).
@@ -2313,6 +2304,11 @@ enum EventKitError: LocalizedError {
     /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
+    /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
+    /// refuse. `code` is the sanitized code of the underlying error and `alarmKinds` are
+    /// `AlarmSnapshot.kindsSomeCalendarsMayRefuse` names, so the message holds no EventKit
+    /// text and no user input.
+    case copyRefused(code: String, alarmKinds: [String])
 
     var errorDescription: String? {
         switch self {
@@ -2395,6 +2391,8 @@ enum EventKitError: LocalizedError {
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
         case .moveRefused(let reason):
             return reason
+        case .copyRefused(let code, let alarmKinds):
+            return "The copy could not be saved (\(code)); the original event is unchanged. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse. Remove those alarms from the event or choose another calendar, then try again."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }

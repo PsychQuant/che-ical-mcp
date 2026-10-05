@@ -64,22 +64,21 @@ final class RecurrenceRuleSnapshotTests: XCTestCase {
         XCTAssertEqual(rebuilt.daysOfTheWeek?.first?.weekNumber, 2)
     }
 
-    /// Every other Monday and Sunday, weeks starting on Sunday (`WKST=SU`). EventKit has no
-    /// public setter for the week start; a rule read back from a calendar written by another
-    /// client carries it, so the test sets it the way the store does.
-    private func everyOtherWeekStartingSunday() -> EKRecurrenceRule {
+    /// Every other Monday and Sunday, weeks starting on Sunday (`WKST=SU`), as a rule written
+    /// by another client reads back. See `setWeekStart(_:on:)` for how the test sets it.
+    private func everyOtherWeekStartingSunday() throws -> EKRecurrenceRule {
         let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 2,
                                     daysOfTheWeek: [EKRecurrenceDayOfWeek(.monday), EKRecurrenceDayOfWeek(.sunday)],
                                     daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
                                     daysOfTheYear: nil, setPositions: nil, end: EKRecurrenceEnd(occurrenceCount: 6))
-        rule.setValue(1, forKey: "firstDayOfTheWeek")
+        try setWeekStart(1, on: rule)
         return rule
     }
 
     /// #253 verify #8: with an interval above 1 the week start decides which Sunday belongs
     /// to which week; the snapshot dropped it, so delete-undo rebuilt the rule with Monday.
-    func testWeekStartRoundtrip() {
-        let rule = everyOtherWeekStartingSunday()
+    func testWeekStartRoundtrip() throws {
+        let rule = try everyOtherWeekStartingSunday()
         XCTAssertEqual(rule.firstDayOfTheWeek, 1)
 
         let snapshot = RecurrenceRuleSnapshot(from: rule)
@@ -90,10 +89,10 @@ final class RecurrenceRuleSnapshotTests: XCTestCase {
     }
 
     /// Equality decides whether update-undo rewrites the rules, so it must see the week start.
-    func testRulesThatDifferOnlyInWeekStartAreNotEqual() {
-        let sunday = everyOtherWeekStartingSunday()
-        let monday = everyOtherWeekStartingSunday()
-        monday.setValue(2, forKey: "firstDayOfTheWeek")
+    func testRulesThatDifferOnlyInWeekStartAreNotEqual() throws {
+        let sunday = try everyOtherWeekStartingSunday()
+        let monday = try everyOtherWeekStartingSunday()
+        try setWeekStart(2, on: monday)
 
         XCTAssertNotEqual(RecurrenceRuleSnapshot(from: sunday), RecurrenceRuleSnapshot(from: monday))
     }

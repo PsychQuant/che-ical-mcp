@@ -57,16 +57,10 @@ struct AlarmSnapshot: Hashable {
                       proximity: proximity, emailAddress: emailAddress, soundName: soundName)
     }
 
-    /// #253 verify #2: the alarm with only its time (absolute date or offset), the form every
-    /// calendar accepts. A location alarm becomes an alarm at the start, as every copy was
-    /// before #230.
-    var timeOnly: AlarmSnapshot {
-        AlarmSnapshot(absoluteDate: absoluteDate, relativeOffset: relativeOffset, location: nil,
-                      proximity: .none, emailAddress: nil, soundName: nil)
-    }
-
-    /// The kinds `timeOnly` drops from `alarms`, in a fixed order; empty when it drops nothing.
-    static func kindsDroppedByTimeOnly(_ alarms: [AlarmSnapshot]) -> [String] {
+    /// #253 verify round 2 (D1): the kinds of alarm in `alarms` that a calendar outside iCloud
+    /// may refuse (unverified), in a fixed order: `location_alarms`, `email_alarms`,
+    /// `alarm_sounds`. A refused copy names them.
+    static func kindsSomeCalendarsMayRefuse(_ alarms: [AlarmSnapshot]) -> [String] {
         var kinds: [String] = []
         if alarms.contains(where: { $0.location != nil }) { kinds.append("location_alarms") }
         if alarms.contains(where: { $0.emailAddress != nil }) { kinds.append("email_alarms") }
@@ -74,25 +68,17 @@ struct AlarmSnapshot: Hashable {
         return kinds
     }
 
-    /// #253 verify #1: the alarms for one occurrence copied out of its series (`span: this`).
-    /// A series carries one absolute date per alarm, tied to the series start; copied as is,
-    /// it would land before a later occurrence and never fire. With the series start known,
-    /// the alarm keeps its distance from the start, measured from the occurrence instead.
-    /// Without it, the alarm goes to the occurrence start as the copy did before #230, and
-    /// `absolute_alarms` is reported. Other alarms are unchanged.
-    static func forSplitOccurrence(_ alarms: [AlarmSnapshot], occurrenceStart: Date,
-                                   seriesStart: Date?) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
-        var movedToStart = false
-        let split = alarms.map { alarm -> AlarmSnapshot in
-            guard let date = alarm.absoluteDate else { return alarm }
-            guard let seriesStart else {
-                movedToStart = true
-                return alarm.timed(absoluteDate: nil, relativeOffset: 0)
-            }
-            return alarm.timed(absoluteDate: occurrenceStart.addingTimeInterval(date.timeIntervalSince(seriesStart)),
-                               relativeOffset: 0)
-        }
-        return (split, movedToStart ? ["absolute_alarms"] : [])
+    /// #253 verify round 2 (D2): the alarms for one occurrence copied out of its series
+    /// (`span: this`). A series carries one date per absolute alarm, which a later occurrence
+    /// has already passed, so the copy would get an alarm that never fires. The occurrence's
+    /// own date would need the series start, which EventKit does not report reliably (it
+    /// documents the event fetched by identifier as the first occurrence; a detached
+    /// occurrence carries its own date). So an absolute alarm goes to the occurrence start,
+    /// as every copied alarm did before #230, and `absolute_alarms` is reported. Other alarms
+    /// are unchanged.
+    static func forSplitOccurrence(_ alarms: [AlarmSnapshot]) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
+        let split = alarms.map { $0.absoluteDate == nil ? $0 : $0.timed(absoluteDate: nil, relativeOffset: 0) }
+        return (split, alarms.contains { $0.absoluteDate != nil } ? ["absolute_alarms"] : [])
     }
 
     /// A location alarm reads back with no absolute date and offset 0, so it is the attached

@@ -42,92 +42,85 @@ final class EventCopyOperationTests: XCTestCase {
         XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, removeSource: { throw Failure.remove }))
     }
 
-    // MARK: - time-only retry (#253 verify #2)
+    // MARK: - refused copy (#253 verify round 2, D1)
 
-    enum SaveFailure: Error { case first, retry }
-    private let absoluteDate = Date(timeIntervalSince1970: 1_800_000_000)
+    enum SaveFailure: Error { case refused }
 
-    /// Every kind a calendar outside iCloud might refuse: a location alarm, an email alarm,
-    /// a sound; plus time-only alarms, which every calendar accepts.
+    /// Every kind a calendar outside iCloud might refuse (a location alarm, an email alarm, a
+    /// sound), plus time-only alarms, which every calendar accepts.
     private func alarms() -> [AlarmSnapshot] {
-        let place = EKStructuredLocation(title: "Office")
         let location = EKAlarm()
-        location.structuredLocation = place
+        location.structuredLocation = EKStructuredLocation(title: "Office")
         location.proximity = .enter
         let email = EKAlarm(relativeOffset: -3600)
         email.emailAddress = "owner@example.com"
         let sound = EKAlarm(relativeOffset: -7200)
         sound.soundName = "Ping"
-        return [EKAlarm(absoluteDate: absoluteDate), EKAlarm(relativeOffset: -900), location, email, sound]
-            .map(AlarmSnapshot.init(from:))
+        return [EKAlarm(absoluteDate: Date(timeIntervalSince1970: 1_800_000_000)), EKAlarm(relativeOffset: -900),
+                location, email, sound].map(AlarmSnapshot.init(from:))
     }
 
     private var timeOnly: [AlarmSnapshot] {
-        [EKAlarm(absoluteDate: absoluteDate), EKAlarm(relativeOffset: -900), EKAlarm(relativeOffset: 0),
-         EKAlarm(relativeOffset: -3600), EKAlarm(relativeOffset: -7200)].map(AlarmSnapshot.init(from:))
+        [EKAlarm(absoluteDate: Date(timeIntervalSince1970: 1_800_000_000)), EKAlarm(relativeOffset: -900)]
+            .map(AlarmSnapshot.init(from:))
     }
 
-    func testASavedCopyDropsNothing() throws {
-        var attempts: [[AlarmSnapshot]] = []
-        let saved = try EventCopyOperation.saveCopy(alarms: alarms()) { attempt in attempts.append(attempt); return "copy" }
-
-        XCTAssertEqual(saved.value, "copy")
-        XCTAssertEqual(saved.notCarriedOver, [])
-        XCTAssertEqual(attempts, [alarms()])
-    }
-
-    /// A target that refuses the alarms used to make copy_event and the move fallback fail
-    /// where the copy (with time-only alarms) used to succeed.
-    func testARefusedCopyIsSavedAgainWithTimeOnlyAlarmsAndSaysWhatWasDropped() throws {
-        var attempts: [[AlarmSnapshot]] = []
-        var refused: [Error] = []
-        let saved = try EventCopyOperation.saveCopy(alarms: alarms(), onRetry: { refused.append($0) }) { attempt -> String in
-            attempts.append(attempt)
-            if attempts.count == 1 { throw SaveFailure.first }
+    func testASavedCopyIsSavedOnce() throws {
+        var attempts = 0
+        let value = try EventCopyOperation.saveCopy(carrying: alarms(), logFailure: { _ in XCTFail("nothing to log"); return "" }) {
+            attempts += 1
             return "copy"
         }
-
-        XCTAssertEqual(saved.value, "copy")
-        XCTAssertEqual(refused.map { $0 as? SaveFailure }, [.first], "the refused save is logged, not swallowed")
-        XCTAssertEqual(attempts.count, 2)
-        XCTAssertEqual(Set(attempts[1]), Set(timeOnly))
-        XCTAssertEqual(saved.notCarriedOver, ["location_alarms", "email_alarms", "alarm_sounds"])
-    }
-
-    /// Without such alarms the failure is not about alarms: it surfaces as before, no retry.
-    func testAFailureWithTimeOnlyAlarmsSurfacesWithoutARetry() {
-        var attempts = 0
-        XCTAssertThrowsError(try EventCopyOperation.saveCopy(alarms: timeOnly) { _ -> String in
-            attempts += 1
-            throw SaveFailure.first
-        }) { error in
-            XCTAssertEqual(error as? SaveFailure, .first)
-        }
+        XCTAssertEqual(value, "copy")
         XCTAssertEqual(attempts, 1)
     }
 
-    /// The retry is the copy as it was saved before #230, so its error is the one a copy
-    /// would have reported then.
-    func testAFailedRetrySurfacesItsError() {
+    /// Round 1 retried a refused copy with time-only alarms; the retry could not undo the
+    /// refused copy and fired on any error. Now the copy fails, as it did before that retry,
+    /// and the error names the alarms some calendars refuse so the caller can decide. The
+    /// underlying error goes to the log, and its code into the message.
+    func testARefusedCopyFailsOnceAndNamesItsLocationEmailAndSoundAlarms() {
         var attempts = 0
-        XCTAssertThrowsError(try EventCopyOperation.saveCopy(alarms: alarms()) { _ -> String in
+        var logged: [Error] = []
+        XCTAssertThrowsError(try EventCopyOperation.saveCopy(carrying: alarms(),
+                                                             logFailure: { logged.append($0); return "eventkit_error_1" }) { () throws -> String in
             attempts += 1
-            throw attempts == 1 ? SaveFailure.first : SaveFailure.retry
+            throw SaveFailure.refused
         }) { error in
-            XCTAssertEqual(error as? SaveFailure, .retry)
+            guard case .copyRefused(let code, let kinds)? = error as? EventKitError else { return XCTFail("\(error)") }
+            XCTAssertEqual(code, "eventkit_error_1")
+            XCTAssertEqual(kinds, ["location_alarms", "email_alarms", "alarm_sounds"])
         }
-        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(attempts, 1, "a refused copy is not saved again")
+        XCTAssertEqual(logged.map { $0 as? SaveFailure }, [.refused])
     }
 
-    func testOnlyTheKindsPresentAreReported() throws {
+    /// Without such alarms there is nothing to name: the error surfaces unchanged.
+    func testAFailureWithTimeOnlyAlarmsSurfacesUnchanged() {
+        XCTAssertThrowsError(try EventCopyOperation.saveCopy(carrying: timeOnly,
+                                                             logFailure: { _ in XCTFail("logged by the caller as before"); return "" }) { () throws -> String in
+            throw SaveFailure.refused
+        }) { error in
+            XCTAssertEqual(error as? SaveFailure, .refused)
+        }
+    }
+
+    func testOnlyTheKindsPresentAreNamed() {
         let sound = EKAlarm(relativeOffset: -60)
         sound.soundName = "Ping"
-        var attempts = 0
-        let saved = try EventCopyOperation.saveCopy(alarms: [AlarmSnapshot(from: sound)]) { _ -> String in
-            attempts += 1
-            if attempts == 1 { throw SaveFailure.first }
-            return "copy"
+        XCTAssertThrowsError(try EventCopyOperation.saveCopy(carrying: [AlarmSnapshot(from: sound)],
+                                                             logFailure: { _ in "eventkit_error_1" }) { () throws -> String in
+            throw SaveFailure.refused
+        }) { error in
+            guard case .copyRefused(_, let kinds)? = error as? EventKitError else { return XCTFail("\(error)") }
+            XCTAssertEqual(kinds, ["alarm_sounds"])
         }
-        XCTAssertEqual(saved.notCarriedOver, ["alarm_sounds"])
+    }
+
+    func testTheRefusalMessageGivesTheCodeAndTheAlarmKinds() {
+        let message = EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms", "alarm_sounds"])
+            .errorDescription ?? ""
+        XCTAssertTrue(message.contains("eventkit_error_1"), message)
+        XCTAssertTrue(message.contains("location_alarms, alarm_sounds"), message)
     }
 }
