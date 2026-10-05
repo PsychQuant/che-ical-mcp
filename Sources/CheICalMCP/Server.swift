@@ -2562,9 +2562,6 @@ class CheICalMCPServer {
             response["id_changed"] = move.eventIdentifier != eventId
             response["method"] = move.method.rawValue
             if !move.notCarriedOver.isEmpty { response["not_carried_over"] = move.notCarriedOver }
-        } else if !newEvent.notCarriedOver.isEmpty {
-            // #253 verify #2: a plain copy says what it did not keep, as a fallback copy does.
-            response["not_carried_over"] = newEvent.notCarriedOver
         }
         return try actionResult(response)
     }

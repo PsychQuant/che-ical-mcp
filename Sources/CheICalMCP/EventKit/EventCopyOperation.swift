@@ -15,21 +15,21 @@ enum EventCopyOperation {
         return Outcome(value: value, undo: nil)
     }
 
-    /// #253 verify #2: `save` builds a copy with the given alarms and saves it. Since #230 a
-    /// copy carries location, email and sound alarms, which a calendar outside iCloud may
-    /// refuse; before, every copied alarm was time-only and such a copy succeeded. So when
-    /// the first save fails and the alarms carry any of those, the copy is saved once more
-    /// with time-only alarms and the dropped kinds are returned. Without them, or when the
-    /// retry fails too, the error surfaces as before. `onRetry` sees the first error.
-    static func saveCopy<Value>(alarms: [AlarmSnapshot], onRetry: (Error) -> Void = { _ in },
-                                save: ([AlarmSnapshot]) throws -> Value) throws -> (value: Value, notCarriedOver: [String]) {
+    /// #253 verify round 2 (D1): saves a copy that carries `alarms`. Since #230 a copy keeps
+    /// location, email and sound alarms, and whether a calendar outside iCloud accepts them is
+    /// unverified. A refused copy is not retried (a retry could not undo the refused copy, and
+    /// could not tell an alarm refusal from any other failure): it fails as before, and when it
+    /// carries any of those alarms the error names them, so the caller can remove them or
+    /// choose another calendar. `logFailure` writes the underlying error to stderr and returns
+    /// its sanitized code for the message. Without such alarms the error surfaces unchanged.
+    static func saveCopy<Value>(carrying alarms: [AlarmSnapshot], logFailure: (Error) -> String,
+                                save: () throws -> Value) throws -> Value {
         do {
-            return (try save(alarms), [])
+            return try save()
         } catch {
-            let dropped = AlarmSnapshot.kindsDroppedByTimeOnly(alarms)
-            guard !dropped.isEmpty else { throw error }
-            onRetry(error)
-            return (try save(alarms.map(\.timeOnly)), dropped)
+            let kinds = AlarmSnapshot.kindsSomeCalendarsMayRefuse(alarms)
+            guard !kinds.isEmpty else { throw error }
+            throw EventKitError.copyRefused(code: logFailure(error), alarmKinds: kinds)
         }
     }
 }

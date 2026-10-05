@@ -57,16 +57,10 @@ struct AlarmSnapshot: Hashable {
                       proximity: proximity, emailAddress: emailAddress, soundName: soundName)
     }
 
-    /// #253 verify #2: the alarm with only its time (absolute date or offset), the form every
-    /// calendar accepts. A location alarm becomes an alarm at the start, as every copy was
-    /// before #230.
-    var timeOnly: AlarmSnapshot {
-        AlarmSnapshot(absoluteDate: absoluteDate, relativeOffset: relativeOffset, location: nil,
-                      proximity: .none, emailAddress: nil, soundName: nil)
-    }
-
-    /// The kinds `timeOnly` drops from `alarms`, in a fixed order; empty when it drops nothing.
-    static func kindsDroppedByTimeOnly(_ alarms: [AlarmSnapshot]) -> [String] {
+    /// #253 verify round 2 (D1): the kinds of alarm in `alarms` that a calendar outside iCloud
+    /// may refuse (unverified), in a fixed order: `location_alarms`, `email_alarms`,
+    /// `alarm_sounds`. A refused copy names them.
+    static func kindsSomeCalendarsMayRefuse(_ alarms: [AlarmSnapshot]) -> [String] {
         var kinds: [String] = []
         if alarms.contains(where: { $0.location != nil }) { kinds.append("location_alarms") }
         if alarms.contains(where: { $0.emailAddress != nil }) { kinds.append("email_alarms") }
