@@ -113,8 +113,13 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    (g) 一次性事件改標題 → 再加上重複規則 → undo（拒絕並丟棄）→ undo：以「it repeats now」拒絕並丟棄，
        什麼都沒寫；(h) 一次性事件改標題 → 在別的 app 讓它變成重複事件 → undo：同 (g)。
    另外在別的 app（或另一個 process）只改一個場次的時間、只改一個場次的鬧鐘 → create-undo 以
-   `modified_occurrences` 拒絕。
+   `modified_occurrences` 拒絕。(i) 一次性事件 `move_events_batch` 到另一個拋棄式日曆 → undo 搬回
+   （對照組）；再做一次，搬移後在別的 app 讓它變成重複事件 → undo：「Cannot undo the move …
+   it repeats now」，丟棄、什麼都沒寫。
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
+9. **非 iCloud 來源的對照組**（有 Google 或 Exchange 帳號時）：在該來源的拋棄式日曆建一次性事件 →
+   `update_event` 改標題 → undo 要成功還原。若以「it is an edited occurrence of a series now」拒絕，
+   就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這條 undo。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。

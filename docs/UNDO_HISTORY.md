@@ -2,13 +2,13 @@
 
 A missing event or reminder does not prove permanent deletion. Normal undo retains transient failures so a source or permission problem can be repaired and retried.
 
-Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Whoever made the change decides: ask the user whether to change it back and undo again, or to give up that undo and discard the record as below. Three create-undo refusals leave only the choice whether to discard: occurrences of a series edited on their own (`modified_occurrences`), which cannot be put back into the series; a series whose occurrences could not be checked (`unchecked_occurrences`, the series has no identifier or calendar); and an event whose recurrence changed (`recurrence`), for example a series split by a span "future" update, which cannot be merged back.
+Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Whoever made the change decides: ask the user whether to change it back and undo again, or to give up that undo and discard the record as below. Three create-undo refusals leave only the choice whether to discard: occurrences of a series edited on their own (`modified_occurrences`), which cannot be put back into the series; a series whose occurrences could not be checked (`unchecked_occurrences`, the series has no identifier or calendar); and a series whose rule was shortened the way a span "future" update splits it (`recurrence`), which cannot be merged back. Any other change of the rule can be changed back, so it is an ordinary refusal.
 
 Four refusals discard the record themselves, so older records stay reachable:
 1. a recurring reminder completion whose identifier now resolves to another occurrence (#204);
 2. a completion recorded without an occurrence snapshot when the reminder still repeats with the opposite completion;
 3. any `update_event` that touched a recurring event (one occurrence, also a detached occurrence addressed by its own id, span "future" or "all", or rules added or removed), listed as `Updated recurring event: <title> (undo not available)` and never undone;
-4. an `update_event` recorded on a one-off event when that event repeats, or is an edited occurrence, by the time of the undo.
+4. an `update_event` or a one-off `move_events_batch` move recorded on a one-off event when that event repeats, or is an edited occurrence, by the time of the undo.
 
 For 3 and 4, revert the change in Calendar if it should be reverted; a safe restore is tracked in #263.
 
