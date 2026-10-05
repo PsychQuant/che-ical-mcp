@@ -123,4 +123,18 @@ final class EventCopyOperationTests: XCTestCase {
         XCTAssertTrue(message.contains("eventkit_error_1"), message)
         XCTAssertTrue(message.contains("location_alarms, alarm_sounds"), message)
     }
+
+    /// Verify round 3: the error is raised for any failed save of such a copy (a network or
+    /// iCloud error too), so it names the alarms as a possible cause only, claims no more than
+    /// that the original was not removed, and tells the caller to do nothing: a caller that
+    /// followed "remove those alarms" would delete the user's alarms after an unrelated error.
+    func testTheRefusalMessageIsDeclarative() {
+        let message = EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["email_alarms"])
+            .errorDescription ?? ""
+        XCTAssertTrue(message.contains("possible cause"), message)
+        XCTAssertTrue(message.contains("original event was not removed"), message)
+        for imperative in ["Remove ", "remove those", "try again", "choose another", "unchanged"] {
+            XCTAssertFalse(message.contains(imperative), "\(imperative): \(message)")
+        }
+    }
 }

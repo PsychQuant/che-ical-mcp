@@ -1364,7 +1364,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
         try EventCopyOperation.saveCopy(carrying: alarms,
-                                        logFailure: { Self.logCopyFailure(identifier: identifier, error: $0) }) {
+                                        logFailure: { Self.logCopyFailure(handler: "copyEvent", identifier: identifier, error: $0) }) {
             try eventStore.save(newEvent, span: .thisEvent)
         }
         return newEvent
@@ -1372,9 +1372,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// A refused copy that carries location, email or sound alarms is reported by name
     /// (`EventKitError.copyRefused`), a trusted message that is not logged; the underlying
-    /// error goes to stderr here, sanitized like any other write failure.
-    private static func logCopyFailure(identifier: String, error: Error) -> String {
-        EventKitErrorSanitizer.writeFailureLog(handler: "copyEvent", identifier: identifier, error: error)
+    /// error goes to stderr here, sanitized like any other write failure, under the caller's
+    /// `handler` label.
+    private static func logCopyFailure(handler: String, identifier: String, error: Error) -> String {
+        EventKitErrorSanitizer.writeFailureLog(handler: handler, identifier: identifier, error: error)
     }
 
     /// `copy_event` with `delete_original` (#226). copy_event has no occurrence_date, so a
@@ -1444,7 +1445,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // A refused copy names its location, email or sound alarms; the source is removed
                 // only after the copy is saved (#253 verify round 2, D1).
                 try EventCopyOperation.saveCopy(carrying: planned.alarms,
-                                                logFailure: { Self.logCopyFailure(identifier: identifier, error: $0) }) {
+                                                logFailure: { Self.logCopyFailure(handler: isSplit ? "moveEvent.split" : "moveEvent.fallbackCopy",
+                                                                                  identifier: identifier, error: $0) }) {
                     try self.eventStore.save(copy, span: .thisEvent)
                     return copy
                 }
@@ -1492,7 +1494,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// The fields a copy keeps. Recurrence and attendees are not among them; the move
     /// policy refuses before a copy would drop those (#226). `alarms` replaces the source's
-    /// own, for a split occurrence (#253 verify #1).
+    /// own: the copy-out passes `copyOutAlarms`, which puts a split occurrence's absolute
+    /// alarms at its start.
     static func makeCopy(of source: EKEvent, alarms: [AlarmSnapshot]? = nil,
                          in calendar: EKCalendar, store: EKEventStore) -> EKEvent {
         let copy = EKEvent(eventStore: store)
@@ -2322,9 +2325,11 @@ enum EventKitError: LocalizedError {
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
     /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
-    /// refuse. `code` is the sanitized code of the underlying error and `alarmKinds` are
-    /// `AlarmSnapshot.kindsSomeCalendarsMayRefuse` names, so the message holds no EventKit
-    /// text and no user input.
+    /// refuse. Raised for any failure of such a save, so the message names the alarms as a
+    /// possible cause only and gives no instruction (round 3: a caller that followed one would
+    /// delete the user's alarms after a network error). `code` is the sanitized code of the
+    /// underlying error and `alarmKinds` are `AlarmSnapshot.kindsSomeCalendarsMayRefuse`
+    /// names, so the message holds no EventKit text and no user input.
     case copyRefused(code: String, alarmKinds: [String])
 
     var errorDescription: String? {
@@ -2409,7 +2414,7 @@ enum EventKitError: LocalizedError {
         case .moveRefused(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):
-            return "The copy could not be saved (\(code)); the original event is unchanged. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse. Remove those alarms from the event or choose another calendar, then try again."
+            return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }

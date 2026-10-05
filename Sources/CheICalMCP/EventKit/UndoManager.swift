@@ -101,7 +101,8 @@ struct EventSnapshot {
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
 
-    /// `alarms` replaces the event's own, for a split occurrence (#253 verify #1).
+    /// `alarms` replaces the event's own: the undo record of a copy-out holds the alarms the
+    /// copy was given (`EventKitManager.copyOutAlarms`).
     init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
