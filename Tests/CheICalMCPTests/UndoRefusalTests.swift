@@ -248,6 +248,50 @@ final class UndoRefusalTests: XCTestCase {
                        "empty UIDs do not match each other")
     }
 
+    // MARK: - Which detached occurrences count (round 3, finding 7)
+
+    private func face(start: Date? = nil, slot: Date?? = nil, title: String? = "Standup", notes: String? = nil,
+                      location: String? = "Room 1", url: String? = nil, allDay: Bool = false,
+                      duration: TimeInterval = 3600) -> UndoPostState.OccurrenceFace {
+        let begins = start ?? self.start
+        return UndoPostState.OccurrenceFace(start: begins, slot: slot ?? begins, title: title, notes: notes, location: location,
+                                            url: url, isAllDay: allDay, duration: duration)
+    }
+
+    /// The tool's own sequence: an occurrence updated (detached) and that update undone. The
+    /// occurrence stays detached, but it holds the series' values again, so it is not an edit and
+    /// does not block the create-undo of the series.
+    func testAnOccurrenceUndoneBackToTheSeriesIsNotAnEdit() {
+        let series = face()
+        let updated = face(title: "Standup (moved talk)", notes: "updated")
+        let undone = face()
+
+        XCTAssertTrue(UndoPostState.differsFromSeries(updated, series: series), "after the update")
+        XCTAssertFalse(UndoPostState.differsFromSeries(undone, series: series), "after its undo")
+        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: [updated, undone].filter {
+            UndoPostState.differsFromSeries($0, series: series)
+        }.count), ["modified_occurrences"], "an occurrence that still differs still refuses")
+    }
+
+    /// Each field the rule names counts on its own; nothing else does.
+    func testWhatMakesAnOccurrenceDiffer() {
+        let series = face()
+        let differs = { (occurrence: UndoPostState.OccurrenceFace) in UndoPostState.differsFromSeries(occurrence, series: series) }
+
+        XCTAssertTrue(differs(face(start: start.addingTimeInterval(1800), slot: .some(start))), "moved off its slot")
+        XCTAssertTrue(differs(face(title: "Retro")))
+        XCTAssertTrue(differs(face(notes: "agenda")))
+        XCTAssertTrue(differs(face(location: "Room 2")))
+        XCTAssertTrue(differs(face(url: "https://example.com")))
+        XCTAssertTrue(differs(face(allDay: true)))
+        XCTAssertTrue(differs(face(duration: 5400)))
+        XCTAssertTrue(differs(face(slot: .some(nil))), "no slot to compare with: counted, the side that refuses")
+
+        XCTAssertFalse(differs(face(start: start.addingTimeInterval(7 * 86_400))), "on its own slot a week later")
+        XCTAssertFalse(differs(face(notes: "")), "no notes and empty notes are the same")
+        XCTAssertFalse(differs(face(start: start.addingTimeInterval(0.4), slot: .some(start))), "to the second")
+    }
+
     /// A scan that could not run refuses instead of reporting no edits (round 2, finding 15).
     func testAScanThatCouldNotRunRefuses() {
         XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: 0), [])

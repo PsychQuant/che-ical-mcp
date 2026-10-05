@@ -149,6 +149,36 @@ enum UndoPostState {
             || sameOrSuffixed(occurrence.externalIdentifier, series.externalIdentifier)
     }
 
+    /// What the scan compares a detached occurrence by (PR #259 round 3, finding 7).
+    struct OccurrenceFace {
+        let start: Date
+        /// `occurrenceDate`: the start the rule gives this occurrence.
+        let slot: Date?
+        let title: String?
+        let notes: String?
+        let location: String?
+        let url: String?
+        let isAllDay: Bool
+        let duration: TimeInterval
+    }
+
+    /// A detached occurrence is an edit only when it differs from the series: moved off the start
+    /// its rule gives it, or a different title, notes, location, URL, all-day flag or duration
+    /// from the series' first occurrence. An occurrence an update-undo put back to the series'
+    /// values stays detached (EventKit cannot re-attach it) and is not an edit. No slot to
+    /// compare with counts as moved, the side that refuses. Other per-occurrence changes (alarms,
+    /// time zone, coordinates) are not looked at.
+    static func differsFromSeries(_ occurrence: OccurrenceFace, series: OccurrenceFace) -> Bool {
+        guard let slot = occurrence.slot, sameInstant(occurrence.start, slot) else { return true }
+        func text(_ value: String?) -> String { value ?? "" }
+        return text(occurrence.title) != text(series.title)
+            || text(occurrence.notes) != text(series.notes)
+            || text(occurrence.location) != text(series.location)
+            || text(occurrence.url) != text(series.url)
+            || occurrence.isAllDay != series.isAllDay
+            || abs(occurrence.duration - series.duration) >= 1
+    }
+
     /// What the scan result adds to a create-undo check of a series: nil means the scan could not
     /// run (no identifier or calendar), which refuses rather than passing as "no edits".
     static func seriesConflicts(modifiedOccurrences: Int?) -> [String] {
@@ -156,11 +186,13 @@ enum UndoPostState {
         return modifiedOccurrences > 0 ? ["modified_occurrences"] : []
     }
 
-    /// The number of detached (individually edited) occurrences of `event`'s series in the scan
-    /// window, or nil when the scan cannot run. Reads only the series' own calendar.
+    /// The number of detached occurrences of `event`'s series in the scan window that differ from
+    /// the series (`differsFromSeries`), or nil when the scan cannot run. Reads only the series'
+    /// own calendar.
     static func modifiedOccurrenceCount(of event: EKEvent, in store: EKEventStore) -> Int? {
         guard let id = event.eventIdentifier, !id.isEmpty, let calendar = event.calendar else { return nil }
         let series = OccurrenceIDs(eventIdentifier: id, externalIdentifier: event.calendarItemExternalIdentifier)
+        let seriesFace = OccurrenceFace(event)
         let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
         // Any open-ended (or count-based) rule leaves the series open.
         let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
@@ -170,9 +202,18 @@ enum UndoPostState {
         store.enumerateEvents(matching: predicate) { occurrence, _ in
             let ids = OccurrenceIDs(eventIdentifier: occurrence.eventIdentifier,
                                     externalIdentifier: occurrence.calendarItemExternalIdentifier)
-            if occurrence.isDetached, isOccurrence(ids, of: series) { count += 1 }
+            if occurrence.isDetached, isOccurrence(ids, of: series),
+               differsFromSeries(OccurrenceFace(occurrence), series: seriesFace) { count += 1 }
         }
         return count
+    }
+}
+
+extension UndoPostState.OccurrenceFace {
+    init(_ event: EKEvent) {
+        self.init(start: event.startDate, slot: event.occurrenceDate, title: event.title, notes: event.notes,
+                  location: event.location, url: event.url?.absoluteString, isAllDay: event.isAllDay,
+                  duration: event.endDate.timeIntervalSince(event.startDate))
     }
 }
 
