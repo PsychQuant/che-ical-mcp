@@ -25,6 +25,15 @@ final class RecurringUpdateUndoTests: XCTestCase {
         XCTAssertEqual(kind(hadRules: true, after: false, onOccurrence: true), .rulesRemoved, "rules removed wins over where they were removed")
     }
 
+    /// #262: span "all" (the series saved with .futureEvents). Its undo saved the first occurrence
+    /// alone, which on iCloud detached it and deleted the rest of the series; it is refused too.
+    func testASeriesUpdateIsARecurringUpdate() {
+        XCTAssertEqual(kind(hadRules: true, after: true, span: .futureEvents), .series)
+        XCTAssertEqual(kind(hadRules: true, after: true), .series, "the series however it was saved")
+        let message = EventKitErrorSanitizer.sanitizeForResponse(UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .series)).code
+        XCTAssertTrue(message.contains("the whole series"), message)
+    }
+
     func testTheRecordIsAMarkerWithNothingToCompareOrWrite() {
         let op = UndoOperation.updateRecurringEvent(id: "series/RID=1", title: "Standup", kind: .occurrence)
         XCTAssertNil(op.undoPostState, "nothing is compared, because nothing is written")

@@ -16,9 +16,12 @@ enum RecurringUpdateKind: String, Sendable, Hashable {
     case rulesAdded
     /// A repeating event made a one-off.
     case rulesRemoved
+    /// The whole series (span "all"). Its undo used to save the first occurrence alone, which on
+    /// iCloud detached it and deleted the rest of the series (#262).
+    case series
 
     /// Which kind of recurring update this was, or nil when the update touched no recurring event
-    /// (its undo restores the event as before). `hasRulesAfter` is what the request leaves the
+    /// (a one-off event before and after; its undo restores the event as before). `hasRulesAfter` is what the request leaves the
     /// series with, not a read of the saved object: a detached occurrence reads back with no rules
     /// even though its series still repeats.
     static func of(hadRules: Bool, hasRulesAfter: Bool, onOccurrence: Bool, span: EKSpan) -> RecurringUpdateKind? {
@@ -26,7 +29,7 @@ enum RecurringUpdateKind: String, Sendable, Hashable {
         if !hadRules { return .rulesAdded }
         if !hasRulesAfter { return .rulesRemoved }
         if onOccurrence { return span == .futureEvents ? .future : .occurrence }
-        return nil
+        return .series
     }
 
     var reason: String {
@@ -35,6 +38,7 @@ enum RecurringUpdateKind: String, Sendable, Hashable {
         case .future: return "it changed an occurrence and the following occurrences of the series"
         case .rulesAdded: return "it made a one-off event repeat"
         case .rulesRemoved: return "it removed the event's repetition"
+        case .series: return "it changed the whole series"
         }
     }
 }
