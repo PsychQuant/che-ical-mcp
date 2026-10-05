@@ -1713,12 +1713,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         calendarSource: String? = nil,
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
-        clearDueDate: Bool = false
+        clearDueDate: Bool = false,
+        realignToDue: Bool = false
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
+        }
+        // #235: checked before anything is written, so a refused call leaves the reminder untouched.
+        if realignToDue && dueDate == nil && reminder.dueDateComponents == nil {
+            throw ToolError.invalidParameter("realign_to_due needs a due date: the reminder has none, so pass due_date")
         }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
@@ -1729,11 +1734,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #227: the start date and absolute-date alarms follow the due date; Reminders.app
         // displays the alarm's date, so leaving it behind keeps showing the old date.
+        // #235: realignToDue puts them onto the due date instead, whatever it moved by.
         var dateSync: ReminderDateSync.Report?
         if clearDueDate {
             dateSync = ReminderDateSync.setDue(reminder, to: nil)
         } else if let due = dueDate {
-            dateSync = ReminderDateSync.setDue(reminder, to: due)
+            dateSync = ReminderDateSync.setDue(reminder, to: due, realignToDue: realignToDue)
+        } else if realignToDue {
+            dateSync = ReminderDateSync.realign(reminder)
         }
 
         if let name = calendarName {

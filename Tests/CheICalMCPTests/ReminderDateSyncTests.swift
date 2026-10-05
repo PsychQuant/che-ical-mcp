@@ -622,6 +622,30 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual((reminder.alarms ?? []).filter { $0.absoluteDate == nil }.map(\.relativeOffset), [-900])
     }
 
+    /// Undo through the `.updateReminder` snapshot (start date and absolute alarms, #227) brings a
+    /// realigned reminder back to its diverged state.
+    func testUndoSnapshotTakenBeforeRealignRestoresTheDivergedDates() {
+        let store = EKEventStore()
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
+        let oldDue = date(2026, 10, 8, 10, in: taipei)
+        let oldStart = date(2026, 10, 4, 10, in: taipei)
+        reminder.dueDateComponents = components(oldDue, in: taipei)
+        reminder.startDateComponents = components(oldStart, in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: oldStart))
+        reminder.addAlarm(EKAlarm(absoluteDate: oldStart.addingTimeInterval(-3600)))
+        let snapshot = ReminderSnapshot(from: reminder)
+
+        _ = ReminderDateSync.setDue(reminder, to: date(2026, 10, 9, 10, in: taipei), realignToDue: true)
+        XCTAssertEqual(absoluteDates(reminder), [date(2026, 10, 9, 10, in: taipei), date(2026, 10, 9, 11, in: taipei)])
+
+        reminder.dueDateComponents = snapshot.dueDateComponents
+        snapshot.applyDates(to: reminder)
+        XCTAssertEqual(startComponents(reminder), components(oldStart, in: taipei))
+        XCTAssertEqual(absoluteDates(reminder), [oldStart.addingTimeInterval(-3600), oldStart])
+        XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), oldDue)
+    }
+
     // MARK: - #235: alignment check
 
     func testAReminderWithoutAnAbsoluteAlarmIsAlignedWhenItsStartIsOnTheDue() {
