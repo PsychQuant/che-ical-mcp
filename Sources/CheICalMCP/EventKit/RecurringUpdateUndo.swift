@@ -69,15 +69,19 @@ extension UndoOperation {
         guard hasRecurrenceRules || isDetached else { return nil }
         let action: String
         let title: String
+        let remedy: String
         switch self {
         case .updateEvent(_, let old, _):
             (action, title) = ("update", old.title)
+            remedy = "If the change should be reverted, revert it in Calendar (or with update_event)."
         case .moveEvent(_, _, _, let movedTitle, false):
             (action, title) = ("move", movedTitle)
+            // Round 7 findings 4, 26: a move is reverted by moving the event back.
+            remedy = "If it should go back to its original calendar, move it back in Calendar (or with move_events_batch, or update_event with calendar_name)."
         default:
             return nil
         }
         let reason = isDetached ? "it is an edited occurrence of a series now" : "it repeats now"
-        return UnrecoverableUndoError(message: "Cannot undo the \(action) of the event '\(undoShownTitle(title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
+        return UnrecoverableUndoError(message: "Cannot undo the \(action) of the event '\(undoShownTitle(title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. \(remedy)")
     }
 }

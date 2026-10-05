@@ -76,6 +76,8 @@ final class RecurringUpdateUndoTests: XCTestCase {
             XCTAssertTrue(message.hasPrefix("Cannot undo the move of the event 'Review'"), message)
             XCTAssertTrue(message.contains(reason), message)
             XCTAssertTrue(message.contains("Nothing was written"), message)
+            XCTAssertTrue(message.contains("move it back") && message.contains("move_events_batch") && message.contains("calendar_name"),
+                          "a move is reverted by moving it back (round 7): \(message)")
         }
         let seriesMove = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: true)
         XCTAssertNil(seriesMove.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: false), "a series move is undone as a series")
