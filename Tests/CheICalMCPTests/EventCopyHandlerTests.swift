@@ -15,6 +15,10 @@ private actor CopyFake: EventCopySource {
             return EventCopyValue(eventIdentifier: moved.result.eventIdentifier, title: moved.title, move: moved.result)
         }
         if identifier == "save-fail" { throw Failure.failed }
+        if identifier == "refused-alarms" {
+            return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier,
+                                  notCarriedOver: ["structured_location", "location_alarms", "email_alarms"])
+        }
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
 
@@ -218,6 +222,25 @@ final class EventCopyHandlerTests: XCTestCase {
         } catch {}
         let calls = await fake.moveCalls
         XCTAssertEqual(calls, [])
+    }
+
+    private func copyOnly(_ id: String) async throws -> [String: Any] {
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let raw = try await server.executeToolCall(name: "copy_event", arguments: [
+            "event_id": .string(id), "target_calendar": .string("Work")])
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    /// #253 verify #2: a copy saved with time-only alarms says which alarm kinds it dropped.
+    func testCopyReportsWhatItDidNotKeep() async throws {
+        let result = try await copyOnly("refused-alarms")
+        XCTAssertEqual(result["action"] as? String, "copied")
+        XCTAssertEqual(result["not_carried_over"] as? [String], ["structured_location", "location_alarms", "email_alarms"])
+    }
+
+    func testCopyThatKeptEverythingHasNoNotCarriedOver() async throws {
+        let result = try await copyOnly("good")
+        XCTAssertNil(result["not_carried_over"])
     }
 
     func testCopyOnlyLeavesHistoryUntouched() async throws {

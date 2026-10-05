@@ -1348,21 +1348,35 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
-    /// fields it keeps. Moves go through `moveEvent` / `moveEventForCopyTool` (#226).
+    /// fields it keeps, and `EventCopyOperation.saveCopy` for the time-only retry. Returns the
+    /// fields the source had that the copy did not keep. Moves go through `moveEvent` /
+    /// `moveEventForCopyTool` (#226).
     func copyEvent(
         identifier: String,
         toCalendarName: String,
         toCalendarSource: String? = nil
-    ) async throws -> EKEvent {
+    ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
         try await ensureCalendarAccess()
         guard let sourceEvent = eventStore.event(withIdentifier: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
-        let newEvent = Self.makeCopy(of: sourceEvent, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
-        try eventStore.save(newEvent, span: .thisEvent)
-        return newEvent
+        let saved = try EventCopyOperation.saveCopy(
+            alarms: (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:)),
+            onRetry: { Self.logTimeOnlyRetry(identifier: identifier, error: $0) }
+        ) { alarms in
+            let copy = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
+            try eventStore.save(copy, span: .thisEvent)
+            return copy
+        }
+        return (saved.value, Self.fieldsNotCarriedOver(from: sourceEvent, to: saved.value) + saved.notCarriedOver)
+    }
+
+    /// The refused first save is not the tool's error (the retry decides that), so it goes to
+    /// stderr only, sanitized like any other write failure.
+    private static func logTimeOnlyRetry(identifier: String, error: Error) {
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "copyEvent.timeOnlyAlarmRetry", identifier: identifier, error: error)
     }
 
     /// `copy_event` with `delete_original` (#226). copy_event has no occurrence_date, so a
@@ -1423,19 +1437,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let copyOut: (_ isSplit: Bool) throws -> EventMoveExecutor.Copied = { isSplit in
             // A split occurrence's absolute alarms follow the occurrence (#253 verify #1).
             let split = isSplit ? Self.splitAlarms(of: subject, series: master) : nil
-            let copy = Self.makeCopy(of: subject, alarms: split?.alarms, in: targetCalendar, store: self.eventStore)
             // A copy removes one occurrence (.thisEvent), so undo restores a standalone
             // occurrence rather than duplicating the original series (#208).
             let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: split?.alarms)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
-                try self.eventStore.save(copy, span: .thisEvent)
-                return copy
+                // The source is removed only after a save succeeds, retry included (#253 verify #2).
+                try EventCopyOperation.saveCopy(
+                    alarms: split?.alarms ?? (subject.alarms ?? []).map(AlarmSnapshot.init(from:)),
+                    onRetry: { Self.logTimeOnlyRetry(identifier: identifier, error: $0) }
+                ) { alarms in
+                    let copy = Self.makeCopy(of: subject, alarms: alarms, in: targetCalendar, store: self.eventStore)
+                    try self.eventStore.save(copy, span: .thisEvent)
+                    return copy
+                }
             }, removeSource: {
                 try self.eventStore.remove(subject, span: .thisEvent)
             })
             undo = outcome.undo
-            return (outcome.value.eventIdentifier ?? "",
-                    Self.fieldsNotCarriedOver(from: subject, to: outcome.value) + (split?.notCarriedOver ?? []))
+            let copy = outcome.value.value
+            return (copy.eventIdentifier ?? "",
+                    Self.fieldsNotCarriedOver(from: subject, to: copy) + (split?.notCarriedOver ?? [])
+                        + outcome.value.notCarriedOver)
         }
 
         let result = try EventMoveExecutor.run(
