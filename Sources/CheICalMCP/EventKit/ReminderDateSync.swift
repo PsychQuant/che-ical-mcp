@@ -194,9 +194,16 @@ enum ReminderDateSync {
     /// - If the update wrote a timed due and it read back without its time or zone, the #237
     ///   fallback (`writeDueAroundStart`) runs and the reminder is saved and read back again; the
     ///   `due_date` path can therefore save twice. Both events are logged with constant text and,
-    ///   for a failure, the sanitized error code (`eventkit_error_<N>`), never the reminder's
-    ///   content. A failed fallback save is rolled back, not thrown: the update itself is saved and
-    ///   recorded for undo, and the report then says `aligned: false`.
+    ///   for a failure, the sanitized error code (`eventkit_error_<N>` for an EventKit error;
+    ///   otherwise `error_<domain>_<N>`, or `error_unknown` for a Swift error), never the
+    ///   reminder's content. A failed fallback
+    ///   save is rolled back, not thrown: the update itself is saved and recorded for undo, and the
+    ///   report then says `aligned: false`. A read-back after the fallback that fails is treated
+    ///   like the first one: not confirmed, `aligned: false`.
+    ///
+    /// Known limit: a source that never hands the due's zone back would save twice on every timed
+    /// due update and never report `aligned: true`. The iCloud and Exchange lists checked on device
+    /// (2026-10-05) keep the zone, and those updates saved once.
     /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
     ///   other fields describe the write and are kept.
     ///
