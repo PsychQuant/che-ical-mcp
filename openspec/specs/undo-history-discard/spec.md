@@ -31,7 +31,7 @@ undo with discard_id SHALL remove only the current top undo record with that id.
 
 ---
 ### Requirement: Stale and busy protection
-The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the three discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, and the update of a recurring event); no other refusal discards its record.
+The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the four discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, the update of a recurring event, and the update of a one-off event that repeats at undo time); no other refusal discards its record.
 
 #### Scenario: Item changed after the operation
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
@@ -58,12 +58,20 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **THEN** nothing is written and the record is kept, even when the reminder already looks like what the write would produce
 
 #### Scenario: Update of a recurring event (#236, #262)
-- **WHEN** undo meets the record of an `update_event` that touched a recurring event: one occurrence (span "this" with `occurrence_date`), an occurrence and the following ones (span "future"), the whole series (span "all"), or an update that made a one-off event repeat or removed a series' repetition
+- **WHEN** undo meets the record of an `update_event` that touched a recurring event: one occurrence (span "this" with `occurrence_date`, or a detached occurrence addressed by its own identifier), an occurrence and the following ones (span "future"), the whole series (span "all"), or an update that made a one-off event repeat or removed a series' repetition
 - **THEN** nothing is looked up or written, the error names the kind of change and says to revert it in Calendar if it should be reverted, and the record is discarded, so older records stay reachable; `undo_history` lists such a record as `Updated recurring event: <title> (undo not available)`
 
 #### Scenario: Update of a one-off event
-- **WHEN** undo meets the record of an `update_event` on an event that repeated neither before nor after the update
+- **WHEN** undo meets the record of an `update_event` on an event that repeated neither before nor after the update, and the event still neither repeats nor is a detached occurrence
 - **THEN** it restores the recorded values as for any update, subject to the post-state check
+
+#### Scenario: Update of a one-off event that repeats at undo time
+- **WHEN** undo meets the record of an `update_event` on a one-off event, and the event now repeats or is a detached occurrence (a later update or another app made it so)
+- **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and to revert the change in Calendar if it should be reverted, and the record is discarded
+
+#### Scenario: Recurrence of a created event changed
+- **WHEN** undo of `create_event` finds the event's recurrence changed since it was created (for example a span "future" update split the series and shortened its rule)
+- **THEN** nothing is written, the record is kept, and the error offers only giving up the undo with discard_id, not changing the recurrence back
 
 #### Scenario: Redo refused
 - **WHEN** redo of a completion finds the reminder changed after the undo

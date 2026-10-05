@@ -100,13 +100,20 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 6. 用 `recurrence.excluded_occurrence_dates` 建立的系列 → undo 一次刪掉整個系列，不出現
    `modified_occurrences`。#182 的「排除日是被移除的場次、不是被單獨修改的場次」只在 iCloud
    看過（2026-10-05）；有其他來源（Google、Exchange）的帳號時，在那裡再做一次。
-7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次 → undo：拒絕、什麼都沒寫、
-   訊息說要改回請到行事曆，紀錄被丟棄（`undo_history` 原本列為 `Updated recurring event: …
-   (undo not available)`）→ 再 undo（create-undo）：以 `modified_occurrences` 拒絕，系列完整。
-   `span: "future"`、`span: "all"`、為一次性事件加上重複規則、移除重複規則也各做一次：update
-   的 undo 一律拒絕並丟棄、什麼都沒寫。**`span: "all"` 的 update-undo 只在拋棄式日曆上測**；
-   #262 修正之前的 binary 會刪掉真實系列的其餘場次。另外在別的 app（或另一個 process）只改一個
-   場次的時間、只改一個場次的鬧鐘 → create-undo 以 `modified_occurrences` 拒絕。
+7. 循環事件的 update-undo 一律拒絕、什麼都不寫、紀錄被丟棄（訊息說要改回請到行事曆）。逐項各做一次，
+   每項都用新建的拋棄式系列：
+   (a) 帶 `occurrence_date` 改一個場次 → undo 拒絕（`undo_history` 原本列為 `Updated recurring
+       event: … (undo not available)`）→ 再 undo（create-undo）以 `modified_occurrences` 拒絕，系列完整；
+   (b) `span: "future"` → undo 拒絕 → create-undo 以 `recurrence` 拒絕，訊息只給放棄（`discard_id`），
+       不叫人改回；
+   (c) `span: "all"` → undo 拒絕，系列每個場次都還在（**只在拋棄式日曆上測**；#262 修正之前的
+       binary 會刪掉真實系列的其餘場次）；
+   (d) 一次性事件加上重複規則 → undo 拒絕；(e) 系列 `clear_recurrence` → undo 拒絕；
+   (f) 用場次自己的 id（`<series>/RID=…`）改一個已 detached 的場次 → undo 拒絕；
+   (g) 一次性事件改標題 → 再加上重複規則 → undo（拒絕並丟棄）→ undo：以「it repeats now」拒絕並丟棄，
+       什麼都沒寫；(h) 一次性事件改標題 → 在別的 app 讓它變成重複事件 → undo：同 (g)。
+   另外在別的 app（或另一個 process）只改一個場次的時間、只改一個場次的鬧鐘 → create-undo 以
+   `modified_occurrences` 拒絕。
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 

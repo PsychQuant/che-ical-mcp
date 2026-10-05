@@ -2,7 +2,15 @@
 
 A missing event or reminder does not prove permanent deletion. Normal undo retains transient failures so a source or permission problem can be repaired and retried.
 
-Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Whoever made the change decides: ask the user whether to change it back and undo again, or to give up that undo and discard the record as below. Occurrences of a series edited on their own (`modified_occurrences`) cannot be put back into the series, and a series whose occurrences could not be checked (`unchecked_occurrences`, the series has no identifier or calendar) stays that way, so for those the choice is only whether to discard. Three refusals discard the record themselves, so older records stay reachable: a recurring reminder completion whose identifier now resolves to another occurrence (#204); the same for a completion recorded without an occurrence snapshot when the reminder still repeats with the opposite completion; and any `update_event` that touched a recurring event (one occurrence, span "future" or "all", or rules added or removed), which is listed as `Updated recurring event: <title> (undo not available)` and is never undone: revert such a change in Calendar if it should be reverted.
+Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Whoever made the change decides: ask the user whether to change it back and undo again, or to give up that undo and discard the record as below. Three create-undo refusals leave only the choice whether to discard: occurrences of a series edited on their own (`modified_occurrences`), which cannot be put back into the series; a series whose occurrences could not be checked (`unchecked_occurrences`, the series has no identifier or calendar); and an event whose recurrence changed (`recurrence`), for example a series split by a span "future" update, which cannot be merged back.
+
+Four refusals discard the record themselves, so older records stay reachable:
+1. a recurring reminder completion whose identifier now resolves to another occurrence (#204);
+2. a completion recorded without an occurrence snapshot when the reminder still repeats with the opposite completion;
+3. any `update_event` that touched a recurring event (one occurrence, also a detached occurrence addressed by its own id, span "future" or "all", or rules added or removed), listed as `Updated recurring event: <title> (undo not available)` and never undone;
+4. an `update_event` recorded on a one-off event when that event repeats, or is an edited occurrence, by the time of the undo.
+
+For 3 and 4, revert the change in Calendar if it should be reverted; a safe restore is tracked in #263.
 
 To intentionally abandon the newest record, call undo_history, inspect the first entry, and pass its id to undo as discard_id. Example: `{"discard_id":"<id returned by undo_history>"}`. This removes only that current top record. It does not edit events/reminders and does not add a redo record; discarding history cannot be undone. Existing redo records are preserved.
 
