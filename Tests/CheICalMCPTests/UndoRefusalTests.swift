@@ -1,4 +1,5 @@
 import CheMCPKit
+import CoreLocation
 import EventKit
 import XCTest
 @testable import CheICalMCP
@@ -298,48 +299,83 @@ final class UndoRefusalTests: XCTestCase {
                        "empty UIDs do not match each other")
     }
 
-    // MARK: - Which detached occurrences count (round 3, finding 7)
+    // MARK: - Which detached occurrences count (round 3 finding 7, round 4 decision)
 
-    private func face(start: Date? = nil, slot: Date?? = nil, title: String? = "Standup", notes: String? = nil,
-                      location: String? = "Room 1", url: String? = nil, allDay: Bool = false,
-                      duration: TimeInterval = 3600) -> UndoPostState.OccurrenceFace {
-        let begins = start ?? self.start
-        return UndoPostState.OccurrenceFace(start: begins, slot: slot ?? begins, title: title, notes: notes, location: location,
-                                            url: url, isAllDay: allDay, duration: duration)
+    /// An occurrence as the scan sees it: built in memory like the series' first occurrence (title,
+    /// location, place without coordinates, a 15-minute alarm, Asia/Taipei), then `edit`ed. `slot`
+    /// is its `occurrenceDate`; by default the start it ends up with.
+    private func occurrence(slot: Date?? = nil, _ edit: (EKEvent) -> Void = { _ in }) -> UndoPostState.OccurrenceFace {
+        let event = EKEvent(eventStore: store)
+        event.calendar = calendarA
+        event.title = "Standup"
+        event.startDate = start
+        event.endDate = start.addingTimeInterval(3600)
+        event.structuredLocation = EKStructuredLocation(title: "Room 1")
+        event.timeZone = TimeZone(identifier: "Asia/Taipei")
+        event.addAlarm(EKAlarm(relativeOffset: -900))
+        edit(event)
+        return UndoPostState.OccurrenceFace(slot: slot ?? event.startDate, event: EventSnapshot(from: event, includeRecurrence: false))
     }
 
-    /// The tool's own sequence: an occurrence updated (detached) and that update undone. The
-    /// occurrence stays detached, but it holds the series' values again, so it is not an edit and
-    /// does not block the create-undo of the series.
-    func testAnOccurrenceUndoneBackToTheSeriesIsNotAnEdit() {
-        let series = face()
-        let updated = face(title: "Standup (moved talk)", notes: "updated")
-        let undone = face()
-
-        XCTAssertTrue(UndoPostState.differsFromSeries(updated, series: series), "after the update")
-        XCTAssertFalse(UndoPostState.differsFromSeries(undone, series: series), "after its undo")
-        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: [updated, undone].filter {
-            UndoPostState.differsFromSeries($0, series: series)
-        }.count), ["modified_occurrences"], "an occurrence that still differs still refuses")
+    /// The tool's own sequence before round 4 (an occurrence updated, then that update undone): the
+    /// occurrence stays detached but holds the series' values again, so it is not an edit.
+    func testAnOccurrenceBackAtTheSeriesValuesIsNotAnEdit() {
+        let series = occurrence()
+        XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.title = "Standup (moved talk)" }, series: series))
+        XCTAssertFalse(UndoPostState.differsFromSeries(occurrence(), series: series))
     }
 
-    /// Each field the rule names counts on its own; nothing else does.
+    /// Round 4 decision: an occurrence whose only edit is its alarm is an edit, so the create-undo
+    /// of the series refuses instead of deleting it.
+    func testAnAlarmOnlyEditBlocksTheCreateUndo() {
+        let series = occurrence()
+        let alarmOnly = occurrence { event in
+            event.alarms?.forEach { event.removeAlarm($0) }
+            event.addAlarm(EKAlarm(relativeOffset: -1800))
+        }
+        let counted = [alarmOnly].filter { UndoPostState.differsFromSeries($0, series: series) }.count
+        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: counted), ["modified_occurrences"])
+    }
+
+    /// Every field the guard compares counts on its own, with the guard's tolerances.
     func testWhatMakesAnOccurrenceDiffer() {
-        let series = face()
-        let differs = { (occurrence: UndoPostState.OccurrenceFace) in UndoPostState.differsFromSeries(occurrence, series: series) }
+        let series = occurrence()
+        let differs = { (face: UndoPostState.OccurrenceFace) in UndoPostState.differsFromSeries(face, series: series) }
 
-        XCTAssertTrue(differs(face(start: start.addingTimeInterval(1800), slot: .some(start))), "moved off its slot")
-        XCTAssertTrue(differs(face(title: "Retro")))
-        XCTAssertTrue(differs(face(notes: "agenda")))
-        XCTAssertTrue(differs(face(location: "Room 2")))
-        XCTAssertTrue(differs(face(url: "https://example.com")))
-        XCTAssertTrue(differs(face(allDay: true)))
-        XCTAssertTrue(differs(face(duration: 5400)))
-        XCTAssertTrue(differs(face(slot: .some(nil))), "no slot to compare with: counted, the side that refuses")
+        XCTAssertTrue(differs(occurrence(slot: .some(start)) { $0.startDate = self.start.addingTimeInterval(1800); $0.endDate = $0.startDate.addingTimeInterval(3600) }), "moved off its slot")
+        XCTAssertTrue(differs(occurrence { $0.title = "Retro" }))
+        XCTAssertTrue(differs(occurrence { $0.notes = "agenda" }))
+        XCTAssertTrue(differs(occurrence { $0.url = URL(string: "https://example.com") }))
+        XCTAssertTrue(differs(occurrence { $0.isAllDay = true }))
+        XCTAssertTrue(differs(occurrence { $0.endDate = $0.startDate.addingTimeInterval(5400) }), "duration")
+        XCTAssertTrue(differs(occurrence { $0.addAlarm(EKAlarm(relativeOffset: -3600)) }), "an alarm added")
+        XCTAssertTrue(differs(occurrence { $0.timeZone = TimeZone(identifier: "Europe/Berlin") }), "time zone")
+        XCTAssertTrue(differs(occurrence { $0.structuredLocation = EKStructuredLocation(title: "Room 2") }), "place")
+        XCTAssertTrue(differs(occurrence(slot: .some(nil))), "no slot to compare with: counted, the side that refuses")
 
-        XCTAssertFalse(differs(face(start: start.addingTimeInterval(7 * 86_400))), "on its own slot a week later")
-        XCTAssertFalse(differs(face(notes: "")), "no notes and empty notes are the same")
-        XCTAssertFalse(differs(face(start: start.addingTimeInterval(0.4), slot: .some(start))), "to the second")
+        XCTAssertFalse(differs(occurrence { $0.startDate = self.start.addingTimeInterval(7 * 86_400); $0.endDate = $0.startDate.addingTimeInterval(3600) }), "on its own slot a week later")
+        XCTAssertFalse(differs(occurrence { $0.notes = "" }), "no notes and empty notes are the same")
+        XCTAssertFalse(differs(occurrence(slot: .some(start)) { $0.startDate = self.start.addingTimeInterval(0.4); $0.endDate = $0.startDate.addingTimeInterval(3600) }), "to the second")
+        XCTAssertFalse(differs(occurrence { $0.alarms?.first?.soundName = "Ping" }), "an alarm sound is not an edit")
+        XCTAssertFalse(differs(occurrence { event in
+            let place = EKStructuredLocation(title: "Room 1")
+            place.geoLocation = CLLocation(latitude: 25.0434, longitude: 121.6145)
+            event.structuredLocation = place
+        }), "coordinates added to a place the series has without them are not an edit")
+    }
+
+    /// The place counts on its own: the same name moved to other coordinates.
+    func testAPlaceMovedUnderTheSameNameIsAnEdit() {
+        func at(_ latitude: Double) -> (EKEvent) -> Void {
+            { event in
+                let place = EKStructuredLocation(title: "Room 1")
+                place.geoLocation = CLLocation(latitude: latitude, longitude: 121.6145)
+                event.structuredLocation = place
+            }
+        }
+        let series = occurrence(at(25.0434))
+        XCTAssertFalse(UndoPostState.differsFromSeries(occurrence(at(25.0434)), series: series))
+        XCTAssertTrue(UndoPostState.differsFromSeries(occurrence(at(25.0500)), series: series))
     }
 
     /// A scan that could not run refuses instead of reporting no edits (round 2, finding 15).

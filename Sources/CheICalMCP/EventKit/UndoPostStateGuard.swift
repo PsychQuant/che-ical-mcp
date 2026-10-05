@@ -149,34 +149,35 @@ enum UndoPostState {
             || sameOrSuffixed(occurrence.externalIdentifier, series.externalIdentifier)
     }
 
-    /// What the scan compares a detached occurrence by (PR #259 round 3, finding 7).
+    /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
+    /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {
-        let start: Date
         /// `occurrenceDate`: the start the rule gives this occurrence.
         let slot: Date?
-        let title: String?
-        let notes: String?
-        let location: String?
-        let url: String?
-        let isAllDay: Bool
-        let duration: TimeInterval
+        let event: EventSnapshot
     }
 
-    /// A detached occurrence is an edit only when it differs from the series: moved off the start
-    /// its rule gives it, or a different title, notes, location, URL, all-day flag or duration
-    /// from the series' first occurrence. An occurrence an update-undo put back to the series'
-    /// values stays detached (EventKit cannot re-attach it) and is not an edit. No slot to
-    /// compare with counts as moved, the side that refuses. Other per-occurrence changes (alarms,
-    /// time zone, coordinates) are not looked at.
+    /// A detached occurrence is an edit when it differs from the series' first occurrence in any
+    /// field the guard compares: moved off the start its rule gives it (its slot), or a different
+    /// title, notes, location, URL, all-day flag, duration, alarms, time zone or place. The
+    /// guard's tolerances apply: an alarm sound, and coordinates added to a place the series has
+    /// without them, are not edits; nil and empty text are the same; instants compare to the
+    /// second. An occurrence back at the series' values stays detached (EventKit cannot re-attach
+    /// it) and is not an edit. No slot to compare with counts as moved, the side that refuses.
     static func differsFromSeries(_ occurrence: OccurrenceFace, series: OccurrenceFace) -> Bool {
-        guard let slot = occurrence.slot, sameInstant(occurrence.start, slot) else { return true }
+        let (one, all) = (occurrence.event, series.event)
+        guard let slot = occurrence.slot, sameInstant(one.startDate, slot) else { return true }
         func text(_ value: String?) -> String { value ?? "" }
-        return text(occurrence.title) != text(series.title)
-            || text(occurrence.notes) != text(series.notes)
-            || text(occurrence.location) != text(series.location)
-            || text(occurrence.url) != text(series.url)
-            || occurrence.isAllDay != series.isAllDay
-            || abs(occurrence.duration - series.duration) >= 1
+        func duration(_ event: EventSnapshot) -> TimeInterval { event.endDate.timeIntervalSince(event.startDate) }
+        return text(one.title) != text(all.title)
+            || text(one.notes) != text(all.notes)
+            || text(one.location) != text(all.location)
+            || text(one.url?.absoluteString) != text(all.url?.absoluteString)
+            || one.isAllDay != all.isAllDay
+            || abs(duration(one) - duration(all)) >= 1
+            || !sameAlarms(all.alarms, one.alarms)
+            || one.timeZone?.identifier != all.timeZone?.identifier
+            || !EventSnapshot.samePlace(recorded: all, current: one)
     }
 
     /// What the scan result adds to a create-undo check of a series: nil means the scan could not
@@ -211,9 +212,7 @@ enum UndoPostState {
 
 extension UndoPostState.OccurrenceFace {
     init(_ event: EKEvent) {
-        self.init(start: event.startDate, slot: event.occurrenceDate, title: event.title, notes: event.notes,
-                  location: event.location, url: event.url?.absoluteString, isAllDay: event.isAllDay,
-                  duration: event.endDate.timeIntervalSince(event.startDate))
+        self.init(slot: event.occurrenceDate, event: EventSnapshot(from: event, includeRecurrence: false))
     }
 }
 
