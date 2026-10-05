@@ -74,25 +74,17 @@ struct AlarmSnapshot: Hashable {
         return kinds
     }
 
-    /// #253 verify #1: the alarms for one occurrence copied out of its series (`span: this`).
-    /// A series carries one absolute date per alarm, tied to the series start; copied as is,
-    /// it would land before a later occurrence and never fire. With the series start known,
-    /// the alarm keeps its distance from the start, measured from the occurrence instead.
-    /// Without it, the alarm goes to the occurrence start as the copy did before #230, and
-    /// `absolute_alarms` is reported. Other alarms are unchanged.
-    static func forSplitOccurrence(_ alarms: [AlarmSnapshot], occurrenceStart: Date,
-                                   seriesStart: Date?) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
-        var movedToStart = false
-        let split = alarms.map { alarm -> AlarmSnapshot in
-            guard let date = alarm.absoluteDate else { return alarm }
-            guard let seriesStart else {
-                movedToStart = true
-                return alarm.timed(absoluteDate: nil, relativeOffset: 0)
-            }
-            return alarm.timed(absoluteDate: occurrenceStart.addingTimeInterval(date.timeIntervalSince(seriesStart)),
-                               relativeOffset: 0)
-        }
-        return (split, movedToStart ? ["absolute_alarms"] : [])
+    /// #253 verify round 2 (D2): the alarms for one occurrence copied out of its series
+    /// (`span: this`). A series carries one date per absolute alarm, which a later occurrence
+    /// has already passed, so the copy would get an alarm that never fires. The occurrence's
+    /// own date would need the series start, which EventKit does not report reliably (it
+    /// documents the event fetched by identifier as the first occurrence; a detached
+    /// occurrence carries its own date). So an absolute alarm goes to the occurrence start,
+    /// as every copied alarm did before #230, and `absolute_alarms` is reported. Other alarms
+    /// are unchanged.
+    static func forSplitOccurrence(_ alarms: [AlarmSnapshot]) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
+        let split = alarms.map { $0.absoluteDate == nil ? $0 : $0.timed(absoluteDate: nil, relativeOffset: 0) }
+        return (split, alarms.contains { $0.absoluteDate != nil } ? ["absolute_alarms"] : [])
     }
 
     /// A location alarm reads back with no absolute date and offset 0, so it is the attached

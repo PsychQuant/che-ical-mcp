@@ -1435,15 +1435,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         defer { markNeedsRefresh() }
 
         let copyOut: (_ isSplit: Bool) throws -> EventMoveExecutor.Copied = { isSplit in
-            // A split occurrence's absolute alarms follow the occurrence (#253 verify #1).
-            let split = isSplit ? Self.splitAlarms(of: subject, series: master) : nil
+            // A split occurrence's absolute alarms go to its start (#253 verify round 2, D2).
+            let planned = Self.copyOutAlarms(of: subject, isSplit: isSplit)
             // A copy removes one occurrence (.thisEvent), so undo restores a standalone
-            // occurrence rather than duplicating the original series (#208).
-            let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: split?.alarms)
+            // occurrence rather than duplicating the original series (#208), with the alarms
+            // the copy was given.
+            let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // The source is removed only after a save succeeds, retry included (#253 verify #2).
                 try EventCopyOperation.saveCopy(
-                    alarms: split?.alarms ?? (subject.alarms ?? []).map(AlarmSnapshot.init(from:)),
+                    alarms: planned.alarms,
                     onRetry: { Self.logTimeOnlyRetry(identifier: identifier, error: $0) }
                 ) { alarms in
                     let copy = Self.makeCopy(of: subject, alarms: alarms, in: targetCalendar, store: self.eventStore)
@@ -1456,7 +1457,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             undo = outcome.undo
             let copy = outcome.value.value
             return (copy.eventIdentifier ?? "",
-                    Self.fieldsNotCarriedOver(from: subject, to: copy) + (split?.notCarriedOver ?? [])
+                    Self.fieldsNotCarriedOver(from: subject, to: copy) + planned.notCarriedOver
                         + outcome.value.notCarriedOver)
         }
 
@@ -1517,16 +1518,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return copy
     }
 
-    /// #253 verify #1: the alarms for `occurrence` copied out of `series`, the event fetched
-    /// by identifier. Its start is taken as the series start only while it carries the rule
-    /// and is not itself a detached occurrence; otherwise absolute alarms go to the
-    /// occurrence start and are reported. Checked on device (iCloud, 2026-10-05): that event
-    /// reports the series start even after its first occurrence was moved or deleted, and a
-    /// later occurrence reads the series' absolute alarm date.
-    static func splitAlarms(of occurrence: EKEvent, series: EKEvent) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
-        let seriesStart: Date? = series.hasRecurrenceRules && !series.isDetached ? series.startDate : nil
-        return AlarmSnapshot.forSplitOccurrence((occurrence.alarms ?? []).map(AlarmSnapshot.init(from:)),
-                                                occurrenceStart: occurrence.startDate, seriesStart: seriesStart)
+    /// The alarms a copy-out writes: the source's own, or for an occurrence split out of its
+    /// series those of `AlarmSnapshot.forSplitOccurrence` (#253 verify round 2, D2).
+    static func copyOutAlarms(of source: EKEvent, isSplit: Bool) -> (alarms: [AlarmSnapshot], notCarriedOver: [String]) {
+        let alarms = (source.alarms ?? []).map(AlarmSnapshot.init(from:))
+        return isSplit ? AlarmSnapshot.forSplitOccurrence(alarms) : (alarms, [])
     }
 
     /// Fields the source actually had that `makeCopy` did not keep (#226).
