@@ -104,7 +104,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    標題改回來，仍是 detached）→ undo（整個系列刪掉，不出現 `modified_occurrences`）。再用
    `span: "all"` 改整個系列做一次：第一個 undo 之後系列的每個場次都還在、都是原值、沒有
    detached 場次。round 4 之前的 binary 在這兩條路上分別是 `eventkit_error_39`（紀錄卡住）
-   與系列只剩一個 detached 場次（其餘場次消失）。
+   與系列只剩一個 detached 場次（其餘場次消失，#262）。**`span: "all"` 的 update-undo 只在
+   拋棄式日曆上測**；含 #262 修正之前的 binary 會刪掉真實系列的其餘場次，不要拿真實資料試。
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 
