@@ -156,6 +156,26 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertNotNil(recreated.dueDateComponents, "EventKit refuses a repeating reminder without a due date")
     }
 
+    /// #253 verify #8: delete-undo of an every-other-week reminder whose weeks start on
+    /// Sunday came back with weeks starting on Monday, which moves its Sunday occurrences.
+    func testApplyingOnANewReminderKeepsTheWeekStart() {
+        let original = makeReminder()
+        original.dueDateComponents = components(2026, 10, 4, 9)
+        let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 2,
+                                    daysOfTheWeek: [EKRecurrenceDayOfWeek(.monday), EKRecurrenceDayOfWeek(.sunday)],
+                                    daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
+                                    daysOfTheYear: nil, setPositions: nil, end: nil)
+        rule.setValue(1, forKey: "firstDayOfTheWeek")
+        original.addRecurrenceRule(rule)
+        let snapshot = ReminderSnapshot(from: original)
+        let recreated = makeReminder()
+
+        snapshot.apply(to: recreated, now: now)
+
+        XCTAssertEqual(recreated.recurrenceRules?.first?.interval, 2)
+        XCTAssertEqual(recreated.recurrenceRules?.first?.firstDayOfTheWeek, 1)
+    }
+
     func testASnapshotWithoutRulesClearsThem() {
         let snapshot = ReminderSnapshot(from: makeReminder())
         let target = makeReminder()

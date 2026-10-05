@@ -64,6 +64,40 @@ final class RecurrenceRuleSnapshotTests: XCTestCase {
         XCTAssertEqual(rebuilt.daysOfTheWeek?.first?.weekNumber, 2)
     }
 
+    /// Every other Monday and Sunday, weeks starting on Sunday (`WKST=SU`). EventKit has no
+    /// public setter for the week start; a rule read back from a calendar written by another
+    /// client carries it, so the test sets it the way the store does.
+    private func everyOtherWeekStartingSunday() -> EKRecurrenceRule {
+        let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 2,
+                                    daysOfTheWeek: [EKRecurrenceDayOfWeek(.monday), EKRecurrenceDayOfWeek(.sunday)],
+                                    daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
+                                    daysOfTheYear: nil, setPositions: nil, end: EKRecurrenceEnd(occurrenceCount: 6))
+        rule.setValue(1, forKey: "firstDayOfTheWeek")
+        return rule
+    }
+
+    /// #253 verify #8: with an interval above 1 the week start decides which Sunday belongs
+    /// to which week; the snapshot dropped it, so delete-undo rebuilt the rule with Monday.
+    func testWeekStartRoundtrip() {
+        let rule = everyOtherWeekStartingSunday()
+        XCTAssertEqual(rule.firstDayOfTheWeek, 1)
+
+        let snapshot = RecurrenceRuleSnapshot(from: rule)
+        let rebuilt = snapshot.rebuild()
+
+        XCTAssertEqual(rebuilt.firstDayOfTheWeek, 1)
+        XCTAssertEqual(RecurrenceRuleSnapshot(from: rebuilt), snapshot)
+    }
+
+    /// Equality decides whether update-undo rewrites the rules, so it must see the week start.
+    func testRulesThatDifferOnlyInWeekStartAreNotEqual() {
+        let sunday = everyOtherWeekStartingSunday()
+        let monday = everyOtherWeekStartingSunday()
+        monday.setValue(2, forKey: "firstDayOfTheWeek")
+
+        XCTAssertNotEqual(RecurrenceRuleSnapshot(from: sunday), RecurrenceRuleSnapshot(from: monday))
+    }
+
     /// The rebuilt rule must be a fresh object — never the original reference
     /// (the stale-reference class behind the on-device 1010).
     func testRebuildProducesFreshObject() {

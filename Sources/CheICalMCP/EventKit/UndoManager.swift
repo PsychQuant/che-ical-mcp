@@ -24,6 +24,9 @@ struct RecurrenceRuleSnapshot: Equatable {
     let setPositions: [Int]?
     let endDate: Date?
     let occurrenceCount: Int?
+    /// 0 = unset, 1–7 = Sunday–Saturday. For a weekly rule with an interval above 1 it decides
+    /// which occurrences fall in which week (#253 verify #8).
+    let firstDayOfTheWeek: Int
 
     init(from rule: EKRecurrenceRule) {
         self.frequency = rule.frequency
@@ -38,6 +41,7 @@ struct RecurrenceRuleSnapshot: Equatable {
         // EKRecurrenceEnd.occurrenceCount is 0 when the end is date-based
         let count = rule.recurrenceEnd?.occurrenceCount ?? 0
         self.occurrenceCount = count > 0 ? count : nil
+        self.firstDayOfTheWeek = rule.firstDayOfTheWeek
     }
 
     func rebuild() -> EKRecurrenceRule {
@@ -47,7 +51,7 @@ struct RecurrenceRuleSnapshot: Equatable {
         } else if let count = occurrenceCount {
             end = EKRecurrenceEnd(occurrenceCount: count)
         }
-        return EKRecurrenceRule(
+        let rule = EKRecurrenceRule(
             recurrenceWith: frequency,
             interval: interval,
             daysOfTheWeek: daysOfTheWeek?.compactMap { d in
@@ -60,6 +64,15 @@ struct RecurrenceRuleSnapshot: Equatable {
             setPositions: setPositions?.map(NSNumber.init),
             end: end
         )
+        // The initializer has no week-start parameter and picks its own default (Monday for
+        // weekly rules), and the property is read-only. The setter exists at run time; check
+        // for it so that a future EventKit without it leaves the default rather than raising
+        // an undefined-key exception.
+        if rule.firstDayOfTheWeek != firstDayOfTheWeek,
+           rule.responds(to: NSSelectorFromString("setFirstDayOfTheWeek:")) {
+            rule.setValue(firstDayOfTheWeek, forKey: "firstDayOfTheWeek")
+        }
+        return rule
     }
 }
 
