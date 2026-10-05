@@ -26,6 +26,15 @@ extension EventKitManager {
         return ReminderSnapshot(from: saved)
     }
 
+    /// What an update-undo writes back, taken before `update_event` changes `target`. For an
+    /// occurrence (`target` is not the series' `master`) that is the occurrence's own state with
+    /// no rules: the record targets the occurrence by its post-save identifier (#246), and the
+    /// series' snapshot moved it to the series' first start and failed to save on device
+    /// (EKErrorDomain 39, "The repeat field cannot be changed"; PR #259 round 4 probe).
+    static func updateUndoSnapshot(master: EKEvent, target: EKEvent) -> EventSnapshot {
+        target === master ? EventSnapshot(from: master) : EventSnapshot(from: target, includeRecurrence: false)
+    }
+
     /// The event under `id`, refreshed, or nil when it is not there. `refresh()` because a
     /// long-lived store can return stale fields after an edit made elsewhere until the object is
     /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is

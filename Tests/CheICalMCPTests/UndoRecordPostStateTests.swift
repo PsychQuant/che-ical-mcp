@@ -64,6 +64,49 @@ final class UndoRecordPostStateTests: XCTestCase {
         XCTAssertEqual(expected.changedFields(in: event), ["title"])
     }
 
+    // MARK: - Occurrence update-undo (PR #259 round 4, device probe)
+
+    private func weeklySeries(title: String) -> EKEvent {
+        let event = makeEvent(title: title)
+        event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 6)))
+        return event
+    }
+
+    /// update_event on one occurrence detaches it, and the record targets that occurrence by its
+    /// post-save identifier (#246). Its undo writes the occurrence's own values and no rules: with
+    /// the series' snapshot it moved the occurrence to the series' first start, and on device the
+    /// save failed with EKErrorDomain 39 "The repeat field cannot be changed".
+    func testAnOccurrenceUpdateRecordsTheOccurrenceWithoutRules() {
+        let series = weeklySeries(title: "Standup")
+        let occurrence = makeEvent(title: "Standup")
+        occurrence.startDate = instant.addingTimeInterval(7 * 86_400)
+        occurrence.endDate = occurrence.startDate.addingTimeInterval(3600)
+
+        let restores = EventKitManager.updateUndoSnapshot(master: series, target: occurrence)
+        XCTAssertEqual(restores.startDate, occurrence.startDate, "its own slot, not the series' first start")
+        XCTAssertNil(restores.recurrenceRules, "an occurrence's undo writes no rules")
+
+        let wholeSeries = EventKitManager.updateUndoSnapshot(master: series, target: series)
+        XCTAssertEqual(wholeSeries.recurrenceRules?.count, 1, "a series update keeps restoring its rules")
+    }
+
+    /// The record of an occurrence update expects the occurrence as the update left it (the
+    /// record's identifier and `saved` both come from the occurrence after the save), not the
+    /// series: against the series' first occurrence the check would refuse on the start.
+    func testAnOccurrenceRecordExpectsTheOccurrence() throws {
+        let series = weeklySeries(title: "Standup")
+        let occurrence = makeEvent(title: "Standup")
+        occurrence.startDate = instant.addingTimeInterval(7 * 86_400)
+        occurrence.endDate = occurrence.startDate.addingTimeInterval(3600)
+        let old = EventKitManager.updateUndoSnapshot(master: series, target: occurrence)
+        occurrence.title = "Standup (moved talk)"
+        let op = UndoOperation.updateEvent(id: "series/RID=1", oldSnapshot: old, saved: EventSnapshot(from: occurrence))
+
+        let expected = try XCTUnwrap(op.undoPostState)
+        XCTAssertEqual(expected.changedFields(in: occurrence), [], "the occurrence as the update left it")
+        XCTAssertTrue(expected.changedFields(in: series).contains("start_time"), "the series is not what the record expects")
+    }
+
     func testMoveEventUndoComparesOnlyTheCalendarItWasMovedTo() throws {
         let event = makeEvent(title: "Standup")
         let op = UndoOperation.moveEvent(id: "moved", fromCalendarIdentifier: "from",
