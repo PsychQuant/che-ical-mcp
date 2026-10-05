@@ -126,6 +126,21 @@ final class UndoRefusalTests: XCTestCase {
         }
     }
 
+    /// The update arm's recurring-target refusal is thrown from `conflicts`, after resolve and
+    /// refresh and before the comparison; the seam passes it through unchanged (round 5).
+    func testAnErrorFromTheConflictCheckPassesThrough() {
+        let event = EKEvent(eventStore: store)
+        var steps: [String] = []
+        XCTAssertThrowsError(try UndoTargetCheck.check(expected, verb: .undo,
+                                                       lookup: { steps.append("lookup"); return event },
+                                                       refresh: { _ in steps.append("refresh"); return true },
+                                                       conflicts: { _ in throw UnrecoverableUndoError(message: "repeats now") })) { error in
+            XCTAssertEqual((error as? UnrecoverableUndoError)?.message, "repeats now")
+            XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        }
+        XCTAssertEqual(steps, ["lookup", "refresh"])
+    }
+
     func testAnArmCanSupplyItsOwnRefusal() {
         let event = EKEvent(eventStore: store)
         XCTAssertThrowsError(try UndoTargetCheck.check(expected, verb: .undo, lookup: { event }, refresh: { _ in true },

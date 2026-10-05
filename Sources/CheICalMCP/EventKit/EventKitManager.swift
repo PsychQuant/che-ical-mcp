@@ -945,11 +945,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let savedID = event.eventIdentifier ?? identifier
         // #236: an update that touched a recurring event is recorded only as a marker; its undo is
         // refused (RecurringUpdateKind). The rules after the update come from the request: a
-        // detached occurrence reads back with none although its series still repeats.
+        // detached occurrence reads back with none although its series still repeats. A detached
+        // occurrence addressed by its own identifier is an occurrence update (round 5).
         let recurringKind = RecurringUpdateKind.of(
             hadRules: hadRules,
             hasRulesAfter: clearRecurrence ? false : (recurrenceRule != nil || hadRules),
-            onOccurrence: event !== masterEvent, span: span)
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span)
         if let recurringKind {
             await CalendarUndoManager.shared.record(.updateRecurringEvent(id: savedID, title: oldSnapshot.title, kind: recurringKind))
         } else {

@@ -74,6 +74,12 @@ extension EventKitManager {
                 },
                 refresh: { $0.refresh() },
                 conflicts: { event in
+                    // Round 5: an update-undo never writes to an event that repeats or is an
+                    // edited occurrence now; refused and discarded before the comparison.
+                    if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
+                                                                      isDetached: event.isDetached) {
+                        throw refusal
+                    }
                     let fields = expected.changedFields(in: event)
                     guard deletesSeries, event.hasRecurrenceRules else { return fields }
                     return fields + UndoPostState.seriesConflicts(

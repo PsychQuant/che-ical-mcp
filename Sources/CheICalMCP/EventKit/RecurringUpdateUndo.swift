@@ -21,14 +21,19 @@ enum RecurringUpdateKind: String, Sendable, Hashable {
     case series
 
     /// Which kind of recurring update this was, or nil when the update touched no recurring event
-    /// (a one-off event before and after; its undo restores the event as before). `hasRulesAfter` is what the request leaves the
-    /// series with, not a read of the saved object: a detached occurrence reads back with no rules
-    /// even though its series still repeats.
+    /// (a one-off event before and after; its undo restores the event as before). `hasRulesAfter`
+    /// is what the request leaves the series with, not a read of the saved object: a detached
+    /// occurrence reads back with no rules even though its series still repeats. `onOccurrence`
+    /// covers an occurrence resolved from its series and a detached occurrence addressed by its own
+    /// identifier (which has no rules of its own, PR #259 round 5 findings 3, 4, 6, 9, 37).
     static func of(hadRules: Bool, hasRulesAfter: Bool, onOccurrence: Bool, span: EKSpan) -> RecurringUpdateKind? {
         guard hadRules || hasRulesAfter || onOccurrence else { return nil }
+        if onOccurrence {
+            if hadRules && !hasRulesAfter { return .rulesRemoved }
+            return span == .futureEvents ? .future : .occurrence
+        }
         if !hadRules { return .rulesAdded }
         if !hasRulesAfter { return .rulesRemoved }
-        if onOccurrence { return span == .futureEvents ? .future : .occurrence }
         return .series
     }
 
@@ -48,5 +53,19 @@ extension UndoOperation {
     /// discarded). Author-controlled text; the store-derived title passes `undoShownTitle`.
     static func recurringUpdateRefusal(title: String, kind: RecurringUpdateKind) -> UnrecoverableUndoError {
         UnrecoverableUndoError(message: "Cannot undo the update of the recurring event '\(undoShownTitle(title))': \(kind.reason). Undo does not restore updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
+    }
+}
+
+extension UndoOperation {
+    /// PR #259 round 5 findings 1, 2, 5, 7: the invariant "undo never writes to a recurring event"
+    /// is also enforced where the update arm writes, not only when the update is recorded. An
+    /// update recorded on a one-off event can find the event repeating at undo time (a later
+    /// update added rules and its marker was discarded, or another app made it repeat) or an
+    /// edited occurrence; the arm then writes nothing and the record is discarded. Checked after
+    /// resolve and refresh, before the field comparison and any write. Nil for other records.
+    func recurringTargetRefusal(hasRecurrenceRules: Bool, isDetached: Bool) -> UnrecoverableUndoError? {
+        guard case .updateEvent(_, let old, _) = self, hasRecurrenceRules || isDetached else { return nil }
+        let reason = isDetached ? "it is an edited occurrence of a series now" : "it repeats now"
+        return UnrecoverableUndoError(message: "Cannot undo the update of the event '\(undoShownTitle(old.title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
     }
 }

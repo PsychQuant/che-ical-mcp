@@ -34,6 +34,42 @@ final class RecurringUpdateUndoTests: XCTestCase {
         XCTAssertTrue(message.contains("the whole series"), message)
     }
 
+    /// Round 5 findings 3, 4, 6, 9, 37: a detached occurrence addressed by its own identifier
+    /// reads back with no rules, but updating it is an occurrence update.
+    func testAnUpdateOfADetachedOccurrenceIsAnOccurrenceUpdate() {
+        XCTAssertEqual(kind(hadRules: false, after: false, onOccurrence: true), .occurrence)
+        XCTAssertEqual(kind(hadRules: false, after: true, onOccurrence: true), .occurrence, "rules in the request do not make it a one-off")
+    }
+
+    // MARK: - The undo arm (round 5 findings 1, 2, 5, 7)
+
+    /// The undo of a one-off update never writes to an event that repeats or is an edited
+    /// occurrence now, however it got there (a later update that added rules, whose marker was
+    /// already discarded, or another app). Checked after resolve and refresh, before any write.
+    func testUndoOfAOneOffUpdateRefusesAnEventThatRepeatsNow() throws {
+        let update = UndoOperation.updateEvent(id: "e", oldSnapshot: UndoSnapshotFixtures.event(title: "Standup"),
+                                               saved: UndoSnapshotFixtures.event(title: "Standup (renamed)"))
+        XCTAssertNil(update.recurringTargetRefusal(hasRecurrenceRules: false, isDetached: false), "still a one-off: undo goes ahead")
+
+        for (rules, detached, reason) in [(true, false, "repeats now"), (false, true, "edited occurrence")] {
+            let error = try XCTUnwrap(update.recurringTargetRefusal(hasRecurrenceRules: rules, isDetached: detached))
+            XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+            let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
+            XCTAssertTrue(message.hasPrefix("Cannot undo the update of the event 'Standup'"), message)
+            XCTAssertTrue(message.contains(reason), message)
+            XCTAssertTrue(message.contains("Nothing was written"), message)
+            XCTAssertTrue(message.contains("revert it in Calendar"), message)
+            XCTAssertFalse(message.contains("discard_id"), message)
+        }
+    }
+
+    /// Only the update arm restores a snapshot onto an existing event; other records are not
+    /// affected by this check.
+    func testOtherRecordsAreNotAffected() {
+        let create = UndoOperation.createEvent(id: "e", title: "Standup", created: UndoSnapshotFixtures.event(title: "Standup"))
+        XCTAssertNil(create.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: false))
+    }
+
     func testTheRecordIsAMarkerWithNothingToCompareOrWrite() {
         let op = UndoOperation.updateRecurringEvent(id: "series/RID=1", title: "Standup", kind: .occurrence)
         XCTAssertNil(op.undoPostState, "nothing is compared, because nothing is written")
