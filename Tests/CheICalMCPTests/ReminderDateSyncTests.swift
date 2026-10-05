@@ -1066,4 +1066,26 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(reminder.startDateComponents?.day, 8)
         XCTAssertEqual(report.aligned, true)
     }
+
+    // MARK: - PR #256 verify round 3
+
+    /// The second read-back, after the fallback save, can fail too: not confirmed, not aligned.
+    func testConfirmSavedReportsNotAlignedWhenTheReadBackAfterTheFallbackFails() {
+        let reminder = floatingDateOnlyReminder()
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var reloads = 0
+        var saves = 0
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { saves += 1 },
+                                                      reload: {
+                                                          reloads += 1
+                                                          if reloads == 1 { self.dropZone(reminder); return true }
+                                                          return false
+                                                      },
+                                                      rollback: {}, log: { _ in })
+
+        XCTAssertEqual(saves, 1, "the fallback was saved")
+        XCTAssertEqual(reloads, 2)
+        XCTAssertEqual(confirmed.aligned, false)
+    }
 }

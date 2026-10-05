@@ -153,4 +153,47 @@ final class ReminderUpdateWriteTests: XCTestCase {
 
         XCTAssertEqual(report?.aligned, false)
     }
+
+    // MARK: - PR #256 verify round 3
+
+    /// The seam refuses `realign_to_due` with `clear_due_date` as the server layer does.
+    func testApplyRefusesRealignWithClearDueDateBeforeWriting() {
+        let reminder = divergedReminder()
+        var saves = 0
+
+        XCTAssertThrowsError(try ReminderUpdateWrite.apply(
+            ReminderUpdateRequest(identifier: "r", clearDueDate: true, realignToDue: true), to: reminder, calendar: nil,
+            save: { saves += 1 }, reload: { true }, rollback: {})) { error in
+            XCTAssertTrue("\(error)".contains("Cannot specify both realign_to_due and clear_due_date"), "\(error)")
+        }
+
+        XCTAssertNotNil(reminder.dueDateComponents)
+        XCTAssertEqual(saves, 0)
+    }
+
+    /// The reminder an update starts from, and the one `getReminder` reads notes and tags from, is
+    /// re-read first (`refresh()`), so an edit made in Reminders.app is the base; `false` means it
+    /// is gone, the #236 convention.
+    func testFreshReminderReReadsBeforeHandingTheReminderOut() throws {
+        let reminder = EKReminder(eventStore: EKEventStore())
+        var refreshed: [EKReminder] = []
+
+        let fresh = try ReminderUpdateWrite.freshReminder(identifier: "r", lookup: { _ in reminder },
+                                                         refresh: { refreshed.append($0); return true })
+
+        XCTAssertTrue(fresh === reminder)
+        XCTAssertEqual(refreshed.count, 1)
+        XCTAssertTrue(refreshed.first === reminder)
+    }
+
+    func testFreshReminderTreatsAFailedReReadAsNotFound() {
+        let reminder = EKReminder(eventStore: EKEventStore())
+
+        XCTAssertThrowsError(try ReminderUpdateWrite.freshReminder(identifier: "gone", lookup: { _ in reminder },
+                                                                   refresh: { _ in false })) { error in
+            XCTAssertTrue("\(error)".contains("gone"), "\(error)")
+        }
+        XCTAssertThrowsError(try ReminderUpdateWrite.freshReminder(identifier: "missing", lookup: { _ in nil },
+                                                                   refresh: { _ in XCTFail("nothing to refresh"); return true }))
+    }
 }

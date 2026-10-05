@@ -1721,10 +1721,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // PR #256 verify round 2: re-read before the first decision, so the no-due check, the
         // realign anchor and the undo snapshot see edits made elsewhere (Reminders.app) since this
         // store cached the reminder. `refresh() == false` means it is gone (the #236 convention).
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder,
-              reminder.refresh() else {
-            throw EventKitError.reminderNotFound(identifier: identifier)
-        }
+        let store = eventStore
+        let reminder = try ReminderUpdateWrite.freshReminder(
+            identifier: identifier, lookup: { store.calendarItem(withIdentifier: $0) as? EKReminder },
+            refresh: { $0.refresh() })
         let request = ReminderUpdateRequest(
             identifier: identifier, title: title, notes: notes, dueDate: dueDate, priority: priority,
             calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
@@ -1735,7 +1735,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
-        let store = eventStore
         let dateSync = try ReminderUpdateWrite.apply(
             request, to: reminder, calendar: calendar,
             save: { try store.save(reminder, commit: true) },
@@ -1750,10 +1749,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
-            throw EventKitError.reminderNotFound(identifier: identifier)
-        }
-
+        // PR #256 verify round 3: `update_reminder` merges notes and tags into what this returns,
+        // so it must be the stored reminder, not the cached one.
+        let store = eventStore
+        let reminder = try ReminderUpdateWrite.freshReminder(
+            identifier: identifier, lookup: { store.calendarItem(withIdentifier: $0) as? EKReminder },
+            refresh: { $0.refresh() })
         return ReminderWriteSnapshot(from: reminder)
     }
 
