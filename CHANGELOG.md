@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_reminders` and `search_reminders` report the start date and time-based alarms** (#231). Reminders.app shows both, and a reminder with only a start date or only an alarm used to look undated through these tools (the #227 situation). New fields: `start` (the start date in the `due` shape, `null` when absent), `start_date` / `start_date_local` (mirroring `due_date` / `due_date_local`, present only when set), and `alarms`, always present (`[]` when none): `{"kind": "relative", "minutes_before": N}` (positive = before the due date) or `{"kind": "absolute", "absolute_date", "absolute_date_local"}`. Absolute alarms are listed first by date, then relative alarms earliest first, because EventKit's own alarm order changes between processes. Location alarms are not listed in `alarms`; they stay in `location_trigger`. Additive only: clients that reject unknown fields must update their decoders. Event alarms are not covered (#240).
+
 ## [1.19.0] - 2026-10-04
 
 ### Changed
