@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Undo of `update_reminder` / `delete_reminder` keeps location alarms, recurrence and the URL** (#228): the undo snapshot kept each alarm as a relative offset (or, since #227, an absolute date), so a location alarm (offset 0, no date) came back as an alarm at the due time. That happened on every update-undo, whatever the update changed, and undoing `clear_location_trigger` added a due-time alarm instead of the location alarm. Delete-undo also recreated a repeating reminder as a one-off and dropped its URL. The snapshot now keeps each alarm whole (time, absolute date, location with radius and proximity), the recurrence rules and the URL; alarms and rules are rewritten only when they differ, so an undo that did not touch them leaves them as they are. Reminder alarm sounds and email addresses are not stored by iCloud, so there is nothing to restore for them.
+- **Undo of `update_event` / `delete_event` keeps absolute-date, location and email alarms** (#230): the snapshot kept one relative offset per alarm, so undo turned absolute-date and location alarms into alarms at the event start and email alarms into display alarms, even after an update that did not touch the alarms. Alarms are now kept whole and rewritten only when they differ.
+- **`copy_event` keeps absolute-date, location and email alarms** (#230): the copy (also the copy + delete fallback of `move_events_batch`) rebuilt every alarm from its offset, while the tool description said absolute-date alarms were not copied. They are now copied as they are, and `not_carried_over` no longer lists `absolute_alarms`.
+
 ## [1.19.0] - 2026-10-04
 
 ### Changed
