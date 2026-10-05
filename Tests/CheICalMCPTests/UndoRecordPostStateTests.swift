@@ -107,6 +107,22 @@ final class UndoRecordPostStateTests: XCTestCase {
         XCTAssertTrue(expected.changedFields(in: series).contains("start_time"), "the series is not what the record expects")
     }
 
+    /// #262: the undo of a span "all" update writes the series back as a whole. Saved with
+    /// .thisEvent on the first occurrence, on device the first occurrence became a detached copy
+    /// and the other occurrences were gone; with .futureEvents the whole series came back.
+    func testASeriesUpdateIsUndoneForTheWholeSeries() {
+        let series = weeklySeries(title: "Standup")
+        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: series), target: series), .futureEvents)
+
+        let occurrenceRecord = EventSnapshot(from: series, includeRecurrence: false)
+        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: occurrenceRecord, target: series), .thisEvent)
+
+        let oneOff = makeEvent(title: "Review")
+        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: oneOff), target: oneOff), .thisEvent)
+        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: series), target: oneOff), .thisEvent,
+                       "undo of clear_recurrence: the event has no series yet, the restore adds the rules")
+    }
+
     func testMoveEventUndoComparesOnlyTheCalendarItWasMovedTo() throws {
         let event = makeEvent(title: "Standup")
         let op = UndoOperation.moveEvent(id: "moved", fromCalendarIdentifier: "from",

@@ -2082,10 +2082,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
         case .updateEvent(_, let oldSnapshot, _):
-            // Undo update = restore old values
+            // Undo update = restore old values; a whole-series update is restored for the whole
+            // series (#262).
             let event = try await verifiedEvent(of: operation, verb: .undo)
+            let span = Self.updateUndoSpan(restoring: oldSnapshot, target: event)
             try applySnapshot(oldSnapshot, to: event)
-            try eventStore.save(event, span: .thisEvent)
+            try eventStore.save(event, span: span)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
