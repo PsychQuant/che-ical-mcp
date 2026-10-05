@@ -2,7 +2,7 @@
 
 A missing event or reminder does not prove permanent deletion. Normal undo retains transient failures so a source or permission problem can be repaired and retried.
 
-Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Revert the change and undo again, or ask the user whether to give up that undo and discard the record as below.
+Undo also refuses, and keeps the record, when the item was changed after the operation in a way the undo would overwrite or delete (#236): the error names the changed fields. Whoever made the change decides: ask the user whether to change it back and undo again, or to give up that undo and discard the record as below. Occurrences of a series edited on their own cannot be put back into the series, so for those the choice is only whether to discard.
 
 To intentionally abandon the newest record, call undo_history, inspect the first entry, and pass its id to undo as discard_id. Example: `{"discard_id":"<id returned by undo_history>"}`. This removes only that current top record. It does not edit events/reminders and does not add a redo record; discarding history cannot be undone. Existing redo records are preserved.
 

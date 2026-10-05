@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **BREAKING (behavior) — `undo` / `redo` refuse to overwrite a change made after the operation (#236)**: undo re-reads the item and refuses, writing nothing and keeping the entry, when a field it would overwrite or delete was changed since (fields already changed back do not count; for a recurring event created here, individually edited occurrences count too). The error names the fields; revert and retry, or drop the entry with `undo` + `discard_id` if the user agrees. A missing item's error now names it and `discard_id`.
+- **BREAKING (behavior) — `undo` / `redo` refuse to overwrite a change a person made after the operation (#236)**: undo re-reads the item and refuses, writing nothing and keeping the entry, when a field it would overwrite or delete was changed since (fields already changed back do not count; a create-undo compares everything the item holds, and for a recurring event created here also occurrences edited on its own, within four years). An alarm sound and coordinates added to a place are not treated as edits and are overwritten. The error names the fields; whoever made the change decides whether to change it back and retry, or to drop the entry with `undo` + `discard_id`. A missing item's error now names it and `discard_id`.
 
 ## [1.19.0] - 2026-10-04
 

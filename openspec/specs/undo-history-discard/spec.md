@@ -41,6 +41,14 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo cannot find the item under its recorded identifier
 - **THEN** nothing is written, the record stays on top with the same id, and the error names the item and discard_id
 
+#### Scenario: Recurring occurrence identity lost (#204)
+- **WHEN** undo or redo of an identity-guarded recurring completion finds that the identifier resolves to another occurrence
+- **THEN** nothing is written and the record is discarded, so older records stay reachable; this is the one refusal that does not keep the record
+
+#### Scenario: Recurring completion without an occurrence snapshot
+- **WHEN** undo or redo of a recurring completion recorded without the #204 snapshot finds the reminder in any state other than the one it expects
+- **THEN** nothing is written and the record is kept, even when the reminder already looks like what the write would produce
+
 #### Scenario: Redo refused
 - **WHEN** redo of a completion finds the reminder changed after the undo
 - **THEN** nothing is written and the record stays on the redo stack
