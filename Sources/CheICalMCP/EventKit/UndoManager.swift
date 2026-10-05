@@ -248,6 +248,9 @@ enum UndoOperation {
     case deleteEvent(snapshot: EventSnapshot)
     /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
     case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
+    /// #236: an update that touched a recurring event, kept only as a marker. Its undo is refused
+    /// and the record discarded; nothing is restored (`RecurringUpdateKind`).
+    case updateRecurringEvent(id: String, title: String, kind: RecurringUpdateKind)
     case createReminder(id: String, title: String, created: ReminderSnapshot)
     case deleteReminder(snapshot: ReminderSnapshot)
     case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
@@ -279,6 +282,8 @@ enum UndoOperation {
             return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
         case .updateEvent(_, let old, _):
             return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
+        case .updateRecurringEvent(_, let title, _):
+            return "Updated recurring event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title)) (undo not available)"
         case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .createReminder(_, let title, _):

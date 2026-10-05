@@ -800,6 +800,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
+        // Snapshot before update for undo
+        let oldSnapshot = EventSnapshot(from: masterEvent)
+        let hadRules = masterEvent.hasRecurrenceRules
+
         // For recurring events, resolve the specific occurrence when needed.
         // When applyToAll is true, operate on master event directly (correct for "all" series updates).
         // "this" or "future" on recurring → require occurrence_date to find the right occurrence.
@@ -819,10 +823,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 message: "For recurring events, occurrence_date is required to identify which occurrence to modify."
             )
         }
-
-        // Snapshot before update for undo: the series, or the occurrence on its own (#236,
-        // PR #259 round 4: the record targets the occurrence by its post-save identifier).
-        let oldSnapshot = Self.updateUndoSnapshot(master: masterEvent, target: event)
 
         if let t = title { event.title = t }
 
@@ -943,8 +943,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #246: a calendar change across accounts changes the identifier, so the record keeps the
         // one the event has now; #236: and the state the update left.
         let savedID = event.eventIdentifier ?? identifier
-        await CalendarUndoManager.shared.record(.updateEvent(id: savedID, oldSnapshot: oldSnapshot,
-                                                             saved: postWriteSnapshot(eventID: savedID, saved: event)))
+        // #236: an update that touched a recurring event is recorded only as a marker; its undo is
+        // refused (RecurringUpdateKind). The rules after the update come from the request: a
+        // detached occurrence reads back with none although its series still repeats.
+        let recurringKind = RecurringUpdateKind.of(
+            hadRules: hadRules,
+            hasRulesAfter: clearRecurrence ? false : (recurrenceRule != nil || hadRules),
+            onOccurrence: event !== masterEvent, span: span)
+        if let recurringKind {
+            await CalendarUndoManager.shared.record(.updateRecurringEvent(id: savedID, title: oldSnapshot.title, kind: recurringKind))
+        } else {
+            await CalendarUndoManager.shared.record(.updateEvent(id: savedID, oldSnapshot: oldSnapshot,
+                                                                 saved: postWriteSnapshot(eventID: savedID, saved: event)))
+        }
         return event
     }
 
@@ -2091,6 +2102,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
+        case .updateRecurringEvent(_, let title, let kind):
+            // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).
+            throw UndoOperation.recurringUpdateRefusal(title: title, kind: kind)
+
         case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
             // event is still in the calendar it was moved to (#236).
@@ -2164,6 +2179,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .updateEvent(let id, _, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
+
+        case .updateRecurringEvent(_, let title, _):
+            // Unreachable: its undo always fails and discards the record.
+            return "Redo update: the update of the recurring event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' was not undone, so there is nothing to redo."
 
         case .moveEvent(_, _, _, let title, _):
             return "Redo move: use move_events_batch to move '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again."

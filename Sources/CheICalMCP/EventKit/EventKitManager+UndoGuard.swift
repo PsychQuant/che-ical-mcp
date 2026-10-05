@@ -26,15 +26,6 @@ extension EventKitManager {
         return ReminderSnapshot(from: saved)
     }
 
-    /// What an update-undo writes back, taken before `update_event` changes `target`. For an
-    /// occurrence (`target` is not the series' `master`) that is the occurrence's own state with
-    /// no rules: the record targets the occurrence by its post-save identifier (#246), and the
-    /// series' snapshot moved it to the series' first start and failed to save on device
-    /// (EKErrorDomain 39, "The repeat field cannot be changed"; PR #259 round 4 probe).
-    static func updateUndoSnapshot(master: EKEvent, target: EKEvent) -> EventSnapshot {
-        target === master ? EventSnapshot(from: master) : EventSnapshot(from: target, includeRecurrence: false)
-    }
-
     /// The span an update-undo saves with (#262). A restore that writes rules back to a series that
     /// is still a series is a whole-series update (span "all") and is undone with `.futureEvents`:
     /// saved with `.thisEvent`, on device the first occurrence became a detached copy and the rest

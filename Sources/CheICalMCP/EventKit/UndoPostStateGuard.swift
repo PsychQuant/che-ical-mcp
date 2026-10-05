@@ -239,7 +239,7 @@ extension UndoOperation {
             guard let completion = completionStates else { return nil }
             return .reminderCompletion(id: completion.id, title: completion.title, state: completion.written,
                                        restoring: completion.identityConfirmed ? completion.undoWrites : nil)
-        case .deleteEvent, .deleteReminder, .batch:
+        case .deleteEvent, .deleteReminder, .batch, .updateRecurringEvent:
             return nil
         }
     }
