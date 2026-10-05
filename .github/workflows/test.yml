@@ -71,7 +71,8 @@ jobs:
         # TCCDriftDetectorBannerTests' binary-spawn tests also run in CI: the
         # skipIfCI() guard was removed once #131 was resolved, and
         # spawnAndCaptureStderr bounds every wait (a hung child costs at most
-        # ~16.5 s per test; see the file's header comment and #233).
+        # ~16.5 s per helper call, ~33 s for the default-mode test, which
+        # makes two calls; see the file's header comment and #233).
         # --verbose + script PTY retained to surface live output if anything regresses.
         run: |
           script -q /dev/null swift test --verbose 2>&1 | tee /tmp/swift-test.log

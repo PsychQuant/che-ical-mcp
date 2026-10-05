@@ -11,9 +11,10 @@
 // load-bearing because `spawnAndCaptureStderr` bounds every wait — the `maxWait` cap
 // (10s by default; since #233 it caps a hung child instead of giving the child a fixed
 // 1s window to write), SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap
-// with a force-reap SIGKILL — so a stuck child costs at most ~16.5s per test (10 + 0.5s
-// SIGTERM grace + 3 + 1s force-reap + two 1s drain bounds) instead of wedging the 20m
-// job timeout. A healthy child exits on stdin EOF right after the banner: roughly 0.4-1.0s
+// with a force-reap SIGKILL — so a stuck child costs at most ~16.5s per helper call (10 +
+// 0.5s SIGTERM grace + 3 + 1s force-reap + two 1s drain bounds) instead of wedging the 20m
+// job timeout. Most tests make one call; the warmed default-mode test makes two (warm-up +
+// timed spawn), so its worst case is ~33s. A healthy child exits on stdin EOF right after the banner: roughly 0.4-1.0s
 // from spawn to exit on the hosts measured for #233, about 0.02s with the banner
 // suppressed. The spawned binary also inherits the same EventKit fast-fail under CI=1, so
 // the banner path (which only reads `authorizationStatus`, never `requestFullAccess`) has
@@ -239,8 +240,12 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// signal would reach the process that is still waiting. With `sh -c "sleep 1.2; printf …"`
     /// the shell forks `sleep`, and that grandchild would outlive the signalled shell.
     func testSpawnHelperCapturesChildThatWritesAfterOneSecond() throws {
+        let perl = "/usr/bin/perl"
+        guard FileManager.default.isExecutableFile(atPath: perl) else {
+            throw XCTSkip("\(perl) is not available on this host; the late-writer child needs it")
+        }
         let run = try spawnAndCaptureStderr(
-            binary: URL(fileURLWithPath: "/usr/bin/perl"),
+            binary: URL(fileURLWithPath: perl),
             arguments: ["-e", "select(undef, undef, undef, 1.2); print STDERR qq([late] written after 1.2s\\n)"]
         )
 
@@ -327,7 +332,15 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // host; ~3.7 s per `testBannerHandlesArbitraryBinaryPath`), and this is the first test
         // in the class to spawn the binary. Running `--version` once, to exit, keeps that cost
         // out of the arrival clock below, which is meant to time the banner path only.
-        _ = try spawnAndCaptureStderr(binary: binary, arguments: ["--version"])
+        let warmUp = try spawnAndCaptureStderr(binary: binary, arguments: ["--version"])
+        XCTAssertFalse(
+            warmUp.timedOut,
+            "The untimed `--version` warm-up hit the cap; this failure is in the warm-up, not the timed banner spawn"
+        )
+        XCTAssertEqual(
+            warmUp.terminationStatus, 0,
+            "The untimed `--version` warm-up exited non-zero; this failure is in the warm-up, not the timed banner spawn"
+        )
 
         let run = try spawnAndCaptureStderr(
             binary: binary,
@@ -362,6 +375,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
         XCTAssertFalse(run.timedOut, "With the banner suppressed the server should still exit by itself on stdin EOF")
+        XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
             run.stderr.contains("[banner]"),
             "Env-var should fully suppress banner. Got stderr: \(run.stderr)"
