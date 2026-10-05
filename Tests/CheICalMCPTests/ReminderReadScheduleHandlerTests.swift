@@ -88,6 +88,8 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
         }
     }
 
+    /// The snapshot is passed in unsorted: the output order is the documented one
+    /// (earliest first) however the snapshot was built, not only via `init(from:)`.
     func testRelativeAlarmsReportMinutesBeforeTheDueDate() async throws {
         let snapshot = ReminderReadSnapshot(id: "relative", title: "R",
                                             alarms: [.relative(seconds: -900), .relative(seconds: 600),
@@ -96,8 +98,21 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
             let value = try await item(tool, args, snapshot)
             let alarms = try XCTUnwrap(value["alarms"] as? [[String: Any]], tool)
             XCTAssertEqual(alarms.map { $0["kind"] as? String }, Array(repeating: "relative", count: 4), tool)
-            XCTAssertEqual(alarms.map { $0["minutes_before"] as? Double }, [15, -10, 1.5, 0], tool)
+            XCTAssertEqual(alarms.map { $0["minutes_before"] as? Double }, [15, 1.5, 0, -10], tool)
             XCTAssertEqual(Set(alarms.flatMap(\.keys)), ["kind", "minutes_before"], tool)
+        }
+    }
+
+    /// JSON has no NaN or infinity; `formatJSON` refuses such a payload, so one bad
+    /// alarm failed the whole call for every reminder in it. It is left out of `alarms`.
+    func testNonFiniteRelativeOffsetIsLeftOutOfAlarms() async throws {
+        let snapshot = ReminderReadSnapshot(id: "nan", title: "R",
+                                            alarms: [.relative(seconds: .nan), .relative(seconds: -900),
+                                                     .relative(seconds: .infinity), .relative(seconds: -.infinity)])
+        for (tool, args) in tools {
+            let value = try await item(tool, args, snapshot)
+            let alarms = try XCTUnwrap(value["alarms"] as? [[String: Any]], tool)
+            XCTAssertEqual(alarms.map { $0["minutes_before"] as? Double }, [15], tool)
         }
     }
 
@@ -115,7 +130,7 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
     func testAbsoluteAlarmReportsUTCAndLocalStrings() async throws {
         let absolute = Date(timeIntervalSince1970: 1_791_615_600)   // 2026-10-10T07:00:00Z
         let snapshot = ReminderReadSnapshot(id: "absolute", title: "R",
-                                            alarms: [.absolute(absolute), .relative(seconds: -900)])
+                                            alarms: [.relative(seconds: -900), .absolute(absolute)])
         for (tool, args) in tools {
             let value = try await item(tool, args, snapshot)
             let alarms = try XCTUnwrap(value["alarms"] as? [[String: Any]], tool)

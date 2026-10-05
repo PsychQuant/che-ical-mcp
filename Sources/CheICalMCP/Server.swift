@@ -1578,7 +1578,8 @@ class CheICalMCPServer {
     private func reminderScheduleFields(_ reminder: ReminderReadSnapshot) -> [String: Any] {
         var fields: [String: Any] = [
             "start": ReminderDueValue(components: reminder.startDateComponents)?.dictionary ?? NSNull(),
-            "alarms": reminder.alarms.map { [self] alarm -> [String: Any] in
+            // Sorted and filtered here too, so the order holds however the snapshot was built.
+            "alarms": ReminderReadSnapshot.Alarm.listed(reminder.alarms).map { [self] alarm -> [String: Any] in
                 switch alarm {
                 case .relative(let seconds):
                     // Positive means before the due date; `+ 0` turns -0.0 into 0.

@@ -33,6 +33,16 @@ struct ReminderReadSnapshot: Sendable {
         case relative(seconds: TimeInterval)
         case absolute(Date)
 
+        /// The alarms as the read output lists them. A relative offset that is not
+        /// finite is left out: JSON cannot encode it, and `formatJSON` would fail the
+        /// whole response. The rest are sorted with `listedBefore`.
+        static func listed(_ alarms: [Alarm]) -> [Alarm] {
+            alarms.filter {
+                if case .relative(let seconds) = $0 { return seconds.isFinite }
+                return true
+            }.sorted(by: listedBefore)
+        }
+
         /// `EKCalendarItem.alarms` order changes between process launches, so the read
         /// output sorts: absolute alarms by date, then relative alarms earliest first.
         static func listedBefore(_ lhs: Alarm, _ rhs: Alarm) -> Bool {
@@ -99,11 +109,11 @@ struct ReminderReadSnapshot: Sendable {
         }
         // A location alarm reads back with absoluteDate nil and relativeOffset 0, so
         // it has to be set aside before the absolute/relative split (#231).
-        let alarms: [Alarm] = (reminder.alarms ?? []).compactMap { alarm in
+        let alarms = Alarm.listed((reminder.alarms ?? []).compactMap { alarm in
             guard alarm.structuredLocation == nil else { return nil }
             if let date = alarm.absoluteDate { return .absolute(date) }
             return .relative(seconds: alarm.relativeOffset)
-        }.sorted(by: Alarm.listedBefore)
+        })
         self.init(id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
                   isCompleted: reminder.isCompleted, priority: reminder.priority,
                   calendarTitle: reminder.calendar?.title ?? "", dueDateComponents: reminder.dueDateComponents,

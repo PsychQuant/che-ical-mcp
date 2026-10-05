@@ -78,6 +78,18 @@ final class ReminderReadScheduleTests: XCTestCase {
         XCTAssertNotNil(snapshot.locationTrigger)
     }
 
+    /// JSON cannot encode NaN or infinity, so an alarm whose offset is not finite
+    /// is left out rather than handed to the serializer.
+    func testNonFiniteRelativeOffsetIsLeftOut() {
+        let reminder = makeReminder()
+        reminder.addAlarm(EKAlarm(relativeOffset: .nan))
+        reminder.addAlarm(EKAlarm(relativeOffset: -900))
+        reminder.addAlarm(EKAlarm(relativeOffset: .infinity))
+        reminder.addAlarm(EKAlarm(relativeOffset: -.infinity))
+
+        XCTAssertEqual(ReminderReadSnapshot(from: reminder).alarms, [.relative(seconds: -900)])
+    }
+
     func testTimedStartDateIsCopiedWithItsTimeZone() {
         let reminder = makeReminder()
         let start = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9, hour: 9, minute: 30)
