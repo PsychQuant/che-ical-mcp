@@ -9,8 +9,8 @@ import Foundation
 /// reference went stale, and re-attaching it in applySnapshot made the save
 /// fail (EKCADErrorDomain 1010, #186 on-device). Rebuilding a fresh rule from
 /// plain values closes that class structurally.
-struct RecurrenceRuleSnapshot {
-    struct DayOfWeek {
+struct RecurrenceRuleSnapshot: Equatable {
+    struct DayOfWeek: Equatable {
         let day: Int        // EKWeekday rawValue
         let weekNumber: Int
     }
@@ -127,11 +127,14 @@ struct ReminderSnapshot {
     let dueDateComponents: DateComponents?
     /// #227: `update_reminder` now moves the start date with the due date, so undo must restore it.
     let startDateComponents: DateComponents?
-    /// Relative-offset alarms only. An absolute-date alarm has `relativeOffset == 0`, so recording
-    /// it here would bring it back as an alarm at the due time (#227).
-    let alarmOffsets: [TimeInterval]?
-    /// #227: absolute-date alarms, restored at their own dates.
-    let absoluteAlarmDates: [Date]
+    /// #228: whole alarms. Recorded as offsets, an absolute-date alarm (#227) and a location
+    /// alarm both report 0 and came back as alarms at the due time.
+    let alarms: [AlarmSnapshot]
+    /// #228: delete-undo recreates the reminder, so its rules must be in the snapshot; stored as
+    /// values (#191).
+    let recurrenceRules: [RecurrenceRuleSnapshot]
+    /// #228: delete-undo used to drop it.
+    let url: URL?
     /// #196: restored by undo instead of letting EventKit re-stamp "now".
     let completionDate: Date?
 
@@ -144,18 +147,30 @@ struct ReminderSnapshot {
         self.priority = reminder.priority
         self.dueDateComponents = reminder.dueDateComponents
         self.startDateComponents = reminder.startDateComponents
-        self.alarmOffsets = reminder.alarms?.filter { $0.absoluteDate == nil }.map { $0.relativeOffset }
-        self.absoluteAlarmDates = reminder.alarms?.compactMap(\.absoluteDate) ?? []
+        self.alarms = (reminder.alarms ?? []).map(AlarmSnapshot.init(from:))
+        self.recurrenceRules = (reminder.recurrenceRules ?? []).map(RecurrenceRuleSnapshot.init(from:))
+        self.url = reminder.url
         self.completionDate = reminder.completionDate
     }
 
-    /// Restores the start date and the time-based alarms (#227). Location alarms are rebuilt
-    /// from `alarmOffsets` like any relative alarm; that loss is tracked separately (#228).
-    func applyDates(to reminder: EKReminder) {
+    /// Writes every recorded field except the list, which `applyReminderSnapshot` looks up in
+    /// the store. Alarms and recurrence rules are rebuilt only when they differ, so an
+    /// update-undo that did not touch them leaves the existing objects in place. The rules
+    /// and the due date go into the same save: EventKit refuses a repeating reminder without
+    /// a due date (EKErrorDomain 18).
+    func apply(to reminder: EKReminder, now: Date) {
+        reminder.title = title
+        reminder.notes = notes
+        // #196: update / delete undo restore the recorded completion instant too.
+        ReminderCompletionWrite.plan(isCompleted: isCompleted, recorded: completionDate, now: now).apply(to: reminder)
+        reminder.priority = priority
+        reminder.dueDateComponents = dueDateComponents
         reminder.startDateComponents = startDateComponents
-        reminder.alarms?.forEach(reminder.removeAlarm)
-        alarmOffsets?.forEach { reminder.addAlarm(EKAlarm(relativeOffset: $0)) }
-        absoluteAlarmDates.forEach { reminder.addAlarm(EKAlarm(absoluteDate: $0)) }
+        reminder.url = url
+        AlarmSnapshot.restore(alarms, to: reminder)
+        if (reminder.recurrenceRules ?? []).map(RecurrenceRuleSnapshot.init(from:)) != recurrenceRules {
+            reminder.recurrenceRules = recurrenceRules.isEmpty ? nil : recurrenceRules.map { $0.rebuild() }
+        }
     }
 }
 

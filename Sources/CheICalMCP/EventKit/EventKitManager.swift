@@ -2223,22 +2223,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         write.apply(to: reminder)
     }
 
-    /// Apply a ReminderSnapshot to an EKReminder.
+    /// Apply a ReminderSnapshot to an EKReminder: the list here, because it needs the store;
+    /// every other recorded field in `ReminderSnapshot.apply` (#228).
     private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, to reminder: EKReminder) {
-        reminder.title = snapshot.title
-        reminder.notes = snapshot.notes
-        // #196: update / delete undo restore the recorded completion instant too.
-        ReminderCompletionWrite.plan(isCompleted: snapshot.isCompleted, recorded: snapshot.completionDate, now: Date()).apply(to: reminder)
-        reminder.priority = snapshot.priority
-        reminder.dueDateComponents = snapshot.dueDateComponents
-
-        // Calendar
         if let cal = eventStore.calendars(for: .reminder).first(where: { $0.title == snapshot.calendarTitle }) {
             reminder.calendar = cal
         }
-
-        // Start date and alarms (#227)
-        snapshot.applyDates(to: reminder)
+        snapshot.apply(to: reminder, now: Date())
     }
 }
 
