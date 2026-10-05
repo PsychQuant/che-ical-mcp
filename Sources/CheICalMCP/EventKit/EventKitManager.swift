@@ -1037,7 +1037,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         for id in identifiers {
             do {
-                guard let event = eventStore.event(withIdentifier: id) else {
+                // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
+                // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
+                guard let event = freshEvent(id: id) else {
                     failures.append((id, "Event not found"))
                     continue
                 }
@@ -1222,7 +1224,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         for item in items {
             do {
-                guard let masterEvent = eventStore.event(withIdentifier: item.identifier) else {
+                // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
+                guard let masterEvent = freshEvent(id: item.identifier) else {
                     failures.append((item.identifier, "Event not found"))
                     continue
                 }
@@ -1918,7 +1921,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         for id in identifiers {
             do {
-                guard let reminder = eventStore.calendarItem(withIdentifier: id) as? EKReminder else {
+                // #236 (PR #259 round 3, finding 1): refreshed, like deleteReminder, so the
+                // only-completed check below reads the current completion.
+                guard let reminder = freshReminder(id: id) else {
                     failures.append((id, "Reminder not found"))
                     continue
                 }
