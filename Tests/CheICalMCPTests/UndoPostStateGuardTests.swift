@@ -100,6 +100,22 @@ final class UndoPostStateGuardTests: XCTestCase {
         }
     }
 
+    /// Round 6 findings 1, 12, 21: time zones compare by offset at the event's start and at the
+    /// next daylight-saving transition, the same as the occurrence scan: two spellings of one zone
+    /// are the same, and zones that agree only until their rules part are not.
+    func testTimeZonesCompareByOffsetNowAndAtTheNextTransition() {
+        let event = makeEvent()
+        let saved = EventSnapshot(from: event)
+        event.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), [], "GMT+8 and Asia/Taipei")
+
+        event.timeZone = TimeZone(identifier: "America/New_York")
+        let newYork = EventSnapshot(from: event)
+        event.timeZone = TimeZone(identifier: "America/Bogota")
+        XCTAssertEqual(newYork.changedFields(in: EventSnapshot(from: event), restoring: nil), ["timezone"],
+                       "the same offset in January, not after New York's March transition")
+    }
+
     func testAllDayChangeIsNamed() {
         let event = makeEvent()
         let saved = EventSnapshot(from: event)

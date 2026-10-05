@@ -387,6 +387,10 @@ final class UndoRefusalTests: XCTestCase {
                        "GMT+8 and Asia/Taipei")
         XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.timeZone = TimeZone(identifier: "Asia/Tokyo") }, series: series))
         XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.timeZone = nil }, series: series), "floating is a change")
+
+        let newYork = occurrence { $0.timeZone = TimeZone(identifier: "America/New_York") }
+        XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.timeZone = TimeZone(identifier: "America/Bogota") }, series: newYork),
+                      "the same offset in January (round 6), not after New York's next transition")
     }
 
     /// The place counts on its own: the same name moved to other coordinates.

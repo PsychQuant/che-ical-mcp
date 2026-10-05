@@ -29,7 +29,7 @@ extension EventSnapshot {
         check("notes") { $0.notes == $1.notes }
         check("location") { $0.location == $1.location }
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
-        check("timezone") { $0.timeZone?.identifier == $1.timeZone?.identifier }
+        check("timezone") { UndoPostState.sameTimeZone($0.timeZone, $1.timeZone, at: $1.startDate) }
         check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
         // `apply` writes `location` unconditionally, and EventKit couples it with the place (a new
         // string replaces the place, `nil` clears it; checked in memory), so the place round-trips.
@@ -155,6 +155,24 @@ extension RecurrenceRuleSnapshot {
 }
 
 extension UndoPostState {
+    /// Two time zones are the same when they give the same offset from GMT at `date` and at the
+    /// next daylight-saving transition of either zone after it (PR #259 round 6 findings 1, 12,
+    /// 21): two spellings of one zone (Asia/Taipei, GMT+8) are the same, while zones that agree
+    /// only until their rules part (America/New_York and America/Bogota in winter) are not. No
+    /// zone (floating) equals only no zone.
+    static func sameTimeZone(_ a: TimeZone?, _ b: TimeZone?, at date: Date) -> Bool {
+        switch (a, b) {
+        case (nil, nil):
+            return true
+        case let (a?, b?):
+            let instants = [date] + [a.nextDaylightSavingTimeTransition(after: date),
+                                     b.nextDaylightSavingTimeTransition(after: date)].compactMap { $0 }
+            return instants.allSatisfy { a.secondsFromGMT(for: $0) == b.secondsFromGMT(for: $0) }
+        default:
+            return false
+        }
+    }
+
     /// An alarm as the guard compares it: the sound is left out (a server may set a default one),
     /// and an absolute date compares to the second, like every other date the guard compares.
     struct AlarmKey {
