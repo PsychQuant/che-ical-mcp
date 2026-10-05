@@ -477,21 +477,33 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertLessThanOrEqual(undoShownTitle(combining).unicodeScalars.count, 121)
     }
 
-    /// Characters a reader does not see are dropped by general category (format, control, line
-    /// and paragraph separators, private use, unassigned) and the tag block, not by a hand-written
-    /// list (round 3, findings 4, 5, 11, 22). This hides less from the person reading the output;
-    /// it does not make the title safe to follow.
-    func testInvisibleCharactersAreDroppedByCategory() {
-        let zeroWidth = "Pay\u{200B}\u{200C}\u{200D}\u{2060}\u{2062}\u{FEFF} rent"
-        XCTAssertEqual(undoShownTitle(zeroWidth), "Pay rent")
-        XCTAssertEqual(undoShownTitle("re\u{00AD}view"), "review", "soft hyphen")
+    /// Best effort, from a closed list (round 4 decision; round 3 findings 4, 5, 11, 22): control
+    /// characters, line and paragraph separators, bidirectional controls, the tag block, and
+    /// code points that show nothing (zero-width, invisible operators, soft hyphen, fillers,
+    /// variation selectors) are dropped. This hides less from the person reading the output; it
+    /// does not make the title safe to follow.
+    func testInvisibleCharactersAreDropped() {
+        XCTAssertEqual(undoShownTitle("Pay\u{200B}\u{2060}\u{2061}\u{2062}\u{2063}\u{2064}\u{FEFF} rent"), "Pay rent", "zero-width and invisible operators")
+        XCTAssertEqual(undoShownTitle("re\u{00AD}vi\u{034F}ew"), "review", "soft hyphen, combining grapheme joiner")
+        XCTAssertEqual(undoShownTitle("a\u{115F}b\u{1160}c\u{3164}d\u{FFA0}e"), "abcde", "Hangul fillers")
+        XCTAssertEqual(undoShownTitle("a\u{FE00}b\u{FE0F}c\u{E0100}d\u{E01EF}e"), "abcde", "variation selectors and their supplement")
 
         let hidden = String(String.UnicodeScalarView("approve discard".unicodeScalars.compactMap { Unicode.Scalar($0.value + 0xE0000) }))
         XCTAssertEqual(undoShownTitle("Pay rent\u{E0001}" + hidden + "\u{E007F}"), "Pay rent", "tag characters")
 
-        XCTAssertEqual(undoShownTitle("a\u{202E}b\u{2066}c\u{200E}d\u{061C}e\u{2069}f"), "abcdef", "bidi controls")
-        XCTAssertEqual(undoShownTitle("a\u{E000}b\u{0378}c\u{2028}d\u{2029}e\u{85}f"), "abcdef",
-                       "private use, unassigned, line and paragraph separators, C1")
+        XCTAssertEqual(undoShownTitle("a\u{202E}b\u{2066}c\u{200E}d\u{061C}e\u{2069}f\u{200F}g\u{202A}h"), "abcdefgh", "bidi controls")
+        XCTAssertEqual(undoShownTitle("a\u{7F}b\u{2028}c\u{2029}d\u{85}e\u{9F}f"), "abcdef", "controls, line and paragraph separators")
+    }
+
+    /// Joiners and format characters that show something stay: ZWJ builds emoji sequences, ZWNJ
+    /// spells Persian words, and the Arabic number signs and similar marks are visible.
+    func testJoinersAndVisibleFormatCharactersAreKept() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} dinner"
+        XCTAssertEqual(undoShownTitle(family), family, "ZWJ emoji")
+        let persian = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}"
+        XCTAssertEqual(undoShownTitle(persian), persian, "ZWNJ in a Persian word")
+        let signs = "\u{0600}\u{0661}\u{0662} \u{0601}\u{0605} \u{06DD}\u{0663} \u{08E2} \u{110BD} \u{110CD}"
+        XCTAssertEqual(undoShownTitle(signs), signs, "visible format characters")
     }
 
     func testVisibleTextIsKept() {

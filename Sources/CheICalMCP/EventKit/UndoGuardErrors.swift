@@ -30,18 +30,28 @@ enum UndoTargetCheck {
 
 /// The title as an undo error shows it. The errors are `TrustedErrorMessage`, so the
 /// store-derived title reaches the client verbatim, between quotes and next to instructions.
-/// Characters a reader does not see are dropped by general category: format (zero-width, soft
-/// hyphen, bidirectional controls), control, line and paragraph separators, private use and
-/// unassigned, plus the tag block (PR #259 round 3, findings 4, 5, 11, 22). A quote is replaced
-/// so the title cannot close its quotes, and the length is capped at 120 Unicode scalars, so
-/// combining marks cannot stretch it (round 1 finding 19, round 2 finding 11). This keeps hidden
-/// text out of the message; a visible title can still read like an instruction.
+/// Best effort, from a closed list (PR #259 round 4 decision; round 3 findings 4, 5, 11, 22):
+/// control characters, line and paragraph separators, bidirectional controls, the tag block, and
+/// code points that show nothing (zero-width space, word joiner and invisible operators, BOM,
+/// soft hyphen, combining grapheme joiner, Hangul fillers, variation selectors) are dropped.
+/// Everything else stays, including ZWJ and ZWNJ (emoji sequences, Persian words) and visible
+/// format characters such as the Arabic number signs; the list does not depend on the Unicode
+/// tables of the toolchain. A quote is replaced so the title cannot close its quotes, and the
+/// length is capped at 120 Unicode scalars, so combining marks cannot stretch it (round 1
+/// finding 19, round 2 finding 11). A visible title can still read like an instruction.
 func undoShownTitle(_ title: String) -> String {
     let dropped: (Unicode.Scalar) -> Bool = { scalar in
-        if (0xE0000...0xE007F).contains(scalar.value) { return true }
-        switch scalar.properties.generalCategory {
-        case .format, .control, .lineSeparator, .paragraphSeparator, .privateUse, .unassigned: return true
-        default: return false
+        switch scalar.value {
+        case 0x00...0x1F, 0x7F...0x9F,                                   // controls
+             0x2028, 0x2029,                                             // line, paragraph separators
+             0x061C, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069,   // bidirectional controls
+             0xE0000...0xE007F,                                          // tags
+             0x200B, 0x2060...0x2064, 0xFEFF, 0x00AD, 0x034F,            // zero-width, invisible operators
+             0x115F, 0x1160, 0x3164, 0xFFA0,                             // Hangul fillers
+             0xFE00...0xFE0F, 0xE0100...0xE01EF:                         // variation selectors
+            return true
+        default:
+            return false
         }
     }
     let clean = EventKitErrorSanitizer.sanitizeForInterpolation(title).unicodeScalars
