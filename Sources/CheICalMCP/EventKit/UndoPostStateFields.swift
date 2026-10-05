@@ -177,18 +177,29 @@ extension RecurrenceRuleSnapshot {
 }
 
 extension UndoPostState {
-    /// Two time zones are the same when they give the same offset from GMT at `date` and at the
-    /// next daylight-saving transition of either zone after it (PR #259 round 6 findings 1, 12,
-    /// 21): two spellings of one zone (Asia/Taipei, GMT+8) are the same, while zones that agree
-    /// only until their rules part (America/New_York and America/Bogota in winter) are not. No
-    /// zone (floating) equals only no zone.
+    /// Two time zones are the same when they give the same offset from GMT at `date` and at every
+    /// daylight-saving transition of either zone in the two years after it (PR #259 rounds 6–7):
+    /// two spellings of one zone (Asia/Taipei, GMT+8) are the same, while zones that agree only
+    /// until their rules part (America/New_York and America/Bogota in winter, America/Vancouver
+    /// and America/Los_Angeles before November 2026) are not. Best effort: zones that part more
+    /// than two years later still look the same. No zone (floating) equals only no zone.
     static func sameTimeZone(_ a: TimeZone?, _ b: TimeZone?, at date: Date) -> Bool {
         switch (a, b) {
         case (nil, nil):
             return true
         case let (a?, b?):
-            let instants = [date] + [a.nextDaylightSavingTimeTransition(after: date),
-                                     b.nextDaylightSavingTimeTransition(after: date)].compactMap { $0 }
+            let horizon = date.addingTimeInterval(2 * 366 * 86_400)
+            var instants = [date]
+            for zone in [a, b] {
+                var cursor = date
+                // At most a few transitions a year; the bound guards against a zone that reports
+                // transitions without end.
+                for _ in 0..<16 {
+                    guard let next = zone.nextDaylightSavingTimeTransition(after: cursor), next < horizon else { break }
+                    instants.append(next)
+                    cursor = next
+                }
+            }
             return instants.allSatisfy { a.secondsFromGMT(for: $0) == b.secondsFromGMT(for: $0) }
         default:
             return false

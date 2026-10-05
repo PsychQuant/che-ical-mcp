@@ -116,6 +116,18 @@ final class UndoPostStateGuardTests: XCTestCase {
                        "the same offset in January, not after New York's March transition")
     }
 
+    /// Round 7 findings 8, 15: offsets are sampled at the start and at every transition of both
+    /// zones over the next two years. America/Vancouver and America/Los_Angeles agree on
+    /// 2026-03-01 and at their next (shared) transition, and part in November 2026 when Vancouver
+    /// stays on daylight time (in this tz database). Best effort: zones that part later still
+    /// look the same.
+    func testZonesThatPartWithinTwoYearsDiffer() throws {
+        let march = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-03-01T12:00:00Z"))
+        XCTAssertFalse(UndoPostState.sameTimeZone(TimeZone(identifier: "America/Vancouver"), TimeZone(identifier: "America/Los_Angeles"), at: march))
+        XCTAssertTrue(UndoPostState.sameTimeZone(TimeZone(secondsFromGMT: 8 * 3600), TimeZone(identifier: "Asia/Taipei"), at: march))
+        XCTAssertTrue(UndoPostState.sameTimeZone(TimeZone(identifier: "America/New_York"), TimeZone(identifier: "America/New_York"), at: march))
+    }
+
     func testAllDayChangeIsNamed() {
         let event = makeEvent()
         let saved = EventSnapshot(from: event)
