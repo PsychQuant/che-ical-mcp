@@ -104,8 +104,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    每項都用新建的拋棄式系列：
    (a) 帶 `occurrence_date` 改一個場次 → undo 拒絕（`undo_history` 原本列為 `Updated recurring
        event: … (undo not available)`）→ 再 undo（create-undo）以 `modified_occurrences` 拒絕，系列完整；
-   (b) `span: "future"` → undo 拒絕 → create-undo 以 `recurrence` 拒絕，訊息只給放棄（`discard_id`），
-       不叫人改回；
+   (b) `span: "future"` → undo 拒絕 → create-undo 以 `recurrence` 拒絕，訊息說系列被縮短、只給放棄
+       （`discard_id`），不叫人改回；
    (c) `span: "all"` → undo 拒絕，系列每個場次都還在（**只在拋棄式日曆上測**；#262 修正之前的
        binary 會刪掉真實系列的其餘場次）；
    (d) 一次性事件加上重複規則 → undo 拒絕；(e) 系列 `clear_recurrence` → undo 拒絕；
@@ -119,7 +119,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 9. **非 iCloud 來源的對照組**（有 Google 或 Exchange 帳號時）：在該來源的拋棄式日曆建一次性事件 →
-   `update_event` 改標題 → undo 要成功還原。若以「it is an edited occurrence of a series now」拒絕，
-   就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這條 undo。
+   `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
+   拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
+   就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。

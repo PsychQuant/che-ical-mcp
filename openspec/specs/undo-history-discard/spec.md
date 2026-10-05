@@ -67,10 +67,10 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Update or move of a one-off event that repeats at undo time
 - **WHEN** undo meets the record of an `update_event`, or of a `move_events_batch` move that was not a series move, on a one-off event, and the event now repeats or is a detached occurrence (a later update or another app made it so)
-- **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and to revert the change in Calendar if it should be reverted, and the record is discarded
+- **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and how to revert the change if it should be reverted (a move: move it back), and the record is discarded; a move of an item that was already an edited occurrence is refused the same way
 
-#### Scenario: Rule of a created series shortened by a split
-- **WHEN** undo of `create_event` finds the series' rule shortened the way a span "future" update leaves it (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none)
+#### Scenario: Rule of a created series shortened
+- **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
 - **THEN** nothing is written, the record is kept, and the error offers only giving up the undo with discard_id, not changing the recurrence back; any other change of the rule is an ordinary refusal that can be changed back
 
 #### Scenario: Redo refused
