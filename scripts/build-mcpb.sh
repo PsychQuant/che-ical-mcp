@@ -94,11 +94,14 @@ echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + pl
 # to the same bin path, so each product is copied out right after its own build —
 # before the next build overwrites it — and the staged copy (the file that gets
 # packaged) is checked by check_staged_product (scripts/lib): the file, exactly that
-# architecture, and a `--version` that matches AppVersion.current. On the release path
-# (REQUIRE_CODESIGN=1) an architecture this host cannot run is an error; otherwise it
-# is a visible note. The per-arch paths under .build/<triple>/release are no longer
-# written and must not be read: they hold whatever an older toolchain left there.
-if [[ "${REQUIRE_CODESIGN:-0}" == "1" ]]; then
+# architecture, and a `--version` that matches AppVersion.current. For a build that will
+# be signed (csp_release_build: REQUIRE_CODESIGN=1/true, or DEVELOPER_ID set without
+# SKIP_CODESIGN) an architecture this host cannot run is an error; otherwise it is a
+# visible note. After lipo the packaged slices must equal the checked ones, and after
+# signing the final file is run again (check_final_binary). The per-arch paths under
+# .build/<triple>/release are no longer written and must not be read: they hold
+# whatever an older toolchain left there.
+if csp_release_build; then
     export CHECK_STAGED_STRICT=1
 fi
 STAGE_DIR="$PROJECT_DIR/.build/mcpb-stage"
@@ -111,7 +114,7 @@ build_arch() {
     bin_dir=$(swift build -c release --arch "$arch" --show-bin-path "${SWIFT_FALLBACK_FLAGS[@]}")
     product="$bin_dir/CheICalMCP"
     if [[ ! -f "$product" ]]; then
-        echo "Error: no $arch product at $product (#238)"
+        echo "Error: no $arch product at $product (#238)" >&2
         exit 1
     fi
     cp "$product" "$STAGE_DIR/CheICalMCP-$arch"
@@ -142,15 +145,8 @@ rm -f "$UNIVERSAL_BINARY"
 lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
 chmod +x "$UNIVERSAL_BINARY"
 # The packaged slices must be byte-identical to the staged products that were checked.
-for arch in arm64 x86_64; do
-    THIN="$STAGE_DIR/packaged-$arch"
-    lipo -thin "$arch" "$UNIVERSAL_BINARY" -output "$THIN"
-    if ! cmp -s "$THIN" "$STAGE_DIR/CheICalMCP-$arch"; then
-        echo "Error: the $arch slice in $UNIVERSAL_BINARY differs from the checked product (#238)"
-        exit 1
-    fi
-done
-echo "Created Universal Binary: $UNIVERSAL_BINARY (slices match the checked products)"
+check_packaged_slices "$UNIVERSAL_BINARY" "$STAGE_DIR" CheICalMCP || exit 1
+echo "Created Universal Binary: $UNIVERSAL_BINARY"
 
 # Verify Universal Binary
 echo ""
@@ -285,6 +281,9 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
     echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
     echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ...\`"
 fi
+
+# Signing rewrote the file that gets packaged, so run it once more (#238).
+check_final_binary "$UNIVERSAL_BINARY" CheICalMCP "$SOURCE_VERSION" || exit 1
 
 # Step 7: Check for required files
 echo ""

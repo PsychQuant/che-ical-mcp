@@ -74,6 +74,44 @@ else
     echo "- skipped: this host cannot execute $OTHER (no Rosetta on Apple Silicon, or an Intel host)"
 fi
 
+# --- release-build detection: the same inputs build-mcpb.sh uses to decide signing ---
+rb() { ( unset REQUIRE_CODESIGN SKIP_CODESIGN DEVELOPER_ID; for kv in "$@"; do export "$kv"; done; csp_release_build ) && echo strict || echo lenient; }
+expect pass "REQUIRE_CODESIGN=1 is a release build"     "strict"  -- rb REQUIRE_CODESIGN=1
+expect pass "REQUIRE_CODESIGN=true is a release build"  "strict"  -- rb REQUIRE_CODESIGN=true
+expect pass "DEVELOPER_ID set is a release build"       "strict"  -- rb DEVELOPER_ID=ABC
+expect pass "SKIP_CODESIGN=true wins over DEVELOPER_ID" "lenient" -- rb DEVELOPER_ID=ABC SKIP_CODESIGN=true
+expect pass "REQUIRE_CODESIGN=0 alone is not"           "lenient" -- rb REQUIRE_CODESIGN=0
+expect pass "no signing inputs is not"                  "lenient" -- rb
+
+# --- packaged slices must be the checked ones; the final file is checked again ---
+fixture arm-good    arm64  "CheICalMCP 1.2.3"
+fixture x86-good    x86_64 "CheICalMCP 1.2.3"
+fixture arm-old     arm64  "CheICalMCP 1.2.2"
+STAGE="$TMP/stage"; mkdir -p "$STAGE"
+cp "$TMP/arm-good" "$STAGE/CheICalMCP-arm64"; cp "$TMP/x86-good" "$STAGE/CheICalMCP-x86_64"
+lipo -create "$TMP/arm-good" "$TMP/x86-good" -output "$TMP/universal-good"
+lipo -create "$TMP/arm-old"  "$TMP/x86-good" -output "$TMP/universal-swapped"
+expect pass "packaged slices match the checked products" "slices match" -- check_packaged_slices "$TMP/universal-good" "$STAGE" CheICalMCP
+expect fail "a packaged slice that differs is refused"   "arm64 slice" -- check_packaged_slices "$TMP/universal-swapped" "$STAGE" CheICalMCP
+expect fail "a universal binary missing a slice"         "x86_64" -- check_packaged_slices "$TMP/arm-good" "$STAGE" CheICalMCP
+expect pass "final binary reports the version"           "($HOST) reports CheICalMCP 1.2.3" -- check_final_binary "$TMP/universal-good" CheICalMCP 1.2.3
+if [ "$HOST" = arm64 ]; then
+    expect fail "final binary with a stale host slice"   "reports 'CheICalMCP 1.2.2'" -- check_final_binary "$TMP/universal-swapped" CheICalMCP 1.2.3
+fi
+
+# --- the pass/fail tools are not taken from PATH; messages are cleaned ---
+mkdir -p "$TMP/shim"; printf '#!/bin/sh\necho %s\n' "$OTHER" > "$TMP/shim/lipo"; chmod +x "$TMP/shim/lipo"
+expect pass "a lipo shim earlier in PATH does not change the verdict" "$HOST product reports" -- \
+    env PATH="$TMP/shim:$PATH" bash -c "source '$SCRIPT_DIR/../lib/check-staged-product.sh'; check_staged_product '$TMP/good' '$HOST' CheICalMCP 1.2.3"
+printf '#include <stdio.h>\nint main(void){printf("\\033[31mX%%0400d\\n", 0);return 4;}\n' > "$TMP/ctl.c"
+clang -arch "$HOST" -o "$TMP/ctl" "$TMP/ctl.c" 2>/dev/null
+ctl_msg=$(check_staged_product "$TMP/ctl" "$HOST" CheICalMCP 1.2.3 2>&1)
+if [[ "$ctl_msg" == *$'\033'* ]] || [ "${#ctl_msg}" -gt 600 ]; then
+    echo "✗ binary output in messages is cleaned and truncated — got ${#ctl_msg} chars"; FAIL=$((FAIL+1))
+else
+    echo "✓ binary output in messages is cleaned and truncated"; PASS=$((PASS+1))
+fi
+
 # An architecture the host cannot execute: a visible note by default, a failure in
 # strict mode (the release path). Simulated by overriding the probe.
 host_can_execute_arch() { return 1; }
