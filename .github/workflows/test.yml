@@ -77,3 +77,9 @@ jobs:
           STATUS=${PIPESTATUS[0]}
           echo "Exit status: $STATUS"
           exit $STATUS
+
+      - name: build-mcpb staged-product check tests
+        # #238: missing / wrong-architecture / wrong-version / unrunnable products must
+        # stop the release build. Fixtures are compiled with clang; the x86_64 run is
+        # skipped (with a note) when the runner has no Rosetta.
+        run: bash scripts/tests/check-staged-product-test.sh
