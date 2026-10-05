@@ -20,18 +20,21 @@
 # Also here: csp_decide_signing (the one signing decision build-mcpb.sh uses both to sign
 # and to choose strict checking), check_packaged_slices (the universal binary holds
 # exactly arm64 and x86_64, byte-identical to the checked products), check_final_binary
-# (the signed file still holds exactly those two slices and each reports the version), and
-# csp_clear_release_artifacts (a failed run leaves no file that looks shippable).
+# (the signed file still holds exactly arm64 and x86_64, and each slice this host can run
+# reports the version), and csp_arm_cleanup / csp_clear_release_artifacts (a run that
+# fails or is interrupted leaves no file that looks shippable).
 #
 # The checks of a binary call arch, lipo and cmp by absolute path and count slices in
-# bash, so a PATH shim cannot change those verdicts; /usr/bin/lipo is an xcrun shim, so
-# DEVELOPER_DIR can still select a different toolchain. head and tr (message cleaning) and
-# the keychain lookup (security, grep) are taken from PATH. Messages go to stderr;
-# non-zero on any failure.
+# bash, and the keychain lookup calls security and grep by absolute path, so a PATH shim
+# cannot change those verdicts; /usr/bin/lipo is an xcrun shim, so DEVELOPER_DIR can still
+# select a different toolchain. Only head and tr (message cleaning) come from PATH.
+# Messages go to stderr; non-zero on any failure.
 
 CSP_ARCH=/usr/bin/arch
 CSP_LIPO=/usr/bin/lipo
 CSP_CMP=/usr/bin/cmp
+CSP_SECURITY=/usr/bin/security
+CSP_GREP=/usr/bin/grep
 
 # csp_decide_signing — sets SHOULD_SIGN (true/false) and SKIP_REASON. build-mcpb.sh makes
 # this decision once, before building, and uses it both to sign and to choose strict
@@ -46,22 +49,28 @@ csp_decide_signing() {
     elif [[ -z "${DEVELOPER_ID:-}" ]]; then
         SHOULD_SIGN=false
         SKIP_REASON="DEVELOPER_ID env not set"
-    elif ! _csp_codesigning_identities | grep -qF -- "$DEVELOPER_ID"; then
+    elif ! _csp_codesigning_identities | "$CSP_GREP" -qF -- "$DEVELOPER_ID"; then
         SHOULD_SIGN=false
         SKIP_REASON="codesigning identity '$DEVELOPER_ID' not in keychain"
     fi
 }
 
 _csp_codesigning_identities() {
-    security find-identity -p codesigning -v 2>/dev/null
+    "$CSP_SECURITY" find-identity -p codesigning -v 2>/dev/null
 }
 
 # csp_release_build — 0 when the staged checks must be strict: csp_decide_signing chose to
 # sign, or REQUIRE_CODESIGN is 1/true (a build that must be signed; build-mcpb.sh refuses
-# it at signing when it cannot sign). Call csp_decide_signing first.
+# it before building when it cannot sign). Called before csp_decide_signing, it fails
+# closed: strict, with an error message.
 csp_release_build() {
     case "${REQUIRE_CODESIGN:-}" in 1|true) return 0 ;; esac
-    [[ "${SHOULD_SIGN:-false}" == true ]]
+    case "${SHOULD_SIGN:-}" in
+        true) return 0 ;;
+        false) return 1 ;;
+        *) echo "Error: csp_release_build ran before csp_decide_signing; checking strictly (#238)" >&2
+           return 0 ;;
+    esac
 }
 
 # host_can_execute_arch <arch> — 0 when this host can run code of that architecture.
@@ -166,12 +175,31 @@ check_final_binary() {
 }
 
 # csp_clear_release_artifacts <packed .mcpb> <universal binary> — remove this version's
-# release files and their .sha256 companions. build-mcpb.sh runs it before building and
-# when a run fails, so a failed run leaves nothing that looks shippable (#238: a stale
+# release files and their .sha256 companions; an empty path is skipped. build-mcpb.sh
+# runs it before building, and csp_arm_cleanup runs it when a run fails (#238: a stale
 # .mcpb that reported 1.18.0 sat where a v1.19.0 release would pick it up).
 csp_clear_release_artifacts() {
-    local f
-    for f in "$1" "$1.sha256" "$2" "$2.sha256"; do
-        /bin/rm -f -- "$f"
+    local base
+    for base in "$1" "$2"; do
+        [[ -n "$base" ]] || continue
+        /bin/rm -f -- "$base" "$base.sha256"
     done
+}
+
+# csp_arm_cleanup — from now on, when the script exits non-zero or is stopped by INT, TERM
+# or HUP, remove the files named by $PACKED_MCPB and $UNIVERSAL_BINARY (read at that
+# moment, so a path set later counts). A successful exit keeps them. The signal traps exit
+# with 128+signal, which runs the EXIT trap; without them bash does not run it on TERM.
+csp_arm_cleanup() {
+    trap '_csp_cleanup_on_exit $?' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
+_csp_cleanup_on_exit() {
+    local rc="$1"
+    [[ "$rc" -eq 0 ]] && return 0
+    csp_clear_release_artifacts "${PACKED_MCPB:-}" "${UNIVERSAL_BINARY:-}"
+    echo "Build failed or stopped (exit $rc): removed ${PACKED_MCPB:-(version not read yet)} and ${UNIVERSAL_BINARY:-} with their .sha256 files (#238)" >&2
 }

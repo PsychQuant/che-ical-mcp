@@ -75,10 +75,13 @@ else
 fi
 
 # --- one signing decision: it chooses both signing and strict checking ---
-# ids=yes|no stands in for the keychain lookup (the only part that is not an env variable).
-rb() { ( unset REQUIRE_CODESIGN SKIP_CODESIGN DEVELOPER_ID; ids=no
-         for kv in "$@"; do case "$kv" in ids=*) ids="${kv#ids=}" ;; *) export "$kv" ;; esac; done
-         _csp_codesigning_identities() { [ "$ids" = yes ] && echo "  1) F25 \"Developer ID Application: Test ($DEVELOPER_ID)\""; }
+# ids=yes|no: whether the keychain holds the identity. Only the security binary is
+# replaced (by a script that answers the same find-identity call); the lookup is real.
+printf '#!/bin/sh\n[ "$1 $2 $3 $4" = "find-identity -p codesigning -v" ] || exit 1\n[ "$FAKE_IDS" = yes ] && echo "  1) F25 \\"Developer ID Application: Test (ABC)\\""\nexit 0\n' > "$TMP/fake-security"
+chmod +x "$TMP/fake-security"
+rb() { ( unset REQUIRE_CODESIGN SKIP_CODESIGN DEVELOPER_ID SHOULD_SIGN; export FAKE_IDS=no
+         for kv in "$@"; do case "$kv" in ids=*) FAKE_IDS="${kv#ids=}" ;; *) export "$kv" ;; esac; done
+         CSP_SECURITY="$TMP/fake-security"
          csp_decide_signing
          if csp_release_build; then echo "strict sign=$SHOULD_SIGN"; else echo "lenient sign=$SHOULD_SIGN ($SKIP_REASON)"; fi ); }
 expect pass "REQUIRE_CODESIGN=1 is a release build"     "strict"  -- rb REQUIRE_CODESIGN=1
@@ -88,6 +91,8 @@ expect pass "DEVELOPER_ID not in the keychain: unsigned, so not strict" "lenient
 expect pass "SKIP_CODESIGN=true wins over DEVELOPER_ID" "lenient sign=false (SKIP_CODESIGN=true)" -- rb DEVELOPER_ID=ABC SKIP_CODESIGN=true ids=yes
 expect pass "REQUIRE_CODESIGN=0 alone is not"           "lenient" -- rb REQUIRE_CODESIGN=0
 expect pass "no signing inputs is not"                  "lenient sign=false (DEVELOPER_ID env not set)" -- rb
+expect pass "strict when no signing decision was made"  "strict" -- \
+    bash -c "unset SHOULD_SIGN REQUIRE_CODESIGN; source '$SCRIPT_DIR/../lib/check-staged-product.sh'; csp_release_build 2>/dev/null && echo strict || echo lenient"
 
 # --- packaged slices must be the checked ones; the final file is checked again ---
 fixture arm-good    arm64  "CheICalMCP 1.2.3"
@@ -125,6 +130,24 @@ if [ "$left" = "./che-ical-mcp-1.2.2.mcpb ./manifest.json " ]; then
 else
     echo "✗ release artifacts of this version are cleared, nothing else — left: $left"; FAIL=$((FAIL+1))
 fi
+echo old > "$ART/.sha256"
+( cd "$ART" && csp_clear_release_artifacts "" "" )
+if [ -f "$ART/.sha256" ]; then echo "✓ an empty path removes nothing"; PASS=$((PASS+1))
+else echo "✗ an empty path removes nothing — .sha256 was deleted"; FAIL=$((FAIL+1)); fi
+
+# csp_arm_cleanup: a run that ends non-zero or is interrupted removes the files; a
+# successful run keeps them. Run as a real bash process, the way build-mcpb.sh runs.
+armed() {   # armed <how the run ends> -> prints "kept" or "removed"
+    local d="$TMP/armed-$RANDOM"; mkdir -p "$d"; echo x > "$d/a.mcpb"; echo x > "$d/a.mcpb.sha256"; echo x > "$d/bin"; echo x > "$d/bin.sha256"
+    bash -c "source '$SCRIPT_DIR/../lib/check-staged-product.sh'; PACKED_MCPB='$d/a.mcpb'; UNIVERSAL_BINARY='$d/bin'; csp_arm_cleanup; $1" >/dev/null 2>&1
+    if [ -z "$(ls -A "$d")" ]; then echo removed; elif [ "$(ls "$d" | wc -l | tr -d ' ')" = 4 ]; then echo kept; else echo "partly: $(ls "$d" | tr '\n' ' ')"; fi
+}
+expect pass "a successful run keeps its files"           "kept"    -- armed "exit 0"
+expect pass "a failed run removes its files"             "removed" -- armed "exit 3"
+expect pass "a set -e abort removes its files"           "removed" -- armed "set -e; false"
+expect pass "a run stopped with TERM removes its files"  "removed" -- armed 'kill -TERM $$; sleep 2'
+expect pass "a run stopped with INT removes its files"   "removed" -- armed 'kill -INT $$; sleep 2'
+expect pass "a run stopped with HUP removes its files"   "removed" -- armed 'kill -HUP $$; sleep 2'
 
 # --- the pass/fail tools are not taken from PATH; messages are cleaned ---
 mkdir -p "$TMP/shim"; printf '#!/bin/sh\necho %s\n' "$OTHER" > "$TMP/shim/lipo"; chmod +x "$TMP/shim/lipo"
@@ -135,8 +158,9 @@ expect pass "a lipo shim earlier in PATH does not change the verdict" "$HOST pro
 printf '#include <stdio.h>\nint main(void){printf("\\033[31mX%%02000d\\n", 0);return 4;}\n' > "$TMP/ctl.c"
 clang -arch "$HOST" -o "$TMP/ctl" "$TMP/ctl.c" 2>/dev/null || { echo "cannot build fixture ctl for $HOST"; exit 2; }
 ctl_msg=$(check_staged_product "$TMP/ctl" "$HOST" CheICalMCP 1.2.3 2>&1)
-ctl_prefix_len=$(( ${#ctl_msg} - $(printf '%s' "$ctl_msg" | tr -cd '0' | wc -c) ))
-if [[ "$ctl_msg" == *$'\033'* ]] || [ "$(printf '%s' "$ctl_msg" | tr -cd '0' | wc -c)" -gt 300 ] || [ "$ctl_prefix_len" -gt 400 ]; then
+ctl_body=${ctl_msg//"$TMP"/}                       # the temp path may contain zeros too
+ctl_zeros=$(printf '%s' "$ctl_body" | tr -cd '0' | wc -c)
+if [[ "$ctl_msg" == *$'\033'* ]] || [ "$ctl_zeros" -gt 300 ] || [ $(( ${#ctl_body} - ctl_zeros )) -gt 400 ]; then
     echo "✗ binary output in messages is cleaned and truncated — got ${#ctl_msg} chars"; FAIL=$((FAIL+1))
 else
     echo "✓ binary output in messages is cleaned and truncated"; PASS=$((PASS+1))
@@ -149,6 +173,21 @@ expect pass "unexecutable architecture: note by default" "version is not checked
 CHECK_STAGED_STRICT=1 expect fail "unexecutable architecture: failure in strict mode" "cannot be checked on this host" -- \
     $C "$TMP/good" "$HOST" CheICalMCP 1.2.3
 
+# --- build-mcpb.sh run in a scratch project (never the repo's own mcpb/): the top of the
+# script refuses an unsignable REQUIRE_CODESIGN build before building and clears this
+# version's files; a swift shim records whether a build started ---
+PROJ="$TMP/proj"; mkdir -p "$PROJ/Sources/CheICalMCP" "$PROJ/mcpb/server" "$PROJ/bin"
+cp -R "$SCRIPT_DIR/.." "$PROJ/scripts"
+printf 'enum AppVersion { static let current = "1.2.3" }\n' > "$PROJ/Sources/CheICalMCP/Version.swift"
+printf '#!/bin/sh\ntouch "%s/swift-ran"\nexit 1\n' "$PROJ" > "$PROJ/bin/swift"; chmod +x "$PROJ/bin/swift"
+for f in che-ical-mcp-1.2.3.mcpb che-ical-mcp-1.2.3.mcpb.sha256 server/CheICalMCP server/CheICalMCP.sha256; do echo old > "$PROJ/mcpb/$f"; done
+proj_out=$(cd "$PROJ" && REQUIRE_CODESIGN=1 SKIP_CODESIGN=1 PATH="$PROJ/bin:$PATH" bash scripts/build-mcpb.sh 2>&1); proj_rc=$?
+if [ "$proj_rc" -ne 0 ] && [[ "$proj_out" == *"Refusing to skip signing"* ]] && [ ! -e "$PROJ/swift-ran" ] && [ -z "$(ls -A "$PROJ/mcpb/server")" ] && [ ! -e "$PROJ/mcpb/che-ical-mcp-1.2.3.mcpb" ] && [ ! -e "$PROJ/mcpb/che-ical-mcp-1.2.3.mcpb.sha256" ]; then
+    echo "✓ build-mcpb.sh refuses an unsignable REQUIRE_CODESIGN build before building, and clears this version's files"; PASS=$((PASS+1))
+else
+    echo "✗ build-mcpb.sh refuses an unsignable REQUIRE_CODESIGN build before building (rc=$proj_rc, swift ran: $([ -e "$PROJ/swift-ran" ] && echo yes || echo no), left: $(cd "$PROJ/mcpb" && find . -type f | tr '\n' ' '))"; FAIL=$((FAIL+1))
+fi
+
 # --- build-mcpb.sh wiring: each check is called, in the right place (#238) ---
 B="$SCRIPT_DIR/../build-mcpb.sh"
 first() { grep -nE -- "$1" "$B" | head -1 | cut -d: -f1; }
@@ -157,17 +196,30 @@ wired() {   # wired <description> <pattern A> <pattern B>: A appears, B appears,
     if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then echo "✓ wiring: $1"; PASS=$((PASS+1))
     else echo "✗ wiring: $1 (lines '$a' / '$b')"; FAIL=$((FAIL+1)); fi
 }
-wired "old artifacts are cleared before building"      '^csp_clear_release_artifacts '         '^build_arch arm64'
-wired "a failed run clears its artifacts (EXIT trap)"  "^trap .*csp_clear_release_artifacts"   '^build_arch arm64'
-wired "the signing decision is made before building"   '^csp_decide_signing'                   '^build_arch arm64'
-wired "strict mode follows that decision"              '^if csp_release_build; then'           '^build_arch arm64'
-wired "packaged slices are checked after lipo"         '^lipo -create '                        '^check_packaged_slices '
-wired "the final binary is checked after signing"      'sign-and-notarize.sh" "\$UNIVERSAL_BINARY"' '^check_final_binary '
-wired "the final binary is checked before packing"     '^check_final_binary '                  'mcpb pack '
-if grep -qE '^[[:space:]]*SHOULD_SIGN=' "$B"; then
+wired "cleanup is armed before anything is built"     '^csp_arm_cleanup$'                       '^echo "\[1/7\]'
+wired "cleanup is armed before the version is read"    '^csp_arm_cleanup$'                       '^SOURCE_VERSION='
+wired "old artifacts are cleared before anything is built" '^csp_clear_release_artifacts "\$PACKED_MCPB" "\$UNIVERSAL_BINARY"$' '^echo "\[1/7\]'
+wired "the version is read before the clear"           '^SOURCE_VERSION='                        '^csp_clear_release_artifacts '
+wired "the signing decision is made before anything is built" '^csp_decide_signing$'           '^echo "\[1/7\]'
+wired "strict mode is chosen after the decision"       '^csp_decide_signing$'                    '^if csp_release_build; then$'
+wired "an unsignable REQUIRE_CODESIGN build is refused before building" 'Refusing to skip signing' '^echo "\[1/7\]'
+wired "packaged slices are checked after lipo"         '^lipo -create '                          '^check_packaged_slices .* \|\| exit 1$'
+wired "the final binary is checked after signing"      'sign-and-notarize.sh" "\$UNIVERSAL_BINARY"' '^check_final_binary .* \|\| exit 1$'
+wired "the final binary is checked before packing"     '^check_final_binary .* \|\| exit 1$'   'mcpb pack '
+if [ "$(grep -A1 -E '^if csp_release_build; then$' "$B" | sed -n 2p | tr -d ' ')" = "exportCHECK_STAGED_STRICT=1" ]; then
+    echo "✓ wiring: the strict branch exports CHECK_STAGED_STRICT=1"; PASS=$((PASS+1))
+else
+    echo "✗ wiring: the strict branch exports CHECK_STAGED_STRICT=1"; FAIL=$((FAIL+1))
+fi
+if grep -vE '^[[:space:]]*#' "$B" | grep -qE 'SHOULD_SIGN='; then
     echo "✗ wiring: build-mcpb.sh makes a second signing decision"; FAIL=$((FAIL+1))
 else
     echo "✓ wiring: build-mcpb.sh has no second signing decision"; PASS=$((PASS+1))
+fi
+if grep -qE '^[[:space:]]*trap[[:space:]]' "$B"; then
+    echo "✗ wiring: build-mcpb.sh sets its own trap (it would replace the cleanup trap)"; FAIL=$((FAIL+1))
+else
+    echo "✓ wiring: build-mcpb.sh sets no trap of its own"; PASS=$((PASS+1))
 fi
 
 echo "$PASS passed, $FAIL failed"
