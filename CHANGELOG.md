@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`update_reminder` keeps the explicit time zone on a due date written to a floating reminder** (#237, a gap in #134): a reminder has one time zone shared by its start and due dates, and when that zone is floating (reminders made date-only in Reminders.app or written without a zone by another client) EventKit stored the new due date floating, so iCloud Web could still show it shifted by the UTC offset. After writing a timed due date the reminder is now given the due date's zone; start and due keep their wall clock. A reminder that already has a zone is left alone, because changing it would move its dates. If the zone still does not stick, the start date is cleared, the due date written, and the start put back with the same wall clock in the due date's zone.
+
 ## [1.19.0] - 2026-10-04
 
 ### Changed

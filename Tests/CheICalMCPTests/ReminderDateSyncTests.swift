@@ -390,6 +390,101 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertNil(reminder.startDateComponents)
     }
 
+    // MARK: - #237: a floating reminder gets the due date's zone
+
+    private func zonedComponents(_ c: DateComponents?) -> DateComponents? {
+        guard var c else { return nil }
+        c.calendar = nil
+        return c
+    }
+
+    /// The store hands a date-only reminder back with a `00:00` floating start. Writing a zoned
+    /// due onto such an item used to drop the zone (#134's iCloud Web shift came back).
+    func testSetDueOnAFloatingItemGivesTheDueAnExplicitZone() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 7)
+        reminder.startDateComponents = DateComponents(year: 2026, month: 10, day: 7, hour: 0, minute: 0)
+        XCTAssertNil(reminder.timeZone, "precondition: a floating item")
+
+        _ = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 10)
+        XCTAssertEqual(reminder.dueDateComponents?.timeZone, .current, "#237: the due carries an explicit zone")
+        XCTAssertEqual(reminder.timeZone, .current)
+        XCTAssertEqual(zonedComponents(reminder.startDateComponents),
+                       DateComponents(timeZone: .current, year: 2026, month: 10, day: 8, hour: 0, minute: 0),
+                       "the start keeps its wall clock, now in the same zone")
+    }
+
+    /// Hazard 1: in memory, giving the item a zone while the start has no hour turns the due
+    /// date date-only. The start gets a 00:00 time first.
+    func testSetDueOnAFloatingItemWithADateOnlyStartKeepsTheTimeAndGetsAZone() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 4)   // start becomes date-only
+        XCTAssertNil(reminder.startDateComponents?.hour, "precondition: a start with no hour")
+
+        _ = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 10)
+        XCTAssertEqual(reminder.dueDateComponents?.day, 8)
+        XCTAssertEqual(reminder.dueDateComponents?.timeZone, .current)
+        XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), local(2026, 10, 8, 10))
+    }
+
+    /// Hazard 2: assigning a zone to an item that already has one moves its instants. A zoned
+    /// item keeps its zone and the due lands on the requested instant (regression guard).
+    func testSetDueLeavesTheZoneOfAZonedItemAlone() {
+        let reminder = makeReminder()
+        let start = date(2026, 10, 7, 9, in: newYork)
+        reminder.startDateComponents = components(start, in: newYork)
+        reminder.dueDateComponents = components(start, in: newYork)
+        let newDue = date(2026, 10, 8, 10, in: taipei)
+
+        _ = ReminderDateSync.setDue(reminder, to: newDue)
+
+        XCTAssertEqual(reminder.timeZone, newYork)
+        XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), newDue)
+        XCTAssertNotNil(reminder.dueDateComponents?.timeZone)
+    }
+
+    /// Clearing the due date writes no zone (regression guard).
+    func testSetDueToNilLeavesAFloatingItemFloating() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 7)
+
+        _ = ReminderDateSync.setDue(reminder, to: nil)
+
+        XCTAssertNil(reminder.timeZone)
+        XCTAssertNil(reminder.dueDateComponents)
+    }
+
+    /// The fallback when the zone did not stick: clear the start, write the due, put the start
+    /// back timed and zoned. This order kept both zoned on device (diagnosis matrix).
+    func testWritingTheDueAroundAClearedStartZonesBoth() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 7)
+        reminder.startDateComponents = DateComponents(year: 2026, month: 10, day: 8, hour: 0, minute: 0)
+        var due = DateComponents(year: 2026, month: 10, day: 8, hour: 10, minute: 0)
+        due.timeZone = .current
+
+        ReminderDateSync.writeDueAroundStart(reminder, due: due)
+
+        XCTAssertEqual(zonedComponents(reminder.dueDateComponents), due)
+        XCTAssertEqual(zonedComponents(reminder.startDateComponents),
+                       DateComponents(timeZone: .current, year: 2026, month: 10, day: 8, hour: 0, minute: 0))
+    }
+
+    func testTheFallbackRunsOnlyWhenTheDueLostItsTimeOrZone() {
+        var zoned = DateComponents(year: 2026, month: 10, day: 8, hour: 10, minute: 0)
+        zoned.timeZone = .current
+        XCTAssertFalse(ReminderDateSync.dueLostTimeOrZone(zoned))
+        XCTAssertTrue(ReminderDateSync.dueLostTimeOrZone(DateComponents(year: 2026, month: 10, day: 8, hour: 10, minute: 0)))
+        var dateOnly = DateComponents(year: 2026, month: 10, day: 8)
+        dateOnly.timeZone = .current
+        XCTAssertTrue(ReminderDateSync.dueLostTimeOrZone(dateOnly))
+        XCTAssertTrue(ReminderDateSync.dueLostTimeOrZone(nil))
+    }
+
     // MARK: - Response shape
 
     func testReportDictionaryUsesSnakeCaseKeys() {

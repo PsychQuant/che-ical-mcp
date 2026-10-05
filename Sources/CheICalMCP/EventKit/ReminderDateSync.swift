@@ -18,6 +18,10 @@ import Foundation
 ///   across a daylight-saving change.
 /// - With a date-only old due (midnight), they move by whole calendar days and keep their time.
 /// Relative-offset and location alarms are never touched.
+///
+/// The due date is written last. On a floating reminder the item is then given the due's
+/// zone, so a timed due keeps the explicit zone #134 writes (#237; `writeZonedDue` records
+/// the on-device findings behind this order).
 enum ReminderDateSync {
     enum StartChange: String, Sendable {
         case shifted, cleared, unchanged, absent
@@ -60,8 +64,62 @@ enum ReminderDateSync {
         // the start after the due date could drop the time the caller asked for.
         let report = sync(reminder, from: oldDue, to: storedDue, oldDueIsDateOnly: oldIsDateOnly,
                           dueDayShift: dayShift(from: oldComponents, to: components), hadDueDate: hadDue)
-        reminder.dueDateComponents = components
+        writeZonedDue(reminder, components)
         return report
+    }
+
+    /// #237: writes a timed due date so that it keeps an explicit zone (#134).
+    ///
+    /// A reminder has one item-level zone (`EKCalendarItem.timeZone`) shared by its start and
+    /// due dates. On a floating item (`timeZone == nil`) a due written with a zone is stored
+    /// floating, keeping its wall clock, so the item is given the due's zone after the write.
+    /// Found on device (2026-10-05, saved and re-fetched):
+    /// - giving the start a zone before the due is written does not help: the due stays floating;
+    /// - setting `reminder.timeZone` after the due is written keeps both wall clocks and zones both;
+    /// - on an item that already has a zone, assigning another one moves its instants, while a
+    ///   due written in another zone is converted and keeps its instant, so a zoned item is left
+    ///   alone;
+    /// - in memory, assigning the zone while the start has no hour turns the due date-only, so
+    ///   such a start first gets `00:00` (the store already hands date-only starts back that way).
+    private static func writeZonedDue(_ reminder: EKReminder, _ components: DateComponents) {
+        let floating = reminder.timeZone == nil
+        if floating, var start = reminder.startDateComponents, start.hour == nil {
+            start.hour = 0
+            start.minute = 0
+            reminder.startDateComponents = start
+        }
+        reminder.dueDateComponents = components
+        if floating {
+            reminder.timeZone = components.timeZone
+        }
+        if dueLostTimeOrZone(reminder.dueDateComponents) {
+            writeDueAroundStart(reminder, due: components)
+        }
+    }
+
+    /// Whether a timed due date read back without its time or its zone.
+    static func dueLostTimeOrZone(_ due: DateComponents?) -> Bool {
+        due?.hour == nil || due?.timeZone == nil
+    }
+
+    /// The fallback when the zone did not stick: clear the start, write the due (EventKit then
+    /// zones the item from it), and put the start back timed, in the due's zone, with its wall
+    /// clock unchanged. This order kept both zoned on device; a date-only start written after
+    /// the due would turn the due date-only, so the start is always written with a time.
+    static func writeDueAroundStart(_ reminder: EKReminder, due components: DateComponents) {
+        let start = reminder.startDateComponents
+        reminder.startDateComponents = nil
+        reminder.dueDateComponents = components
+        guard var start else { return }
+        start.calendar = nil
+        if start.hour == nil {
+            start.hour = 0
+            start.minute = 0
+        }
+        if start.timeZone == nil {
+            start.timeZone = components.timeZone
+        }
+        reminder.startDateComponents = start
     }
 
     /// - Parameters:
@@ -138,9 +196,10 @@ enum ReminderDateSync {
         return Report(startDate: hadStart ? .cleared : .absent, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: absolute.count)
     }
 
-    /// Moves start components with the due date, keeping their time zone (floating stays
-    /// floating) and granularity. A date-only start moves by `days` calendar days; a timed
-    /// start moves like an alarm, in its own zone.
+    /// Moves start components with the due date, keeping their time zone and granularity. A
+    /// floating start stays floating here; when `setDue` then writes a timed due it zones the
+    /// whole item (#237). A date-only start moves by `days` calendar days; a timed start moves
+    /// like an alarm, in its own zone.
     private static func shift(_ components: DateComponents, days: Int,
                               moveTimed: (Date, TimeZone) -> Date) -> DateComponents? {
         let zone = components.timeZone ?? .current
