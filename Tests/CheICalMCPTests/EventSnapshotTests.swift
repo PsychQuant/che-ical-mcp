@@ -72,6 +72,51 @@ final class EventSnapshotTests: XCTestCase {
         XCTAssertEqual(alarms(event), Set(snapshot.alarms))
     }
 
+    // MARK: - apply (#253 verify #4)
+
+    /// Update-undo writes the snapshot back through `EventSnapshot.apply`, the same path
+    /// `applySnapshot` takes; before, only `AlarmSnapshot.restore` was tested, so dropping the
+    /// alarm write from the undo path left the suite green.
+    func testApplyRestoresTheFieldsAndAlarmsOfAnUpdatedEvent() {
+        let event = eventWithEveryKindOfAlarm()
+        let snapshot = EventSnapshot(from: event)
+        event.title = "Renamed"
+        event.alarms?.forEach(event.removeAlarm)
+        event.addAlarm(EKAlarm(relativeOffset: 0))
+
+        snapshot.apply(to: event, calendar: event.calendar)
+
+        XCTAssertEqual(event.title, "Review")
+        XCTAssertEqual(event.alarms?.count, 4)
+        XCTAssertEqual(alarms(event), Set(snapshot.alarms))
+    }
+
+    /// Delete-undo applies the snapshot to a new event.
+    func testApplyOnANewEventRecreatesEveryAlarm() {
+        let original = eventWithEveryKindOfAlarm()
+        let snapshot = EventSnapshot(from: original)
+        let recreated = EKEvent(eventStore: store)
+        let calendar = EKCalendar(for: .event, eventStore: store)
+
+        snapshot.apply(to: recreated, calendar: calendar)
+
+        XCTAssertTrue(recreated.calendar === calendar)
+        XCTAssertEqual(recreated.startDate, original.startDate)
+        XCTAssertEqual(alarms(recreated), alarms(original))
+    }
+
+    func testApplyLeavesUnchangedAlarmObjectsInPlace() {
+        let event = eventWithEveryKindOfAlarm()
+        let before = event.alarms ?? []
+        let snapshot = EventSnapshot(from: event)
+        event.title = "Renamed"
+
+        snapshot.apply(to: event, calendar: event.calendar)
+
+        XCTAssertEqual(event.alarms?.count, before.count)
+        XCTAssertTrue(before.allSatisfy { kept in event.alarms?.contains { $0 === kept } ?? false })
+    }
+
     func testEventWithoutAlarmsRecordsNone() {
         XCTAssertEqual(EventSnapshot(from: makeEvent()).alarms, [])
     }

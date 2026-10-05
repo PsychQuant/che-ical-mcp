@@ -1,4 +1,5 @@
 import CheMCPKit
+import CoreLocation
 import EventKit
 import Foundation
 
@@ -127,6 +128,47 @@ struct EventSnapshot {
         return calendar
     }
 
+    /// Writes every recorded field to `event`, with `calendar` already resolved from
+    /// `calendarIdentifier` (the caller has the store). Both event undo arms come through here:
+    /// update-undo on the fetched event, delete-undo on a new one.
+    func apply(to event: EKEvent, calendar: EKCalendar) {
+        event.title = title
+        event.startDate = startDate
+        event.endDate = endDate
+        event.notes = notes
+        event.location = location
+        event.url = url
+        event.isAllDay = isAllDay
+
+        // Calendar
+        event.calendar = calendar
+
+        // Alarms (#230): rebuilt from value snapshots, and only those that differ
+        AlarmSnapshot.restore(alarms, to: event)
+
+        // Structured location
+        if let locTitle = structuredLocationTitle {
+            let structured = EKStructuredLocation(title: locTitle)
+            if let lat = structuredLocationLat, let lon = structuredLocationLon {
+                structured.geoLocation = CLLocation(latitude: lat, longitude: lon)
+            }
+            if let radius = structuredLocationRadius, radius > 0 {
+                structured.radius = radius
+            }
+            event.structuredLocation = structured
+        }
+
+        // Recurrence
+        if let rules = recurrenceRules {
+            // #191 — rebuild fresh EKRecurrenceRule objects from value snapshots;
+            // re-attaching the original (now-stale) rule objects made the restore
+            // save fail with EKCADErrorDomain 1010 (#186 on-device).
+            event.recurrenceRules = rules.map { $0.rebuild() }
+        }
+
+        // Timezone
+        event.timeZone = timeZone
+    }
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.

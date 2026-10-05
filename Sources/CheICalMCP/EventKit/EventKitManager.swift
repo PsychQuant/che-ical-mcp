@@ -2175,45 +2175,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Apply an EventSnapshot to an EKEvent.
+    /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
+    /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
+    /// reminders).
     private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
         let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
-        event.title = snapshot.title
-        event.startDate = snapshot.startDate
-        event.endDate = snapshot.endDate
-        event.notes = snapshot.notes
-        event.location = snapshot.location
-        event.url = snapshot.url
-        event.isAllDay = snapshot.isAllDay
-
-        // Calendar
-        event.calendar = originalCalendar
-
-        // Alarms (#230): rebuilt from value snapshots, and only when they differ
-        AlarmSnapshot.restore(snapshot.alarms, to: event)
-
-        // Structured location
-        if let locTitle = snapshot.structuredLocationTitle {
-            let structured = EKStructuredLocation(title: locTitle)
-            if let lat = snapshot.structuredLocationLat, let lon = snapshot.structuredLocationLon {
-                structured.geoLocation = CLLocation(latitude: lat, longitude: lon)
-            }
-            if let radius = snapshot.structuredLocationRadius, radius > 0 {
-                structured.radius = radius
-            }
-            event.structuredLocation = structured
-        }
-
-        // Recurrence
-        if let rules = snapshot.recurrenceRules {
-            // #191 — rebuild fresh EKRecurrenceRule objects from value snapshots;
-            // re-attaching the original (now-stale) rule objects made the restore
-            // save fail with EKCADErrorDomain 1010 (#186 on-device).
-            event.recurrenceRules = rules.map { $0.rebuild() }
-        }
-
-        // Timezone
-        event.timeZone = snapshot.timeZone
+        snapshot.apply(to: event, calendar: originalCalendar)
     }
 
     /// A completion record always yields a write (#196); the throw is unreachable by
