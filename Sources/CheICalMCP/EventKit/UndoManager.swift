@@ -273,32 +273,31 @@ enum UndoOperation {
     /// through the `undo_history` MCP tool's response field**, so any
     /// user-controlled title here flows through the same wire path as
     /// `executeUndo`/`executeRedo` arms — and shares the same CWE-117
-    /// log-injection surface. Each title interpolation goes through `undoShownTitle`, like the
-    /// undo errors (#74 verify DA1; PR #259 round 6).
+    /// log-injection surface. Each title interpolation goes through `undoVisibleTitle`, which
+    /// drops hidden characters and leaves quotes alone (#74 verify DA1; PR #259 rounds 6–7).
     var description: String {
         switch self {
         case .createEvent(_, let title, _):
-            return "Created event: \(undoShownTitle(title))"
+            return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(undoShownTitle(snapshot.title))"
+            return "Deleted event: \(undoVisibleTitle(snapshot.title))"
         case .updateEvent(_, let old, _):
-            return "Updated event: \(undoShownTitle(old.title))"
+            return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
-            // #236 round 5: shown like the undo errors (a new record type, no older format to keep).
-            return "Updated recurring event: \(undoShownTitle(title)) (undo not available)"
+            return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
         case .moveEvent(_, _, _, let title, _):
-            return "Moved event: \(undoShownTitle(title))"
+            return "Moved event: \(undoVisibleTitle(title))"
         case .createReminder(_, let title, _):
-            return "Created reminder: \(undoShownTitle(title))"
+            return "Created reminder: \(undoVisibleTitle(title))"
         case .deleteReminder(let snapshot):
-            return "Deleted reminder: \(undoShownTitle(snapshot.title))"
+            return "Deleted reminder: \(undoVisibleTitle(snapshot.title))"
         case .updateReminder(_, let old, _):
-            return "Updated reminder: \(undoShownTitle(old.title))"
+            return "Updated reminder: \(undoVisibleTitle(old.title))"
         case .completeReminder(_, _, _, _, let title, _, _):
-            return "Completed reminder: \(undoShownTitle(title))"
+            return "Completed reminder: \(undoVisibleTitle(title))"
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
-            return "\(action) recurring reminder: \(undoShownTitle(before.title))"
+            return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
         case .batch(let ops):
             return "Batch (\(ops.count) operations)"
         }

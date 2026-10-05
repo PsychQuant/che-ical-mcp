@@ -594,6 +594,7 @@ final class UndoRefusalTests: XCTestCase {
                        "Khmer inherent vowels, Mongolian variation selectors, braille blank")
         XCTAssertEqual(undoShownTitle("a\u{2065}b\u{FFF0}c\u{FFF8}d\u{E01F0}e\u{E0FFF}f"), "abcdef",
                        "unassigned default-ignorable code points (round 6)")
+        XCTAssertEqual(undoShownTitle("a\u{E0080}b\u{E00FF}c"), "abc", "the rest of the default-ignorable block (round 7)")
     }
 
     /// Round 6 findings 8, 11, 13, 20: visible format marks stay (Syriac abbreviation mark, Arabic

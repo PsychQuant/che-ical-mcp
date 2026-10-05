@@ -64,11 +64,12 @@ final class UndoRecordPostStateTests: XCTestCase {
         XCTAssertEqual(expected.changedFields(in: event), ["title"])
     }
 
-    /// Round 6 findings 14, 23: every undo_history description shows its title like the undo
-    /// errors (bidirectional and zero-width characters dropped, quotes replaced).
+    /// Round 6 findings 14, 23 and round 7 findings 19, 28: every undo_history description drops
+    /// the invisible characters of its title; the title is not quoted there, so its quotes stay
+    /// and it is not cut.
     func testHistoryDescriptionsShowTitlesLikeTheErrors() {
-        let title = "Stand\u{202E}up\u{200B} 'x'"
-        let shown = "Standup \u{2019}x\u{2019}"
+        let title = "Stand\u{202E}up\u{200B} 'x'" + String(repeating: "y", count: 130)
+        let shown = "Standup 'x'" + String(repeating: "y", count: 130)
         let event = UndoSnapshotFixtures.event(title: title)
         let reminder = UndoSnapshotFixtures.reminder(title: title)
         let completion = ReminderCompletionSnapshot(id: "r", title: title, calendarID: "c", sourceID: "s", isCompleted: false,

@@ -26,7 +26,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
     }
 
     func testRedoInstructionsShowTitlesLikeTheErrors() async throws {
-        let title = "Stand\u{202E}up\u{200B}"
+        let title = "Stand\u{202E}up\u{200B} 'x'"
         let event = UndoSnapshotFixtures.event(title: title)
         let reminder = UndoSnapshotFixtures.reminder(title: title)
         let ops: [UndoOperation] = [
@@ -39,7 +39,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
         ]
         for op in ops {
             let text = try await redoText(of: op)
-            XCTAssertTrue(text.contains("Standup"), "\(op.description): \(text)")
+            XCTAssertTrue(text.contains("Standup 'x'") || text.contains("Standup \\'x\\'"), "\(op.description): \(text)")
             XCTAssertFalse(text.unicodeScalars.contains { [0x202E, 0x200B].contains($0.value) }, text)
         }
     }

@@ -2083,7 +2083,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // series (mirrors deleteEventSeries); .thisEvent strands N-1 occurrences.
             try eventStore.remove(event, span: event.hasRecurrenceRules ? .futureEvents : .thisEvent)
             markNeedsRefresh()
-            return "Undone: removed created event '\(undoShownTitle(title))'"
+            return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
             // Undo delete = recreate from snapshot
@@ -2091,7 +2091,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return "Undone: restored event '\(undoShownTitle(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
+            return "Undone: restored event '\(undoVisibleTitle(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
         case .updateEvent(_, let oldSnapshot, _):
             // Undo update = restore old values. Only updates of one-off events are recorded this
@@ -2102,7 +2102,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return "Undone: restored event '\(undoShownTitle(oldSnapshot.title))' to previous state"
+            return "Undone: restored event '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
 
         case .updateRecurringEvent(_, let title, let kind):
             // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).
@@ -2118,7 +2118,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.calendar = original
             try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
             markNeedsRefresh()
-            return "Undone: moved event '\(undoShownTitle(title))' back to its original calendar"
+            return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
         case .createReminder(_, let title, _):
             // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:
@@ -2129,7 +2129,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try eventStore.remove(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: removed created reminder '\(undoShownTitle(title))'"
+            return "Undone: removed created reminder '\(undoVisibleTitle(title))'"
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate
@@ -2138,7 +2138,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             applyReminderSnapshot(snapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: restored reminder '\(undoShownTitle(snapshot.title))'"
+            return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
@@ -2146,14 +2146,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             applyReminderSnapshot(oldSnapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: restored reminder '\(undoShownTitle(oldSnapshot.title))' to previous state"
+            return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
 
         case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Undone: set reminder '\(undoShownTitle(title))' completion to \(wasCompleted)"
+            return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)"
 
         case .completeRecurringReminder(let before, _, _):
             return try await undoRecurringCompletion(operation, before: before)
@@ -2172,28 +2172,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent(_, let title, _):
-            return "Cannot redo creation of event '\(undoShownTitle(title))' — please create it again manually"
+            return "Cannot redo creation of event '\(undoVisibleTitle(title))' — please create it again manually"
 
         case .deleteEvent(let snapshot):
             // Redo delete = delete the restored event
             // The restored event's ID was stored via updateLastRedoEventId
-            return "Redo delete: please use delete_event to remove '\(undoShownTitle(snapshot.title))'"
+            return "Redo delete: please use delete_event to remove '\(undoVisibleTitle(snapshot.title))'"
 
         case .updateEvent(let id, _, _):
             return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
 
         case .updateRecurringEvent(_, let title, _):
             // Unreachable: its undo always fails and discards the record.
-            return "Redo update: the update of the recurring event '\(undoShownTitle(title))' was not undone, so there is nothing to redo."
+            return "Redo update: the update of the recurring event '\(undoVisibleTitle(title))' was not undone, so there is nothing to redo."
 
         case .moveEvent(_, _, _, let title, _):
-            return "Redo move: use move_events_batch to move '\(undoShownTitle(title))' again."
+            return "Redo move: use move_events_batch to move '\(undoVisibleTitle(title))' again."
 
         case .createReminder(_, let title, _):
-            return "Cannot redo reminder creation — please create '\(undoShownTitle(title))' again manually"
+            return "Cannot redo reminder creation — please create '\(undoVisibleTitle(title))' again manually"
 
         case .deleteReminder(let snapshot):
-            return "Redo delete: please use delete_reminder to remove '\(undoShownTitle(snapshot.title))'"
+            return "Redo delete: please use delete_reminder to remove '\(undoVisibleTitle(snapshot.title))'"
 
         case .updateReminder(let id, _, _):
             return "Redo update: the reminder \(id) was restored. Apply your changes again."
@@ -2206,7 +2206,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
-            return "Redone: set reminder '\(undoShownTitle(title))' completion to \(requestedCompleted)"
+            return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)"
 
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
