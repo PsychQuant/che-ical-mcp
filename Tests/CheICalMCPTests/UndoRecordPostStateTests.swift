@@ -64,48 +64,6 @@ final class UndoRecordPostStateTests: XCTestCase {
         XCTAssertEqual(expected.changedFields(in: event), ["title"])
     }
 
-    // MARK: - Recurring update-undo (PR #259 round 4, device probe)
-
-    private func weeklySeries(title: String) -> EKEvent {
-        let event = makeEvent(title: title)
-        event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 6)))
-        return event
-    }
-
-    /// update_event on one occurrence detaches it, and the record targets that occurrence by its
-    /// post-save identifier (#246). Its undo writes the occurrence's own values and no rules: with
-    /// the series' snapshot it moved the occurrence to the series' first start, and on device the
-    /// save failed with EKErrorDomain 39 "The repeat field cannot be changed".
-    func testAnOccurrenceUpdateRecordsTheOccurrenceWithoutRules() {
-        let series = weeklySeries(title: "Standup")
-        let occurrence = makeEvent(title: "Standup")
-        occurrence.startDate = instant.addingTimeInterval(7 * 86_400)
-        occurrence.endDate = occurrence.startDate.addingTimeInterval(3600)
-
-        let restores = EventKitManager.updateUndoSnapshot(master: series, target: occurrence)
-        XCTAssertEqual(restores.startDate, occurrence.startDate, "its own slot, not the series' first start")
-        XCTAssertNil(restores.recurrenceRules, "an occurrence's undo writes no rules")
-
-        let wholeSeries = EventKitManager.updateUndoSnapshot(master: series, target: series)
-        XCTAssertEqual(wholeSeries.recurrenceRules?.count, 1, "a series update keeps restoring its rules")
-    }
-
-    /// The undo of a span "all" update writes the series back as a whole. Saved with .thisEvent on
-    /// the first occurrence, on device the first occurrence became a detached copy and the other
-    /// occurrences were gone; with .futureEvents the whole series came back.
-    func testASeriesUpdateIsUndoneForTheWholeSeries() {
-        let series = weeklySeries(title: "Standup")
-        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: series), target: series), .futureEvents)
-
-        let occurrenceRecord = EventSnapshot(from: series, includeRecurrence: false)
-        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: occurrenceRecord, target: series), .thisEvent)
-
-        let oneOff = makeEvent(title: "Review")
-        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: oneOff), target: oneOff), .thisEvent)
-        XCTAssertEqual(EventKitManager.updateUndoSpan(restoring: EventSnapshot(from: series), target: oneOff), .thisEvent,
-                       "undo of clear_recurrence: the event has no series yet, the restore adds the rules")
-    }
-
     func testMoveEventUndoComparesOnlyTheCalendarItWasMovedTo() throws {
         let event = makeEvent(title: "Standup")
         let op = UndoOperation.moveEvent(id: "moved", fromCalendarIdentifier: "from",

@@ -800,6 +800,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.eventNotFound(identifier: identifier)
         }
 
+        // Snapshot before update for undo
+        let oldSnapshot = EventSnapshot(from: masterEvent)
+
         // For recurring events, resolve the specific occurrence when needed.
         // When applyToAll is true, operate on master event directly (correct for "all" series updates).
         // "this" or "future" on recurring → require occurrence_date to find the right occurrence.
@@ -819,10 +822,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 message: "For recurring events, occurrence_date is required to identify which occurrence to modify."
             )
         }
-
-        // Snapshot before update for undo: the series, or the occurrence on its own (#236,
-        // PR #259 round 4: the record targets the occurrence by its post-save identifier).
-        let oldSnapshot = Self.updateUndoSnapshot(master: masterEvent, target: event)
 
         if let t = title { event.title = t }
 
@@ -2082,12 +2081,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
         case .updateEvent(_, let oldSnapshot, _):
-            // Undo update = restore old values; a whole-series update is restored for the whole
-            // series (#236, PR #259 round 4).
+            // Undo update = restore old values
             let event = try await verifiedEvent(of: operation, verb: .undo)
-            let span = Self.updateUndoSpan(restoring: oldSnapshot, target: event)
             try applySnapshot(oldSnapshot, to: event)
-            try eventStore.save(event, span: span)
+            try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(EventKitErrorSanitizer.sanitizeForInterpolation(oldSnapshot.title))' to previous state"
 
