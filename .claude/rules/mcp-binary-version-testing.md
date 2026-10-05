@@ -100,8 +100,11 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 6. 用 `recurrence.excluded_occurrence_dates` 建立的系列 → undo 一次刪掉整個系列，不出現
    `modified_occurrences`。#182 的「排除日是被移除的場次、不是被單獨修改的場次」只在 iCloud
    看過（2026-10-05）；有其他來源（Google、Exchange）的帳號時，在那裡再做一次。
-7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次的標題 → undo → undo：
-   見 #236 round 4 的決定（本步驟的預期結果依 update-undo 對單一場次的處理而定）。
+7. 建立每週系列 → `update_event` 帶 `occurrence_date` 改其中一個場次的標題 → undo（該場次的
+   標題改回來，仍是 detached）→ undo（整個系列刪掉，不出現 `modified_occurrences`）。再用
+   `span: "all"` 改整個系列做一次：第一個 undo 之後系列的每個場次都還在、都是原值、沒有
+   detached 場次。round 4 之前的 binary 在這兩條路上分別是 `eventkit_error_39`（紀錄卡住）
+   與系列只剩一個 detached 場次（其餘場次消失）。
 8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
    successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
 
