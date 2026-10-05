@@ -13,10 +13,11 @@
 // 1s window to write), SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap
 // with a force-reap SIGKILL — so a stuck child costs at most ~16.5s per test (10 + 0.5s
 // SIGTERM grace + 3 + 1s force-reap + two 1s drain bounds) instead of wedging the 20m
-// job timeout. A healthy child exits on stdin EOF right after the banner, so normal runs
-// take well under a second. The spawned binary also inherits the same EventKit fast-fail
-// under CI=1, so the banner path (which only reads `authorizationStatus`, never
-// `requestFullAccess`) has no blocking primitive left to hang on.
+// job timeout. A healthy child exits on stdin EOF right after the banner: roughly 0.4-1.0s
+// from spawn to exit on the hosts measured for #233, about 0.02s with the banner
+// suppressed. The spawned binary also inherits the same EventKit fast-fail under CI=1, so
+// the banner path (which only reads `authorizationStatus`, never `requestFullAccess`) has
+// no blocking primitive left to hang on.
 
 import CheMCPKit
 import XCTest
@@ -61,15 +62,17 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
     /// Spawn the binary, close its stdin, and wait for it to exit, terminating it if it is
     /// still running after `maxWait` seconds. With stdin at EOF the MCP server loop has no
-    /// JSON-RPC to read and exits by itself right after the banner, so a normal run returns
-    /// in well under a second.
+    /// JSON-RPC to read and exits by itself right after the banner, roughly 0.4-1.0 s after
+    /// spawn on the hosts measured for #233.
     ///
     /// `maxWait` is a cap for a hung child, not the time a child gets to emit its output
     /// (#233). The banner is a single write at the end of `emitStartupBanner()`, after up
-    /// to three 500 ms subprocess caps (#126); under host CPU contention it lands after
-    /// 1 s, and the former 1.0 s default SIGTERM'd the child before that write (no SIGTERM
-    /// handler, so the default action kills it), which read as "no banner". The 10 s
-    /// default sits well above the slowest arrival measured under contention (~1.5 s).
+    /// to three 500 ms subprocess caps (#126). The former 1.0 s default SIGTERM'd the child
+    /// whenever that write came later than 1 s (no SIGTERM handler, so the default action
+    /// kills it), which read as "no banner". A healthy run already takes up to ~1 s, so
+    /// that window had little margin even before host CPU contention pushed the banner
+    /// later. The 10 s default sits well above the slowest arrival measured under
+    /// contention (1.67 s).
     ///
     /// `until`, when given, is checked against the drained stderr after every chunk. The
     /// helper stops waiting as soon as it matches (then terminates the child if it is still
@@ -306,11 +309,15 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// integration including spawn`. A wall-clock assertion on a shared host cannot hold a
     /// bound that tight, so this test keeps a coarse tripwire for the "banner now takes 10
     /// seconds" class of regression (#127 closing summary). It times the banner's arrival
-    /// (spawn → the `until` match), not the helper's whole run including teardown. The
-    /// bound is 5.0 s because the production path's own worst case is process startup plus
-    /// three 500 ms subprocess caps (`ps`, `sqlite3`, the parent-chain `ps`; #126), and
-    /// under host CPU contention the banner was measured arriving at up to ~1.5 s (#233),
-    /// right at the former 1.5 s bound.
+    /// (spawn → the `until` match), not the helper's whole run including teardown, and an
+    /// untimed warm-up exec keeps a first-exec Gatekeeper assessment out of it. The bound
+    /// is 5.0 s because the production path's own worst case is process startup plus three
+    /// 500 ms subprocess caps (`ps`, `sqlite3`, the parent-chain `ps`; #126), and under host
+    /// CPU contention the banner was measured arriving at up to 1.67 s (#233), past the
+    /// former 1.5 s bound. 5.0 s is deliberately a looser #127 guard than that 1.5 s: the
+    /// tighter bound fell inside the range of real arrival times on a busy host and so
+    /// produced false reds, while 5.0 s still catches the 10-second class of regression
+    /// #127 is about.
     func testBannerAppearsInDefaultMCPServerMode() throws {
         let binary = try locateBuiltBinary()
         let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
