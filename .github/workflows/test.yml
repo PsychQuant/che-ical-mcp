@@ -61,6 +61,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
+      - name: build-mcpb staged-product check tests
+        # #238: missing / wrong-architecture / wrong-version / unrunnable products must
+        # stop the release build. Fixtures are compiled with clang (seconds); runs before
+        # the long test step so a swift test failure cannot hide it. The other-architecture
+        # run is skipped, with a note, when the runner cannot execute it.
+        run: bash scripts/tests/check-staged-product-test.sh
+
       - name: swift build
         run: swift build
 
@@ -77,9 +84,3 @@ jobs:
           STATUS=${PIPESTATUS[0]}
           echo "Exit status: $STATUS"
           exit $STATUS
-
-      - name: build-mcpb staged-product check tests
-        # #238: missing / wrong-architecture / wrong-version / unrunnable products must
-        # stop the release build. Fixtures are compiled with clang; the x86_64 run is
-        # skipped (with a note) when the runner has no Rosetta.
-        run: bash scripts/tests/check-staged-product-test.sh

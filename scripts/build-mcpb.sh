@@ -91,12 +91,16 @@ echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + pl
 
 # Steps 3-4: Build for both architectures
 # #238: under the swiftbuild build system (Swift 6.4 default) both --arch builds write
-# to the same bin path, so each product is checked and copied out right after its own
-# build — before the next build overwrites it. check_staged_product (scripts/lib)
-# requires the file, exactly that architecture, and — when this host can run that
-# architecture — a `--version` that matches AppVersion.current; it says so when it
-# cannot run it. The per-arch paths under .build/<triple>/release are no longer
+# to the same bin path, so each product is copied out right after its own build —
+# before the next build overwrites it — and the staged copy (the file that gets
+# packaged) is checked by check_staged_product (scripts/lib): the file, exactly that
+# architecture, and a `--version` that matches AppVersion.current. On the release path
+# (REQUIRE_CODESIGN=1) an architecture this host cannot run is an error; otherwise it
+# is a visible note. The per-arch paths under .build/<triple>/release are no longer
 # written and must not be read: they hold whatever an older toolchain left there.
+if [[ "${REQUIRE_CODESIGN:-0}" == "1" ]]; then
+    export CHECK_STAGED_STRICT=1
+fi
 STAGE_DIR="$PROJECT_DIR/.build/mcpb-stage"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
@@ -106,8 +110,12 @@ build_arch() {
     swift build -c release --arch "$arch" "${SWIFT_FALLBACK_FLAGS[@]}"
     bin_dir=$(swift build -c release --arch "$arch" --show-bin-path "${SWIFT_FALLBACK_FLAGS[@]}")
     product="$bin_dir/CheICalMCP"
-    check_staged_product "$product" "$arch" CheICalMCP "$SOURCE_VERSION" || exit 1
+    if [[ ! -f "$product" ]]; then
+        echo "Error: no $arch product at $product (#238)"
+        exit 1
+    fi
     cp "$product" "$STAGE_DIR/CheICalMCP-$arch"
+    check_staged_product "$STAGE_DIR/CheICalMCP-$arch" "$arch" CheICalMCP "$SOURCE_VERSION" || exit 1
 }
 
 echo "[3/7] Building for Apple Silicon (arm64)..."
@@ -133,7 +141,16 @@ UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 rm -f "$UNIVERSAL_BINARY"
 lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
 chmod +x "$UNIVERSAL_BINARY"
-echo "Created Universal Binary: $UNIVERSAL_BINARY"
+# The packaged slices must be byte-identical to the staged products that were checked.
+for arch in arm64 x86_64; do
+    THIN="$STAGE_DIR/packaged-$arch"
+    lipo -thin "$arch" "$UNIVERSAL_BINARY" -output "$THIN"
+    if ! cmp -s "$THIN" "$STAGE_DIR/CheICalMCP-$arch"; then
+        echo "Error: the $arch slice in $UNIVERSAL_BINARY differs from the checked product (#238)"
+        exit 1
+    fi
+done
+echo "Created Universal Binary: $UNIVERSAL_BINARY (slices match the checked products)"
 
 # Verify Universal Binary
 echo ""
