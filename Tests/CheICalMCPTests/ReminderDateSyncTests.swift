@@ -716,6 +716,26 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(ReminderDateSync.isAligned(reminder), false)
     }
 
+    /// On device (2026-10-05) the store hands a date-only start back as `00:00`, and after #237 a
+    /// date-only reminder given a time keeps that start as `00:00` in the due's zone. It is a
+    /// date-only start on the due's day (`startChange` already treats midnight that way), so a
+    /// reminder made in Reminders.app and rescheduled with a time must not read as diverged.
+    func testAMidnightStartOnTheDuesDayCountsAsADateOnlyStart() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(date(2026, 10, 8, 10, in: taipei), in: taipei)
+        reminder.startDateComponents = components(date(2026, 10, 8, 0, in: taipei), in: taipei)
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), true)
+    }
+
+    func testAMidnightStartOnAnotherDayIsNotAligned() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(date(2026, 10, 8, 10, in: taipei), in: taipei)
+        reminder.startDateComponents = components(date(2026, 10, 7, 0, in: taipei), in: taipei)
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), false)
+    }
+
     func testAlignmentIsUnknownWithoutADueDate() {
         XCTAssertNil(ReminderDateSync.isAligned(makeReminder()))
     }

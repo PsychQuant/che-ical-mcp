@@ -137,7 +137,9 @@ enum ReminderDateSync {
     /// #235: whether the start date and the alarm Reminders.app displays agree with the due date.
     /// `nil` without a due date. True only if both hold:
     /// - there is no start, or a date-only start (or any start under a date-only due) is on the
-    ///   due's day, or a timed start is at the due instant;
+    ///   due's day, or a timed start is at the due instant. A start at midnight counts as date-only:
+    ///   the store hands date-only starts back as `00:00` (on device 2026-10-05), as `startChange`
+    ///   also assumes;
     /// - there is no absolute alarm, or the earliest one (the displayed one) is at the due
     ///   instant (timed due) or on the due's day (date-only due).
     /// An alarm set apart from the due on purpose reads as not aligned; this is a report, the
@@ -146,7 +148,7 @@ enum ReminderDateSync {
         guard let due = reminder.dueDateComponents else { return nil }
         let dueIsDateOnly = due.hour == nil
         if let start = reminder.startDateComponents {
-            if dueIsDateOnly || start.hour == nil {
+            if dueIsDateOnly || isMidnightOrDateOnly(start) {
                 guard dayShift(from: start, to: due) == 0 else { return false }
             } else {
                 guard sameInstant(safeDateFromComponents(start), safeDateFromComponents(due)) else { return false }
@@ -158,6 +160,10 @@ enum ReminderDateSync {
             return dayShift(from: day, to: due) == 0
         }
         return sameInstant(earliest, safeDateFromComponents(due))
+    }
+
+    private static func isMidnightOrDateOnly(_ components: DateComponents) -> Bool {
+        (components.hour ?? 0) == 0 && (components.minute ?? 0) == 0
     }
 
     /// The start date before and after the write. A date-only start counts as midnight of its
