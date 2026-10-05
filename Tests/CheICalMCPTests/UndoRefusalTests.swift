@@ -508,7 +508,9 @@ final class UndoRefusalTests: XCTestCase {
         for (shape, created, current) in splits {
             for fields in [["recurrence"], ["title", "recurrence"]] {
                 let message = refusal(created: created, current: current, fields: fields)
-                XCTAssertTrue(message.contains("split"), "\(shape): \(message)")
+                XCTAssertTrue(message.contains("was shortened"), "\(shape): \(message)")
+                XCTAssertTrue(message.contains("an update or delete of an occurrence and the following ones does this"), message)
+                XCTAssertFalse(message.contains("split"), "the cause is not asserted (round 7): \(message)")
                 XCTAssertFalse(message.contains("change it back"), "\(shape) \(fields): \(message)")
                 XCTAssertTrue(message.contains("discard_id"), message)
             }

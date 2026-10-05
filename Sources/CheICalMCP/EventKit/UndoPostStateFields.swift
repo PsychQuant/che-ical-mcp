@@ -150,8 +150,8 @@ extension RecurrenceRuleSnapshot {
             && set(setPositions) == set(other.setPositions)
     }
 
-    /// The shape a span "future" update leaves on the original series (PR #259 round 6, checked
-    /// on iCloud 2026-10-06): one rule before and after, the same pattern, ended earlier: a
+    /// The shape an update or delete of an occurrence and the following ones leaves on the
+    /// original series (PR #259 rounds 6–7; a span "future" update checked on iCloud 2026-10-06): one rule before and after, the same pattern, ended earlier: a
     /// smaller count (6 → 2), an earlier end date (05-30 → 04-10), or an end where there was none
     /// (open → 04-10). A count that became an end date is not compared (it can lengthen the series)
     /// and is not counted as shortened (PR #259 round 7). The shortened series cannot be put back.
