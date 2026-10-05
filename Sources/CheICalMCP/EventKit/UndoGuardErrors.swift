@@ -28,15 +28,18 @@ enum UndoTargetCheck {
 }
 
 /// The title as an undo error shows it. The errors are `TrustedErrorMessage`, so the
-/// store-derived title reaches the client verbatim, between quotes and next to instructions:
-/// control characters, line and paragraph separators and bidirectional controls are dropped, a
-/// quote is replaced so the title cannot close its quotes, and the length is capped at 120
-/// Unicode scalars, so combining marks cannot stretch it (PR #259, round 1 finding 19, round 2
-/// finding 11).
+/// store-derived title reaches the client verbatim, between quotes and next to instructions.
+/// Characters a reader does not see are dropped by general category: format (zero-width, soft
+/// hyphen, bidirectional controls), control, line and paragraph separators, private use and
+/// unassigned, plus the tag block (PR #259 round 3, findings 4, 5, 11, 22). A quote is replaced
+/// so the title cannot close its quotes, and the length is capped at 120 Unicode scalars, so
+/// combining marks cannot stretch it (round 1 finding 19, round 2 finding 11). This keeps hidden
+/// text out of the message; a visible title can still read like an instruction.
 func undoShownTitle(_ title: String) -> String {
     let dropped: (Unicode.Scalar) -> Bool = { scalar in
-        switch scalar.value {
-        case 0x80...0x9F, 0x2028, 0x2029, 0x061C, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069: return true
+        if (0xE0000...0xE007F).contains(scalar.value) { return true }
+        switch scalar.properties.generalCategory {
+        case .format, .control, .lineSeparator, .paragraphSeparator, .privateUse, .unassigned: return true
         default: return false
         }
     }

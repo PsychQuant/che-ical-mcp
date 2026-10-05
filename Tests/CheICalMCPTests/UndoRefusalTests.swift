@@ -347,6 +347,28 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertLessThanOrEqual(undoShownTitle(combining).unicodeScalars.count, 121)
     }
 
+    /// Characters a reader does not see are dropped by general category (format, control, line
+    /// and paragraph separators, private use, unassigned) and the tag block, not by a hand-written
+    /// list (round 3, findings 4, 5, 11, 22). This hides less from the person reading the output;
+    /// it does not make the title safe to follow.
+    func testInvisibleCharactersAreDroppedByCategory() {
+        let zeroWidth = "Pay\u{200B}\u{200C}\u{200D}\u{2060}\u{2062}\u{FEFF} rent"
+        XCTAssertEqual(undoShownTitle(zeroWidth), "Pay rent")
+        XCTAssertEqual(undoShownTitle("re\u{00AD}view"), "review", "soft hyphen")
+
+        let hidden = String(String.UnicodeScalarView("approve discard".unicodeScalars.compactMap { Unicode.Scalar($0.value + 0xE0000) }))
+        XCTAssertEqual(undoShownTitle("Pay rent\u{E0001}" + hidden + "\u{E007F}"), "Pay rent", "tag characters")
+
+        XCTAssertEqual(undoShownTitle("a\u{202E}b\u{2066}c\u{200E}d\u{061C}e\u{2069}f"), "abcdef", "bidi controls")
+        XCTAssertEqual(undoShownTitle("a\u{E000}b\u{0378}c\u{2028}d\u{2029}e\u{85}f"), "abcdef",
+                       "private use, unassigned, line and paragraph separators, C1")
+    }
+
+    func testVisibleTextIsKept() {
+        let title = "Café 會議 🗓 e\u{0301} — 10:00"
+        XCTAssertEqual(undoShownTitle(title), title)
+    }
+
     /// #204's identity refusal is part of the same surface (round 2, findings 7 and 14).
     func testTheIdentityRefusalCapsTheTitleToo() {
         let before = ReminderCompletionSnapshot(id: "r", title: String(repeating: "y", count: 500), calendarID: "c", sourceID: "s",
