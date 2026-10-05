@@ -175,7 +175,7 @@ final class ReminderDateSyncTests: XCTestCase {
 
         let report = ReminderDateSync.setDue(reminder, to: newDue)
 
-        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0))
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true))
         XCTAssertNotNil(reminder.dueDateComponents?.timeZone, "#134: due components carry an explicit time zone")
         XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), newDue)
         XCTAssertEqual(absoluteDates(reminder), [newDue])
@@ -485,6 +485,184 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertTrue(ReminderDateSync.dueLostTimeOrZone(nil))
     }
 
+    // MARK: - #235: realigning a reminder whose alarm or start already diverged
+
+    /// Reminders.app displays the earliest absolute-date alarm (on device 2026-10-05), so that is
+    /// the anchor `realign_to_due` puts on the due date.
+    private func divergedReminder() -> EKReminder {
+        // As v1.17/v1.18 left it: due moved to Oct 8, start and alarm still on Oct 4.
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(date(2026, 10, 8, 10, in: taipei), in: taipei)
+        reminder.startDateComponents = components(date(2026, 10, 4, 10, in: taipei), in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 4, 10, in: taipei)))
+        return reminder
+    }
+
+    /// Case 1: the same due date re-sent moves nothing, and the response now says so.
+    func testSameDueReSentOnADivergedReminderReportsNotAligned() {
+        let reminder = divergedReminder()
+
+        let report = ReminderDateSync.setDue(reminder, to: date(2026, 10, 8, 10, in: taipei))
+
+        XCTAssertEqual(report.aligned, false)
+        XCTAssertEqual(report.absoluteAlarmsShifted, 0)
+        XCTAssertEqual(absoluteDates(reminder), [date(2026, 10, 4, 10, in: taipei)])
+    }
+
+    func testRealignPutsTheStartAndAlarmOfADivergedReminderOnTheDueDate() {
+        let reminder = divergedReminder()
+        let due = date(2026, 10, 8, 10, in: taipei)
+
+        let report = ReminderDateSync.setDue(reminder, to: due, realignToDue: true)
+
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true))
+        XCTAssertEqual(absoluteDates(reminder), [due])
+        XCTAssertEqual(startComponents(reminder), components(due, in: taipei))
+    }
+
+    /// `realign_to_due` without `due_date` aligns to the current due date and leaves it as it is.
+    func testRealignToTheCurrentDueLeavesTheDueDateAlone() {
+        let reminder = divergedReminder()
+        let due = date(2026, 10, 8, 10, in: taipei)
+
+        let report = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true))
+        XCTAssertEqual(safeDateFromComponents(reminder.dueDateComponents), due)
+        XCTAssertEqual(absoluteDates(reminder), [due])
+    }
+
+    /// Case 2: no previous due date. EventKit creates start = due while the due is written; the
+    /// report describes that start (`set`), not the state before the write (`absent`).
+    func testNoPreviousDueReportsTheStartEventKitCreatesAndNotAligned() {
+        let reminder = makeReminder()
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 1, 9, in: taipei)))
+
+        let report = ReminderDateSync.setDue(reminder, to: date(2026, 10, 8, 10, in: taipei))
+
+        XCTAssertEqual(report.startDate, .set)
+        XCTAssertEqual(report.aligned, false)
+        XCTAssertEqual(absoluteDates(reminder), [date(2026, 10, 1, 9, in: taipei)])
+    }
+
+    func testRealignWithNoPreviousDueMovesTheAlarmOntoTheNewDue() {
+        let reminder = makeReminder()
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 1, 9, in: taipei)))
+        let due = date(2026, 10, 8, 10, in: taipei)
+
+        let report = ReminderDateSync.setDue(reminder, to: due, realignToDue: true)
+
+        XCTAssertEqual(report, .init(startDate: .set, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true))
+        XCTAssertEqual(absoluteDates(reminder), [due])
+    }
+
+    /// Case 3: a date-only due given a time on the same day.
+    private func dateOnlyReminderWithMorningAlarm() -> EKReminder {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 4)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 4, 9)))
+        return reminder
+    }
+
+    func testDateOnlyDueGivenATimeOnTheSameDayReportsNotAligned() {
+        let reminder = dateOnlyReminderWithMorningAlarm()
+
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 4, 10))
+
+        XCTAssertEqual(report.aligned, false)
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 4, 9)])
+    }
+
+    func testRealignMovesTheMorningAlarmAndStartToTheNewDueTime() {
+        let reminder = dateOnlyReminderWithMorningAlarm()
+
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 4, 10), realignToDue: true)
+
+        XCTAssertEqual(report.aligned, true)
+        XCTAssertEqual(report.absoluteAlarmsShifted, 1)
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 4, 10)])
+        XCTAssertEqual(safeDateFromComponents(reminder.startDateComponents), local(2026, 10, 4, 10))
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 10, "the due time survives the start write")
+        XCTAssertNotNil(reminder.dueDateComponents?.timeZone, "#237 still applies")
+    }
+
+    /// The earliest alarm lands on the due date; the later ones keep their spacing after it.
+    func testRealignAnchorsTheEarliestAlarmAndKeepsTheSpacingOfTheOthers() {
+        let reminder = divergedReminder()
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 3, 9, in: taipei)))   // 25 h before the other
+        let due = date(2026, 10, 8, 10, in: taipei)
+
+        let report = ReminderDateSync.setDue(reminder, to: due, realignToDue: true)
+
+        XCTAssertEqual(report.absoluteAlarmsShifted, 2)
+        XCTAssertEqual(absoluteDates(reminder), [due, due.addingTimeInterval(25 * 3600)])
+        XCTAssertEqual(report.aligned, true)
+    }
+
+    /// With a date-only due the alarms move by whole calendar days and keep their time of day.
+    func testRealignToADateOnlyDueKeepsTheAlarmsTimeOfDay() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 8)
+        reminder.addAlarm(EKAlarm(absoluteDate: local(2026, 10, 4, 9)))
+
+        let report = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual(absoluteDates(reminder), [local(2026, 10, 8, 9)])
+        XCTAssertEqual(reminder.startDateComponents?.day, 8)
+        XCTAssertNil(reminder.dueDateComponents?.hour, "the due stays date-only")
+        XCTAssertEqual(report.aligned, true)
+    }
+
+    func testRealignLeavesRelativeAndLocationAlarmsAlone() {
+        let reminder = divergedReminder()
+        reminder.addAlarm(EKAlarm(relativeOffset: -900))
+
+        _ = ReminderDateSync.realign(reminder)
+
+        XCTAssertEqual((reminder.alarms ?? []).filter { $0.absoluteDate == nil }.map(\.relativeOffset), [-900])
+    }
+
+    // MARK: - #235: alignment check
+
+    func testAReminderWithoutAnAbsoluteAlarmIsAlignedWhenItsStartIsOnTheDue() {
+        let reminder = makeReminder()
+        let due = date(2026, 10, 8, 10, in: taipei)
+        reminder.dueDateComponents = components(due, in: taipei)
+        reminder.startDateComponents = components(due, in: taipei)
+        reminder.addAlarm(EKAlarm(relativeOffset: -900))
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), true)
+    }
+
+    /// The displayed date follows the earliest alarm even when it is after the due date.
+    func testAnAlarmAfterTheDueDateIsNotAligned() {
+        let reminder = makeReminder()
+        let due = date(2026, 10, 8, 10, in: taipei)
+        reminder.dueDateComponents = components(due, in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: due.addingTimeInterval(86400)))
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), false)
+    }
+
+    func testAStartOnAnotherInstantIsNotAligned() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(date(2026, 10, 8, 10, in: taipei), in: taipei)
+        reminder.startDateComponents = components(date(2026, 10, 8, 9, in: taipei), in: taipei)
+
+        XCTAssertEqual(ReminderDateSync.isAligned(reminder), false)
+    }
+
+    func testAlignmentIsUnknownWithoutADueDate() {
+        XCTAssertNil(ReminderDateSync.isAligned(makeReminder()))
+    }
+
+    func testClearingTheDueDateReportsNoAlignment() {
+        let report = ReminderDateSync.setDue(divergedReminder(), to: nil)
+
+        XCTAssertNil(report.aligned)
+        XCTAssertNil(report.dictionary["aligned"])
+    }
+
     // MARK: - Response shape
 
     func testReportDictionaryUsesSnakeCaseKeys() {
@@ -493,5 +671,13 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(report.dictionary["start_date"] as? String, "shifted")
         XCTAssertEqual(report.dictionary["absolute_alarms_shifted"] as? Int, 1)
         XCTAssertEqual(report.dictionary["absolute_alarms_removed"] as? Int, 0)
+        XCTAssertNil(report.dictionary["aligned"], "omitted when unknown")
+    }
+
+    func testReportDictionaryCarriesAlignedAndTheSetStart() {
+        let report = ReminderDateSync.Report(startDate: .set, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0, aligned: false)
+
+        XCTAssertEqual(report.dictionary["start_date"] as? String, "set")
+        XCTAssertEqual(report.dictionary["aligned"] as? Bool, false)
     }
 }
