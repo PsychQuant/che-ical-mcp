@@ -14,7 +14,7 @@ private actor WriteFake: ReminderWriteSource {
         let touchedDue = request.dueDate != nil || request.clearDueDate || request.realignToDue
         let sync = request.clearDueDate
             ? ReminderDateSync.Report(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1)
-            : ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: request.realignToDue)
+            : ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true)
         return ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(id: request.identifier, title: request.title ?? "Saved", notes: request.notes),
             dateSync: touchedDue ? sync : nil)
@@ -93,15 +93,18 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertNil(requests.first?.dueDate)
         XCTAssertNotNil(result["date_sync"] as? [String: Any])
     }
-    func testRealignToDueIsOffByDefault() async throws {
+    /// The handler's default: omitted, JSON null and `false` all leave realign off; only `true`
+    /// turns it on. (What realign does to a reminder is pinned in `ReminderUpdateWriteTests`.)
+    func testRealignToDueIsOffUnlessTrue() async throws {
         let fake = WriteFake()
         let server = try await CheICalMCPServer(reminderWriteSource: fake)
-        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
-            "reminder_id": .string("r"), "due_date": .string("2026-10-08T10:00:00+08:00")]))
+        let due: Value = .string("2026-10-08T10:00:00+08:00")
+        for extra: [String: Value] in [[:], ["realign_to_due": .null], ["realign_to_due": .bool(false)], ["realign_to_due": .bool(true)]] {
+            _ = try await server.executeToolCall(name: "update_reminder",
+                                                 arguments: ["reminder_id": .string("r"), "due_date": due].merging(extra) { $1 })
+        }
         let requests = await fake.updated
-        XCTAssertEqual(requests.first?.realignToDue, false)
-        let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
-        XCTAssertEqual(sync["aligned"] as? Bool, false)
+        XCTAssertEqual(requests.map(\.realignToDue), [false, false, false, true])
     }
     func testRealignToDueWithClearDueDateIsRejectedBeforeAnyWrite() async throws {
         let fake = WriteFake()

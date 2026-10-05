@@ -1721,59 +1721,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
-        // #235: checked before anything is written, so a refused call leaves the reminder untouched.
-        if realignToDue && dueDate == nil && reminder.dueDateComponents == nil {
-            throw ToolError.invalidParameter("realign_to_due needs a due date: the reminder has none, so pass due_date")
-        }
+        let request = ReminderUpdateRequest(
+            identifier: identifier, title: title, notes: notes, dueDate: dueDate, priority: priority,
+            calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
+            clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue)
+        // PR #256 verify round 1: everything that can refuse the call runs before the first write,
+        // so a refused call leaves the cached reminder untouched (#235 no-due check, list lookup).
+        try ReminderUpdateWrite.checkRealign(request, existingDue: reminder.dueDateComponents)
+        let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
-
-        if let t = title { reminder.title = t }
-        if let n = notes { reminder.notes = n }
-        if let p = priority { reminder.priority = p }
-
-        // #227: the start date and absolute-date alarms follow the due date; Reminders.app
-        // displays the alarm's date, so leaving it behind keeps showing the old date.
-        // #235: realignToDue puts them onto the due date instead, whatever it moved by.
-        var dateSync: ReminderDateSync.Report?
-        if clearDueDate {
-            dateSync = ReminderDateSync.setDue(reminder, to: nil)
-        } else if let due = dueDate {
-            dateSync = ReminderDateSync.setDue(reminder, to: due, realignToDue: realignToDue)
-        } else if realignToDue {
-            dateSync = ReminderDateSync.realign(reminder)
-        }
-
-        if let name = calendarName {
-            let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
-            reminder.calendar = calendar
-        }
-
-        // Update location trigger
-        if clearLocationTrigger {
-            // Remove only location-based alarms
-            if let existingAlarms = reminder.alarms {
-                for alarm in existingAlarms where alarm.structuredLocation != nil {
-                    reminder.removeAlarm(alarm)
-                }
-            }
-        } else if let trigger = locationTrigger {
-            // Remove existing location-based alarms first
-            if let existingAlarms = reminder.alarms {
-                for alarm in existingAlarms where alarm.structuredLocation != nil {
-                    reminder.removeAlarm(alarm)
-                }
-            }
-            let structured = EKStructuredLocation(title: trigger.title)
-            structured.geoLocation = CLLocation(latitude: trigger.latitude, longitude: trigger.longitude)
-            structured.radius = trigger.radius > 0 ? trigger.radius : 100
-            let alarm = EKAlarm()
-            alarm.structuredLocation = structured
-            alarm.proximity = trigger.proximity
-            reminder.addAlarm(alarm)
-        }
-
-        try eventStore.save(reminder, commit: true)
+        let store = eventStore
+        let dateSync = try ReminderUpdateWrite.apply(
+            request, to: reminder, calendar: calendar,
+            save: { try store.save(reminder, commit: true) },
+            reload: { _ = reminder.refresh() },
+            rollback: { reminder.rollback() })
         markNeedsRefresh()
         let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)
         await CalendarUndoManager.shared.record(.updateReminder(id: identifier, oldSnapshot: oldSnapshot))
