@@ -35,7 +35,17 @@ enum ReminderDateSync {
         let absoluteAlarmsRemoved: Int
         /// #235: whether the start date and the alarm Reminders.app displays agree with the due
         /// date after the update (`isAligned`). `nil` when the update leaves no due date.
+        /// `confirmSaved` replaces it with the value judged on the saved reminder.
         var aligned: Bool? = nil
+        /// The due date this update wrote, as the caller asked for it; `nil` when it was cleared.
+        /// `confirmSaved` judges the saved reminder against it. Not part of the response, and not
+        /// part of equality.
+        var writtenDue: DateComponents? = nil
+
+        static func == (lhs: Report, rhs: Report) -> Bool {
+            lhs.startDate == rhs.startDate && lhs.absoluteAlarmsShifted == rhs.absoluteAlarmsShifted
+                && lhs.absoluteAlarmsRemoved == rhs.absoluteAlarmsRemoved && lhs.aligned == rhs.aligned
+        }
 
         var dictionary: [String: Any] {
             var result: [String: Any] = [
@@ -87,12 +97,16 @@ enum ReminderDateSync {
         }
         writeZonedDue(reminder, components)
         return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
-                      absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0, aligned: isAligned(reminder))
+                      absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0,
+                      aligned: isAligned(reminder, requestedTime: true), writtenDue: components)
     }
 
     /// #235: `realign_to_due` without `due_date`. Puts the start date and absolute alarms onto
-    /// the current due date, which is written back unchanged. The caller checks that there is a
-    /// due date; without one nothing is changed.
+    /// the current due date, which keeps its value. A timed due is written the way `due_date`
+    /// writes one (verify round 1): on a floating item it takes the host zone, keeping its wall
+    /// clock, and the item is zoned with it (#237), so both paths leave the same state. A date-only
+    /// due is written back as it is. The caller checks that there is a due date; without one
+    /// nothing is changed.
     static func realign(_ reminder: EKReminder) -> Report {
         let startBefore = reminder.startDateComponents
         guard var due = reminder.dueDateComponents else {
@@ -100,10 +114,19 @@ enum ReminderDateSync {
                           absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0)
         }
         due.calendar = nil
+        let timed = due.hour != nil
+        if timed && due.timeZone == nil {
+            due.timeZone = reminder.timeZone ?? .current
+        }
         let moved = realignDates(reminder, to: due)
-        reminder.dueDateComponents = due
+        if timed {
+            writeZonedDue(reminder, due)
+        } else {
+            reminder.dueDateComponents = due
+        }
         return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
-                      absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0, aligned: isAligned(reminder))
+                      absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0,
+                      aligned: isAligned(reminder, requestedTime: timed), writtenDue: due)
     }
 
     /// #235: the anchor rule. Reminders.app displays the **earliest** absolute-date alarm, after
@@ -114,10 +137,16 @@ enum ReminderDateSync {
     /// - with a date-only due they move by whole calendar days onto the due's day and keep
     ///   their time of day.
     /// An existing start date is set to the due's components; on a floating item without a zone,
-    /// so that `writeZonedDue` zones start and due together (#237). Relative and location alarms
-    /// are not touched. Returns the number of absolute alarms moved.
+    /// so that `writeZonedDue` zones start and due together (#237). A start `isAligned` already
+    /// accepts as date-only (midnight or no time) on the due's day is left alone, so a reminder
+    /// that reads as aligned is a fixed point of realign (verify round 1). Relative and location
+    /// alarms are not touched. Returns the number of absolute alarms moved.
+    ///
+    /// The cost of the anchor: a stale alarm earlier than an intended early alarm becomes the
+    /// anchor, and the early alarm then lands after the due by the same spacing.
     private static func realignDates(_ reminder: EKReminder, to due: DateComponents) -> Int {
-        if reminder.startDateComponents != nil {
+        if let current = reminder.startDateComponents,
+           !(isMidnightOrDateOnly(current) && dayShift(from: current, to: due) == 0) {
             var start = due
             start.calendar = nil
             if reminder.timeZone == nil { start.timeZone = nil }
@@ -142,11 +171,15 @@ enum ReminderDateSync {
     ///   also assumes;
     /// - there is no absolute alarm, or the earliest one (the displayed one) is at the due
     ///   instant (timed due) or on the due's day (date-only due).
+    /// `requestedTime` is the precision the caller asked for (verify round 1): a timed due that is
+    /// held date-only, because the #237 fallback could not keep its time, is not aligned, whatever
+    /// the start and alarms say.
     /// An alarm set apart from the due on purpose reads as not aligned; this is a report, the
     /// tool cannot tell intent from a leftover.
-    static func isAligned(_ reminder: EKReminder) -> Bool? {
+    static func isAligned(_ reminder: EKReminder, requestedTime: Bool = false) -> Bool? {
         guard let due = reminder.dueDateComponents else { return nil }
         let dueIsDateOnly = due.hour == nil
+        if requestedTime && dueIsDateOnly { return false }
         if let start = reminder.startDateComponents {
             if dueIsDateOnly || isMidnightOrDateOnly(start) {
                 guard dayShift(from: start, to: due) == 0 else { return false }
@@ -160,6 +193,39 @@ enum ReminderDateSync {
             return dayShift(from: day, to: due) == 0
         }
         return sameInstant(earliest, safeDateFromComponents(due))
+    }
+
+    /// #235 / #237, verify round 1: judges an update on the reminder as saved. The caller saves
+    /// first and then calls this; `reload` re-reads the reminder from the store
+    /// (`EKObject.refresh()`).
+    /// - If the update wrote a timed due and it read back without its time or zone, the #237
+    ///   fallback (`writeDueAroundStart`) runs and the reminder is saved and read back again. A
+    ///   failed fallback save is rolled back and logged, not thrown: the update itself is saved and
+    ///   recorded for undo, and the report then says `aligned: false`.
+    /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
+    ///   other fields describe the write and are kept.
+    ///
+    /// What this cannot see is anything EventKit does not return. The duplicate alarm rows that
+    /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
+    /// only one of them, so a reminder in that state reads as aligned here as well.
+    static func confirmSaved(_ reminder: EKReminder, report: Report, save: () throws -> Void,
+                             reload: () -> Void, rollback: () -> Void) -> Report {
+        guard let written = report.writtenDue else { return report }
+        reload()
+        let requestedTime = written.hour != nil
+        if requestedTime && dueLostTimeOrZone(reminder.dueDateComponents) {
+            writeDueAroundStart(reminder, due: written)
+            do {
+                try save()
+            } catch {
+                rollback()
+                FileHandle.standardError.write(Data("update_reminder: saving the #237 due-date fallback failed; rolled back\n".utf8))
+            }
+            reload()
+        }
+        var confirmed = report
+        confirmed.aligned = isAligned(reminder, requestedTime: requestedTime)
+        return confirmed
     }
 
     private static func isMidnightOrDateOnly(_ components: DateComponents) -> Bool {
