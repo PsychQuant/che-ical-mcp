@@ -162,13 +162,19 @@ enum UndoPostState {
     /// title, notes, location, URL, all-day flag, duration, alarms, time zone or place. The
     /// guard's tolerances apply: an alarm sound, and coordinates added to a place the series has
     /// without them, are not edits; nil and empty text are the same; instants compare to the
-    /// second. An occurrence back at the series' values stays detached (EventKit cannot re-attach
-    /// it) and is not an edit. No slot to compare with counts as moved, the side that refuses.
+    /// second; time zones by their offset at the occurrence's start. Place coordinates compare
+    /// exactly (`samePlace`): a store that rounded them would make a place look moved, which can
+    /// only refuse more. An occurrence back at the series' values stays detached (EventKit cannot
+    /// re-attach it) and is not an edit. No slot to compare with counts as moved, the side that
+    /// refuses.
     static func differsFromSeries(_ occurrence: OccurrenceFace, series: OccurrenceFace) -> Bool {
         let (one, all) = (occurrence.event, series.event)
         guard let slot = occurrence.slot, sameInstant(one.startDate, slot) else { return true }
         func text(_ value: String?) -> String { value ?? "" }
         func duration(_ event: EventSnapshot) -> TimeInterval { event.endDate.timeIntervalSince(event.startDate) }
+        // Time zones by their offset at the occurrence's start, so two spellings of one zone
+        // (Asia/Taipei, GMT+8) are the same (round 5 findings 16, 26, 28); floating stays apart.
+        func offset(_ zone: TimeZone?) -> Int? { zone?.secondsFromGMT(for: one.startDate) }
         return text(one.title) != text(all.title)
             || text(one.notes) != text(all.notes)
             || text(one.location) != text(all.location)
@@ -176,7 +182,7 @@ enum UndoPostState {
             || one.isAllDay != all.isAllDay
             || abs(duration(one) - duration(all)) >= 1
             || !sameAlarms(all.alarms, one.alarms)
-            || one.timeZone?.identifier != all.timeZone?.identifier
+            || offset(one.timeZone) != offset(all.timeZone)
             || !EventSnapshot.samePlace(recorded: all, current: one)
     }
 

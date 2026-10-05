@@ -379,6 +379,16 @@ final class UndoRefusalTests: XCTestCase {
         }), "coordinates added to a place the series has without them are not an edit")
     }
 
+    /// Round 5 findings 16, 26, 28: time zones compare by their offset at the occurrence's start,
+    /// so two spellings of one zone are the same and a real change of zone still counts.
+    func testTimeZonesCompareByOffsetAtTheOccurrence() {
+        let series = occurrence()
+        XCTAssertFalse(UndoPostState.differsFromSeries(occurrence { $0.timeZone = TimeZone(secondsFromGMT: 8 * 3600) }, series: series),
+                       "GMT+8 and Asia/Taipei")
+        XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.timeZone = TimeZone(identifier: "Asia/Tokyo") }, series: series))
+        XCTAssertTrue(UndoPostState.differsFromSeries(occurrence { $0.timeZone = nil }, series: series), "floating is a change")
+    }
+
     /// The place counts on its own: the same name moved to other coordinates.
     func testAPlaceMovedUnderTheSameNameIsAnEdit() {
         func at(_ latitude: Double) -> (EKEvent) -> Void {

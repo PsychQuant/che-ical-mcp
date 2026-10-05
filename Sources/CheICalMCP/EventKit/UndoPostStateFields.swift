@@ -45,7 +45,8 @@ extension EventSnapshot {
     }
 
     /// A place recorded without coordinates that later has them under the same name was geocoded
-    /// by the calendar app or server, not edited.
+    /// by the calendar app or server, not edited. Coordinates and radius compare exactly as
+    /// Doubles; a store that rounded them would only make the guard refuse more.
     static func samePlace(recorded: EventSnapshot, current: EventSnapshot) -> Bool {
         guard recorded.structuredLocationTitle == current.structuredLocationTitle else { return false }
         guard recorded.structuredLocationLat != nil, recorded.structuredLocationLon != nil else { return true }
