@@ -132,6 +132,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `redo` | 重做上次復原的操作 |
 | `undo_history` | 列出可復原的操作及時間戳記 |
 
+**復原不會蓋掉之後的修改（#236）：** 復原建立、修改、搬移或完成的操作之前，會先確認事件或提醒事項仍是那次操作留下的樣子（搬移則確認仍在搬過去的日曆）。如果之後在別的 app 或別的工具呼叫裡改過，就什麼都不寫，錯誤訊息列出改過的欄位，這筆紀錄留在 `undo_history`：把修改改回來再復原一次，或用 `undo` 加 `discard_id` 移除這筆紀錄。重做「完成」時也會以復原留下的狀態做同樣的檢查。
+
 </details>
 
 ---

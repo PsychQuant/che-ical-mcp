@@ -133,6 +133,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `redo` | Redo the last undone operation |
 | `undo_history` | List undoable operations with timestamps |
 
+**Undo does not overwrite a later change (#236):** an undo of a create, update, move or completion first checks that the event or reminder is still as that operation left it (for a move, still in the calendar it was moved to). If it was changed since, in another app or another tool call, nothing is written, the error names the changed fields, and the entry stays in `undo_history`: revert the change and undo again, or drop the entry with `undo` + `discard_id`. Redo of a completion makes the same check against the state the undo left.
+
 </details>
 
 ---

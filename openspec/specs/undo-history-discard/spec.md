@@ -31,7 +31,11 @@ undo with discard_id SHALL remove only the current top undo record with that id.
 
 ---
 ### Requirement: Stale and busy protection
-The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry.
+The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236).
+
+#### Scenario: Item changed after the operation
+- **WHEN** undo finds that the event or reminder was changed after the recorded operation
+- **THEN** nothing is written, the error names the changed fields, the record stays on top with the same id, and undo with that id as discard_id removes it
 
 #### Scenario: Repeated discard
 - **WHEN** the same id is submitted after its record was removed
