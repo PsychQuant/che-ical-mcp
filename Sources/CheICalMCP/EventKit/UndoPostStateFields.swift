@@ -5,7 +5,8 @@ import Foundation
 /// changed since the write and is not already at the value the undo writes (`restoring`); a
 /// delete (`restoring == nil`) has no value to write, so every compared field that changed counts.
 ///
-/// - An update-undo compares the fields its restore writes (diagnosis D1).
+/// - An update-undo compares the fields its restore writes (diagnosis D1); it restores only
+///   one-off events, so recurrence is not among them (round 5).
 /// - A create-undo deletes the item, so it compares every recorded field, the calendar or list
 ///   and the alarms included (PR #259 round 2, finding 1).
 /// - Changes a calendar app or server makes on its own are not edits: an alarm sound, and
@@ -33,9 +34,11 @@ extension EventSnapshot {
         // `apply` writes `location` unconditionally, and EventKit couples it with the place (a new
         // string replaces the place, `nil` clears it; checked in memory), so the place round-trips.
         check("structured_location") { Self.samePlace(recorded: $0, current: $1) }
-        // `apply` writes rules only when the restored snapshot recorded them; a delete removes
-        // them with the item. No rules and nil are the same (verify #2 / #6).
-        if target == nil || target?.recurrenceRules != nil {
+        // A delete removes the rules with the item, so create-undo compares them; no rules and nil
+        // are the same (verify #2 / #6). Update-undo restores only one-off events (PR #259 round 5:
+        // an update that touched a recurring event is a marker, and the update arm refuses an
+        // event that repeats at undo time before this comparison), so it never compares them.
+        if target == nil {
             check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules, allDay: $0.isAllDay) }
         }
         return changed

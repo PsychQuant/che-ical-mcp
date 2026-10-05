@@ -161,7 +161,8 @@ struct EventSnapshot {
             event.structuredLocation = structured
         }
 
-        // Recurrence
+        // Recurrence: written only by delete-undo, which recreates a deleted series. Update-undo
+        // restores one-off events only (#236 round 5), whose snapshots have no rules.
         if let rules = recurrenceRules {
             // #191 — rebuild fresh EKRecurrenceRule objects from value snapshots;
             // re-attaching the original (now-stale) rule objects made the restore

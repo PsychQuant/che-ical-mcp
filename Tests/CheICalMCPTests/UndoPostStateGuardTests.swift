@@ -88,7 +88,9 @@ final class UndoPostStateGuardTests: XCTestCase {
             (["timezone"], { $0.timeZone = TimeZone(identifier: "America/New_York") }),
             (["alarms"], { $0.addAlarm(EKAlarm(relativeOffset: -60)) }),
             (["structured_location"], { [unowned self] in $0.structuredLocation = office(latitude: 24.0) }),
-            (["recurrence"], { $0.recurrenceRules = [EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil)] }),
+            // Recurrence is not compared for an update-undo: it restores only one-off events, and
+            // an event that repeats at undo time is refused before the comparison (round 5;
+            // UndoRecurrenceGuardTests).
         ]
         for (fields, edit) in edits {
             let event = makeEvent()

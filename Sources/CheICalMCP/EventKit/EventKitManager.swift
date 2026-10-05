@@ -2096,7 +2096,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateEvent(_, let oldSnapshot, _):
             // Undo update = restore old values. Only updates of one-off events are recorded this
             // way; an update that touched a recurring event is a marker whose undo is refused
-            // (#236, #262).
+            // (#236, #262), and `verifiedEvent` refuses an event that repeats now. The snapshot
+            // holds no rules, so `apply` writes none here (its rules branch serves delete-undo).
             let event = try await verifiedEvent(of: operation, verb: .undo)
             try applySnapshot(oldSnapshot, to: event)
             try eventStore.save(event, span: .thisEvent)

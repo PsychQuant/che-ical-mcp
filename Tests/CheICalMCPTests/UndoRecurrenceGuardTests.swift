@@ -2,9 +2,9 @@ import EventKit
 import XCTest
 @testable import CheICalMCP
 
-/// #236, PR #259 verify #2 / #6 / #11: how the post-state guard compares recurrence. Whether
-/// rules count is decided by what the undo writes (the restored snapshot, or the whole item for
-/// a delete), with no rules and `nil` the same; the rules themselves compare as sets, with the
+/// #236, PR #259 verify #2 / #6 / #11: how the post-state guard compares recurrence. Rules count
+/// for create-undo only (round 5: update-undo restores only one-off events), with no rules and
+/// `nil` the same; the rules themselves compare as sets, with the
 /// end to the second (to the day for an all-day event). In memory only, so no TCC prompt.
 final class UndoRecurrenceGuardTests: XCTestCase {
     private let store = EKEventStore()
@@ -33,22 +33,6 @@ final class UndoRecurrenceGuardTests: XCTestCase {
 
     // MARK: - Which rules count (verify #2 / #6)
 
-    /// update_event with clear_recurrence, then a rule added in Calendar.app: the undo would
-    /// write the old rule over it. A store may report a one-off's rules as nil (emulated with
-    /// `includeRecurrence: false`) or as none.
-    func testClearRecurrenceUndoRefusesWhenARuleWasAddedElsewhere() {
-        for reportsNil in [true, false] {
-            let event = makeEvent(rules: [weekly([.monday])])
-            let old = EventSnapshot(from: event)
-            event.recurrenceRules = nil                                       // the update
-            let saved = EventSnapshot(from: event, includeRecurrence: !reportsNil)
-            event.recurrenceRules = [daily]                                   // added elsewhere
-
-            XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: old), ["recurrence"],
-                           "rules reported as \(reportsNil ? "nil" : "none")")
-        }
-    }
-
     /// Create-undo of a one-off deletes the whole series it has since become.
     func testCreateUndoRefusesWhenAOneOffGainedRecurrence() {
         for reportsNil in [true, false] {
@@ -61,16 +45,16 @@ final class UndoRecurrenceGuardTests: XCTestCase {
         }
     }
 
-    /// `applySnapshot` leaves the rules alone when the restored snapshot recorded none
-    /// (`includeRecurrence: false`), so update-undo does not compare them then.
-    func testUpdateUndoComparesRecurrenceOnlyWhenTheRestoredSnapshotRecordedRules() {
-        let restored = EventSnapshot(from: makeEvent(rules: [weekly([.monday])]), includeRecurrence: false)
+    /// Update-undo restores only one-off events (round 5): an update that touched a recurring
+    /// event is a marker whose undo is refused, and the update arm refuses an event that repeats
+    /// at undo time before this comparison. So recurrence is compared for create-undo only.
+    func testUpdateUndoDoesNotCompareRecurrence() {
         let event = makeEvent(rules: [weekly([.monday])])
         let saved = EventSnapshot(from: event)
         event.recurrenceRules = [daily]
 
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: restored), [])
-        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), ["recurrence"])
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: saved), [])
+        XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: nil), ["recurrence"], "create-undo still compares it")
     }
 
     // MARK: - How rules compare (verify #11)
