@@ -256,20 +256,23 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// is the symlink target, not the symlink itself. We compare against the resolved
     /// path so the assertion matches the post-#129 canonical-path behavior.
     ///
-    /// **Latency budget enforcement** (#127): the Plan tier for #122 specified
-    /// `< 200ms integration including spawn`. This test now encodes that budget as
-    /// `XCTAssertLessThan` so future regressions in banner emission speed are caught
-    /// rather than discovered through user reports. Empirical baseline ~50-100ms on
-    /// healthy local macOS; we use 1.5s as the assertion bound to absorb local-machine
-    /// noise (Spotlight indexing / brew autoupdate / etc.) while still catching the
-    /// "banner now takes 10 seconds" class of regression that would actually matter.
+    /// **Latency tripwire** (#127, #233): the Plan tier for #122 specified `< 200ms
+    /// integration including spawn`. A wall-clock assertion on a shared host cannot hold a
+    /// bound that tight, so this test keeps a coarse tripwire for the "banner now takes 10
+    /// seconds" class of regression (#127 closing summary). It times the banner's arrival
+    /// (spawn → the `until` match), not the helper's whole run including teardown. The
+    /// bound is 5.0 s because the production path's own worst case is process startup plus
+    /// three 500 ms subprocess caps (`ps`, `sqlite3`, the parent-chain `ps`; #126), and
+    /// under host CPU contention the banner was measured arriving at up to ~1.5 s (#233),
+    /// right at the former 1.5 s bound.
     func testBannerAppearsInDefaultMCPServerMode() throws {
         let binary = try locateBuiltBinary()
         let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
 
-        let start = Date()
-        let (stderr, _, _) = try spawnAndCaptureStderr(binary: binary)
-        let elapsed = Date().timeIntervalSince(start)
+        let (stderr, _, bannerArrival) = try spawnAndCaptureStderr(
+            binary: binary,
+            until: { $0.contains("[banner] che-ical-mcp") && $0.contains(resolvedBinaryPath) }
+        )
 
         XCTAssertTrue(
             stderr.contains("[banner] che-ical-mcp"),
@@ -279,9 +282,13 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             stderr.contains(resolvedBinaryPath),
             "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
         )
+        let arrival = try XCTUnwrap(
+            bannerArrival,
+            "The banner header and the resolved binary path never both reached stderr, so there is no arrival time to check"
+        )
         XCTAssertLessThan(
-            elapsed, 1.5,
-            "Banner must emit within Plan tier latency budget (#127, target 200ms; assertion bound at 1.5s to absorb local-host noise). Elapsed: \(String(format: "%.3f", elapsed))s"
+            arrival, 5.0,
+            "Banner must arrive within the latency tripwire (#127 target 200ms; bound 5.0s, above the production path's own worst case, #233). Arrived after: \(String(format: "%.3f", arrival))s"
         )
     }
 
