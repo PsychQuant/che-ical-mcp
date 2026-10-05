@@ -2189,15 +2189,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Calendar
         event.calendar = originalCalendar
 
-        // Alarms
-        if let existingAlarms = event.alarms {
-            for alarm in existingAlarms { event.removeAlarm(alarm) }
-        }
-        if let offsets = snapshot.alarmOffsets {
-            for offset in offsets {
-                event.addAlarm(EKAlarm(relativeOffset: offset))
-            }
-        }
+        // Alarms (#230): rebuilt from value snapshots, and only when they differ
+        AlarmSnapshot.restore(snapshot.alarms, to: event)
 
         // Structured location
         if let locTitle = snapshot.structuredLocationTitle {

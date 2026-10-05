@@ -75,7 +75,9 @@ struct EventSnapshot {
     let location: String?
     let url: URL?
     let isAllDay: Bool
-    let alarmOffsets: [TimeInterval]?
+    /// #230: whole alarms, not offsets; an absolute, location or email alarm rebuilt from its
+    /// offset came back as a plain alarm at the event start.
+    let alarms: [AlarmSnapshot]
     let structuredLocationTitle: String?
     let structuredLocationLat: Double?
     let structuredLocationLon: Double?
@@ -95,7 +97,7 @@ struct EventSnapshot {
         self.location = event.location
         self.url = event.url
         self.isAllDay = event.isAllDay
-        self.alarmOffsets = event.alarms?.map { $0.relativeOffset }
+        self.alarms = (event.alarms ?? []).map(AlarmSnapshot.init(from:))
         self.structuredLocationTitle = event.structuredLocation?.title
         self.structuredLocationLat = event.structuredLocation?.geoLocation?.coordinate.latitude
         self.structuredLocationLon = event.structuredLocation?.geoLocation?.coordinate.longitude
