@@ -173,6 +173,18 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertEqual(ending.end, start.addingTimeInterval(31 * 86_400))
     }
 
+    /// On device (iCloud, 2026-10-05) an occurrence edited on its own reads back with its own
+    /// identifier, the series identifier plus `/RID=<seconds>`, and deleting the series removes
+    /// it too. So the scan matches that form as well as the bare series identifier.
+    func testAnEditedOccurrenceIsRecognisedByItsIdentifier() {
+        let series = "29034CB8-B308-40D1-A11D-F727B1EA1F46:098D5E80-E343-45A3-B4B5-CFF9E930E9E0"
+        XCTAssertTrue(UndoPostState.isOccurrence(identifier: series, ofSeries: series))
+        XCTAssertTrue(UndoPostState.isOccurrence(identifier: series + "/RID=815878800", ofSeries: series))
+        XCTAssertFalse(UndoPostState.isOccurrence(identifier: "29034CB8-B308-40D1-A11D-F727B1EA1F46:6384413B", ofSeries: series))
+        XCTAssertFalse(UndoPostState.isOccurrence(identifier: series + "0", ofSeries: series))
+        XCTAssertFalse(UndoPostState.isOccurrence(identifier: nil, ofSeries: series))
+    }
+
     // MARK: - Messages
 
     func testUndoRefusalNamesTheFieldsAndTheEscapeHatch() {

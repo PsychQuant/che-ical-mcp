@@ -121,8 +121,8 @@ enum UndoPostState {
         return DateInterval(start: from, end: max(to, from))
     }
 
-    /// The number of occurrences of `event`'s series that were edited on their own, in the scan
-    /// window. Reads only the series' own calendar.
+    /// The number of occurrences of `event`'s series that were edited on their own (detached), in
+    /// the scan window. Reads only the series' own calendar.
     static func modifiedOccurrenceCount(of event: EKEvent, in store: EKEventStore) -> Int {
         guard event.hasRecurrenceRules, let id = event.eventIdentifier, let calendar = event.calendar else { return 0 }
         let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
@@ -132,9 +132,17 @@ enum UndoPostState {
         let predicate = store.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
         var count = 0
         store.enumerateEvents(matching: predicate) { occurrence, _ in
-            if occurrence.eventIdentifier == id, occurrence.isDetached { count += 1 }
+            if occurrence.isDetached, isOccurrence(identifier: occurrence.eventIdentifier, ofSeries: id) { count += 1 }
         }
         return count
+    }
+
+    /// On device (iCloud, 2026-10-05) an occurrence edited on its own has its own identifier,
+    /// the series identifier plus `/RID=<seconds>`, and the delete of the series removes it too.
+    /// Unedited occurrences share the series identifier.
+    static func isOccurrence(identifier: String?, ofSeries series: String) -> Bool {
+        guard let identifier, !series.isEmpty else { return false }
+        return identifier == series || identifier.hasPrefix(series + "/")
     }
 }
 
