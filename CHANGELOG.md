@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Build** — `scripts/build-mcpb.sh` packaged stale per-architecture binaries under the Swift 6.4 build system (the first v1.19.0 build reported 1.18.0). Each architecture's product is now staged and checked right after its own build (architecture, and `--version` against `AppVersion.current`); the universal binary must hold exactly those two checked slices; after signing it must still hold them and is run again. A signed build therefore needs a host that can run both slices (Rosetta on Apple Silicon); an unsigned build prints a note for a slice it cannot run. Signing and strict checking come from one decision, and a failed run removes this version's `.mcpb`, binary and `.sha256` files so nothing stale is left to upload (#238).
+
 ## [1.19.0] - 2026-10-04
 
 ### Changed
