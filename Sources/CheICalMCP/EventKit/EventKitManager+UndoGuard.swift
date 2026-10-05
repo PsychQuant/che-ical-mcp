@@ -73,9 +73,9 @@ extension EventKitManager {
                 refresh: { $0.refresh() },
                 conflicts: { event in
                     let fields = expected.changedFields(in: event)
-                    guard deletesSeries, event.hasRecurrenceRules,
-                          UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore) > 0 else { return fields }
-                    return fields + ["modified_occurrences"]
+                    guard deletesSeries, event.hasRecurrenceRules else { return fields }
+                    return fields + UndoPostState.seriesConflicts(
+                        modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
                 },
                 refusal: refusal)
         case .reminder:

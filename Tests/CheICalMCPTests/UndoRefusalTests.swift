@@ -219,7 +219,7 @@ final class UndoRefusalTests: XCTestCase {
     func testTheSeriesScanWindow() {
         let open = UndoPostState.seriesScanWindow(firstStart: start, ruleEnd: nil)
         XCTAssertEqual(open.start, start.addingTimeInterval(-86_400))
-        XCTAssertEqual(open.end, start.addingTimeInterval(1460 * 86_400))
+        XCTAssertEqual(open.duration, 1460 * 86_400, "EventKit matches at most four years per query (round 2, finding 27)")
 
         let ending = UndoPostState.seriesScanWindow(firstStart: start, ruleEnd: start.addingTimeInterval(30 * 86_400))
         XCTAssertEqual(ending.end, start.addingTimeInterval(31 * 86_400))
@@ -227,14 +227,35 @@ final class UndoRefusalTests: XCTestCase {
 
     /// On device (iCloud, 2026-10-05) an occurrence edited on its own reads back with its own
     /// identifier, the series identifier plus `/RID=<seconds>`, and deleting the series removes
-    /// it too. So the scan matches that form as well as the bare series identifier.
-    func testAnEditedOccurrenceIsRecognisedByItsIdentifier() {
-        let series = "29034CB8-B308-40D1-A11D-F727B1EA1F46:098D5E80-E343-45A3-B4B5-CFF9E930E9E0"
-        XCTAssertTrue(UndoPostState.isOccurrence(identifier: series, ofSeries: series))
-        XCTAssertTrue(UndoPostState.isOccurrence(identifier: series + "/RID=815878800", ofSeries: series))
-        XCTAssertFalse(UndoPostState.isOccurrence(identifier: "29034CB8-B308-40D1-A11D-F727B1EA1F46:6384413B", ofSeries: series))
-        XCTAssertFalse(UndoPostState.isOccurrence(identifier: series + "0", ofSeries: series))
-        XCTAssertFalse(UndoPostState.isOccurrence(identifier: nil, ofSeries: series))
+    /// it too. Other stores may give it an unrelated identifier but keep the iCalendar UID, so the
+    /// external identifier is accepted as well, equal or with the same suffix form (round 2,
+    /// finding 4).
+    func testAnEditedOccurrenceIsRecognisedByEitherIdentifier() {
+        let series = UndoPostState.OccurrenceIDs(eventIdentifier: "29034CB8:098D5E80", externalIdentifier: "098D5E80")
+        let match = { (id: String?, ext: String?) in
+            UndoPostState.isOccurrence(UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ext), of: series)
+        }
+
+        XCTAssertTrue(match("29034CB8:098D5E80", "098D5E80"))
+        XCTAssertTrue(match("29034CB8:098D5E80/RID=815878800", "098D5E80/RID=815878800"), "iCloud shape")
+        XCTAssertTrue(match("EXCHANGE-OCCURRENCE-7", "098D5E80"), "unrelated identifier, same UID")
+        XCTAssertTrue(match("EXCHANGE-OCCURRENCE-7", "098D5E80/RID=815878800"))
+        XCTAssertFalse(match("29034CB8:6384413B", "6384413B"))
+        XCTAssertFalse(match("29034CB8:098D5E800", "098D5E800"), "a longer identifier is another item")
+        XCTAssertFalse(match(nil, nil))
+        XCTAssertFalse(UndoPostState.isOccurrence(UndoPostState.OccurrenceIDs(eventIdentifier: "x", externalIdentifier: ""),
+                                                  of: UndoPostState.OccurrenceIDs(eventIdentifier: "y", externalIdentifier: "")),
+                       "empty UIDs do not match each other")
+    }
+
+    /// A scan that could not run refuses instead of reporting no edits (round 2, finding 15).
+    func testAScanThatCouldNotRunRefuses() {
+        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: 0), [])
+        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: 2), ["modified_occurrences"])
+        XCTAssertEqual(UndoPostState.seriesConflicts(modifiedOccurrences: nil), ["unchecked_occurrences"])
+        let message = UndoTargetChangedError(verb: .undo, kind: .event, title: "Standup", changedFields: ["unchecked_occurrences"]).message
+        XCTAssertTrue(message.contains("could not be checked"), message)
+        XCTAssertFalse(message.contains("change it back"), message)
     }
 
     // MARK: - Messages

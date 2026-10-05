@@ -109,44 +109,70 @@ enum UndoPostState {
         }
     }
 
-    // MARK: - Series (PR #259 verify #1)
+    // MARK: - Series (PR #259, round 1 finding 1, round 2 findings 3, 4, 15, 27)
 
     /// Undo of `create_event` on a series deletes every occurrence (`.futureEvents` on the first),
-    /// but `event(withIdentifier:)` returns only the first occurrence, so the field check alone
-    /// would miss an occurrence edited elsewhere. The scan looks for detached (individually
-    /// edited) occurrences from a day before the first occurrence to a day after the rule's end,
-    /// and at most 1460 days in all: EventKit matches at most four years per query, so an edit
-    /// further out than that is not seen.
+    /// occurrences edited on their own included (checked on device), but `event(withIdentifier:)`
+    /// returns only the first occurrence, so the field check alone would miss them. The scan looks
+    /// for detached occurrences from a day before the first occurrence to a day after the rule's
+    /// end, at most 1460 days in all (EventKit matches at most four years per query).
+    ///
+    /// Not seen, so not protected: an edited occurrence that was moved outside that window (before
+    /// the first occurrence, after the rule's end, or beyond the four years); and anything more
+    /// than four years in, which includes the later part of a long count-based rule, scanned as
+    /// open-ended because its end has no date.
     static func seriesScanWindow(firstStart: Date, ruleEnd: Date?) -> DateInterval {
         let day: TimeInterval = 86_400
         let from = firstStart.addingTimeInterval(-day)
-        let cap = firstStart.addingTimeInterval(1460 * day)
+        let cap = from.addingTimeInterval(1460 * day)
         let to = ruleEnd.map { min($0.addingTimeInterval(day), cap) } ?? cap
         return DateInterval(start: from, end: max(to, from))
     }
 
-    /// The number of occurrences of `event`'s series that were edited on their own (detached), in
-    /// the scan window. Reads only the series' own calendar.
-    static func modifiedOccurrenceCount(of event: EKEvent, in store: EKEventStore) -> Int {
-        guard event.hasRecurrenceRules, let id = event.eventIdentifier, let calendar = event.calendar else { return 0 }
+    /// The identifiers that tie an occurrence to its series.
+    struct OccurrenceIDs: Equatable {
+        let eventIdentifier: String?
+        let externalIdentifier: String?
+    }
+
+    /// On device (iCloud, 2026-10-05) an occurrence edited on its own reads back with its own
+    /// identifier, the series identifier plus `/RID=<seconds>`, and its external identifier is
+    /// the series UID plus the same suffix. Other stores may give it an unrelated identifier but
+    /// keep the iCalendar UID, so either identifier, equal or with a `/` suffix, ties it to the
+    /// series. Unedited occurrences share the series identifier.
+    static func isOccurrence(_ occurrence: OccurrenceIDs, of series: OccurrenceIDs) -> Bool {
+        func sameOrSuffixed(_ value: String?, _ base: String?) -> Bool {
+            guard let value, let base, !base.isEmpty else { return false }
+            return value == base || value.hasPrefix(base + "/")
+        }
+        return sameOrSuffixed(occurrence.eventIdentifier, series.eventIdentifier)
+            || sameOrSuffixed(occurrence.externalIdentifier, series.externalIdentifier)
+    }
+
+    /// What the scan result adds to a create-undo check of a series: nil means the scan could not
+    /// run (no identifier or calendar), which refuses rather than passing as "no edits".
+    static func seriesConflicts(modifiedOccurrences: Int?) -> [String] {
+        guard let modifiedOccurrences else { return ["unchecked_occurrences"] }
+        return modifiedOccurrences > 0 ? ["modified_occurrences"] : []
+    }
+
+    /// The number of detached (individually edited) occurrences of `event`'s series in the scan
+    /// window, or nil when the scan cannot run. Reads only the series' own calendar.
+    static func modifiedOccurrenceCount(of event: EKEvent, in store: EKEventStore) -> Int? {
+        guard let id = event.eventIdentifier, !id.isEmpty, let calendar = event.calendar else { return nil }
+        let series = OccurrenceIDs(eventIdentifier: id, externalIdentifier: event.calendarItemExternalIdentifier)
         let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
-        // Any open-ended rule leaves the series open.
+        // Any open-ended (or count-based) rule leaves the series open.
         let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
         let window = seriesScanWindow(firstStart: event.startDate, ruleEnd: ruleEnd)
         let predicate = store.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
         var count = 0
         store.enumerateEvents(matching: predicate) { occurrence, _ in
-            if occurrence.isDetached, isOccurrence(identifier: occurrence.eventIdentifier, ofSeries: id) { count += 1 }
+            let ids = OccurrenceIDs(eventIdentifier: occurrence.eventIdentifier,
+                                    externalIdentifier: occurrence.calendarItemExternalIdentifier)
+            if occurrence.isDetached, isOccurrence(ids, of: series) { count += 1 }
         }
         return count
-    }
-
-    /// On device (iCloud, 2026-10-05) an occurrence edited on its own has its own identifier,
-    /// the series identifier plus `/RID=<seconds>`, and the delete of the series removes it too.
-    /// Unedited occurrences share the series identifier.
-    static func isOccurrence(identifier: String?, ofSeries series: String) -> Bool {
-        guard let identifier, !series.isEmpty else { return false }
-        return identifier == series || identifier.hasPrefix(series + "/")
     }
 }
 

@@ -64,6 +64,8 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
         case revertable
         /// Occurrences of a series edited on their own: no tool or app puts them back.
         case editedOccurrences
+        /// The series' occurrences could not be checked for individual edits.
+        case uncheckedOccurrences
         /// A recurring reminder's completion, on a record that cannot confirm the occurrence.
         case unconfirmedOccurrence
     }
@@ -78,13 +80,17 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
         let giveUp = verb == .undo
             ? "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id"
             : "ask the user whether to give up this redo; any new change clears the redo history"
-        switch situation ?? (changedFields.contains("modified_occurrences") ? .editedOccurrences : .revertable) {
+        let derived: Situation = changedFields.contains("modified_occurrences") ? .editedOccurrences
+            : changedFields.contains("unchecked_occurrences") ? .uncheckedOccurrences : .revertable
+        switch situation ?? derived {
         case .revertable where verb == .undo:
             message = "Cannot undo: the \(item) was changed after this operation, in another app or by the calendar server (\(fields)). Undoing now would overwrite or delete that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id."
         case .revertable:
             message = "Cannot redo: the \(item) was changed after the undo, in another app or by the calendar server (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run redo again; any new change clears the redo history."
         case .editedOccurrences:
             message = "Cannot \(verb.rawValue): occurrences of the \(item) were edited on their own after it was created (\(fields)). Undoing would delete those edits with the series, and an edited occurrence cannot be put back into its series, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
+        case .uncheckedOccurrences:
+            message = "Cannot \(verb.rawValue): the occurrences of the \(item) could not be checked for individual edits (\(fields)), and undoing would delete every occurrence of the series, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
         case .unconfirmedOccurrence:
             message = "Cannot \(verb.rawValue): the completion of the recurring \(item) differs from the state this operation expects (\(fields)), and the record cannot confirm which occurrence its identifier points at now: it may be a later occurrence of the series (EventKit advances a recurring reminder in place). Nothing was written and \(kept). To go on, \(giveUp), and act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder)."
         }
