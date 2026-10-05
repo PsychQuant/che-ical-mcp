@@ -231,10 +231,14 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// contention the banner can land after 1 s, and a fixed 1.0 s wait killed the child
     /// before its single banner write, so the test read "no banner". With the default
     /// arguments the helper must wait for the child, not for a fixed interval.
+    ///
+    /// One process does both the wait and the write, so if the cap ever fired, the helper's
+    /// signal would reach the process that is still waiting. With `sh -c "sleep 1.2; printf …"`
+    /// the shell forks `sleep`, and that grandchild would outlive the signalled shell.
     func testSpawnHelperCapturesChildThatWritesAfterOneSecond() throws {
         let run = try spawnAndCaptureStderr(
-            binary: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "sleep 1.2; printf '[late] written after 1.2s\\n' >&2"]
+            binary: URL(fileURLWithPath: "/usr/bin/perl"),
+            arguments: ["-e", "select(undef, undef, undef, 1.2); print STDERR qq([late] written after 1.2s\\n)"]
         )
 
         XCTAssertTrue(
@@ -310,6 +314,13 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     func testBannerAppearsInDefaultMCPServerMode() throws {
         let binary = try locateBuiltBinary()
         let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
+
+        // Untimed warm-up exec. The first exec of a freshly linked or copied binary can include
+        // a one-time Gatekeeper assessment (up to 2.4 s measured for a fresh copy on the #233
+        // host; ~3.7 s per `testBannerHandlesArbitraryBinaryPath`), and this is the first test
+        // in the class to spawn the binary. Running `--version` once, to exit, keeps that cost
+        // out of the arrival clock below, which is meant to time the banner path only.
+        _ = try spawnAndCaptureStderr(binary: binary, arguments: ["--version"])
 
         let run = try spawnAndCaptureStderr(
             binary: binary,
