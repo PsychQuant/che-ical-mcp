@@ -57,15 +57,27 @@ extension UndoOperation {
 }
 
 extension UndoOperation {
-    /// PR #259 round 5 findings 1, 2, 5, 7: the invariant "undo never writes to a recurring event"
-    /// is also enforced where the update arm writes, not only when the update is recorded. An
-    /// update recorded on a one-off event can find the event repeating at undo time (a later
-    /// update added rules and its marker was discarded, or another app made it repeat) or an
-    /// edited occurrence; the arm then writes nothing and the record is discarded. Checked after
-    /// resolve and refresh, before the field comparison and any write. Nil for other records.
+    /// PR #259 round 5 findings 1, 2, 5, 7 and round 6 findings 2, 4, 9: undo never writes to a
+    /// recurring event through the arms that write to an existing one-off event, the update arm
+    /// and the move arm of a one-off (`isSeries == false`). The record was taken on a one-off
+    /// event, but the event can repeat at undo time (a later update added rules and its marker
+    /// was discarded, or another app made it repeat) or be an edited occurrence; the arm then
+    /// writes nothing and the record is discarded. Checked after resolve and refresh, before the
+    /// comparison and any write. Nil for every other record: a series move is undone for the
+    /// whole series by design (#226), and delete-undo recreates rather than writes.
     func recurringTargetRefusal(hasRecurrenceRules: Bool, isDetached: Bool) -> UnrecoverableUndoError? {
-        guard case .updateEvent(_, let old, _) = self, hasRecurrenceRules || isDetached else { return nil }
+        guard hasRecurrenceRules || isDetached else { return nil }
+        let action: String
+        let title: String
+        switch self {
+        case .updateEvent(_, let old, _):
+            (action, title) = ("update", old.title)
+        case .moveEvent(_, _, _, let movedTitle, false):
+            (action, title) = ("move", movedTitle)
+        default:
+            return nil
+        }
         let reason = isDetached ? "it is an edited occurrence of a series now" : "it repeats now"
-        return UnrecoverableUndoError(message: "Cannot undo the update of the event '\(undoShownTitle(old.title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
+        return UnrecoverableUndoError(message: "Cannot undo the \(action) of the event '\(undoShownTitle(title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
     }
 }

@@ -63,7 +63,25 @@ final class RecurringUpdateUndoTests: XCTestCase {
         }
     }
 
-    /// Only the update arm restores a snapshot onto an existing event; other records are not
+    /// Round 6 findings 2, 4, 9: the move arm writes to an existing event too. Undo of a move of a
+    /// one-off event refuses the same way when the event repeats or is an edited occurrence now;
+    /// a series move (`isSeries`) is undone for the whole series by design (#226).
+    func testUndoOfAOneOffMoveRefusesAnEventThatRepeatsNow() throws {
+        let move = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Review", isSeries: false)
+        XCTAssertNil(move.recurringTargetRefusal(hasRecurrenceRules: false, isDetached: false))
+        for (rules, detached, reason) in [(true, false, "repeats now"), (false, true, "edited occurrence")] {
+            let error = try XCTUnwrap(move.recurringTargetRefusal(hasRecurrenceRules: rules, isDetached: detached))
+            XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+            let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
+            XCTAssertTrue(message.hasPrefix("Cannot undo the move of the event 'Review'"), message)
+            XCTAssertTrue(message.contains(reason), message)
+            XCTAssertTrue(message.contains("Nothing was written"), message)
+        }
+        let seriesMove = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: true)
+        XCTAssertNil(seriesMove.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: false), "a series move is undone as a series")
+    }
+
+    /// Only the update and one-off move arms write to an existing event; other records are not
     /// affected by this check.
     func testOtherRecordsAreNotAffected() {
         let create = UndoOperation.createEvent(id: "e", title: "Standup", created: UndoSnapshotFixtures.event(title: "Standup"))

@@ -74,8 +74,9 @@ extension EventKitManager {
                 },
                 refresh: { $0.refresh() },
                 conflicts: { event in
-                    // Round 5: an update-undo never writes to an event that repeats or is an
-                    // edited occurrence now; refused and discarded before the comparison.
+                    // Rounds 5–6: update-undo and the undo of a one-off move never write to an
+                    // event that repeats or is an edited occurrence now; refused and discarded
+                    // before the comparison.
                     if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
                                                                       isDetached: event.isDetached) {
                         throw refusal
