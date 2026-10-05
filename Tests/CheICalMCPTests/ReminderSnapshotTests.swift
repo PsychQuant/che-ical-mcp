@@ -158,14 +158,14 @@ final class ReminderSnapshotTests: XCTestCase {
 
     /// #253 verify #8: delete-undo of an every-other-week reminder whose weeks start on
     /// Sunday came back with weeks starting on Monday, which moves its Sunday occurrences.
-    func testApplyingOnANewReminderKeepsTheWeekStart() {
+    func testApplyingOnANewReminderKeepsTheWeekStart() throws {
         let original = makeReminder()
         original.dueDateComponents = components(2026, 10, 4, 9)
         let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 2,
                                     daysOfTheWeek: [EKRecurrenceDayOfWeek(.monday), EKRecurrenceDayOfWeek(.sunday)],
                                     daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
                                     daysOfTheYear: nil, setPositions: nil, end: nil)
-        rule.setValue(1, forKey: "firstDayOfTheWeek")
+        try setWeekStart(1, on: rule)
         original.addRecurrenceRule(rule)
         let snapshot = ReminderSnapshot(from: original)
         let recreated = makeReminder()

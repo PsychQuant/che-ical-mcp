@@ -103,9 +103,14 @@ final class AlarmSnapshotTests: XCTestCase {
 
     /// Round-1 verify #6, pinned: the header says setting a sound clears the email address,
     /// but EventKit (macOS 27) keeps both on one alarm and reports it as an email alarm,
-    /// whichever is set last. `rebuild` sets the email address first, then the sound.
-    func testEmailAndSoundOnOneAlarmBothComeBackAsAnEmailAlarm() {
-        let snapshot = AlarmSnapshot(from: emailAndSoundAlarm())
+    /// whichever is set last. `rebuild` sets the email address first, then the sound. Where
+    /// EventKit follows its header (verify round 2, 11), there is nothing to pin: skipped.
+    func testEmailAndSoundOnOneAlarmBothComeBackAsAnEmailAlarm() throws {
+        let alarm = emailAndSoundAlarm()
+        guard alarm.emailAddress != nil, alarm.soundName != nil else {
+            throw XCTSkip("EventKit on this macOS clears the email address when a sound is set")
+        }
+        let snapshot = AlarmSnapshot(from: alarm)
         XCTAssertEqual(snapshot.emailAddress, "owner@example.com")
         XCTAssertEqual(snapshot.soundName, "Ping")
 
