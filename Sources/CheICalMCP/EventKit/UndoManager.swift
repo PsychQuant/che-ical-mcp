@@ -284,7 +284,8 @@ enum UndoOperation {
         case .updateEvent(_, let old, _):
             return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
         case .updateRecurringEvent(_, let title, _):
-            return "Updated recurring event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title)) (undo not available)"
+            // #236 round 5: shown like the undo errors (a new record type, no older format to keep).
+            return "Updated recurring event: \(undoShownTitle(title)) (undo not available)"
         case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
         case .createReminder(_, let title, _):

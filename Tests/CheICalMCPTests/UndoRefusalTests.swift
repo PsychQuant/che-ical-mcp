@@ -529,6 +529,15 @@ final class UndoRefusalTests: XCTestCase {
         XCTAssertEqual(undoShownTitle("a\u{7F}b\u{2028}c\u{2029}d\u{85}e\u{9F}f"), "abcdef", "controls, line and paragraph separators")
     }
 
+    /// Round 5 findings 15, 18, 27: every format (Cf) character is dropped except a short keep-list,
+    /// and so are the listed invisible characters of other categories.
+    func testEveryFormatCharacterOutsideTheKeepListIsDropped() {
+        XCTAssertEqual(undoShownTitle("a\u{206A}b\u{206F}c\u{180E}d\u{FFF9}e\u{FFFB}f\u{1D173}g\u{1D17A}h\u{070F}i"), "abcdefghi",
+                       "deprecated format controls, Mongolian vowel separator, annotation marks, musical format controls, other Cf")
+        XCTAssertEqual(undoShownTitle("a\u{17B4}b\u{17B5}c\u{180B}d\u{180D}e\u{2800}f"), "abcdef",
+                       "Khmer inherent vowels, Mongolian variation selectors, braille blank")
+    }
+
     /// Joiners and format characters that show something stay: ZWJ builds emoji sequences, ZWNJ
     /// spells Persian words, and the Arabic number signs and similar marks are visible.
     func testJoinersAndVisibleFormatCharactersAreKept() {

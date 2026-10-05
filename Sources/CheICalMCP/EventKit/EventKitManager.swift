@@ -2184,7 +2184,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .updateRecurringEvent(_, let title, _):
             // Unreachable: its undo always fails and discards the record.
-            return "Redo update: the update of the recurring event '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' was not undone, so there is nothing to redo."
+            return "Redo update: the update of the recurring event '\(undoShownTitle(title))' was not undone, so there is nothing to redo."
 
         case .moveEvent(_, _, _, let title, _):
             return "Redo move: use move_events_batch to move '\(EventKitErrorSanitizer.sanitizeForInterpolation(title))' again."

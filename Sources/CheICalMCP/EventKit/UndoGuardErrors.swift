@@ -28,30 +28,35 @@ enum UndoTargetCheck {
     }
 }
 
-/// The title as an undo error shows it. The errors are `TrustedErrorMessage`, so the
-/// store-derived title reaches the client verbatim, between quotes and next to instructions.
-/// Best effort, from a closed list (PR #259 round 4 decision; round 3 findings 4, 5, 11, 22):
-/// control characters, line and paragraph separators, bidirectional controls, the tag block, and
-/// code points that show nothing (zero-width space, word joiner and invisible operators, BOM,
-/// soft hyphen, combining grapheme joiner, Hangul fillers, variation selectors) are dropped.
-/// Everything else stays, including ZWJ and ZWNJ (emoji sequences, Persian words) and visible
-/// format characters such as the Arabic number signs; the list does not depend on the Unicode
-/// tables of the toolchain. A quote is replaced so the title cannot close its quotes, and the
-/// length is capped at 120 Unicode scalars, so combining marks cannot stretch it (round 1
+/// The title as an undo error or the undo history shows it. The errors are `TrustedErrorMessage`,
+/// so the store-derived title reaches the client verbatim, between quotes and next to
+/// instructions. Best effort (PR #259 round 5 findings 15, 18, 27; round 4 decision):
+/// - every format character (general category Cf: zero-width, bidirectional controls, soft
+///   hyphen, invisible operators, tags, annotation marks…) is dropped, except a keep-list of the
+///   ones that show or join something: ZWNJ U+200C and ZWJ U+200D (Persian words, emoji
+///   sequences) and the visible number and abbreviation signs U+0600–0605, U+06DD, U+08E2,
+///   U+110BD, U+110CD;
+/// - controls (Cc), line and paragraph separators (Zl, Zp), and these invisible characters of
+///   other categories: U+034F, U+115F, U+1160, U+17B4, U+17B5, U+180B–180E, U+2800, U+3164,
+///   U+FFA0, the variation selectors U+FE00–FE0F and U+E0100–E01EF, the tag block U+E0000–E007F,
+///   U+1D173–1D17A and U+FFF9–FFFB.
+/// Cf membership is stable across Unicode versions, so this does not depend on unassigned code
+/// points in the toolchain's tables. A quote is replaced so the title cannot close its quotes,
+/// and the length is capped at 120 Unicode scalars, so combining marks cannot stretch it (round 1
 /// finding 19, round 2 finding 11). A visible title can still read like an instruction.
 func undoShownTitle(_ title: String) -> String {
     let dropped: (Unicode.Scalar) -> Bool = { scalar in
         switch scalar.value {
-        case 0x00...0x1F, 0x7F...0x9F,                                   // controls
-             0x2028, 0x2029,                                             // line, paragraph separators
-             0x061C, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069,   // bidirectional controls
-             0xE0000...0xE007F,                                          // tags
-             0x200B, 0x2060...0x2064, 0xFEFF, 0x00AD, 0x034F,            // zero-width, invisible operators
-             0x115F, 0x1160, 0x3164, 0xFFA0,                             // Hangul fillers
-             0xFE00...0xFE0F, 0xE0100...0xE01EF:                         // variation selectors
+        case 0x200C, 0x200D, 0x0600...0x0605, 0x06DD, 0x08E2, 0x110BD, 0x110CD:   // keep-list
+            return false
+        case 0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B...0x180E, 0x2800, 0x3164, 0xFFA0,
+             0xFE00...0xFE0F, 0xE0100...0xE01EF, 0xE0000...0xE007F, 0x1D173...0x1D17A, 0xFFF9...0xFFFB:
             return true
         default:
-            return false
+            switch scalar.properties.generalCategory {
+            case .format, .control, .lineSeparator, .paragraphSeparator: return true
+            default: return false
+            }
         }
     }
     let clean = EventKitErrorSanitizer.sanitizeForInterpolation(title).unicodeScalars

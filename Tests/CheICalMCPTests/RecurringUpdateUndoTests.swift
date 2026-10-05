@@ -77,6 +77,12 @@ final class RecurringUpdateUndoTests: XCTestCase {
         XCTAssertEqual(op.description, "Updated recurring event: Standup (undo not available)")
     }
 
+    /// Round 5 finding 20: the marker's undo_history and redo text show the title like the errors.
+    func testTheMarkerShowsItsTitleLikeTheErrors() {
+        let op = UndoOperation.updateRecurringEvent(id: "e", title: "Stand\u{202E}up\u{200B} 'x'", kind: .series)
+        XCTAssertEqual(op.description, "Updated recurring event: Standup \u{2019}x\u{2019} (undo not available)")
+    }
+
     func testUndoIsRefusedPermanentlyAndNamesTheReason() {
         let reasons: [RecurringUpdateKind: String] = [
             .occurrence: "one occurrence", .future: "following occurrences",
