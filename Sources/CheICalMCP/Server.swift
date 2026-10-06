@@ -43,6 +43,7 @@ class CheICalMCPServer {
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
+    private let undoExecutionSource: any UndoExecutionSource
     private let reminderCompletionSource: any ReminderCompletionSource
     private let dateFormatter: ISO8601DateFormatter
 
@@ -78,11 +79,13 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
-         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared) async throws {
+         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
+         undoExecutionSource: any UndoExecutionSource = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
         self.reminderReadSource = reminderReadSource
         self.reminderCompletionSource = reminderCompletionSource
         self.undoManager = undoManager
+        self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
 
@@ -327,7 +330,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -438,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). Four refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); and two for recurring reminder completions whose identifier now resolves to another occurrence. Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -449,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo.",
+                description: "Redo the last undone operation. Only available after an undo. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -855,7 +858,7 @@ class CheICalMCPServer {
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees, coordinates and absolute-date alarms are not copied. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method and any not_carried_over fields; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
+                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees and the event's own structured location (its coordinates) are not copied. Alarms are copied with their date or offset, location (coordinates and radius), email address and sound; a procedure alarm (one that opens a file or runs a script) becomes a plain alarm at the same time. If saving the copy fails while it carries location, email or sound alarms, which some calendars refuse, the error gives the failure code and names those alarm kinds (location_alarms, email_alarms, alarm_sounds) as a possible cause; the original is not removed. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method, and not_carried_over when a fallback copy did not keep structured_location or availability: only those two keys are listed there, since a move that would drop recurrence or attendees is refused and a procedure alarm turned plain is not reported; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -872,7 +875,7 @@ class CheICalMCPServer {
             // Feature 7: Move Events Batch
             Tool(
                 name: "move_events_batch",
-                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields (a split occurrence lists recurrence: it becomes a one-off). Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original and the copy remains.",
+                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields. not_carried_over lists only recurrence (a split occurrence becomes a one-off), absolute_alarms (a split occurrence's absolute-date alarms become alarms at its start), structured_location and availability; a procedure alarm turned plain is not listed. If saving a copy fails while it carries location, email or sound alarms, which some calendars refuse, that event's error gives the failure code and names those alarm kinds as a possible cause; the original is not removed. Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original and the copy remains.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1510,7 +1513,7 @@ class CheICalMCPServer {
         // another undo/redo or explicit discard while execution is suspended.
         let message: String
         do {
-            message = try await eventKitManager.executeUndo(record.operation)
+            message = try await undoExecutionSource.executeUndo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:
@@ -1536,7 +1539,7 @@ class CheICalMCPServer {
         // #191 — same catch-scope discipline as handleUndo (execution only).
         let message: String
         do {
-            message = try await eventKitManager.executeRedo(record.operation)
+            message = try await undoExecutionSource.executeRedo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore: await undoManager.restoreFailedRedo(record)
