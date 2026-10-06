@@ -21,6 +21,8 @@ struct ReminderUpdateRequest: Sendable {
     var locationTrigger: LocationTriggerInput? = nil
     var clearLocationTrigger = false
     var clearDueDate = false
+    /// #235: put the start date and absolute alarms onto the (new or current) due date.
+    var realignToDue = false
 }
 /// #227: `update_reminder` reports how the start date and absolute alarms followed the due date.
 struct ReminderUpdateResult: Sendable {
@@ -45,6 +47,6 @@ extension EventKitManager: ReminderWriteSource {
                                  dueDate: request.dueDate, priority: request.priority,
                                  calendarName: request.calendarName, calendarSource: request.calendarSource,
                                  locationTrigger: request.locationTrigger, clearLocationTrigger: request.clearLocationTrigger,
-                                 clearDueDate: request.clearDueDate)
+                                 clearDueDate: request.clearDueDate, realignToDue: request.realignToDue)
     }
 }
