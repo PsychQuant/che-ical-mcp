@@ -5,7 +5,8 @@ import XCTest
 
 /// #207 — every boolean tool argument follows the #205 contract: a string or number
 /// is rejected with a key-named error before any read or write; omitted or JSON
-/// null keeps the default. Table-driven over the twelve sites #205 left out.
+/// null keeps the default. Table-driven over the twelve sites #205 left out and the
+/// booleans added since (`realign_to_due`, #235).
 private actor CountingReadFake: ReminderReadSource {
     private(set) var completedFilters: [Bool?] = []
     var calls: Int { completedFilters.count }
@@ -27,6 +28,7 @@ final class BooleanArgumentContractTests: XCTestCase {
         ("update_reminder", "clear_tags", ["reminder_id": .string("r")]),
         ("update_reminder", "clear_due_date", ["reminder_id": .string("r")]),
         ("update_reminder", "clear_location_trigger", ["reminder_id": .string("r")]),
+        ("update_reminder", "realign_to_due", ["reminder_id": .string("r")]),
         ("list_reminder_tags", "include_completed", [:]),
         ("cleanup_completed_reminders", "dry_run", [:]),
         ("copy_event", "delete_original", ["event_id": .string("e"), "target_calendar": .string("Work")]),

@@ -144,9 +144,10 @@ final class EnvelopeShapeTests: XCTestCase {
         XCTAssertNotNil(searchRemindersStart, "Could not locate search_reminders tool registration")
         guard let startRange = searchRemindersStart else { return }
 
-        // Extract roughly 2500 chars after start (covers the whole Tool block;
-        // search_reminders block is ~2200 chars per current source).
-        let endIndex = source.index(startRange.lowerBound, offsetBy: 2500, limitedBy: source.endIndex) ?? source.endIndex
+        // The Tool block runs up to the next tool registration. A fixed character
+        // window broke as soon as the description grew (#231).
+        let endIndex = source.range(of: "name: \"", range: startRange.upperBound..<source.endIndex)?.lowerBound
+            ?? source.endIndex
         let searchRemindersBlock = String(source[startRange.lowerBound..<endIndex])
 
         // Limit parameter should be declared

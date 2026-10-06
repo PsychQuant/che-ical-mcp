@@ -122,7 +122,7 @@ Or just ask naturally:
 
 ### Reminders (10)
 - `list_reminders` / `search_reminders` / `list_reminder_tags` — list/search items carry `has_recurrence`, `recurrence_rules` and a `due` object (#194)
-- `create_reminder` / `update_reminder` / `complete_reminder` / `delete_reminder` — `complete_reminder` returns `operation` (write outcome), `observed` and `next_occurrence`; read `operation.status`, not legacy `is_completed` (#194); `update_reminder` moves the start date and absolute-date alarms with `due_date` and reports them in `date_sync` (#227)
+- `create_reminder` / `update_reminder` / `complete_reminder` / `delete_reminder` — `complete_reminder` returns `operation` (write outcome), `observed` and `next_occurrence`; read `operation.status`, not legacy `is_completed` (#194); `update_reminder` moves the start date and absolute-date alarms with `due_date` and reports them in `date_sync` (#227); `realign_to_due` puts them onto the due date instead and `date_sync.aligned` says whether they agree with it (#235)
 - `create_reminders_batch` / `delete_reminders_batch` — batch ops
 - `cleanup_completed_reminders` — single-call cleanup of all completed reminders (`dry_run=true` default; new in v1.7.2)
 
