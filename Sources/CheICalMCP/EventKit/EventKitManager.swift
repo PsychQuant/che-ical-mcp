@@ -1773,60 +1773,33 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         calendarSource: String? = nil,
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
-        clearDueDate: Bool = false
+        clearDueDate: Bool = false,
+        realignToDue: Bool = false
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
-        // #236 (PR #259 verify #5): refreshed before the undo snapshot, as in update_event.
-        guard let reminder = freshReminder(id: identifier) else {
-            throw EventKitError.reminderNotFound(identifier: identifier)
-        }
+        // PR #256 verify round 2: re-read before the first decision, so the no-due check, the
+        // realign anchor and the undo snapshot see edits made elsewhere (Reminders.app) since this
+        // store cached the reminder. `refresh() == false` means it is gone (the #236 convention).
+        let store = eventStore
+        let reminder = try ReminderUpdateWrite.freshReminder(
+            identifier: identifier, lookup: { store.calendarItem(withIdentifier: $0) as? EKReminder },
+            refresh: { $0.refresh() })
+        let request = ReminderUpdateRequest(
+            identifier: identifier, title: title, notes: notes, dueDate: dueDate, priority: priority,
+            calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
+            clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue)
+        // PR #256 verify round 1: everything that can refuse the call runs before the first write,
+        // so a refused call leaves the cached reminder untouched (#235 no-due check, list lookup).
+        try ReminderUpdateWrite.checkRealign(request, existingDue: reminder.dueDateComponents)
+        let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
-
-        if let t = title { reminder.title = t }
-        if let n = notes { reminder.notes = n }
-        if let p = priority { reminder.priority = p }
-
-        // #227: the start date and absolute-date alarms follow the due date; Reminders.app
-        // displays the alarm's date, so leaving it behind keeps showing the old date.
-        var dateSync: ReminderDateSync.Report?
-        if clearDueDate {
-            dateSync = ReminderDateSync.setDue(reminder, to: nil)
-        } else if let due = dueDate {
-            dateSync = ReminderDateSync.setDue(reminder, to: due)
-        }
-
-        if let name = calendarName {
-            let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
-            reminder.calendar = calendar
-        }
-
-        // Update location trigger
-        if clearLocationTrigger {
-            // Remove only location-based alarms
-            if let existingAlarms = reminder.alarms {
-                for alarm in existingAlarms where alarm.structuredLocation != nil {
-                    reminder.removeAlarm(alarm)
-                }
-            }
-        } else if let trigger = locationTrigger {
-            // Remove existing location-based alarms first
-            if let existingAlarms = reminder.alarms {
-                for alarm in existingAlarms where alarm.structuredLocation != nil {
-                    reminder.removeAlarm(alarm)
-                }
-            }
-            let structured = EKStructuredLocation(title: trigger.title)
-            structured.geoLocation = CLLocation(latitude: trigger.latitude, longitude: trigger.longitude)
-            structured.radius = trigger.radius > 0 ? trigger.radius : 100
-            let alarm = EKAlarm()
-            alarm.structuredLocation = structured
-            alarm.proximity = trigger.proximity
-            reminder.addAlarm(alarm)
-        }
-
-        try eventStore.save(reminder, commit: true)
+        let dateSync = try ReminderUpdateWrite.apply(
+            request, to: reminder, calendar: calendar,
+            save: { try store.save(reminder, commit: true) },
+            reload: { reminder.refresh() },
+            rollback: { reminder.rollback() })
         markNeedsRefresh()
         let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)
         // Same reason as update_event (#246): the identifier the reminder has after the save.
@@ -1839,10 +1812,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         try await ensureReminderAccess()
 
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
-            throw EventKitError.reminderNotFound(identifier: identifier)
-        }
-
+        // PR #256 verify round 3: `update_reminder` merges notes and tags into what this returns,
+        // so it must be the stored reminder, not the cached one.
+        let store = eventStore
+        let reminder = try ReminderUpdateWrite.freshReminder(
+            identifier: identifier, lookup: { store.calendarItem(withIdentifier: $0) as? EKReminder },
+            refresh: { $0.refresh() })
         return ReminderWriteSnapshot(from: reminder)
     }
 

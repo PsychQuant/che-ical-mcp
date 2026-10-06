@@ -576,7 +576,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the alarm's date); clear_due_date also clears the start date and removes absolute-date alarms. Relative and location alarms are unchanged. The response's date_sync reports what moved.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -587,6 +587,10 @@ class CheICalMCPServer {
                         "clear_due_date": .object([
                             "type": .string("boolean"),
                             "description": .string("Set to true to remove due date from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                        ]),
+                        "realign_to_due": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
@@ -1715,6 +1719,10 @@ class CheICalMCPServer {
         if clearDueDate && dueDate != nil {
             throw ToolError.invalidParameter("Cannot specify both due_date and clear_due_date")
         }
+        let realignToDue = try InputValidation.requireOptionalBool(arguments, key: "realign_to_due") ?? false
+        if realignToDue && clearDueDate {
+            throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
+        }
         let priority = arguments["priority"]?.intValue
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
@@ -1763,11 +1771,13 @@ class CheICalMCPServer {
             calendarSource: calendarSource,
             locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger,
-            clearDueDate: clearDueDate
+            clearDueDate: clearDueDate,
+            realignToDue: realignToDue
         ))
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? "", "id": reminderId]
-        // #227: what moved with the due date (start date, absolute-date alarms).
+        // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
+        // they agree with it, also for a call with only realign_to_due.
         if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
         return try actionResult(response)
     }

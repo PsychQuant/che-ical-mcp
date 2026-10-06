@@ -99,7 +99,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
 
-**提醒事項改期（#227）：** Reminders.app 顯示的是絕對時間鬧鐘的日期，所以 `update_reminder` 改 `due_date` 時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。回應的 `date_sync` 說明移動了什麼，undo 會還原 start date 與鬧鐘，位置鬧鐘也包括在內（#228）。
+**提醒事項改期（#227/#235/#237）：** Reminders.app 顯示的是最早一個絕對時間鬧鐘的日期，所以 `update_reminder` 改 `due_date` 時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。移動會保留原本就存在的差距，所以鬧鐘已經和到期日對不上的提醒事項，要傳 `realign_to_due: true` 來修正（搭配 `due_date`，或單獨使用以對齊目前的到期日）：最早的絕對時間鬧鐘落在到期日上，較晚的鬧鐘維持與它的間隔；start date 設為到期日，除非它已經和到期日一致（純日期的到期日：當天任何時間；有時間的到期日：同一時刻，或當天午夜、或沒有時間）。回應的 `date_sync` 說明移動了什麼，`date_sync.aligned` 說明儲存後的提醒事項，start date 與最早的絕對時間鬧鐘是否和到期日一致（刻意設在別天的鬧鐘也會是 `false`）。浮動時區的提醒事項（例如在 Reminders.app 建立的純日期提醒）寫入有時間的到期日後，會保留明確的時區。undo 會還原 start date 與鬧鐘，位置鬧鐘也包括在內（#228）。
 
 </details>
 

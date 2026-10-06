@@ -77,7 +77,7 @@
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date; changing due_date also moves the start date and absolute-date alarms) (annotated destructive: updates can replace or clear existing values)"
+      "description": "Update an existing reminder (including tags, clear_due_date; changing due_date also moves the start date and absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "complete_reminder",
