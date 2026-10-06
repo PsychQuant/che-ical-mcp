@@ -219,6 +219,12 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let undoErr: any Error = UnrecoverableUndoError(message: "x")
         XCTAssertTrue(undoErr is TrustedErrorMessage, "UnrecoverableUndoError must conform (author-controlled message; title passes sanitizeForInterpolation)")
 
+        let changedErr: any Error = UndoTargetChangedError(verb: .undo, kind: .event, title: "x", changedFields: ["title"])
+        XCTAssertTrue(changedErr is TrustedErrorMessage, "UndoTargetChangedError must conform (#236: fixed verb, kind and field names; title passes sanitizeForInterpolation)")
+
+        let missingErr: any Error = UndoTargetMissingError(verb: .undo, kind: .reminder, title: "x", hasIdentifier: true)
+        XCTAssertTrue(missingErr is TrustedErrorMessage, "UndoTargetMissingError must conform (#236: same terms as UndoTargetChangedError)")
+
         // Negative: well-known Foundation types must NOT conform — their
         // localizedDescription sources Apple-framework strings that may
         // interpolate user-controlled content (#21 / #27 threat class).

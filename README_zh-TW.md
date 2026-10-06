@@ -79,7 +79,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `update_event` | 更新事件（含時區、重複規則、recurring span） |
 | `delete_event` | 刪除事件 |
 
-> **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。
+> **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。排除的日期是被移除的場次，不是被單獨修改的場次（2026-10-05 只在 iCloud 確認過，其他來源沒有檢查），所以不會擋下這次復原；建立之後被單獨修改過的場次則會（#236）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。
 
 </details>
 
@@ -99,7 +99,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
 
-**提醒事項改期（#227）：** Reminders.app 顯示的是絕對時間鬧鐘的日期，所以 `update_reminder` 改 `due_date` 時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。回應的 `date_sync` 說明移動了什麼，undo 會還原 start date 與鬧鐘。
+**提醒事項改期（#227/#235/#237）：** Reminders.app 顯示的是最早一個絕對時間鬧鐘的日期，所以 `update_reminder` 改 `due_date` 時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。移動會保留原本就存在的差距，所以鬧鐘已經和到期日對不上的提醒事項，要傳 `realign_to_due: true` 來修正（搭配 `due_date`，或單獨使用以對齊目前的到期日）：最早的絕對時間鬧鐘落在到期日上，較晚的鬧鐘維持與它的間隔；start date 設為到期日，除非它已經和到期日一致（純日期的到期日：當天任何時間；有時間的到期日：同一時刻，或當天午夜、或沒有時間）。回應的 `date_sync` 說明移動了什麼，`date_sync.aligned` 說明儲存後的提醒事項，start date 與最早的絕對時間鬧鐘是否和到期日一致（刻意設在別天的鬧鐘也會是 `false`）。浮動時區的提醒事項（例如在 Reminders.app 建立的純日期提醒）寫入有時間的到期日後，會保留明確的時區。undo 會還原 start date 與鬧鐘，位置鬧鐘也包括在內（#228）。
 
 </details>
 
@@ -131,6 +131,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `undo` | 復原最近一次行事曆/提醒事項操作 |
 | `redo` | 重做上次復原的操作 |
 | `undo_history` | 列出可復原的操作及時間戳記 |
+
+**復原不會蓋掉之後有人做的修改（#236）：** 復原建立、修改、搬移或完成的操作之前，會重新讀取事件或提醒事項，確認復原要覆寫或刪除的內容在那次操作之後沒有被改過（搬移只看日曆；在這裡建立的循環事件還會看有沒有單獨改過的場次，查到第一個場次之後四年內；場次的任何比對欄位與系列不同就算，包括鬧鐘、時區與地點；回到系列原值的場次不算）。已經被改回復原要寫入的值的欄位不算。日曆 app 或伺服器自己做的兩種改變不算修改，不會擋下復原，修改的復原也會把它們蓋回去：鬧鐘的音效，以及為原本沒有座標的地點補上的座標。如果有被改過，就什麼都不寫，錯誤訊息列出改過的欄位，這筆紀錄留在 `undo_history`；要把修改改回來再復原，或用 `undo` 加 `discard_id` 放棄這次復原，由做出修改的人決定。有三種 create-undo 拒絕只能選擇要不要放棄：單獨修改過的場次放不回系列；無法檢查場次的系列（`unchecked_occurrences`）之後也一樣無法檢查；系列的重複規則被縮短（`recurrence`；修改或刪除某個場次及其後的場次會造成），被切掉的部分放不回去。重做「完成」時也會以復原留下的狀態做同樣的檢查。動到循環事件的 `update_event`（改單一場次、span "future" 或 "all"、加上或移除重複規則）不能復原：`undo` 什麼都不寫，訊息說明若要改回請到行事曆修改，並丟棄這筆紀錄，讓更早的操作仍可復原（#262：這種復原以前會刪掉系列的其餘場次）。一次性事件的修改或搬移，若在復原時該事件已變成重複事件或單獨修改過的場次（搬移的本來就是單獨修改過的場次也算），也一樣拒絕；所以修改的復原與一次性事件搬移的復原不會寫入循環事件（整個系列的搬移仍會整個搬回，這是設計如此）。循環事件修改的安全復原見 #263。
 
 </details>
 
