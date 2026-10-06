@@ -79,3 +79,48 @@ v1.16.0。追查發現 plugin server 連線被 15 分鐘 failure cache 跳過、
 spawn（上節整條鏈）。手動執行 plugin cache 的 wrapper 一次即完成下載。若當時未探測
 而直接在 session MCP 表面驗 v1.16.1 的新行為，會拿舊 binary 的結果當新版證據 —
 正是本規則鐵律要防的方向之二。
+
+## Release gate：undo post-state guard（#236）
+
+#236 的 guard（item 在操作之後被改過時，undo / redo 拒絕寫入）只有純邏輯部分有單元測試：
+欄位比對、resolve → refresh → compare 的順序（`UndoTargetCheck`）、拒絕方式的選擇、batch
+順序。`executeUndo` / `executeRedo` 裡圍繞它們的 EventKit 呼叫沒有任何自動測試，而 undo 是
+stateful，`--cli` 走不到（見上表）。**出 #236 的那個版本打 tag 之前**，在重啟後的 session
+MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的拋棄式日曆與清單，至少驗：
+
+1. `create_event` → undo 刪掉它；`create_event` → 在 Calendar.app 改標題 → undo 拒絕並列出
+   `title`、`undo_history` 仍有該筆、`discard_id` 可移除。
+2. 每週系列 → 在 Calendar.app 單獨改其中一個場次 → undo 以 `modified_occurrences` 拒絕，什麼都沒刪。
+3. 一次性（不重複）事件的 `update_event` → 手動把欄位改回原值 → undo 成功。
+4. `complete_reminder` → undo 還原；redo 再完成一次。
+5. 帶欄位建立 → 等至少 60 秒 → 不做任何修改 → undo 要成功刪掉：(a) 有鬧鐘、`location` 字串、
+   非本機 `timezone` 的事件；(b) 全天事件（EventKit 存檔前就會自動加一個預設鬧鐘，紀錄裡已有它）；
+   (c) 有 `due_date` 與 `location_trigger` 的提醒事項。任何一個以 `calendar` / `timezone` /
+   `alarms` / `structured_location` / `list` 拒絕，就是有欄位在同步後自己變了，要加豁免。
+6. 用 `recurrence.excluded_occurrence_dates` 建立的系列 → undo 一次刪掉整個系列，不出現
+   `modified_occurrences`。#182 的「排除日是被移除的場次、不是被單獨修改的場次」只在 iCloud
+   看過（2026-10-05）；有其他來源（Google、Exchange）的帳號時，在那裡再做一次。
+7. 循環事件的 update-undo 一律拒絕、什麼都不寫、紀錄被丟棄（訊息說要改回請到行事曆）。逐項各做一次，
+   每項都用新建的拋棄式系列：
+   (a) 帶 `occurrence_date` 改一個場次 → undo 拒絕（`undo_history` 原本列為 `Updated recurring
+       event: … (undo not available)`）→ 再 undo（create-undo）以 `modified_occurrences` 拒絕，系列完整；
+   (b) `span: "future"` → undo 拒絕 → create-undo 以 `recurrence` 拒絕，訊息說系列被縮短、只給放棄
+       （`discard_id`），不叫人改回；
+   (c) `span: "all"` → undo 拒絕，系列每個場次都還在（**只在拋棄式日曆上測**；#262 修正之前的
+       binary 會刪掉真實系列的其餘場次）；
+   (d) 一次性事件加上重複規則 → undo 拒絕；(e) 系列 `clear_recurrence` → undo 拒絕；
+   (f) 用場次自己的 id（`<series>/RID=…`）改一個已 detached 的場次 → undo 拒絕；
+   (g) 一次性事件改標題 → 再加上重複規則 → undo（拒絕並丟棄）→ undo：以「it repeats now」拒絕並丟棄，
+       什麼都沒寫；(h) 一次性事件改標題 → 在別的 app 讓它變成重複事件 → undo：同 (g)。
+   另外在別的 app（或另一個 process）只改一個場次的時間、只改一個場次的鬧鐘 → create-undo 以
+   `modified_occurrences` 拒絕。(i) 一次性事件 `move_events_batch` 到另一個拋棄式日曆 → undo 搬回
+   （對照組）；再做一次，搬移後在別的 app 讓它變成重複事件 → undo：「Cannot undo the move …
+   it repeats now」，丟棄、什麼都沒寫。
+8. 循環提醒事項完成後滾到下一個場次 → undo：紀錄被丟棄（#204 的訊息，或沒有場次快照的紀錄的
+   successor-shape 訊息），什麼都沒寫到下一個場次，較舊的紀錄可以 undo。
+9. **非 iCloud 來源的對照組**（有 Google 或 Exchange 帳號時）：在該來源的拋棄式日曆建一次性事件 →
+   `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
+   拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
+   就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
+
+結果記在 #236。結束後刪掉拋棄式日曆與清單。

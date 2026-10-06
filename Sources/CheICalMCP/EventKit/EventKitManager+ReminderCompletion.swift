@@ -6,9 +6,10 @@ extension EventKitManager {
     func completeReminder(identifier: String, completed: Bool = true) async throws -> ReminderCompletionResult {
         try await ensureReminderAccess()
         // Same refresh discipline as the read paths, so the pre-save snapshot the
-        // successor comparison is anchored on is not stale from an earlier mutation.
-        refreshIfNeeded()
-        guard let reminder = eventStore.calendarItem(withIdentifier: identifier) as? EKReminder else {
+        // successor comparison is anchored on is not stale from an earlier mutation;
+        // and the object refreshed (#236, PR #259 verify #5), so `before` (what undo
+        // restores) is not a stale copy either.
+        guard let reminder = freshReminder(id: identifier) else {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
@@ -39,40 +40,30 @@ extension EventKitManager {
     /// (on-device probe, PR #195). Acting on the advanced item would mutate the
     /// wrong occurrence, and no retry can make the identity match again, so
     /// the failure is permanent and the caller discards the history entry.
-    private func resolveRecurringOccurrence(_ before: ReminderCompletionSnapshot, verb: String) throws -> EKReminder {
-        let title = EventKitErrorSanitizer.sanitizeForInterpolation(before.title)
-        // Same refresh discipline as the read paths: the guard must compare
-        // against the store's current state, not the cache this completion
-        // itself marked dirty.
-        refreshIfNeeded()
-        // Not found is treated as transient (store lag) and keeps the entry for a
-        // retry, exactly like the legacy arms (#191); a deleted item therefore
-        // stays on the stack until the user clears it, same as every other arm.
-        // Only a resolved-but-different occurrence is permanent.
-        guard let reminder = eventStore.calendarItem(withIdentifier: before.id) as? EKReminder else {
-            throw EventKitError.reminderNotFound(identifier: before.id)
-        }
+    /// #236: runs on the reminder `verifiedHistoryTarget` resolved and refreshed
+    /// (with the read paths' refresh discipline), before the completion check; not
+    /// found stays transient there, as for every other arm (#191).
+    func ensureSameOccurrence(_ before: ReminderCompletionSnapshot, _ reminder: EKReminder, verb: String) throws {
         guard before.matchesOccurrence(ReminderCompletionSnapshot(from: reminder)) else {
-            throw UnrecoverableUndoError(message: "Cannot \(verb) recurring reminder completion of '\(title)': its identifier no longer resolves to the recorded occurrence — the series advanced (EventKit keeps the finished occurrence as a separate completed record) or the item's due, rules, list or source were edited since. Act on the intended occurrence explicitly (list_reminders with completed=true, then complete_reminder). This history entry was discarded so earlier operations remain undoable.")
+            throw UndoOperation.occurrenceIdentityRefusal(before: before, verb: verb)
         }
-        return reminder
     }
 
+    /// #236: `verifiedReminder` runs the identity guard above (a mismatch is permanent and
+    /// discards the record), then the completion post-state check (a mismatch keeps the record).
     func undoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot) async throws -> String {
-        try await ensureReminderAccess()
-        let reminder = try resolveRecurringOccurrence(before, verb: "undo")
+        let reminder = try await verifiedReminder(of: operation, verb: .undo)
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        return "Undone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(before.isCompleted)"
+        return "Undone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(before.isCompleted)"
     }
 
     func redoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot, requestedCompleted: Bool) async throws -> String {
-        try await ensureReminderAccess()
-        let reminder = try resolveRecurringOccurrence(before, verb: "redo")
+        let reminder = try await verifiedReminder(of: operation, verb: .redo)
         try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
         try eventStore.save(reminder, commit: true)
         markNeedsRefresh()
-        return "Redone: set recurring reminder '\(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))' completion to \(requestedCompleted)"
+        return "Redone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(requestedCompleted)"
     }
 }

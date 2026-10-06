@@ -161,7 +161,8 @@ struct EventSnapshot {
             event.structuredLocation = structured
         }
 
-        // Recurrence
+        // Recurrence: written only by delete-undo, which recreates a deleted series. Update-undo
+        // restores one-off events only (#236 round 5), whose snapshots have no rules.
         if let rules = recurrenceRules {
             // #191 — rebuild fresh EKRecurrenceRule objects from value snapshots;
             // re-attaching the original (now-stale) rule objects made the restore
@@ -177,6 +178,9 @@ struct EventSnapshot {
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
 struct ReminderSnapshot {
     let title: String
+    /// #236: the post-state guard compares the list by identifier; the restore still picks the
+    /// list by title (#242).
+    let calendarIdentifier: String
     let calendarTitle: String
     let calendarSource: String?
     let notes: String?
@@ -198,6 +202,7 @@ struct ReminderSnapshot {
 
     init(from reminder: EKReminder) {
         self.title = reminder.title ?? ""
+        self.calendarIdentifier = reminder.calendar?.calendarIdentifier ?? ""
         self.calendarTitle = reminder.calendar.title
         self.calendarSource = reminder.calendar.source?.title
         self.notes = reminder.notes
@@ -235,50 +240,64 @@ struct ReminderSnapshot {
 // MARK: - Operations
 
 /// A recorded mutation operation that can be undone/redone.
+///
+/// #236: the create / update / move records also carry the state the write *left*, which undo
+/// compares the item with before it writes (`undoPostState`). No defaults: a record site that
+/// drops the post-state must not compile (#196 convention).
 enum UndoOperation {
-    case createEvent(id: String, title: String)
+    case createEvent(id: String, title: String, created: EventSnapshot)
     case deleteEvent(snapshot: EventSnapshot)
-    case updateEvent(id: String, oldSnapshot: EventSnapshot)
-    case createReminder(id: String, title: String)
+    /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
+    case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
+    /// #236: an update that touched a recurring event, kept only as a marker. Its undo is refused
+    /// and the record discarded; nothing is restored (`RecurringUpdateKind`).
+    case updateRecurringEvent(id: String, title: String, kind: RecurringUpdateKind)
+    case createReminder(id: String, title: String, created: ReminderSnapshot)
     case deleteReminder(snapshot: ReminderSnapshot)
-    case updateReminder(id: String, oldSnapshot: ReminderSnapshot)
+    case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
     /// pre-write instant undo restores. Neither has a default: dropping them must not compile.
-    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?)
+    /// #236: `wasRecurring` records that the reminder repeated at write time: such a record has no
+    /// #204 occurrence snapshot, so undo and redo cannot confirm which occurrence the identifier
+    /// points at after a rollover and go ahead only on the exact state they expect.
+    case completeReminder(id: String, wasCompleted: Bool, requestedCompleted: Bool, completionDate: Date?, title: String, redoCompletionDate: Date?, wasRecurring: Bool)
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
-    /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`.
-    case moveEvent(id: String, fromCalendarIdentifier: String, title: String, isSeries: Bool)
+    /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
+    /// the event is still in `toCalendarIdentifier` (#236).
+    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
     /// through the `undo_history` MCP tool's response field**, so any
     /// user-controlled title here flows through the same wire path as
     /// `executeUndo`/`executeRedo` arms — and shares the same CWE-117
-    /// log-injection surface. Each title interpolation must go through
-    /// `EventKitErrorSanitizer.sanitizeForInterpolation` (#74 verify DA1).
+    /// log-injection surface. Each title interpolation goes through `undoVisibleTitle`, which
+    /// drops hidden characters and leaves quotes alone (#74 verify DA1; PR #259 rounds 6–7).
     var description: String {
         switch self {
-        case .createEvent(_, let title):
-            return "Created event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+        case .createEvent(_, let title, _):
+            return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
-        case .updateEvent(_, let old):
-            return "Updated event: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
-        case .moveEvent(_, _, let title, _):
-            return "Moved event: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
-        case .createReminder(_, let title):
-            return "Created reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Deleted event: \(undoVisibleTitle(snapshot.title))"
+        case .updateEvent(_, let old, _):
+            return "Updated event: \(undoVisibleTitle(old.title))"
+        case .updateRecurringEvent(_, let title, _):
+            return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
+        case .moveEvent(_, _, _, let title, _):
+            return "Moved event: \(undoVisibleTitle(title))"
+        case .createReminder(_, let title, _):
+            return "Created reminder: \(undoVisibleTitle(title))"
         case .deleteReminder(let snapshot):
-            return "Deleted reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(snapshot.title))"
-        case .updateReminder(_, let old):
-            return "Updated reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(old.title))"
-        case .completeReminder(_, _, _, _, let title, _):
-            return "Completed reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(title))"
+            return "Deleted reminder: \(undoVisibleTitle(snapshot.title))"
+        case .updateReminder(_, let old, _):
+            return "Updated reminder: \(undoVisibleTitle(old.title))"
+        case .completeReminder(_, _, _, _, let title, _, _):
+            return "Completed reminder: \(undoVisibleTitle(title))"
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
-            return "\(action) recurring reminder: \(EventKitErrorSanitizer.sanitizeForInterpolation(before.title))"
+            return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
         case .batch(let ops):
             return "Batch (\(ops.count) operations)"
         }
@@ -458,7 +477,8 @@ extension UndoOperation {
             return .completeRecurringReminder(before: before, requestedCompleted: requestedCompleted, redoCompletionDate: savedCompletionDate)
         }
         return .completeReminder(id: before.id, wasCompleted: before.isCompleted, requestedCompleted: requestedCompleted,
-                                 completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate)
+                                 completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate,
+                                 wasRecurring: before.hasRecurrence)
     }
 }
 
@@ -469,7 +489,7 @@ extension UndoOperation {
     /// reopening a reminder on device. `nil` for records that are not completions.
     func completionWrite(undo: Bool, now: Date) -> ReminderCompletionWrite? {
         switch self {
-        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _, let redoCompletionDate):
+        case .completeReminder(_, let wasCompleted, let requestedCompleted, let completionDate, _, let redoCompletionDate, _):
             return undo ? ReminderCompletionWrite.plan(isCompleted: wasCompleted, recorded: completionDate, now: now)
                         : ReminderCompletionWrite.plan(isCompleted: requestedCompleted, recorded: redoCompletionDate, now: now)
         case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):

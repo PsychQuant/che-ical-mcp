@@ -41,7 +41,7 @@ private actor CopyFake: EventCopySource {
         case "same-calendar":
             return EventMoveValue(result: .init(method: .unchanged, eventIdentifier: identifier, notCarriedOver: []), title: identifier)
         default:
-            await history.record(.moveEvent(id: identifier, fromCalendarIdentifier: "from", title: identifier, isSeries: false))
+            await history.record(.moveEvent(id: identifier, fromCalendarIdentifier: "from", toCalendarIdentifier: "to", title: identifier, isSeries: false))
             return EventMoveValue(result: .init(method: .inPlace, eventIdentifier: identifier, notCarriedOver: []), title: identifier)
         }
     }

@@ -61,7 +61,7 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring) (annotated destructive: updates can replace or clear existing values)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
     },
     {
       "name": "delete_event",
@@ -145,11 +145,11 @@
     },
     {
       "name": "undo",
-      "description": "Undo the last operation, or explicitly discard the current top history record using discard_id from undo_history"
+      "description": "Undo the last operation (refused without writing when the item was changed since; the record stays until the change is reverted or the user discards it; updates to recurring events are never undone), or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
-      "description": "Redo the last undone operation"
+      "description": "Redo the last undone operation (a completion redo is refused when the reminder changed since the undo)"
     },
     {
       "name": "undo_history",

@@ -43,6 +43,7 @@ class CheICalMCPServer {
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
+    private let undoExecutionSource: any UndoExecutionSource
     private let reminderCompletionSource: any ReminderCompletionSource
     private let dateFormatter: ISO8601DateFormatter
 
@@ -78,11 +79,13 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
-         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared) async throws {
+         reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
+         undoExecutionSource: any UndoExecutionSource = EventKitManager.shared) async throws {
         self.reminderCleanupSource = reminderCleanupSource
         self.reminderReadSource = reminderReadSource
         self.reminderCompletionSource = reminderCompletionSource
         self.undoManager = undoManager
+        self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
 
@@ -327,7 +330,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time will automatically preserve the original duration. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -438,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). Four refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); and two for recurring reminder completions whose identifier now resolves to another occurrence. Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -449,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo.",
+                description: "Redo the last undone operation. Only available after an undo. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -1506,7 +1509,7 @@ class CheICalMCPServer {
         // another undo/redo or explicit discard while execution is suspended.
         let message: String
         do {
-            message = try await eventKitManager.executeUndo(record.operation)
+            message = try await undoExecutionSource.executeUndo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:
@@ -1532,7 +1535,7 @@ class CheICalMCPServer {
         // #191 — same catch-scope discipline as handleUndo (execution only).
         let message: String
         do {
-            message = try await eventKitManager.executeRedo(record.operation)
+            message = try await undoExecutionSource.executeRedo(record.operation)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore: await undoManager.restoreFailedRedo(record)

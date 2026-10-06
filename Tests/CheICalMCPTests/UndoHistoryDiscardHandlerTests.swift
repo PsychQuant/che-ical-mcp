@@ -7,8 +7,8 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
     func testDiscardExposesOlderRecordWithoutCreatingRedo() async throws {
         for reversed in [false, true] {
             let manager = CalendarUndoManager()
-            let event = UndoOperation.createEvent(id: "event", title: "Event")
-            let reminder = UndoOperation.createReminder(id: "reminder", title: "Reminder")
+            let event = UndoOperation.createEvent(id: "event", title: "Event", created: UndoSnapshotFixtures.event(title: "Event"))
+            let reminder = UndoOperation.createReminder(id: "reminder", title: "Reminder", created: UndoSnapshotFixtures.reminder(title: "Reminder"))
             await manager.record(reversed ? event : reminder)
             await manager.record(reversed ? reminder : event)
             let server = try await CheICalMCPServer(undoManager: manager)
@@ -30,8 +30,8 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
     }
     func testDiscardPreservesExistingRedoAndRedoBusyLock() async throws {
         let manager = CalendarUndoManager()
-        await manager.record(.createEvent(id: "a", title: "A"))
-        await manager.record(.createEvent(id: "b", title: "B"))
+        await manager.record(.createEvent(id: "a", title: "A", created: UndoSnapshotFixtures.event(title: "A")))
+        await manager.record(.createEvent(id: "b", title: "B", created: UndoSnapshotFixtures.event(title: "B")))
         let started = try await manager.beginUndo()
         let record = try XCTUnwrap(started)
         await manager.finishHistoryOperation(record)
@@ -51,7 +51,7 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
 
     func testMalformedIdsNeverMutateHistory() async throws {
         let manager = CalendarUndoManager()
-        await manager.record(.createEvent(id: "e", title: "E"))
+        await manager.record(.createEvent(id: "e", title: "E", created: UndoSnapshotFixtures.event(title: "E")))
         let server = try await CheICalMCPServer(undoManager: manager)
         for value: Value in [.null, .int(1), .bool(true), .object([:]), .string(""), .string("not-id")] {
             do { _ = try await server.executeToolCall(name: "undo", arguments: ["discard_id": value]); XCTFail("invalid id") } catch {}
@@ -61,7 +61,7 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
     }
     func testBusyBlocksDiscardAndSecondBeginThenRestoreKeepsId() async throws {
         let manager = CalendarUndoManager()
-        await manager.record(.createEvent(id: "e", title: "E"))
+        await manager.record(.createEvent(id: "e", title: "E", created: UndoSnapshotFixtures.event(title: "E")))
         let initial = await manager.historySnapshot()
         let started = try await manager.beginUndo()
         let record = try XCTUnwrap(started)
