@@ -288,7 +288,7 @@ final class ReminderDateSyncTests: XCTestCase {
         _ = ReminderDateSync.setDue(reminder, to: date(2026, 10, 8, 10, in: taipei))
         XCTAssertEqual(absoluteDates(reminder), [date(2026, 10, 8, 10, in: taipei)])
 
-        snapshot.applyDates(to: reminder)
+        snapshot.apply(to: reminder, now: Date())
         XCTAssertEqual(startComponents(reminder), components(oldDue, in: taipei))
         XCTAssertEqual(absoluteDates(reminder), [oldDue])
         XCTAssertEqual((reminder.alarms ?? []).filter { $0.absoluteDate == nil }.map(\.relativeOffset), [-900])
