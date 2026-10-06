@@ -117,13 +117,28 @@ final class UndoPostStateGuardTests: XCTestCase {
     }
 
     /// Round 7 findings 8, 15: offsets are sampled at the start and at every transition of both
-    /// zones over the next two years. America/Vancouver and America/Los_Angeles agree on
-    /// 2026-03-01 and at their next (shared) transition, and part in November 2026 when Vancouver
-    /// stays on daylight time (in this tz database). Best effort: zones that part later still
-    /// look the same.
+    /// zones over the next two years, so zones that agree at the start and at their next
+    /// (shared) transition but part later are told apart. Best effort: zones that part after the
+    /// two years still look the same.
+    ///
+    /// The pinned pair is historical, so every tz database has it: in 2016 Europe/Istanbul and
+    /// Europe/Bucharest were both +2, moved to +3 together on 27 March, and parted on 30 October
+    /// when Bucharest went back to +2 and Istanbul stayed on +3. The case that prompted the fix,
+    /// America/Vancouver and America/Los_Angeles parting in November 2026, exists only in a tz
+    /// database that has British Columbia's permanent daylight time (the CI runner's does not,
+    /// PR #259 run 37416828179), so it is checked only where the two zones do part.
     func testZonesThatPartWithinTwoYearsDiffer() throws {
-        let march = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-03-01T12:00:00Z"))
-        XCTAssertFalse(UndoPostState.sameTimeZone(TimeZone(identifier: "America/Vancouver"), TimeZone(identifier: "America/Los_Angeles"), at: march))
+        let iso = ISO8601DateFormatter()
+        let january2016 = try XCTUnwrap(iso.date(from: "2016-01-01T12:00:00Z"))
+        XCTAssertFalse(UndoPostState.sameTimeZone(TimeZone(identifier: "Europe/Istanbul"), TimeZone(identifier: "Europe/Bucharest"), at: january2016))
+
+        let march = try XCTUnwrap(iso.date(from: "2026-03-01T12:00:00Z"))
+        let december = try XCTUnwrap(iso.date(from: "2026-12-01T12:00:00Z"))
+        let vancouver = try XCTUnwrap(TimeZone(identifier: "America/Vancouver"))
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        if vancouver.secondsFromGMT(for: december) != losAngeles.secondsFromGMT(for: december) {
+            XCTAssertFalse(UndoPostState.sameTimeZone(vancouver, losAngeles, at: march))
+        }
         XCTAssertTrue(UndoPostState.sameTimeZone(TimeZone(secondsFromGMT: 8 * 3600), TimeZone(identifier: "Asia/Taipei"), at: march))
         XCTAssertTrue(UndoPostState.sameTimeZone(TimeZone(identifier: "America/New_York"), TimeZone(identifier: "America/New_York"), at: march))
     }
