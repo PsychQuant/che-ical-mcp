@@ -557,7 +557,13 @@ final class ReminderDateSyncTests: XCTestCase {
 
         XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true))
         XCTAssertEqual(absoluteDates(reminder), [due])
-        XCTAssertEqual(startComponents(reminder), components(due, in: taipei))
+        // The new due is written in the host zone (#134), and the start is put on it in that
+        // zone. Compare with what was written, not a fixed zone: the test then holds on any host
+        // (CI runs in GMT, where a fixed Asia/Taipei expectation failed).
+        XCTAssertEqual(safeDateFromComponents(reminder.startDateComponents), due)
+        XCTAssertNotNil(report.writtenDue?.timeZone)
+        XCTAssertEqual(startComponents(reminder)?.timeZone, report.writtenDue?.timeZone)
+        XCTAssertEqual(startComponents(reminder)?.hour, report.writtenDue?.hour)
     }
 
     /// `realign_to_due` without `due_date` aligns to the current due date and leaves it as it is.
