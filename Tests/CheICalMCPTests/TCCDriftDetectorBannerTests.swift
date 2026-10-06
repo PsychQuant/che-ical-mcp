@@ -8,12 +8,17 @@
 //
 // Both the compile-time `#if !CI_BUILD` exclusion AND the runtime `skipIfCI()` guard
 // are now removed: these binary-spawn tests run on CI. The precaution is no longer
-// load-bearing because `spawnAndCaptureStderr` bounds every wait — `maxWait` poll,
-// SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap with a force-reap
-// SIGKILL — so a stuck child fails fast (~6s/test worst case) instead of wedging the
-// 20m job timeout. The spawned binary also inherits the same EventKit fast-fail under
-// CI=1, so the banner path (which only reads `authorizationStatus`, never
-// `requestFullAccess`) has no blocking primitive left to hang on.
+// load-bearing because `spawnAndCaptureStderr` bounds every wait — the `maxWait` cap
+// (10s by default; since #233 it caps a hung child instead of giving the child a fixed
+// 1s window to write), SIGTERM→SIGKILL escalation, and a 3s hard `waitUntilExit` cap
+// with a force-reap SIGKILL — so a stuck child costs at most ~16.5s per helper call (10 +
+// 0.5s SIGTERM grace + 3 + 1s force-reap + two 1s drain bounds) instead of wedging the 20m
+// job timeout. Most tests make one call; the warmed default-mode test makes two (warm-up +
+// timed spawn), so its worst case is ~33s. A healthy child exits on stdin EOF right after the banner: roughly 0.4-1.0s
+// from spawn to exit on the hosts measured for #233, about 0.02s with the banner
+// suppressed. The spawned binary also inherits the same EventKit fast-fail under CI=1, so
+// the banner path (which only reads `authorizationStatus`, never `requestFullAccess`) has
+// no blocking primitive left to hang on.
 
 import CheMCPKit
 import XCTest
@@ -44,10 +49,37 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         throw XCTSkip("CheICalMCP binary not found at \(candidates). Run `swift build` first.")
     }
 
-    /// Spawn the binary, give it up to `maxWait` seconds to emit a banner, then terminate.
-    /// Returns (stderr_text, exit_status). Stdin is wired to `/dev/null` so the MCP server
-    /// loop has no JSON-RPC to read; we don't expect graceful shutdown, just the banner
-    /// to land on stderr before we kill.
+    /// What `spawnAndCaptureStderr` observed.
+    private struct SpawnResult {
+        let stderr: String
+        let terminationStatus: Int32
+        /// Seconds from spawn to the stderr chunk that satisfied `until`, or `nil` if it never did.
+        let untilMatchedAfter: TimeInterval?
+        /// True when the `maxWait` cap ended the wait: the child was still running and `until`
+        /// had not matched, so the helper had to terminate it. A child that is expected to exit
+        /// by itself should leave this false; otherwise a hung child only shows up as slow.
+        let timedOut: Bool
+    }
+
+    /// Spawn the binary, close its stdin, and wait for it to exit, terminating it if it is
+    /// still running after `maxWait` seconds. With stdin at EOF the MCP server loop has no
+    /// JSON-RPC to read and exits by itself right after the banner, roughly 0.4-1.0 s after
+    /// spawn on the hosts measured for #233.
+    ///
+    /// `maxWait` is a cap for a hung child, not the time a child gets to emit its output
+    /// (#233). The banner is a single write at the end of `emitStartupBanner()`, after up
+    /// to three 500 ms subprocess caps (#126). The former 1.0 s default SIGTERM'd the child
+    /// whenever that write came later than 1 s (no SIGTERM handler, so the default action
+    /// kills it), which read as "no banner". A healthy run already takes up to ~1 s, so
+    /// that window had little margin even before host CPU contention pushed the banner
+    /// later. The 10 s default sits well above the slowest arrival measured under
+    /// contention (1.67 s).
+    ///
+    /// `until`, when given, is checked against the drained stderr after every chunk. The
+    /// helper stops waiting as soon as it matches (then terminates the child if it is still
+    /// running), and returns `untilMatchedAfter`: seconds from spawn to the chunk that
+    /// matched, or `nil` if it never did. Tests that time an output use this rather than the
+    /// helper's whole run, which also includes teardown.
     ///
     /// CI hang note (#122 R3): the GitHub Actions macos-latest runner can leave the MCP
     /// loop in a state where SIGTERM is ignored (ad-hoc-signed binary + TCC sandbox quirks),
@@ -58,9 +90,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         binary: URL,
         arguments: [String] = [],
         environment: [String: String]? = nil,
-        maxWait: TimeInterval = 1.0,
-        sigtermGrace: TimeInterval = 0.5
-    ) throws -> (stderr: String, terminationStatus: Int32) {
+        maxWait: TimeInterval = 10.0,
+        sigtermGrace: TimeInterval = 0.5,
+        until: ((String) -> Bool)? = nil
+    ) throws -> SpawnResult {
         let process = Process()
         process.executableURL = binary
         process.arguments = arguments
@@ -83,16 +116,28 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         let stderrQueue = DispatchQueue(label: "spawnAndCaptureStderr.drain")
         let stderrLock = NSLock()
         var stderrBuffer = Data()
+        var untilMatchedAfter: TimeInterval?
         let drainDone = DispatchSemaphore(value: 0)
+        // Arrival clock for `until`, spawn included (as #127's latency budget specified).
+        let spawnStart = Date()
         stderrQueue.async {
             while true {
                 let chunk = stderrHandle.availableData
                 if chunk.isEmpty { break }  // EOF
                 stderrLock.lock()
                 stderrBuffer.append(chunk)
+                if let until, untilMatchedAfter == nil,
+                   until(String(decoding: stderrBuffer, as: UTF8.self)) {
+                    untilMatchedAfter = Date().timeIntervalSince(spawnStart)
+                }
                 stderrLock.unlock()
             }
             drainDone.signal()
+        }
+        func untilMatched() -> Bool {
+            stderrLock.lock()
+            defer { stderrLock.unlock() }
+            return untilMatchedAfter != nil
         }
 
         // Same drain pattern for stdout — without this, the child writing >64KB of
@@ -123,15 +168,16 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         try? stderr.fileHandleForWriting.close()
         try? stdout.fileHandleForWriting.close()
 
-        // Close stdin so the MCP loop reads EOF, then wait briefly for the banner to
-        // flush. If the process exits on its own (--version / --help), we drop out of
-        // the polling loop early via isRunning check.
+        // Close stdin so the MCP loop reads EOF and exits by itself after the banner
+        // (--version / --help exit even sooner). Wait for that exit, for `until` to
+        // match, or for the `maxWait` cap, whichever comes first.
         try stdin.fileHandleForWriting.close()
 
         let deadline = Date().addingTimeInterval(maxWait)
-        while process.isRunning, Date() < deadline {
+        while process.isRunning, Date() < deadline, !untilMatched() {
             Thread.sleep(forTimeInterval: 0.05)
         }
+        let timedOut = process.isRunning && !untilMatched()
 
         // Two-stage shutdown: SIGTERM first, then escalate to SIGKILL if the child
         // ignores it. POSIX `kill(_:_:)` from Darwin is uncatchable on SIGKILL, so this
@@ -173,8 +219,83 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         stderrLock.lock()
         let stderrText = String(data: stderrBuffer, encoding: .utf8) ?? ""
+        let matchedAfter = untilMatchedAfter
         stderrLock.unlock()
-        return (stderrText, process.terminationStatus)
+        return SpawnResult(
+            stderr: stderrText,
+            terminationStatus: process.terminationStatus,
+            untilMatchedAfter: matchedAfter,
+            timedOut: timedOut
+        )
+    }
+
+    // MARK: - Helper contract (#233)
+
+    /// A child that is slow to start must not be reported as silent. #233: under host CPU
+    /// contention the banner can land after 1 s, and a fixed 1.0 s wait killed the child
+    /// before its single banner write, so the test read "no banner". With the default
+    /// arguments the helper must wait for the child, not for a fixed interval.
+    ///
+    /// One process does both the wait and the write, so if the cap ever fired, the helper's
+    /// signal would reach the process that is still waiting. With `sh -c "sleep 1.2; printf …"`
+    /// the shell forks `sleep`, and that grandchild would outlive the signalled shell.
+    func testSpawnHelperCapturesChildThatWritesAfterOneSecond() throws {
+        let perl = "/usr/bin/perl"
+        guard FileManager.default.isExecutableFile(atPath: perl) else {
+            throw XCTSkip("\(perl) is not available on this host; the late-writer child needs it")
+        }
+        let run = try spawnAndCaptureStderr(
+            binary: URL(fileURLWithPath: perl),
+            arguments: ["-e", "select(undef, undef, undef, 1.2); print STDERR qq([late] written after 1.2s\\n)"]
+        )
+
+        XCTAssertTrue(
+            run.stderr.contains("[late] written after 1.2s"),
+            "A child that writes after 1.2 s must be captured with the default wait. Got stderr: \(run.stderr)"
+        )
+        XCTAssertFalse(run.timedOut, "The child should exit by itself, not hit the cap")
+        XCTAssertEqual(run.terminationStatus, 0, "The child should exit by itself, not by the helper's SIGTERM")
+    }
+
+    /// `until:` releases the helper as soon as the drained stderr satisfies it, so a child
+    /// that keeps running after its output costs well under the 10 s cap, and the helper
+    /// reports when the output arrived (spawn → match) separately from teardown.
+    func testSpawnHelperReturnsOnceUntilPredicateMatches() throws {
+        let start = Date()
+        let run = try spawnAndCaptureStderr(
+            binary: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf '[ready] up\\n' >&2; exec sleep 30"],
+            until: { $0.contains("[ready] up") }
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertTrue(run.stderr.contains("[ready] up"), "Got stderr: \(run.stderr)")
+        let matchedAfter = try XCTUnwrap(run.untilMatchedAfter, "The predicate matched, so the arrival time must be reported")
+        XCTAssertLessThanOrEqual(matchedAfter, elapsed)
+        XCTAssertFalse(run.timedOut, "`until` matched, so the cap did not end the wait")
+        XCTAssertLessThan(
+            elapsed, 5.0,
+            "The helper should return once `until` matches, not wait out the 10 s cap. Elapsed: \(String(format: "%.3f", elapsed))s"
+        )
+    }
+
+    /// A child that ignores stdin EOF is stopped at the `maxWait` cap and reported as
+    /// `timedOut`, in about `maxWait` + the SIGTERM it dies on, not left to run on.
+    func testSpawnHelperReportsTimeoutWhenChildOutlivesTheCap() throws {
+        let start = Date()
+        let run = try spawnAndCaptureStderr(
+            binary: URL(fileURLWithPath: "/bin/sleep"),
+            arguments: ["30"],
+            maxWait: 0.3
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertTrue(run.timedOut, "`sleep 30` ignores stdin EOF, so the 0.3 s cap must end the wait")
+        XCTAssertNil(run.untilMatchedAfter)
+        XCTAssertLessThan(
+            elapsed, 3.0,
+            "The cap path should take about maxWait plus the SIGTERM, not run on. Elapsed: \(String(format: "%.3f", elapsed))s"
+        )
     }
 
     // MARK: - Tests
@@ -189,32 +310,59 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// is the symlink target, not the symlink itself. We compare against the resolved
     /// path so the assertion matches the post-#129 canonical-path behavior.
     ///
-    /// **Latency budget enforcement** (#127): the Plan tier for #122 specified
-    /// `< 200ms integration including spawn`. This test now encodes that budget as
-    /// `XCTAssertLessThan` so future regressions in banner emission speed are caught
-    /// rather than discovered through user reports. Empirical baseline ~50-100ms on
-    /// healthy local macOS; we use 1.5s as the assertion bound to absorb local-machine
-    /// noise (Spotlight indexing / brew autoupdate / etc.) while still catching the
-    /// "banner now takes 10 seconds" class of regression that would actually matter.
+    /// **Latency tripwire** (#127, #233): the Plan tier for #122 specified `< 200ms
+    /// integration including spawn`. A wall-clock assertion on a shared host cannot hold a
+    /// bound that tight, so this test keeps a coarse tripwire for the "banner now takes 10
+    /// seconds" class of regression (#127 closing summary). It times the banner's arrival
+    /// (spawn → the `until` match), not the helper's whole run including teardown, and an
+    /// untimed warm-up exec keeps a first-exec Gatekeeper assessment out of it. The bound
+    /// is 5.0 s because the production path's own worst case is process startup plus three
+    /// 500 ms subprocess caps (`ps`, `sqlite3`, the parent-chain `ps`; #126), and under host
+    /// CPU contention the banner was measured arriving at up to 1.67 s (#233), past the
+    /// former 1.5 s bound. 5.0 s is deliberately a looser #127 guard than that 1.5 s: the
+    /// tighter bound fell inside the range of real arrival times on a busy host and so
+    /// produced false reds, while 5.0 s still catches the 10-second class of regression
+    /// #127 is about.
     func testBannerAppearsInDefaultMCPServerMode() throws {
         let binary = try locateBuiltBinary()
         let resolvedBinaryPath = BinaryPathResolver.resolveArgv0(binary.path)
 
-        let start = Date()
-        let (stderr, _) = try spawnAndCaptureStderr(binary: binary)
-        let elapsed = Date().timeIntervalSince(start)
+        // Untimed warm-up exec. The first exec of a freshly linked or copied binary can include
+        // a one-time Gatekeeper assessment (up to 2.4 s measured for a fresh copy on the #233
+        // host; ~3.7 s per `testBannerHandlesArbitraryBinaryPath`), and this is the first test
+        // in the class to spawn the binary. Running `--version` once, to exit, keeps that cost
+        // out of the arrival clock below, which is meant to time the banner path only.
+        let warmUp = try spawnAndCaptureStderr(binary: binary, arguments: ["--version"])
+        XCTAssertFalse(
+            warmUp.timedOut,
+            "The untimed `--version` warm-up hit the cap; this failure is in the warm-up, not the timed banner spawn"
+        )
+        XCTAssertEqual(
+            warmUp.terminationStatus, 0,
+            "The untimed `--version` warm-up exited non-zero; this failure is in the warm-up, not the timed banner spawn"
+        )
+
+        let run = try spawnAndCaptureStderr(
+            binary: binary,
+            until: { $0.contains("[banner] che-ical-mcp") && $0.contains(resolvedBinaryPath) }
+        )
 
         XCTAssertTrue(
-            stderr.contains("[banner] che-ical-mcp"),
-            "Default startup should emit banner. Got stderr: \(stderr.prefix(200))"
+            run.stderr.contains("[banner] che-ical-mcp"),
+            "Default startup should emit banner. Got stderr: \(run.stderr.prefix(200))"
         )
         XCTAssertTrue(
-            stderr.contains(resolvedBinaryPath),
-            "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
+            run.stderr.contains(resolvedBinaryPath),
+            "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(run.stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
+        )
+        XCTAssertFalse(run.timedOut, "The banner should arrive before the 10 s cap")
+        let arrival = try XCTUnwrap(
+            run.untilMatchedAfter,
+            "The banner header and the resolved binary path never both reached stderr, so there is no arrival time to check"
         )
         XCTAssertLessThan(
-            elapsed, 1.5,
-            "Banner must emit within Plan tier latency budget (#127, target 200ms; assertion bound at 1.5s to absorb local-host noise). Elapsed: \(String(format: "%.3f", elapsed))s"
+            arrival, 5.0,
+            "Banner must arrive within the latency tripwire (#127 target 200ms; bound 5.0s, above the production path's own worst case, #233). Arrived after: \(String(format: "%.3f", arrival))s"
         )
     }
 
@@ -224,30 +372,33 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         var env = ProcessInfo.processInfo.environment
         env["CHE_ICAL_MCP_NO_BANNER"] = "1"
 
-        let (stderr, _) = try spawnAndCaptureStderr(binary: binary, environment: env)
+        let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
+        XCTAssertFalse(run.timedOut, "With the banner suppressed the server should still exit by itself on stdin EOF")
+        XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
-            stderr.contains("[banner]"),
-            "Env-var should fully suppress banner. Got stderr: \(stderr)"
+            run.stderr.contains("[banner]"),
+            "Env-var should fully suppress banner. Got stderr: \(run.stderr)"
         )
         XCTAssertFalse(
-            stderr.contains("[drift]"),
-            "Env-var should also suppress drift signals. Got stderr: \(stderr)"
+            run.stderr.contains("[drift]"),
+            "Env-var should also suppress drift signals. Got stderr: \(run.stderr)"
         )
     }
 
     /// `--version` exits before the MCP-server-mode code path, so no banner.
     func testNoBannerForVersionFlag() throws {
         let binary = try locateBuiltBinary()
-        let (stderr, status) = try spawnAndCaptureStderr(
+        let run = try spawnAndCaptureStderr(
             binary: binary,
             arguments: ["--version"]
         )
 
-        XCTAssertEqual(status, 0)
+        XCTAssertFalse(run.timedOut, "--version should exit by itself")
+        XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
-            stderr.contains("[banner]"),
-            "--version path should not emit banner. Got stderr: \(stderr)"
+            run.stderr.contains("[banner]"),
+            "--version path should not emit banner. Got stderr: \(run.stderr)"
         )
     }
 
@@ -255,15 +406,16 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// document the contract explicitly.
     func testNoBannerForHelpFlag() throws {
         let binary = try locateBuiltBinary()
-        let (stderr, status) = try spawnAndCaptureStderr(
+        let run = try spawnAndCaptureStderr(
             binary: binary,
             arguments: ["--help"]
         )
 
-        XCTAssertEqual(status, 0)
+        XCTAssertFalse(run.timedOut, "--help should exit by itself")
+        XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
-            stderr.contains("[banner]"),
-            "--help path should not emit banner. Got stderr: \(stderr)"
+            run.stderr.contains("[banner]"),
+            "--help path should not emit banner. Got stderr: \(run.stderr)"
         )
     }
 
@@ -272,16 +424,21 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// non-zero when access is denied/skipped (host-TCC-state dependent), and under this
     /// non-interactive spawn `.notDetermined` is skipped (never calls the blocking request,
     /// so no hang).
+    ///
+    /// `maxWait: 1.0` is explicit (#233): in a GUI session `--setup` runs the interactive
+    /// SetupWindow `NSApplication`, which never exits by itself (#249), so the 10 s default
+    /// cap would keep that window on screen for 10 s on every run.
     func testNoBannerForSetupFlag() throws {
         let binary = try locateBuiltBinary()
-        let (stderr, _) = try spawnAndCaptureStderr(
+        let run = try spawnAndCaptureStderr(
             binary: binary,
-            arguments: ["--setup"]
+            arguments: ["--setup"],
+            maxWait: 1.0
         )
 
         XCTAssertFalse(
-            stderr.contains("[banner]"),
-            "--setup path should not emit banner. Got stderr: \(stderr)"
+            run.stderr.contains("[banner]"),
+            "--setup path should not emit banner. Got stderr: \(run.stderr)"
         )
     }
 
@@ -302,20 +459,22 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         // A freshly-copied binary at a never-seen path incurs a one-time macOS Gatekeeper
         // first-exec assessment before `main` runs — measured ~3.7s cold here (vs ~0.3s once
-        // assessed). The banner only emits after that, so the default 1.0s maxWait would
-        // SIGTERM the child before it ever prints. The continuous stderr drain captures the
-        // banner the moment it lands, so we just need a wait budget that comfortably exceeds
-        // cold-exec assessment; 10s gives margin for slower/CI hosts without risking a job hang
-        // (the post-kill waitUntilExit is independently capped at 3s).
-        let (stderr, _) = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
+        // assessed). The banner only emits after that. The helper waits for the child to exit
+        // (it exits on stdin EOF right after the banner), so the cap only has to comfortably
+        // exceed cold-exec assessment; 10s gives margin for slower/CI hosts without risking a
+        // job hang (the post-kill waitUntilExit is independently capped at 3s). 10s has also
+        // been the helper's default since #233; it stays explicit so this test keeps its
+        // budget if the default changes.
+        let run = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
 
+        XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF after the banner")
         XCTAssertTrue(
-            stderr.contains("[banner] che-ical-mcp"),
-            "Banner should appear even from arbitrary path. Got stderr: \(stderr.prefix(200))"
+            run.stderr.contains("[banner] che-ical-mcp"),
+            "Banner should appear even from arbitrary path. Got stderr: \(run.stderr.prefix(200))"
         )
         XCTAssertTrue(
-            stderr.contains(tempBinary.path),
-            "Banner should print the temp path we spawned from. Got: \(stderr.prefix(400))"
+            run.stderr.contains(tempBinary.path),
+            "Banner should print the temp path we spawned from. Got: \(run.stderr.prefix(400))"
         )
     }
 }
