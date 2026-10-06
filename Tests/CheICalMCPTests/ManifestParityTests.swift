@@ -143,4 +143,19 @@ final class ManifestParityTests: XCTestCase {
             "mcpb/manifest.json display_name (\"\(displayName)\") must not contain XML/HTML metacharacters \(Array("&<>")) — a literal `&` makes Claude Desktop 1.18286.0 silently drop the whole server from conversations (#166, confirmed root cause). Found: \(Array(forbidden))."
         )
     }
+
+    /// #231: `alarms[].minutes_before` flips EventKit's sign (EventKit: negative =
+    /// before), so both places a client first reads about the field state the sign.
+    func testReminderReadToolsStateTheSignOfMinutesBefore() throws {
+        let sign = "positive = before the due date, negative = after"
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["list_reminders", "search_reminders"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains(sign), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains(sign), "mcpb/manifest.json \(name): \(summary)")
+        }
+    }
 }

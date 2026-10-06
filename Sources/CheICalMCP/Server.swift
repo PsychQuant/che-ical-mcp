@@ -477,7 +477,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -656,7 +656,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules) and due date precision.",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1580,6 +1580,30 @@ class CheICalMCPServer {
 
     // MARK: - Reminder Handlers
 
+    /// #231: start date and time-based alarms for list_reminders / search_reminders.
+    /// `start` has the `due` shape; `start_date` / `start_date_local` mirror `due_date` / `due_date_local`.
+    private func reminderScheduleFields(_ reminder: ReminderReadSnapshot) -> [String: Any] {
+        var fields: [String: Any] = [
+            "start": ReminderDueValue(components: reminder.startDateComponents)?.dictionary ?? NSNull(),
+            // Sorted and filtered here too, so the order holds however the snapshot was built.
+            "alarms": ReminderReadSnapshot.Alarm.listed(reminder.alarms).map { [self] alarm -> [String: Any] in
+                switch alarm {
+                case .relative(let seconds):
+                    // Positive means before the due date; `+ 0` turns -0.0 into 0.
+                    return ["kind": "relative", "minutes_before": -seconds / 60 + 0]
+                case .absolute(let date):
+                    return ["kind": "absolute", "absolute_date": dateFormatter.string(from: date),
+                            "absolute_date_local": localDateFormatter.string(from: date)]
+                }
+            }
+        ]
+        if let startDate = safeDateFromComponents(reminder.startDateComponents) {
+            fields["start_date"] = dateFormatter.string(from: startDate)
+            fields["start_date_local"] = localDateFormatter.string(from: startDate)
+        }
+        return fields
+    }
+
     private func handleListReminders(arguments: [String: Value]) async throws -> String {
         let filterMode = arguments["filter"]?.stringValue
         let sortMode = arguments["sort"]?.stringValue ?? "due_date"
@@ -1642,6 +1666,7 @@ class CheICalMCPServer {
                 dict["creation_date_local"] = localDateFormatter.string(from: creationDate)
             }
             if let trigger = reminder.locationTrigger { dict["location_trigger"] = trigger.dictionary }
+            dict.merge(reminderScheduleFields(reminder)) { _, new in new }
             dict.merge(reminder.recurrenceMetadata) { _, new in new }
             return dict
         }
@@ -1880,6 +1905,7 @@ class CheICalMCPServer {
                 dict["completion_date_local"] = localDateFormatter.string(from: completionDate)
             }
             if let trigger = reminder.locationTrigger { dict["location_trigger"] = trigger.dictionary }
+            dict.merge(reminderScheduleFields(reminder)) { _, new in new }
             dict.merge(reminder.recurrenceMetadata) { _, new in new }
             return dict
         }

@@ -69,7 +69,7 @@
     },
     {
       "name": "list_reminders",
-      "description": "List reminders with structured recurrence rules and due-date precision"
+      "description": "List reminders with structured recurrence rules, due-date precision, start date and time-based alarms (minutes_before: positive = before the due date, negative = after)"
     },
     {
       "name": "create_reminder",
@@ -125,7 +125,7 @@
     },
     {
       "name": "search_reminders",
-      "description": "Search reminders by keyword(s) or tag with AND/OR matching and structured recurrence metadata"
+      "description": "Search reminders by keyword(s) or tag with AND/OR matching, structured recurrence metadata, start date and time-based alarms (minutes_before: positive = before the due date, negative = after)"
     },
     {
       "name": "create_reminders_batch",
