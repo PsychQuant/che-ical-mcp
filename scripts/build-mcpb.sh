@@ -6,12 +6,51 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=lib/check-staged-product.sh
+source "$SCRIPT_DIR/lib/check-staged-product.sh"
 MCPB_DIR="$PROJECT_DIR/mcpb"
 SERVER_DIR="$MCPB_DIR/server"
 
 echo "=== che-ical-mcp MCPB Build Script ==="
 echo "Project directory: $PROJECT_DIR"
 echo ""
+
+# #238: this version's release files from an earlier run (a stale .mcpb reported 1.18.0
+# in the first v1.19.0 build) are removed before anything is built, and again if this
+# run fails or is stopped (csp_arm_cleanup), so a failed run never leaves a file that
+# looks shippable. That includes a good build of the same version from an earlier run:
+# rebuild to get it back. Cleanup is armed first, so even a failure to read the version
+# removes the binary.
+UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
+PACKED_MCPB=""
+csp_arm_cleanup
+# AppVersion.current is the source of truth (step 2 checks the other files against it).
+VERSION_SWIFT="$PROJECT_DIR/Sources/CheICalMCP/Version.swift"
+SOURCE_VERSION=$(grep -E 'static let current = "' "$VERSION_SWIFT" | sed -E 's/.*"([^"]+)".*/\1/')
+if [[ -z "$SOURCE_VERSION" ]]; then
+    echo "  ✗ Failed to parse AppVersion.current from Version.swift"
+    exit 1
+fi
+PACKED_MCPB="$MCPB_DIR/che-ical-mcp-${SOURCE_VERSION}.mcpb"
+csp_clear_release_artifacts "$PACKED_MCPB" "$UNIVERSAL_BINARY"
+
+# The signing decision is made once, here, before anything is built, and used both for
+# strict checking and for signing in step 6, so the two cannot disagree (scripts/lib).
+csp_decide_signing
+if [[ "$SHOULD_SIGN" == "false" && ( "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ) ]]; then
+    # Canonical release path — refuse to produce an unsigned artifact, before building.
+    echo "✗ Refusing to skip signing: REQUIRE_CODESIGN=$REQUIRE_CODESIGN" >&2
+    echo "  Reason: $SKIP_REASON" >&2
+    echo "  Fix: set DEVELOPER_ID + NOTARY_PROFILE, install Developer ID Application" >&2
+    echo "       cert, and ensure cert is in your login keychain." >&2
+    echo "  See README 'Signing & Notarization' for one-time setup." >&2
+    exit 1
+fi
+# A build that signs, or must sign, refuses an architecture this host cannot run
+# (check_staged_product), so it needs Rosetta on Apple Silicon.
+if csp_release_build; then
+    export CHECK_STAGED_STRICT=1
+fi
 
 # Swift 6 Concurrency Guard
 # Try Swift 6 (strict concurrency) first; if upstream dependencies fail,
@@ -34,18 +73,11 @@ fi
 # README "Release Process" — because it's a Registry snapshot that bumps only
 # when re-submitting the .mcpb bundle to MCP Registry.
 echo "[2/7] Checking version consistency..."
-VERSION_SWIFT="$PROJECT_DIR/Sources/CheICalMCP/Version.swift"
 MCPB_MANIFEST="$MCPB_DIR/manifest.json"
 INFO_PLIST="$PROJECT_DIR/Sources/CheICalMCP/Info.plist"
 
-SOURCE_VERSION=$(grep -E 'static let current = "' "$VERSION_SWIFT" | sed -E 's/.*"([^"]+)".*/\1/')
 MCPB_VERSION=$(grep -E '"version"' "$MCPB_MANIFEST" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
 PLIST_VERSION=$(awk '/<key>CFBundleVersion<\/key>/{getline; print}' "$INFO_PLIST" | sed -E 's/.*<string>([^<]+)<\/string>.*/\1/')
-
-if [[ -z "$SOURCE_VERSION" ]]; then
-    echo "  ✗ Failed to parse AppVersion.current from Version.swift"
-    exit 1
-fi
 
 if [[ "$MCPB_VERSION" != "$SOURCE_VERSION" ]]; then
     echo "  ✗ Version drift: Version.swift=$SOURCE_VERSION but mcpb/manifest.json=$MCPB_VERSION"
@@ -87,31 +119,34 @@ fi
 
 echo "  ✓ Version.swift, Info.plist, mcpb/manifest.json, marketplace.json + plugin.json all at $SOURCE_VERSION"
 
+
 # Steps 3-4: Build for both architectures
 # #238: under the swiftbuild build system (Swift 6.4 default) both --arch builds write
 # to the same bin path, so each product is copied out right after its own build —
-# before the next build overwrites it — and checked to contain only that
-# architecture. The per-arch paths under .build/<triple>/release are no longer
-# written and must not be read: they hold whatever an older toolchain left there.
+# before the next build overwrites it — and the staged copy (the file that gets
+# packaged) is checked by check_staged_product (scripts/lib): the file, exactly that
+# architecture, and a `--version` that matches AppVersion.current. In strict mode
+# (CHECK_STAGED_STRICT, chosen at the top: a build that signs or must sign) an
+# architecture this host cannot run is an error; otherwise it is a visible note. After lipo
+# the packaged slices must equal the checked ones, and after signing the final file must
+# still hold exactly those two slices and is run again (check_final_binary). The
+# per-arch paths under .build/<triple>/release are no longer written and must not be
+# read: they hold whatever an older toolchain left there.
 STAGE_DIR="$PROJECT_DIR/.build/mcpb-stage"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 
 build_arch() {
-    local arch="$1" bin_dir product archs
+    local arch="$1" bin_dir product
     swift build -c release --arch "$arch" "${SWIFT_FALLBACK_FLAGS[@]}"
     bin_dir=$(swift build -c release --arch "$arch" --show-bin-path "${SWIFT_FALLBACK_FLAGS[@]}")
     product="$bin_dir/CheICalMCP"
     if [[ ! -f "$product" ]]; then
-        echo "Error: no $arch product at $product"
-        exit 1
-    fi
-    archs=$(lipo -archs "$product")
-    if [[ "$archs" != "$arch" ]]; then
-        echo "Error: $product contains '$archs', expected '$arch' (#238)"
+        echo "Error: no $arch product at $product (#238)" >&2
         exit 1
     fi
     cp "$product" "$STAGE_DIR/CheICalMCP-$arch"
+    check_staged_product "$STAGE_DIR/CheICalMCP-$arch" "$arch" CheICalMCP "$SOURCE_VERSION" || exit 1
 }
 
 echo "[3/7] Building for Apple Silicon (arm64)..."
@@ -127,32 +162,18 @@ mkdir -p "$SERVER_DIR"
 
 ARM64_BINARY="$STAGE_DIR/CheICalMCP-arm64"
 X64_BINARY="$STAGE_DIR/CheICalMCP-x86_64"
-UNIVERSAL_BINARY="$SERVER_DIR/CheICalMCP"
 
-if [[ -f "$ARM64_BINARY" && -f "$X64_BINARY" ]]; then
-    # rm -f forces fresh inode (see Makefile install: target for the rationale —
-    # macOS kernel caches code-signature hashes per-inode, and reusing an inode
-    # held open by an old running CheICalMCP process triggers SIGKILL with
-    # "load code signature error 2" on subsequent execs. See #62.)
-    rm -f "$UNIVERSAL_BINARY"
-    lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
-    chmod +x "$UNIVERSAL_BINARY"
-    echo "Created Universal Binary: $UNIVERSAL_BINARY"
-    # #238: the packaged binary must report the version the sources declare. A stale
-    # product (left by an older toolchain) passes every later step — signing,
-    # notarization, the .mcpb check — so this is the only place it can be caught.
-    BUILT_VERSION=$("$UNIVERSAL_BINARY" --version 2>/dev/null | awk '{print $NF}')
-    if [[ "$BUILT_VERSION" != "$SOURCE_VERSION" ]]; then
-        echo "Error: the packaged binary reports '$BUILT_VERSION', but the sources are at $SOURCE_VERSION (stale build product, #238)"
-        exit 1
-    fi
-    echo "  ✓ packaged binary reports $BUILT_VERSION"
-else
-    echo "Error: Could not find architecture-specific binaries"
-    echo "  ARM64: $ARM64_BINARY (exists: $(test -f "$ARM64_BINARY" && echo yes || echo no))"
-    echo "  X64: $X64_BINARY (exists: $(test -f "$X64_BINARY" && echo yes || echo no))"
-    exit 1
-fi
+# Both staged products were checked in build_arch (#238), which exits on any failure.
+# rm -f forces fresh inode (see Makefile install: target for the rationale —
+# macOS kernel caches code-signature hashes per-inode, and reusing an inode
+# held open by an old running CheICalMCP process triggers SIGKILL with
+# "load code signature error 2" on subsequent execs. See #62.)
+rm -f "$UNIVERSAL_BINARY"
+lipo -create "$ARM64_BINARY" "$X64_BINARY" -output "$UNIVERSAL_BINARY"
+chmod +x "$UNIVERSAL_BINARY"
+# The packaged slices must be byte-identical to the staged products that were checked.
+check_packaged_slices "$UNIVERSAL_BINARY" "$STAGE_DIR" CheICalMCP || exit 1
+echo "Created Universal Binary: $UNIVERSAL_BINARY"
 
 # Verify Universal Binary
 echo ""
@@ -183,36 +204,17 @@ echo "  written to: $SHA256_FILE"
 #
 # Behavior:
 #   SKIP_CODESIGN=1 (or "true") → skip unconditionally (local iteration override)
-#   REQUIRE_CODESIGN=1 → fail-fast if signing prerequisites missing
+#   REQUIRE_CODESIGN=1 → refused before building if signing prerequisites are missing
 #     (used by `make release-signed` — canonical release path must not
-#      silently produce unsigned artifacts)
+#      silently produce unsigned artifacts; see the top of this script)
 #   No DEVELOPER_ID env or no cert in keychain → auto-skip with warning
 #     (default fork-friendly behavior for direct `./scripts/build-mcpb.sh`)
 #   Otherwise → run sign-and-notarize.sh
+#   (SHOULD_SIGN / SKIP_REASON come from csp_decide_signing, run before building.)
 echo ""
-SHOULD_SIGN=true
-SKIP_REASON=""
-if [[ "${SKIP_CODESIGN:-}" == "1" || "${SKIP_CODESIGN:-}" == "true" ]]; then
-    SHOULD_SIGN=false
-    SKIP_REASON="SKIP_CODESIGN=$SKIP_CODESIGN"
-elif [[ -z "${DEVELOPER_ID:-}" ]]; then
-    SHOULD_SIGN=false
-    SKIP_REASON="DEVELOPER_ID env not set"
-elif ! security find-identity -p codesigning -v 2>/dev/null | grep -qF "$DEVELOPER_ID"; then
-    SHOULD_SIGN=false
-    SKIP_REASON="codesigning identity '$DEVELOPER_ID' not in keychain"
-fi
 
 if [[ "$SHOULD_SIGN" == "false" ]]; then
-    if [[ "${REQUIRE_CODESIGN:-}" == "1" || "${REQUIRE_CODESIGN:-}" == "true" ]]; then
-        # Canonical release path — refuse to produce unsigned artifact silently
-        echo "[6/7] ✗ Refusing to skip signing: REQUIRE_CODESIGN=$REQUIRE_CODESIGN" >&2
-        echo "        Reason: $SKIP_REASON" >&2
-        echo "        Fix: set DEVELOPER_ID + NOTARY_PROFILE, install Developer ID Application" >&2
-        echo "             cert, and ensure cert is in your login keychain." >&2
-        echo "        See README 'Signing & Notarization' for one-time setup." >&2
-        exit 1
-    fi
+    # (REQUIRE_CODESIGN with no way to sign was refused before building.)
     # Fork-friendly auto-skip: warn + continue with unsigned binary
     echo "[6/7] Skipping codesign + notarize."
     echo "  Reason: $SKIP_REASON"
@@ -287,6 +289,9 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
     echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
     echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ...\`"
 fi
+
+# Signing rewrote the file that gets packaged, so run it once more (#238).
+check_final_binary "$UNIVERSAL_BINARY" CheICalMCP "$SOURCE_VERSION" || exit 1
 
 # Step 7: Check for required files
 echo ""
