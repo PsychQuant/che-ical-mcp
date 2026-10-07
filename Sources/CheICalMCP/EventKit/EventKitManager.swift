@@ -2143,35 +2143,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Execute an operation again (for redo). Same as the original mutation.
+    /// Execute an operation again (for redo). Only completions are written again (#247).
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
-        case .createEvent(_, let title, _):
-            return "Cannot redo creation of event '\(undoVisibleTitle(title))' — please create it again manually"
-
-        case .deleteEvent(let snapshot):
-            // Redo delete = delete the restored event
-            // The restored event's ID was stored via updateLastRedoEventId
-            return "Redo delete: please use delete_event to remove '\(undoVisibleTitle(snapshot.title))'"
-
-        case .updateEvent(let id, _, _):
-            return "Redo update: the event \(id) was restored to its previous state. Apply your changes again."
-
-        case .updateRecurringEvent(_, let title, _):
-            // Unreachable: its undo always fails and discards the record.
-            return "Redo update: the update of the recurring event '\(undoVisibleTitle(title))' was not undone, so there is nothing to redo."
-
-        case .moveEvent(_, _, _, let title, _):
-            return "Redo move: use move_events_batch to move '\(undoVisibleTitle(title))' again."
-
-        case .createReminder(_, let title, _):
-            return "Cannot redo reminder creation — please create '\(undoVisibleTitle(title))' again manually"
-
-        case .deleteReminder(let snapshot):
-            return "Redo delete: please use delete_reminder to remove '\(undoVisibleTitle(snapshot.title))'"
-
-        case .updateReminder(let id, _, _):
-            return "Redo update: the reminder \(id) was restored. Apply your changes again."
+        case .createEvent, .deleteEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
+             .createReminder, .deleteReminder, .updateReminder:
+            // #247: these write nothing on redo. `handleRedo` answers them itself and leaves both
+            // stacks unchanged (`CalendarUndoManager.beginRedo`); this is a fallback with the same
+            // text, and it writes nothing either.
+            return operation.redoInstruction ?? "Nothing to redo"
 
         case .completeReminder(_, _, let requestedCompleted, _, let title, _, _):
             // Redo re-applies the recorded request (#196: never the opposite of
@@ -2187,6 +2167,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
 
         case .batch(let ops):
+            // #247: a batch of members that write nothing used to answer "Redone batch (N
+            // operations)" for a no-op.
+            if let instruction = operation.redoInstruction { return instruction }
             let results = try await UndoBatchRunner.run(
                 ops,
                 check: { try await self.verifyHistoryTarget(of: $0, verb: .redo) },

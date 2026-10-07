@@ -452,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
+                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo and redo history as they were, and answers success: false with the tool that repeats the operation; that entry stays on top of the redo history until a new change clears it. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -1533,8 +1533,18 @@ class CheICalMCPServer {
     }
 
     private func handleRedo() async throws -> String {
-        guard let record = try await undoManager.beginRedo() else {
+        let record: UndoRecord
+        switch try await undoManager.beginRedo() {
+        case .empty:
             return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo"])
+        case .notRedoable(let top, let undoCount, let redoCount):
+            // #247: nothing is executed and neither stack moved, so the next undo cannot repeat
+            // the undo of this record (a deleted item recreated twice).
+            return try actionResult(["action": "redo", "success": false,
+                                     "message": top.operation.redoInstruction ?? "Nothing to redo",
+                                     "undo_available": undoCount, "redo_available": redoCount])
+        case .started(let started):
+            record = started
         }
         // #191 — same catch-scope discipline as handleUndo (execution only).
         let message: String
