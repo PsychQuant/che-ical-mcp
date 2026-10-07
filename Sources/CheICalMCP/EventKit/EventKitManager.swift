@@ -2161,6 +2161,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
+            // #244 D3 first: a member that can never be restored refuses and discards the record,
+            // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
+            try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
             // #248 B: the calendar or list each deleted item is recreated in, read once per batch.
             try await verifyRestoreDestinations(of: ops, verb: .undo)
             // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write

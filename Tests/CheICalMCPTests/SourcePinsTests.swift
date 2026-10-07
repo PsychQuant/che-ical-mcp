@@ -35,6 +35,13 @@ final class SourcePinsTests: XCTestCase {
         XCTAssertNil(SourcePins.body(of: "func fourth()", in: "// func fourth() { x }\nfunc other() {}"))
     }
 
+    /// A whole file's code, for pins that count a call across files (PR #282's runner-caller pin).
+    func testTheCodeOfAWholeFileHasNoCommentsOrStrings() {
+        let code = SourcePins.code("let a = \"run( in // a string\" // run( in a comment\nrun(x)\n/* run( */")
+        XCTAssertEqual(SourcePins.ranges(of: "run(", in: code).count, 1, code)
+        XCTAssertEqual(code.split(separator: "\n", omittingEmptySubsequences: false).count, 3, "newlines stay")
+    }
+
     func testPatternsTolerateSpacing() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func first()", in: "func first() {\n  self.value   =  a ?? b.value\n}"))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"self\.value\s*=\s*a\s*\?\?\s*b\.value"#, in: body).count, 1)

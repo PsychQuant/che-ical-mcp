@@ -31,6 +31,12 @@ enum SourcePins {
         return nil
     }
 
+    /// A whole source's code with comments and string literals blanked, for a pin that counts a
+    /// call across files rather than reading one function.
+    static func code(_ source: String) -> String {
+        String(blankingCommentsAndStrings(Array(source)))
+    }
+
     static func ranges(of literal: String, in body: String) -> [Range<String.Index>] {
         ranges(ofPattern: NSRegularExpression.escapedPattern(for: literal), in: body)
     }
