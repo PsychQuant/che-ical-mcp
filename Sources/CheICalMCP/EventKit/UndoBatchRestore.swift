@@ -14,6 +14,36 @@ enum UndoRestoreDestination {
     /// The list `applyReminderSnapshot` picks.
     case reminderList(ReminderSnapshot)
 
+    /// The title of the item that would be recreated.
+    var itemTitle: String {
+        switch self {
+        case .eventCalendar(let snapshot): return snapshot.title
+        case .reminderList(let snapshot): return snapshot.title
+        }
+    }
+
+    /// Every destination an undo of `members` recreates items in, nested batches included, in record
+    /// order. The batch pre-check reads the calendars and lists once for all of them.
+    static func of(_ members: [UndoOperation], verb: UndoHistoryVerb) -> [UndoRestoreDestination] {
+        members.flatMap { member -> [UndoRestoreDestination] in
+            if case .batch(let inner) = member { return of(inner, verb: verb) }
+            return member.restoreDestination(verb: verb).map { [$0] } ?? []
+        }
+    }
+
+    /// The first destination whose calendar or list is gone. The two closures must make the lookup
+    /// the restore makes (`applySnapshot`, `applyReminderSnapshot`), against lists read once.
+    static func firstMissing(among destinations: [UndoRestoreDestination],
+                             eventCalendarResolves: (EventSnapshot) -> Bool,
+                             reminderListResolves: (ReminderSnapshot) -> Bool) -> UndoRestoreDestination? {
+        destinations.first { destination in
+            switch destination {
+            case .eventCalendar(let snapshot): return !eventCalendarResolves(snapshot)
+            case .reminderList(let snapshot): return !reminderListResolves(snapshot)
+            }
+        }
+    }
+
     /// The refusal when the destination is gone.
     var missingError: UndoRestoreDestinationMissingError {
         switch self {
@@ -31,7 +61,7 @@ enum UndoRestoreDestination {
 
 extension UndoOperation {
     /// Where an undo of this record recreates the item, or nil. A redo of a delete writes nothing
-    /// (#247). A batch is walked member by member by the caller. Exhaustive, so a new record kind
+    /// (#247). A batch is walked by `UndoRestoreDestination.of`. Exhaustive, so a new record kind
     /// must be classified to compile (#196 convention).
     func restoreDestination(verb: UndoHistoryVerb) -> UndoRestoreDestination? {
         guard verb == .undo else { return nil }

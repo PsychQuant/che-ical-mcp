@@ -285,9 +285,9 @@ extension UndoOperation {
 ///
 /// Only batch records reach this: lists of `.deleteEvent` (multi-event and series deletes) and of
 /// `.deleteReminder` (reminder batch deletes, #243). Their undo writes to no existing item, so the
-/// post-state part has nothing to compare (PR #259 verify #12 / #25 / #28); what the pre-flight
-/// checks for them is that the calendar or list each is recreated in exists (#248 B,
-/// `verifyRestoreDestination`). It assumes the members touch different
+/// post-state part has nothing to compare (PR #259 verify #12 / #25 / #28); for them the batch arm
+/// first checks, once per batch, that the calendar or list each is recreated in exists (#248 B,
+/// `verifyRestoreDestinations`). It assumes the members touch different
 /// items: two members on one item would both be checked against the state before either is
 /// undone. It is not atomic: each member re-checks when it runs, and a store change in between
 /// can still stop the batch half way, which `Interrupted` reports.

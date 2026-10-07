@@ -112,31 +112,35 @@ extension EventKitManager {
             for member in operations { try await verifyHistoryTarget(of: member, verb: verb) }
             return
         }
-        try await verifyRestoreDestination(of: operation, verb: verb)
         _ = try await verifiedHistoryTarget(of: operation, verb: verb)
     }
 
-    /// #248 B: a member whose undo recreates the item needs the calendar or list it is recreated
-    /// in, so a batch with a member whose calendar is gone is refused before its first write
-    /// instead of failing part-way. Kept apart from the post-state check, which covers items that
-    /// exist. Not a transaction: a calendar deleted after this check still stops the batch part-way
-    /// (`UndoBatchPartiallyUndoneError`).
-    func verifyRestoreDestination(of operation: UndoOperation, verb: UndoHistoryVerb) async throws {
-        guard let destination = operation.restoreDestination(verb: verb) else { return }
-        let found: Bool
-        switch destination {
-        case .eventCalendar(let snapshot):
+    /// #248 B: a batch whose undo recreates items (deleted events and reminders) needs the calendar
+    /// or list each is recreated in, so a batch with a member whose calendar is gone is refused
+    /// before its first write instead of failing part-way. Run once per batch, before the per-member
+    /// checks: the calendars and lists are read once however many members the batch holds (a
+    /// cleanup holds up to its `limit`). Not a transaction: a calendar deleted after this check
+    /// still stops the batch part-way (`UndoBatchPartiallyUndoneError`).
+    func verifyRestoreDestinations(of members: [UndoOperation], verb: UndoHistoryVerb) async throws {
+        let destinations = UndoRestoreDestination.of(members, verb: verb)
+        var eventCalendars: [EKCalendar] = []
+        var reminderLists: [EKCalendar] = []
+        if destinations.contains(where: { if case .eventCalendar = $0 { return true }; return false }) {
             try await ensureCalendarAccess()
             refreshIfNeeded()
-            found = (try? snapshot.resolveCalendar(in: eventStore.calendars(for: .event),
-                                                   identifier: { $0.calendarIdentifier })) != nil
-        case .reminderList(let snapshot):
+            eventCalendars = eventStore.calendars(for: .event)
+        }
+        if destinations.contains(where: { if case .reminderList = $0 { return true }; return false }) {
             try await ensureReminderAccess()
             refreshIfNeeded()
-            // The lookup `applyReminderSnapshot` makes on main (by title); #242 (PR #277) makes it identifier-based.
-            found = eventStore.calendars(for: .reminder).contains { $0.title == snapshot.calendarTitle }
+            reminderLists = eventStore.calendars(for: .reminder)
         }
-        if !found { throw destination.missingError }
+        let missing = UndoRestoreDestination.firstMissing(
+            among: destinations,
+            eventCalendarResolves: { (try? $0.resolveCalendar(in: eventCalendars, identifier: { $0.calendarIdentifier })) != nil },
+            // The lookup `applyReminderSnapshot` makes on main (by title); #242 (PR #277) makes it identifier-based.
+            reminderListResolves: { snapshot in reminderLists.contains { $0.title == snapshot.calendarTitle } })
+        if let missing { throw missing.missingError }
     }
 
     /// Each undo arm knows its record kind, so a mismatch is unreachable by construction; it

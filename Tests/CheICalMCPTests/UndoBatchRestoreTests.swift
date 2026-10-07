@@ -77,26 +77,41 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(error is TrustedErrorMessage)
     }
 
-    /// The pre-check is part of the batch check, which runs on every member before the first
-    /// write: a member whose calendar is gone stops the batch with nothing restored.
-    func testAMissingDestinationStopsTheBatchBeforeItsFirstWrite() async {
+    /// The destinations are gathered for the whole batch, nested batches included, so the calendars
+    /// and lists are read once per batch rather than once per member (PR #282 round 1, 5 and 15).
+    func testTheDestinationsOfABatchAreGatheredOnceForAllItsMembers() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
-        let members: [UndoOperation] = [.deleteEvent(snapshot: gone), .deleteEvent(snapshot: event)]
-        var executed: [String] = []
-        do {
-            _ = try await UndoBatchRunner.run(
-                Array(members.reversed()),
-                check: { member in
-                    if case .eventCalendar(let snapshot)? = member.restoreDestination(verb: .undo), snapshot.title == "Gone" {
-                        throw UndoRestoreDestination.eventCalendar(snapshot).missingError
-                    }
-                },
-                execute: { member in executed.append(member.description); return "restored" })
-            XCTFail("the refusal must surface")
-        } catch {
-            XCTAssertTrue(error is UndoRestoreDestinationMissingError, "\(error)")
+        let members: [UndoOperation] = [
+            .deleteEvent(snapshot: gone),
+            .createEvent(id: "e", title: "Standup", created: event),
+            .batch([.deleteReminder(snapshot: reminder)]),
+        ]
+        let destinations = UndoRestoreDestination.of(members, verb: .undo)
+        XCTAssertEqual(destinations.map(\.itemTitle), ["Gone", "Pay rent"])
+        XCTAssertTrue(UndoRestoreDestination.of(members, verb: .redo).isEmpty)
+    }
+
+    func testTheFirstMissingDestinationIsTheOneTheRefusalNames() {
+        let gone = UndoSnapshotFixtures.event(title: "Gone")
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteEvent(snapshot: gone),
+                                                      .deleteReminder(snapshot: reminder)], verb: .undo)
+        var asked: [String] = []
+        let missing = UndoRestoreDestination.firstMissing(
+            among: destinations,
+            eventCalendarResolves: { asked.append($0.title); return $0.title != "Gone" },
+            reminderListResolves: { asked.append($0.title); return true })
+        XCTAssertEqual(missing?.itemTitle, "Gone")
+        XCTAssertEqual(asked, ["Standup", "Gone"], "stops at the first destination that is gone")
+
+        let none = UndoRestoreDestination.firstMissing(among: destinations,
+                                                       eventCalendarResolves: { _ in true },
+                                                       reminderListResolves: { _ in true })
+        XCTAssertNil(none)
+        guard case .reminderList? = UndoRestoreDestination.firstMissing(among: destinations,
+                                                                        eventCalendarResolves: { _ in true },
+                                                                        reminderListResolves: { _ in false }) else {
+            return XCTFail("a gone list is reported as the reminder's destination")
         }
-        XCTAssertEqual(executed, [])
     }
 
     // MARK: - A: a write fails part-way

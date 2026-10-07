@@ -2144,6 +2144,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
+            // #248 B: the calendar or list each deleted item is recreated in, read once per batch.
+            try await verifyRestoreDestinations(of: ops, verb: .undo)
             // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write
             // keeps only the members not yet restored (`UndoBatchExecution`).
             let results = try await UndoBatchExecution.run(
