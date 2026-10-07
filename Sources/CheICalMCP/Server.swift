@@ -1009,7 +1009,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminders_batch",
-                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts.",
+                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo restores every reminder it deleted, each under a new identifier.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1042,7 +1042,7 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThis does not record undo — use delete_reminder for individual items you may want to restore. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
+                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry: one undo restores every reminder it deleted, each under a new identifier. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([

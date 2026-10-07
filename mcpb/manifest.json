@@ -133,7 +133,7 @@
     },
     {
       "name": "delete_reminders_batch",
-      "description": "Delete multiple reminders at once"
+      "description": "Delete multiple reminders at once (one undo restores them all)"
     },
     {
       "name": "list_reminder_tags",
@@ -141,7 +141,7 @@
     },
     {
       "name": "cleanup_completed_reminders",
-      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list."
+      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list. One undo restores the deleted reminders."
     },
     {
       "name": "undo",

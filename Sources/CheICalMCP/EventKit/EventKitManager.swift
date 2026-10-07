@@ -1906,6 +1906,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var successCount = 0
         var failures: [(String, String)] = []
+        // #243: a snapshot per reminder actually removed, so the whole call is one undo entry, as
+        // in deleteEventsBatch (#185). Both delete_reminders_batch and cleanup_completed_reminders
+        // come through here.
+        var undoSnapshots: [ReminderSnapshot] = []
 
         for id in identifiers {
             do {
@@ -1932,8 +1936,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, "Reminder is no longer completed"))
                     continue
                 }
+                let snapshot = ReminderSnapshot(from: reminder)
                 try eventStore.remove(reminder, commit: true)
                 successCount += 1
+                undoSnapshots.append(snapshot)
             } catch {
                 // #32: never forward Apple-produced `localizedDescription` to
                 // the MCP client — it could in a future macOS interpolate
@@ -1983,6 +1989,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         markNeedsRefresh()
+        // #243: one entry for the call (partial failure: only the reminders actually removed).
+        if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) {
+            await CalendarUndoManager.shared.record(undo)
+        }
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,

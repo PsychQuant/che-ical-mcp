@@ -496,6 +496,14 @@ extension UndoOperation {
                                  completionDate: before.completionDate, title: savedTitle, redoCompletionDate: savedCompletionDate,
                                  wasRecurring: before.hasRecurrence)
     }
+
+    /// #243: the one record of a reminder batch delete (`delete_reminders_batch`,
+    /// `cleanup_completed_reminders`), holding only the reminders the call removed, in the order it
+    /// removed them; one undo restores them all, as for `delete_events_batch` (#185). `nil` when it
+    /// removed none, so the call pushes no entry that undo would pop instead of an older operation.
+    static func reminderBatchDelete(_ removed: [ReminderSnapshot]) -> UndoOperation? {
+        removed.isEmpty ? nil : .batch(removed.map { .deleteReminder(snapshot: $0) })
+    }
 }
 
 extension UndoOperation {

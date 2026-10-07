@@ -16,7 +16,7 @@ enum ReminderCleanup {
     /// `calendarName` is non-nil and findCalendars finds a match (see
     /// `EventKitManager.swift:971-973`). If `calendarSource` is supplied
     /// alone, it is silently discarded and the cleanup widens to every
-    /// calendar on every account. For a destructive, no-undo tool this is
+    /// calendar on every account. For a destructive tool this is
     /// a destructive silent failure (verification Round 1 F1).
     ///
     /// Round 2 found two bypasses of the original guard:
