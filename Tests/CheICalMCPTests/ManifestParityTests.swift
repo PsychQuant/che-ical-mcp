@@ -175,4 +175,73 @@ final class ManifestParityTests: XCTestCase {
                            "\(place) redo: \(text)")
         }
     }
+
+    /// PR #282 round 3, finding 4: the `undo` description and its manifest summary are edited by
+    /// #242 (PR #277), #244 (PR #278) and #248 (PR #282), each one line, so a merge that drops one
+    /// clause passes every other test. Each clause is pinned in both places a client reads it; the
+    /// phrasing may differ between them, the fact may not go.
+    func testUndoDescriptionsKeepEveryClause() throws {
+        let clauses: [(what: String, declared: String, summary: String)] = [
+            ("#242: a reminder's recorded list not found",
+             "the reminder list it restores into is not found under its recorded identifier",
+             "a reminder's recorded list is not found"),
+            ("#242: giving up a delete_reminder undo loses the reminder",
+             "giving up the undo of a delete_reminder loses the deleted reminder",
+             "discarding a delete_reminder undo loses the deleted reminder"),
+            ("#244: a batch holding a never-restorable delete is refused whole",
+             "a delete_events_batch that holds such a delete (refused before any of its events is restored)",
+             "a batch holding one that did not is refused whole"),
+            ("#244: a deleted occurrence comes back as a one-off event",
+             "Undo of a delete of one occurrence restores it as a one-off event",
+             "a deleted occurrence comes back as a one-off event"),
+            ("#248: a batch undo is refused before any write for a missing or read-only calendar or list",
+             "is refused before any write, its record kept whole, when the calendar or list of any of its items is missing or read-only",
+             "a batch undo is refused before any write when an item's calendar or list is missing or read-only"),
+            ("#248: the refusal counts the items",
+             "the error counts the items this stops and those whose calendar or list is in place",
+             "a batch undo is refused before any write"),
+            ("#248: giving up a batch undo drops every item",
+             "giving up that undo with discard_id drops every item of the entry",
+             "discarding it drops every item of the batch"),
+            ("#248: a batch undo that fails part-way keeps only the items not yet restored",
+             "A batch undo that fails part-way keeps only the items not yet restored",
+             "a batch undo that fails part-way keeps only the items not yet restored"),
+        ]
+        let (declared, summary) = try descriptions(of: "undo")
+        for clause in clauses {
+            XCTAssertTrue(declared.contains(clause.declared), "defineTools() undo lost \(clause.what): \(declared)")
+            XCTAssertTrue(summary.contains(clause.summary), "mcpb/manifest.json undo lost \(clause.what): \(summary)")
+        }
+    }
+
+    /// The same for the batch deletes whose undo is a batch record (#185, #243): what one undo
+    /// restores, the #244 refusal (events), and #248's refusal and its discard cost (finding 16).
+    func testBatchDeleteDescriptionsSayWhatTheirUndoRefusesAndWhatGivingUpCosts() throws {
+        let clauses: [(tool: String, clause: String)] = [
+            ("delete_events_batch", "comes back as a one-off event"),
+            ("delete_events_batch", "holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored"),
+            ("delete_events_batch", "when the calendar of any of its events is missing or read-only"),
+            ("delete_events_batch", "giving up that undo with discard_id drops every event of the batch"),
+            ("delete_reminders_batch", "one undo recreates every reminder it deleted"),
+            ("delete_reminders_batch", "when the list of any of its reminders is missing or read-only"),
+            ("delete_reminders_batch", "giving up that undo with discard_id drops every reminder of the call"),
+            ("cleanup_completed_reminders", "One undo recreates every reminder it deleted"),
+            ("cleanup_completed_reminders", "when the list of any of its reminders is missing or read-only"),
+            ("cleanup_completed_reminders", "giving up that undo with discard_id drops every reminder of the call"),
+        ]
+        for (tool, clause) in clauses {
+            let declared = try descriptions(of: tool).declared
+            XCTAssertTrue(declared.contains(clause), "defineTools() \(tool) lost: \(clause)\n\(declared)")
+        }
+    }
+
+    /// The `defineTools()` description and the manifest summary of `tool`.
+    private func descriptions(of tool: String) throws -> (declared: String, summary: String) {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools().first { $0.name == tool }?.description ?? ""
+        let summary = entries.first { $0["name"] as? String == tool }?["description"] as? String ?? ""
+        return (declared, summary)
+    }
 }
