@@ -24,6 +24,8 @@ final class UndoRedoClassificationTests: XCTestCase {
         [
             .createEvent(id: "EVT-1", title: "Standup", created: event),
             .deleteEvent(snapshot: event),
+            .deleteOccurrence(snapshot: event, notCarriedOver: []),
+            .deleteFollowingOccurrences(title: "Standup"),
             .updateEvent(id: "EVT-1", oldSnapshot: event, saved: event),
             .updateRecurringEvent(id: "EVT-1", title: "Standup", kind: .series),
             .moveEvent(id: "EVT-1", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
@@ -55,7 +57,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// The instruction names the title and the tool that repeats the operation, never the
     /// identifier (stale after an update-undo across accounts, #246), and says nothing was written.
     func testInstructionsNameTheTitleAndToolNotTheIdentifier() throws {
-        let expectedTool = ["create_event", "delete_event", "update_event", nil, "move_events_batch",
+        let expectedTool = ["create_event", "delete_event", "delete_event", nil, "update_event", nil, "move_events_batch",
                             "create_reminder", "delete_reminder", "update_reminder"]
         for (operation, tool) in zip(instructionOnly, expectedTool) {
             let text = try XCTUnwrap(operation.redoInstruction)
@@ -69,6 +71,24 @@ final class UndoRedoClassificationTests: XCTestCase {
         XCTAssertTrue(events.contains("2 events") && events.contains("delete_events_batch"), events)
         let reminders = try XCTUnwrap(UndoOperation.batch([.deleteReminder(snapshot: reminder)]).redoInstruction)
         XCTAssertTrue(reminders.contains("1 reminder") && reminders.contains("delete_reminders_batch"), reminders)
+    }
+
+    /// #244 (PR #278): a restored occurrence is a one-off event, deleted again with `delete_event`;
+    /// the marker of an occurrence-and-following delete is never undone (its undo discards the
+    /// record), so there is nothing to redo. Neither writes on redo.
+    func testTheOccurrenceDeleteRecordsWriteNothingOnRedo() throws {
+        let occurrence = try XCTUnwrap(UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: ["absolute_alarms"]).redoInstruction)
+        XCTAssertTrue(occurrence.contains("occurrence") && occurrence.contains("one-off event") && occurrence.contains("delete_event"), occurrence)
+        let following = try XCTUnwrap(UndoOperation.deleteFollowingOccurrences(title: "Standup").redoInstruction)
+        XCTAssertTrue(following.contains("was not undone") && following.contains("nothing to redo"), following)
+    }
+
+    /// A `delete_events_batch` record can mix whole events and occurrences (#244); both come back
+    /// as events, so the batch instruction is the event one.
+    func testABatchOfEventAndOccurrenceDeletesNamesDeleteEventsBatch() throws {
+        let mixed = try XCTUnwrap(UndoOperation.batch([.deleteEvent(snapshot: event),
+                                                       .deleteOccurrence(snapshot: event, notCarriedOver: [])]).redoInstruction)
+        XCTAssertTrue(mixed.contains("2 events") && mixed.contains("delete_events_batch"), mixed)
     }
 
     func testInstructionDropsHiddenCharactersFromTheTitle() throws {

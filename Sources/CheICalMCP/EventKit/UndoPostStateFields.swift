@@ -31,6 +31,8 @@ extension EventSnapshot {
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
         check("timezone") { UndoPostState.sameTimeZone($0.timeZone, $1.timeZone, at: $1.startDate) }
         check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
+        // #245 D1 (a): recorded, and written back by both event arms, so compared like the rest.
+        check("availability") { $0.availability == $1.availability }
         // `apply` writes `location` unconditionally, and EventKit couples it with the place (a new
         // string replaces the place, `nil` clears it; checked in memory), so the place round-trips.
         check("structured_location") { Self.samePlace(recorded: $0, current: $1) }

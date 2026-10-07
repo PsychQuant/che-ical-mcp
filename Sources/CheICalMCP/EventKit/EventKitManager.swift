@@ -990,26 +990,29 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let masterEvent = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
-
-        // Snapshot before deletion for undo
-        let snapshot = EventSnapshot(from: masterEvent)
+        let hadRules = masterEvent.hasRecurrenceRules
 
         // For recurring events, always resolve the specific occurrence (this/future both need it).
-        // Non-recurring events operate on master directly.
-        if masterEvent.hasRecurrenceRules, let date = occurrenceDate {
+        // Non-recurring events operate on master directly. #244: the snapshots and the facts the
+        // record is classified by are taken before the removal.
+        let snapshots: DeletedEventSnapshots
+        if hadRules, let date = occurrenceDate {
             guard let occurrence = findOccurrence(identifier: identifier, on: date, in: masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
+            snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence)
             try eventStore.remove(occurrence, span: span)
-        } else if masterEvent.hasRecurrenceRules {
+        } else if hadRules {
             throw EventKitError.invalidTimeRange(
                 message: "For recurring events, occurrence_date is required to identify which occurrence to delete."
             )
         } else {
+            snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
             try eventStore.remove(masterEvent, span: span)
         }
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.deleteEvent(snapshot: snapshot))
+        let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: identifier) })
+        await CalendarUndoManager.shared.record(snapshots.record(for: kind))
     }
 
     /// Delete an entire recurring event series by removing from the earliest occurrence.
@@ -1025,8 +1028,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // eventStore.event(withIdentifier:) returns the master event for recurring series,
         // so calling .futureEvents on it deletes the entire series.
         // If it's a non-recurring event, just delete it normally.
-        // #185 — snapshot BEFORE removal (EventSnapshot keeps raw EKRecurrenceRule,
-        // so undo rebuilds the whole series), consistent with single deleteEvent.
+        // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
+        // rebuilds the whole series), consistent with single deleteEvent.
         let snapshot = EventSnapshot(from: event)
         if event.hasRecurrenceRules {
             try eventStore.remove(event, span: .futureEvents)
@@ -1224,16 +1227,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var successCount = 0
         var failures: [(String, String)] = []
-        // #185 — collect a snapshot per successful removal so the whole batch is
-        // one undo unit (mirrors the single-delete path at deleteEvent, which
-        // snapshots the MASTER before removal — including occurrence-level deletes).
-        // Same-identifier dedupe (#185 verify F5): removing several occurrences of
-        // ONE recurring master yields progressively-shrunken master snapshots;
-        // replaying more than one would rebuild multiple series on undo. Only the
-        // FIRST (fullest) snapshot per identifier enters the undo unit — restoring
-        // it rebuilds the master as it stood before any of this batch's removals.
-        var undoSnapshots: [EventSnapshot] = []
-        var undoSeenIdentifiers = Set<String>()
+        // #185 — collect a record per successful removal so the whole batch is one undo unit,
+        // classified per item as in deleteEvent (#244): one occurrence is recorded as that
+        // occurrence, an occurrence and the following ones as a marker (which refuses the batch's
+        // undo before any member runs, D3), and the series only when a span future delete started
+        // at its first occurrence and removed it all (`EventRemovalKind.of`).
+        // Same-identifier dedupe (#185 verify F5), now for whole-event records only: two whole
+        // snapshots of one identifier would rebuild it twice; occurrence records are distinct items.
+        var undoOperations: [UndoOperation] = []
+        var undoSeenWholeIdentifiers = Set<String>()
 
         for item in items {
             do {
@@ -1242,23 +1244,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((item.identifier, "Event not found"))
                     continue
                 }
-                let snapshot = EventSnapshot(from: masterEvent)
+                let hadRules = masterEvent.hasRecurrenceRules
 
-                if masterEvent.hasRecurrenceRules, let date = item.occurrenceDate {
+                let snapshots: DeletedEventSnapshots
+                if hadRules, let date = item.occurrenceDate {
                     guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
+                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence)
                     try eventStore.remove(occurrence, span: span)
-                } else if masterEvent.hasRecurrenceRules {
+                } else if hadRules {
                     failures.append((item.identifier, "For recurring events, occurrence_date is required"))
                     continue
                 } else {
+                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
                     try eventStore.remove(masterEvent, span: span)
                 }
                 successCount += 1
-                if undoSeenIdentifiers.insert(item.identifier).inserted {
-                    undoSnapshots.append(snapshot)
+                let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: item.identifier) })
+                if kind != .wholeEvent || undoSeenWholeIdentifiers.insert(item.identifier).inserted {
+                    undoOperations.append(snapshots.record(for: kind))
                 }
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(
@@ -1273,8 +1279,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         markNeedsRefresh()
         // #185 — one .batch entry for the whole call (partial failure: only the
         // events actually removed). A single undo restores every one of them.
-        if !undoSnapshots.isEmpty {
-            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
+        if !undoOperations.isEmpty {
+            await CalendarUndoManager.shared.record(.batch(undoOperations))
         }
         return BatchDeleteResult(
             successCount: successCount,
@@ -2078,6 +2084,20 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: restored event '\(undoVisibleTitle(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
 
+        case .deleteOccurrence(let snapshot, let notCarriedOver):
+            // #244: the snapshot holds no rules, so the occurrence comes back as a one-off event at
+            // its slot, beside what is left of the series (EventKit cannot put it back in).
+            let event = EKEvent(eventStore: eventStore)
+            try applySnapshot(snapshot, to: event)
+            try eventStore.save(event, span: .thisEvent)
+            markNeedsRefresh()
+            return UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: event.eventIdentifier ?? "unknown",
+                                                           notCarriedOver: notCarriedOver)
+
+        case .deleteFollowingOccurrences(let title):
+            // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
+            throw UndoOperation.followingOccurrencesDeleteRefusal(title: title)
+
         case .updateEvent(_, let oldSnapshot, _):
             // Undo update = restore old values. Only updates of one-off events are recorded this
             // way; an update that touched a recurring event is a marker whose undo is refused
@@ -2150,18 +2170,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
                 execute: { try await self.executeUndo($0) },
                 describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
-            return "Undone batch (\(results.count) operations)"
+            // #244: names what a restored occurrence did not carry over (`batchUndoneMessage`).
+            return UndoOperation.batchUndoneMessage(members: ops, count: results.count)
         }
     }
 
     /// Execute an operation again (for redo). Only completions are written again (#247).
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
-        case .createEvent, .deleteEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
-             .createReminder, .deleteReminder, .updateReminder:
-            // #247: these write nothing on redo. `handleRedo` answers them itself and leaves both
-            // stacks unchanged (`CalendarUndoManager.beginRedo`); this is a fallback with the same
-            // text, and it writes nothing either.
+        case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
+             .updateRecurringEvent, .moveEvent, .createReminder, .deleteReminder, .updateReminder:
+            // #247: these write nothing on redo. `handleRedo` answers them itself and drops the
+            // entry from the redo stack (`CalendarUndoManager.beginRedo`); this is a fallback with
+            // the same text, and it writes nothing either.
             return operation.redoInstruction ?? "Nothing to redo"
 
         case .completeReminder(_, _, let requestedCompleted, _, let title, _, _):

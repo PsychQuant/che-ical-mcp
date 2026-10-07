@@ -112,7 +112,14 @@ extension EventKitManager {
             for member in operations { try await verifyHistoryTarget(of: member, verb: verb) }
             return
         }
+        try verifyBatchMemberRestorable(operation, verb: verb)
         _ = try await verifiedHistoryTarget(of: operation, verb: verb)
+    }
+
+    /// #244 D3: a member whose undo can never restore it (a span "future" delete recorded as the
+    /// marker) refuses the whole batch here, before any member writes.
+    func verifyBatchMemberRestorable(_ operation: UndoOperation, verb: UndoHistoryVerb) throws {
+        if verb == .undo, let refusal = operation.batchMemberUndoRefusal { throw refusal }
     }
 
     /// #248 B: a batch whose undo recreates items (deleted events and reminders) needs the calendar

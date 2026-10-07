@@ -100,10 +100,15 @@ struct EventSnapshot {
     // #191 — recurrence rules stored as VALUE snapshots (never raw objects)
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
+    /// #245: a delete-undo recreated a free event busy (the calendar default). `.notSupported` when
+    /// the event's calendar has none; written back only where the calendar supports it.
+    let availability: EKEventAvailability
 
     /// `alarms` replaces the event's own: the undo record of a copy-out holds the alarms the
-    /// copy was given (`EventKitManager.copyOutAlarms`).
-    init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil) {
+    /// copy was given (`EventKitManager.copyOutAlarms`). `availability` replaces the event's own
+    /// for value-level tests: an in-memory EKEvent ignores the property (#245).
+    init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil,
+         availability: EKEventAvailability? = nil) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
@@ -121,6 +126,7 @@ struct EventSnapshot {
         self.structuredLocationRadius = event.structuredLocation?.radius
         self.recurrenceRules = includeRecurrence ? event.recurrenceRules?.map(RecurrenceRuleSnapshot.init) : nil
         self.timeZone = event.timeZone
+        self.availability = availability ?? event.availability
     }
     /// Names can be duplicated across accounts; history restores only its original calendar.
     func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
@@ -145,6 +151,12 @@ struct EventSnapshot {
 
         // Calendar
         event.calendar = calendar
+
+        // Availability (#245): after the calendar, whose support decides whether it is written
+        if let value = Self.availabilityToWrite(recorded: availability, supported: calendar.supportedEventAvailabilities,
+                                                current: event.availability) {
+            event.availability = value
+        }
 
         // Alarms (#230): rebuilt from value snapshots, and only those that differ
         AlarmSnapshot.restore(alarms, to: event)
@@ -289,6 +301,17 @@ struct ReminderSnapshot {
 enum UndoOperation {
     case createEvent(id: String, title: String, created: EventSnapshot)
     case deleteEvent(snapshot: EventSnapshot)
+    /// #244: one occurrence of a series deleted (span "this"). The snapshot is the occurrence
+    /// without rules; undo recreates it as a one-off event, never a second series (`EventRemovalKind`).
+    /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
+    /// of the series was moved to the occurrence's start.
+    case deleteOccurrence(snapshot: EventSnapshot, notCarriedOver: [String])
+    /// #244: a span "future" delete that undo does not restore, kept only as a marker: every one
+    /// `EventRemovalKind.of` does not prove removed the whole series (it left part of the series,
+    /// started at the last occurrence or after earlier deletes, named a detached occurrence, or the
+    /// lookup after it was inconclusive). Its undo is refused and the record discarded; nothing is
+    /// restored.
+    case deleteFollowingOccurrences(title: String)
     /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
     case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
     /// #236: an update that touched a recurring event, kept only as a marker. Its undo is refused
@@ -323,6 +346,10 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             return "Deleted event: \(undoVisibleTitle(snapshot.title))"
+        case .deleteOccurrence(let snapshot, _):
+            return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
+        case .deleteFollowingOccurrences(let title):
+            return "Deleted occurrences of recurring event: \(undoVisibleTitle(title)) (undo not available)"
         case .updateEvent(_, let old, _):
             return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
@@ -609,6 +636,12 @@ extension UndoOperation {
             return "Cannot redo the creation of event '\(undoVisibleTitle(title))': redo does not create items again. Use create_event to create it again." + nothingWritten
         case .deleteEvent(let snapshot):
             return "Cannot redo the deletion of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored event. Use delete_event to delete it again." + nothingWritten
+        case .deleteOccurrence(let snapshot, _):
+            // #244: the undo brought the occurrence back as a one-off event, not into its series.
+            return "Cannot redo the deletion of an occurrence of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the one-off event the undo restored. Use delete_event to delete it again." + nothingWritten
+        case .deleteFollowingOccurrences(let title):
+            // #244: its undo always fails and discards the record, so it never reaches the redo stack.
+            return "Cannot redo the deletion of occurrences of recurring event '\(undoVisibleTitle(title))': that delete was not undone, so there is nothing to redo." + nothingWritten
         case .updateEvent(_, let oldSnapshot, _):
             return "Cannot redo the update of event '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_event to apply the changes again." + nothingWritten
         case .updateRecurringEvent(_, let title, _):
@@ -626,7 +659,14 @@ extension UndoOperation {
             // A batch writes on redo only when every member does.
             if !operations.isEmpty, operations.allSatisfy({ $0.redoInstruction == nil }) { return nil }
             let count = operations.count
-            if !operations.isEmpty, operations.allSatisfy({ if case .deleteEvent = $0 { return true }; return false }) {
+            // #244: a delete_events_batch record holds whole-event and occurrence deletes; both come
+            // back as events, which delete_events_batch deletes again.
+            if !operations.isEmpty, operations.allSatisfy({
+                switch $0 {
+                case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences: return true
+                default: return false
+                }
+            }) {
                 return "Cannot redo the deletion of \(count) event\(count == 1 ? "" : "s"): redo does not delete the restored events. Use delete_events_batch to delete them again." + nothingWritten
             }
             if !operations.isEmpty, operations.allSatisfy({ if case .deleteReminder = $0 { return true }; return false }) {

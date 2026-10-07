@@ -6,8 +6,9 @@ import Foundation
 /// failed after earlier members were written used to put the whole record back, and the next undo
 /// recreated those members again.
 
-/// B: where the undo of a batch member recreates its item. Only the delete records recreate; every
-/// other record writes to an existing item, which the post-state check covers, or writes nothing.
+/// B: where the undo of a batch member recreates its item. Only the delete records recreate (a
+/// deleted occurrence as a one-off event, #244); every other record writes to an existing item,
+/// which the post-state check covers, or writes nothing.
 enum UndoRestoreDestination {
     /// The recorded calendar, resolved as `applySnapshot` resolves it (`EventSnapshot.resolveCalendar`).
     case eventCalendar(EventSnapshot)
@@ -74,8 +75,14 @@ extension UndoOperation {
         switch self {
         case .deleteEvent(let snapshot):
             return .eventCalendar(snapshot)
+        case .deleteOccurrence(let snapshot, _):
+            // #244: recreated as a one-off event in the occurrence's recorded calendar.
+            return .eventCalendar(snapshot)
         case .deleteReminder(let snapshot):
             return .reminderList(snapshot)
+        case .deleteFollowingOccurrences:
+            // #244: never restored; its refusal (`batchMemberUndoRefusal`) runs before this check.
+            return nil
         case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
              .completeReminder, .completeRecurringReminder, .batch:
             return nil

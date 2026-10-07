@@ -26,8 +26,15 @@ final class UndoBatchRestoreTests: XCTestCase {
             return XCTFail("a delete-reminder undo recreates the reminder in a list")
         }
         XCTAssertEqual(reminderSnapshot.title, "Pay rent")
+        // #244 (PR #278): a deleted occurrence is recreated as a one-off event in its calendar.
+        guard case .eventCalendar(let occurrenceSnapshot)? = UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: [])
+            .restoreDestination(verb: .undo) else {
+            return XCTFail("a delete-occurrence undo recreates the occurrence in its recorded calendar")
+        }
+        XCTAssertEqual(occurrenceSnapshot.title, "Standup")
 
         let others: [UndoOperation] = [
+            .deleteFollowingOccurrences(title: "Standup"),   // never restored: its undo is refused
             .createEvent(id: "e", title: "Standup", created: event),
             .updateEvent(id: "e", oldSnapshot: event, saved: event),
             .updateRecurringEvent(id: "e", title: "Standup", kind: .series),
@@ -46,6 +53,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// Redo of a delete writes nothing (#247), so it has nothing to check.
     func testRedoHasNoDestinationToCheck() {
         XCTAssertNil(UndoOperation.deleteEvent(snapshot: event).restoreDestination(verb: .redo))
+        XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: []).restoreDestination(verb: .redo))
         XCTAssertNil(UndoOperation.deleteReminder(snapshot: reminder).restoreDestination(verb: .redo))
     }
 
