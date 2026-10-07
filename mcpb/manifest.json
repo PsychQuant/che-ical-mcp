@@ -145,7 +145,7 @@
     },
     {
       "name": "undo",
-      "description": "Undo the last operation (refused without writing when the item was changed since; the record stays until the change is reverted or the user discards it; updates to recurring events are never undone; a delete of an occurrence and the following ones is undone only when it started at the series' first occurrence and removed it all; a deleted occurrence comes back as a one-off event), or explicitly discard the current top history record using discard_id from undo_history"
+      "description": "Undo the last operation (refused without writing when the item was changed since; the record stays until the change is reverted or the user discards it; updates to recurring events are never undone; a delete of an occurrence and the following ones is undone only when it started at the series' first occurrence and removed it all; a deleted occurrence comes back as a one-off event; a series deleted whole comes back from its rules, without the occurrences deleted or edited on their own before), or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
