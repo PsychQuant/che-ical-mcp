@@ -21,7 +21,8 @@ import Foundation
 ///
 /// The due date is written last. On a floating reminder the item is then given the due's
 /// zone, so a timed due keeps the explicit zone #134 writes (#237; `writeZonedDue` records
-/// the on-device findings behind this order).
+/// the on-device findings behind this order). Undo writes recorded dates in the same order
+/// (`restore`, #251).
 enum ReminderDateSync {
     /// What happened to the start date. `set` (#235): there was none, and EventKit created one
     /// while the due date was written.
@@ -127,6 +128,32 @@ enum ReminderDateSync {
         return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
                       absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0,
                       aligned: isAligned(reminder, requestedTime: timed), writtenDue: due)
+    }
+
+    /// #251: the undo entry point. Writes the start and due a `ReminderSnapshot` recorded, in the
+    /// order the coupling needs (in memory, a date-only start written after a timed due turns the
+    /// due date-only):
+    /// - a timed due is written after the start: a zoned one through `writeZonedDue`, as `setDue`
+    ///   writes it, so a floating item is zoned from it (#237); a floating one as it is, which
+    ///   leaves the item floating. EventKit gives a reminder without a start one equal to a due
+    ///   written to it (#235), so a recorded absent start is cleared after the due;
+    /// - a date-only or absent due is written before the start, as undo always wrote it: a
+    ///   floating date-only due returns an item that #237 zoned to floating.
+    static func restore(_ reminder: EKReminder, start: DateComponents?, due: DateComponents?) {
+        guard let due, due.hour != nil else {
+            reminder.dueDateComponents = due
+            reminder.startDateComponents = start
+            return
+        }
+        reminder.startDateComponents = start
+        if due.timeZone != nil {
+            writeZonedDue(reminder, due)
+        } else {
+            reminder.dueDateComponents = due
+        }
+        if start == nil {
+            reminder.startDateComponents = nil
+        }
     }
 
     /// #235: the anchor rule. Reminders.app displays the **earliest** absolute-date alarm, after

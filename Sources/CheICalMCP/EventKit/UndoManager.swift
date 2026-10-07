@@ -217,18 +217,18 @@ struct ReminderSnapshot {
     }
 
     /// Writes every recorded field except the list, which `applyReminderSnapshot` looks up in
-    /// the store. Alarms and recurrence rules are rebuilt only when they differ, so an
-    /// update-undo that did not touch them leaves the existing objects in place. The rules
-    /// and the due date go into the same save: EventKit refuses a repeating reminder without
-    /// a due date (EKErrorDomain 18).
+    /// the store. The start and due dates go through `ReminderDateSync.restore` (#251), which
+    /// writes them in the order EventKit's coupling of the two needs. Alarms and recurrence
+    /// rules are rebuilt only when they differ, so an update-undo that did not touch them leaves
+    /// the existing objects in place. The rules and the due date go into the same save:
+    /// EventKit refuses a repeating reminder without a due date (EKErrorDomain 18).
     func apply(to reminder: EKReminder, now: Date) {
         reminder.title = title
         reminder.notes = notes
         // #196: update / delete undo restore the recorded completion instant too.
         ReminderCompletionWrite.plan(isCompleted: isCompleted, recorded: completionDate, now: now).apply(to: reminder)
         reminder.priority = priority
-        reminder.dueDateComponents = dueDateComponents
-        reminder.startDateComponents = startDateComponents
+        ReminderDateSync.restore(reminder, start: startDateComponents, due: dueDateComponents)
         reminder.url = url
         AlarmSnapshot.restore(alarms, to: reminder)
         if (reminder.recurrenceRules ?? []).map(RecurrenceRuleSnapshot.init(from:)) != recurrenceRules {
