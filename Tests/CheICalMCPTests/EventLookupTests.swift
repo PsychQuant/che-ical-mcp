@@ -32,8 +32,9 @@ final class EventLookupTests: XCTestCase {
         XCTAssertEqual(calls.event, [], "event(withIdentifier:) aborts the process on a reminder id")
     }
 
-    /// Event ids are `eventIdentifier`s, which `calendarItem(withIdentifier:)` usually does not
-    /// know: nil there is the normal case for an event, so the event lookup decides.
+    /// Event ids are `eventIdentifier`s, for which `calendarItem(withIdentifier:)` returned nil on
+    /// device (iCloud and Google): nil there is the normal case for an event, so the event lookup
+    /// decides.
     func testAnIdTheItemLookupDoesNotKnowGoesToTheEventLookup() {
         let event = EKEvent(eventStore: store)
         let (result, calls) = resolve("event-id", calendarItem: nil, event: event)

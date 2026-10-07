@@ -17,12 +17,14 @@ import Foundation
 /// here (`freshEvent` refreshes first; the freshness of the other callers is #271).
 ///
 /// Not `calendarItem(withIdentifier:) as? EKEvent`: the ids this server hands out for events are
-/// `eventIdentifier`s, which that lookup does not know (nil on device, for an event on iCloud and
-/// one on Google), and `event(withIdentifier:)` is the one with the recurring-series semantics the
-/// callers rely on. The other id lookups the server makes, `calendarItem(withIdentifier:)` (this
-/// check and the reminder tools) and `calendar(withIdentifier:)`, are not known to raise; on device
-/// `calendarItem(withIdentifier:)` was given event ids (iCloud and Google), a reminder id and ids
-/// that no longer existed without raising.
+/// `eventIdentifier`s, for which that lookup returned nil on device (one-off and recurring events
+/// on iCloud, a one-off event on Google; it returns the event for its `calendarItemIdentifier`),
+/// and `event(withIdentifier:)` is the one with the recurring-series semantics the callers rely
+/// on. The other id lookups the server makes did not raise on device for the ids they were given:
+/// `calendarItem(withIdentifier:)` (this check and the reminder tools) for event ids (iCloud and
+/// Google), a reminder id and ids that no longer existed; `calendar(withIdentifier:)` (calendar
+/// ids from the caller and from undo records) for a reminder id (nil) and ids that no longer
+/// existed. Neither was tried with every kind of id, or on other account types.
 enum EventLookup {
     /// The resolver behind closures (the closure-seam variant, #182), so the order is tested
     /// without a saved reminder.
