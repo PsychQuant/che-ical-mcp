@@ -158,4 +158,21 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(summary.contains(sign), "mcpb/manifest.json \(name): \(summary)")
         }
     }
+
+    /// #247 (maintainer decision, 2026-10-07): a redo entry that writes nothing is answered once and
+    /// then removed from the redo history, so both places a client reads about `redo` say so, and
+    /// neither still says the entry stays.
+    func testRedoDescriptionsSayAnEntryThatWritesNothingIsRemoved() throws {
+        let removed = "removed from the redo history"
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "redo" }?.description ?? ""
+        let summary = entries.first { $0["name"] as? String == "redo" }?["description"] as? String ?? ""
+        for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+            XCTAssertTrue(text.contains(removed), "\(place) redo: \(text)")
+            XCTAssertFalse(text.contains("stays on top") || text.contains("as it was") || text.contains("as they were"),
+                           "\(place) redo: \(text)")
+        }
+    }
 }

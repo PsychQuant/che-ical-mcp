@@ -2,8 +2,9 @@ import XCTest
 @testable import CheICalMCP
 
 /// #247: which records a redo writes for (`redoInstruction` / `redoWrites`), and what
-/// `CalendarUndoManager.beginRedo` does with a record whose redo writes nothing: neither stack
-/// moves. Pure apart from building snapshots in memory, so no TCC prompt.
+/// `CalendarUndoManager.beginRedo` does with a record whose redo writes nothing: it leaves the
+/// redo stack and the undo stack does not move. Pure apart from building snapshots in memory, so
+/// no TCC prompt.
 final class UndoRedoClassificationTests: XCTestCase {
     // Static, so each fixture (and its EKEventStore) is built once per class when first used:
     // instance properties are built for every test when XCTest assembles the suite, and too
@@ -61,6 +62,7 @@ final class UndoRedoClassificationTests: XCTestCase {
             XCTAssertFalse(text.contains("EVT-1") || text.contains("REM-1"), text)
             XCTAssertTrue(text.contains("'Standup'") || text.contains("'Pay rent'"), text)
             XCTAssertTrue(text.contains("Nothing was written"), text)
+            XCTAssertFalse(text.contains("stays until"), "the entry is dropped, not kept (#247): \(text)")
             if let tool { XCTAssertTrue(text.contains(tool), text) }
         }
         let events = try XCTUnwrap(UndoOperation.batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)]).redoInstruction)
@@ -76,29 +78,61 @@ final class UndoRedoClassificationTests: XCTestCase {
 
     // MARK: - CalendarUndoManager.beginRedo
 
-    func testBeginRedoLeavesBothStacksForARecordWhoseRedoWritesNothing() async throws {
+    /// Maintainer decision on #247 (2026-10-07): a top record whose redo writes nothing is removed
+    /// from the redo stack once its instruction is returned, so the record beneath it is reachable
+    /// on the next redo. The undo stack does not move, so the next undo cannot undo that record a
+    /// second time (the repeated undo #247 reported).
+    func testBeginRedoDropsATopRecordWhoseRedoWritesNothingAndLeavesTheUndoStack() async throws {
         let history = CalendarUndoManager()
-        await history.record(completion)
         await history.record(.deleteEvent(snapshot: event))
-        let undone = try await history.beginUndo()
-        await history.finishHistoryOperation(try XCTUnwrap(undone))
+        await history.record(completion)
+        let completionRecord = try await history.beginUndo()
+        await history.finishHistoryOperation(try XCTUnwrap(completionRecord))
+        let undoneDelete = try await history.beginUndo()          // the delete, now on top of redo
+        let deleteRecord = try XCTUnwrap(undoneDelete)
+        await history.finishHistoryOperation(deleteRecord)
         let before = await history.historySnapshot()
+        XCTAssertEqual(before.undoCount, 0)
+        XCTAssertEqual(before.redoCount, 2)
 
         let start = try await history.beginRedo()
 
-        guard case .notRedoable(let record, let undoCount, let redoCount) = start else {
-            return XCTFail("expected notRedoable, got \(start)")
+        guard case .dropped(let record, let undoCount, let redoCount) = start else {
+            return XCTFail("expected dropped, got \(start)")
         }
-        XCTAssertEqual(record.id, undone?.id)
-        XCTAssertEqual(undoCount, 1)
-        XCTAssertEqual(redoCount, 1)
+        XCTAssertEqual(record.id, deleteRecord.id)
+        XCTAssertEqual(undoCount, 0, "the undo stack is not touched")
+        XCTAssertEqual(redoCount, 1, "the dropped record no longer counts")
+        let after = await history.historySnapshot()
+        XCTAssertEqual(after.undoCount, 0)
+        XCTAssertEqual(after.redoCount, 1)
+
+        // No history operation was left active, and the next redo reaches the completion beneath.
+        guard case .started(let next) = try await history.beginRedo() else {
+            return XCTFail("the record beneath the dropped one is redone next")
+        }
+        XCTAssertEqual(next.operation.description, completion.description)
+    }
+
+    /// The undo stack keeps what it held: an older record stays undoable after the drop.
+    func testDroppingARedoRecordKeepsTheOlderUndoRecords() async throws {
+        let history = CalendarUndoManager()
+        await history.record(completion)
+        await history.record(.deleteEvent(snapshot: event))
+        let undoneRecord = try await history.beginUndo()
+        let undone = try XCTUnwrap(undoneRecord)
+        await history.finishHistoryOperation(undone)
+        let before = await history.historySnapshot()
+
+        guard case .dropped = try await history.beginRedo() else { return XCTFail("expected dropped") }
+
         let after = await history.historySnapshot()
         XCTAssertEqual(after.entries.map(\.id), before.entries.map(\.id))
-        XCTAssertEqual(after.redoCount, 1)
-        // No history operation was left active: another begin is not refused as busy.
-        let again = try await history.beginRedo()
-        guard case .notRedoable = again else { return XCTFail("expected notRedoable again, got \(again)") }
+        XCTAssertEqual(after.redoCount, 0)
+        guard case .empty(let undoCount) = try await history.beginRedo() else { return XCTFail("nothing left to redo") }
+        XCTAssertEqual(undoCount, 1)
         let undoAgain = try await history.beginUndo()
+        XCTAssertNotEqual(undoAgain?.id, undone.id, "the dropped record is not undone again")
         XCTAssertNotNil(undoAgain, "the older completion record is still undoable")
     }
 

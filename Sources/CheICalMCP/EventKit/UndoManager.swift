@@ -410,20 +410,26 @@ actor CalendarUndoManager {
     enum RedoStart {
         /// Nothing to redo; the undo count is read in the same call (PR #282 round 1, finding 24).
         case empty(undoCount: Int)
-        /// #247: the top record's redo writes nothing (`UndoOperation.redoWrites`). Neither stack
-        /// moved and no history operation is active; the counts are read in the same call.
-        case notRedoable(UndoRecord, undoCount: Int, redoCount: Int)
+        /// #247: the top record's redo writes nothing (`UndoOperation.redoWrites`), so it was removed
+        /// from the redo stack, to be answered with its instruction once (maintainer decision on
+        /// #247, 2026-10-07): the record beneath it is reached on the next redo. The undo stack did
+        /// not move and no history operation is active; the counts, read in the same call, are the
+        /// ones after the removal.
+        case dropped(UndoRecord, undoCount: Int, redoCount: Int)
         /// Moved to the undo stack and active until `finishHistoryOperation` or a restore.
         case started(UndoRecord)
     }
 
-    /// #247: the record moves only when its redo writes. The check and the move happen in this one
-    /// actor call, so no other undo or redo can come between them.
+    /// #247: the record moves to the undo stack only when its redo writes; one whose redo writes
+    /// nothing leaves the redo stack and never reaches the undo stack, so its undo cannot run a
+    /// second time. The check and the move happen in this one actor call, so no other undo or redo
+    /// can come between them.
     func beginRedo() throws -> RedoStart {
         guard activeHistoryID == nil else { throw UndoHistoryError.busy }
         guard let top = redoStack.last else { return .empty(undoCount: undoStack.count) }
         guard top.operation.redoWrites else {
-            return .notRedoable(top, undoCount: undoStack.count, redoCount: redoStack.count)
+            redoStack.removeLast()
+            return .dropped(top, undoCount: undoStack.count, redoCount: redoStack.count)
         }
         guard let record = popRedo() else { return .empty(undoCount: undoStack.count) }
         activeHistoryID = record.id
@@ -591,38 +597,39 @@ extension UndoOperation {
     /// across accounts changes it, #246). Exhaustive, so a new record kind must be classified to
     /// compile (#196 convention).
     var redoInstruction: String? {
-        let stays = " Nothing was written; this redo entry stays until a new change clears the redo history."
+        // Not what becomes of the entry: `handleRedo` drops it and says so (maintainer decision on #247).
+        let nothingWritten = " Nothing was written."
         switch self {
         case .completeReminder, .completeRecurringReminder:
             return nil
         case .createEvent(_, let title, _):
-            return "Cannot redo the creation of event '\(undoVisibleTitle(title))': redo does not create items again. Use create_event to create it again." + stays
+            return "Cannot redo the creation of event '\(undoVisibleTitle(title))': redo does not create items again. Use create_event to create it again." + nothingWritten
         case .deleteEvent(let snapshot):
-            return "Cannot redo the deletion of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored event. Use delete_event to delete it again." + stays
+            return "Cannot redo the deletion of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored event. Use delete_event to delete it again." + nothingWritten
         case .updateEvent(_, let oldSnapshot, _):
-            return "Cannot redo the update of event '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_event to apply the changes again." + stays
+            return "Cannot redo the update of event '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_event to apply the changes again." + nothingWritten
         case .updateRecurringEvent(_, let title, _):
             // Its undo always fails and discards the record, so it never reaches the redo stack.
-            return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + stays
+            return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
         case .moveEvent(_, _, _, let title, _):
-            return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + stays
+            return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + nothingWritten
         case .createReminder(_, let title, _):
-            return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + stays
+            return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten
         case .deleteReminder(let snapshot):
-            return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + stays
+            return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + nothingWritten
         case .updateReminder(_, let oldSnapshot, _):
-            return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_reminder to apply the changes again." + stays
+            return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_reminder to apply the changes again." + nothingWritten
         case .batch(let operations):
             // A batch writes on redo only when every member does.
             if !operations.isEmpty, operations.allSatisfy({ $0.redoInstruction == nil }) { return nil }
             let count = operations.count
             if !operations.isEmpty, operations.allSatisfy({ if case .deleteEvent = $0 { return true }; return false }) {
-                return "Cannot redo the deletion of \(count) event\(count == 1 ? "" : "s"): redo does not delete the restored events. Use delete_events_batch to delete them again." + stays
+                return "Cannot redo the deletion of \(count) event\(count == 1 ? "" : "s"): redo does not delete the restored events. Use delete_events_batch to delete them again." + nothingWritten
             }
             if !operations.isEmpty, operations.allSatisfy({ if case .deleteReminder = $0 { return true }; return false }) {
-                return "Cannot redo the deletion of \(count) reminder\(count == 1 ? "" : "s"): redo does not delete the restored reminders. Use delete_reminders_batch to delete them again." + stays
+                return "Cannot redo the deletion of \(count) reminder\(count == 1 ? "" : "s"): redo does not delete the restored reminders. Use delete_reminders_batch to delete them again." + nothingWritten
             }
-            return "Cannot redo this batch of \(count) operations: redo does not repeat them. Repeat them with the tools that made them." + stays
+            return "Cannot redo this batch of \(count) operations: redo does not repeat them. Repeat them with the tools that made them." + nothingWritten
         }
     }
 

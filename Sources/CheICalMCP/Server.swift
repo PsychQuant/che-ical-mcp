@@ -452,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo and redo history as they were, and answers success: false with the tool that repeats the operation; that entry stays on top of the redo history until a new change clears it. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
+                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo history unchanged, and answers success: false with the tool that repeats the operation; that entry is then removed from the redo history, so the next redo reaches the entry beneath it. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -1538,17 +1538,24 @@ class CheICalMCPServer {
         return try actionResult(["action": "undo", "success": true, "message": message])
     }
 
+    /// #247: appended to the instruction of a redo entry that writes nothing, which `beginRedo` has
+    /// just dropped, so a client does not call redo again expecting the same entry.
+    static let droppedRedoNote = "This entry was removed from the redo history, so calling redo again redoes the entry beneath it, if there is one."
+
     private func handleRedo() async throws -> String {
         let record: UndoRecord
         switch try await undoManager.beginRedo() {
         case .empty(let undoCount):
             return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo",
                                      "undo_available": undoCount, "redo_available": 0])
-        case .notRedoable(let top, let undoCount, let redoCount):
-            // #247: nothing is executed and neither stack moved, so the next undo cannot repeat
-            // the undo of this record (a deleted item recreated twice).
+        case .dropped(let top, let undoCount, let redoCount):
+            // #247: nothing is executed and the undo stack did not move, so the next undo cannot
+            // repeat the undo of this record (a deleted item recreated twice). The record left the
+            // redo stack (maintainer decision, 2026-10-07), so its instruction is answered once and
+            // the next redo reaches the record beneath it.
+            let instruction = top.operation.redoInstruction ?? "Nothing was written."
             return try actionResult(["action": "redo", "success": false,
-                                     "message": top.operation.redoInstruction ?? "Nothing to redo",
+                                     "message": instruction + " " + Self.droppedRedoNote,
                                      "undo_available": undoCount, "redo_available": redoCount])
         case .started(let started):
             record = started

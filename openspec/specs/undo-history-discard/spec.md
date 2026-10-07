@@ -91,7 +91,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Redo of a record whose redo writes nothing (#247)
 - **WHEN** the top of the redo stack is a record whose redo writes nothing: a create, delete, update or move, or a batch with any such member (only completion records are written again)
-- **THEN** nothing is executed or written, neither stack changes, no undo or redo is left in progress, and redo answers `success: false` with an instruction that names the tool that repeats the operation; the next undo therefore does not undo that record a second time
+- **THEN** nothing is executed or written, the undo stack does not change, no undo or redo is left in progress, and redo answers `success: false` with an instruction that names the tool that repeats the operation; the record is then removed from the redo stack, so the instruction is returned once and the next redo reaches the record beneath it; the next undo does not undo that record a second time
 
 #### Scenario: Repeated discard
 - **WHEN** the same id is submitted after its record was removed

@@ -127,7 +127,7 @@ Or just ask naturally:
 - `cleanup_completed_reminders` — single-call cleanup of all completed reminders (`dry_run=true` default; new in v1.7.2); one `undo` recreates what it deleted (#243)
 
 ### Undo / Redo (3, process-local)
-- `undo` / `redo` / `undo_history` — redo writes only completions again; for any other entry it writes nothing and answers `success: false` (#247). A batch undo restores every item, or after a failure keeps only the items not yet restored (#248)
+- `undo` / `redo` / `undo_history` — redo writes only completions again; for any other entry it writes nothing, answers `success: false` and drops that entry from the redo history (#247). A batch undo restores every item, or after a failure keeps only the items not yet restored (#248)
 
 ## Permissions
 

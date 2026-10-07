@@ -4,9 +4,10 @@ import XCTest
 @testable import CheICalMCP
 
 /// #247: `redo` of a record whose redo writes nothing (create, delete, update, move, and a batch
-/// of deletes) leaves both stacks as they were, calls nothing on the executor, and answers
-/// `success: false` with the instruction. Before, the record moved back to the undo stack and the
-/// next undo recreated a deleted item a second time. The executor is a spy, so no EventKit.
+/// of deletes) calls nothing on the executor, answers `success: false` with the instruction, and
+/// then drops that record from the redo stack (maintainer decision, 2026-10-07); the undo stack is
+/// left as it was. Before, the record moved back to the undo stack and the next undo recreated a
+/// deleted item a second time. The executor is a spy, so no EventKit.
 private actor SpyExecutor: UndoExecutionSource {
     private(set) var undoCalls = 0
     private(set) var redoCalls = 0
@@ -31,7 +32,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any], text)
     }
 
-    func testRedoOfARecordWhoseRedoWritesNothingLeavesBothStacks() async throws {
+    func testRedoOfARecordWhoseRedoWritesNothingAnswersItsInstructionOnceAndDropsIt() async throws {
         let event = UndoSnapshotFixtures.event(title: "Standup")
         let reminder = UndoSnapshotFixtures.reminder(title: "Pay rent")
         let operations: [UndoOperation] = [
@@ -58,14 +59,20 @@ final class RedoInstructionHandlerTests: XCTestCase {
             let redo = try json(result)
             XCTAssertEqual(redo["action"] as? String, "redo", operation.description)
             XCTAssertEqual(redo["success"] as? Bool, false, operation.description)
-            XCTAssertEqual(redo["message"] as? String, operation.redoInstruction, operation.description)
-            XCTAssertEqual(redo["redo_available"] as? Int, 1, operation.description)
+            let message = try XCTUnwrap(redo["message"] as? String, operation.description)
+            XCTAssertTrue(message.hasPrefix(try XCTUnwrap(operation.redoInstruction)), message)
+            XCTAssertTrue(message.contains("removed from the redo history"), message)
+            XCTAssertEqual(redo["redo_available"] as? Int, 0, operation.description)
             XCTAssertEqual(redo["undo_available"] as? Int, 0, operation.description)
             let after = await history.historySnapshot()
             XCTAssertEqual(after.undoCount, before.undoCount, operation.description)
-            XCTAssertEqual(after.redoCount, before.redoCount, operation.description)
+            XCTAssertEqual(after.redoCount, before.redoCount - 1, operation.description)
             let redoCalls = await executor.redoCalls
             XCTAssertEqual(redoCalls, 0, operation.description)
+
+            // The instruction is answered once: the next redo has nothing left.
+            let again = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
+            XCTAssertEqual(again["message"] as? String, "Nothing to redo", operation.description)
 
             // The next undo finds nothing to undo instead of recreating the deleted item again.
             let next = try json(await server.handleToolCallForTesting(name: "undo", arguments: [:]))
@@ -73,6 +80,34 @@ final class RedoInstructionHandlerTests: XCTestCase {
             let undoCalls = await executor.undoCalls
             XCTAssertEqual(undoCalls, 1, operation.description)
         }
+    }
+
+    /// The record beneath a dropped one is reached on the next redo, and a redo that writes still
+    /// moves its record to the undo stack.
+    func testTheRecordBeneathADroppedOneIsRedoneNext() async throws {
+        let history = CalendarUndoManager()
+        await history.record(.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup")))
+        await history.record(.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
+                                               title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
+        let executor = SpyExecutor()
+        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        _ = await server.handleToolCallForTesting(name: "undo", arguments: [:])   // the completion
+        _ = await server.handleToolCallForTesting(name: "undo", arguments: [:])   // the delete, now on top of redo
+
+        let first = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
+        XCTAssertEqual(first["success"] as? Bool, false)
+        XCTAssertEqual(first["redo_available"] as? Int, 1)
+        XCTAssertEqual(first["undo_available"] as? Int, 0)
+
+        let second = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
+
+        XCTAssertEqual(second["success"] as? Bool, true)
+        XCTAssertEqual(second["message"] as? String, "Redone")
+        let calls = await executor.redoCalls
+        XCTAssertEqual(calls, 1, "only the completion was executed")
+        let state = await history.historySnapshot()
+        XCTAssertEqual(state.undoCount, 1, "the redone completion moved to the undo stack")
+        XCTAssertEqual(state.redoCount, 0)
     }
 
     func testRedoOfACompletionStillWrites() async throws {
