@@ -1094,4 +1094,78 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(reloads, 2)
         XCTAssertEqual(confirmed.aligned, false)
     }
+
+    // MARK: - #251: restoring recorded dates (undo)
+
+    /// Written with an explicit zone, not the host's, so the expectations hold in any host zone.
+    private func taipeiComponents(day: Int, hour: Int) -> DateComponents {
+        DateComponents(timeZone: taipei, year: 2026, month: 10, day: day, hour: hour, minute: 0)
+    }
+
+    private let dateOnlyStart = DateComponents(year: 2026, month: 10, day: 9)
+
+    /// The date a set of components holds. A due written beside a start makes EventKit derive both
+    /// again and add era, second and weekday fields that hold nothing new.
+    private func dateValue(_ c: DateComponents?) -> DateComponents? {
+        guard let c else { return nil }
+        return DateComponents(timeZone: c.timeZone, year: c.year, month: c.month, day: c.day, hour: c.hour, minute: c.minute)
+    }
+
+    /// A date-only start beside a zoned timed due. Written due first (undo before #251), the start
+    /// turned the due date-only; written start first with a plain due write, the due lost its zone
+    /// and, in memory, took the host's wall clock. `restore` writes the due as `setDue` does, so
+    /// the recorded date-only start comes back as 00:00 of its day in the due's zone, the way the
+    /// store hands a date-only start back.
+    func testRestoreKeepsTheTimeAndZoneOfADueBesideADateOnlyStart() {
+        let reminder = makeReminder()
+
+        ReminderDateSync.restore(reminder, start: dateOnlyStart, due: taipeiComponents(day: 10, hour: 15))
+
+        XCTAssertEqual(dateValue(reminder.dueDateComponents), taipeiComponents(day: 10, hour: 15))
+        XCTAssertEqual(reminder.timeZone, taipei)
+        XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 0))
+    }
+
+    /// The same on a reminder that an update zoned and moved (update-undo).
+    func testRestoreOnAZonedReminderKeepsTheTimeAndZoneOfADueBesideADateOnlyStart() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = taipeiComponents(day: 12, hour: 0)
+        reminder.dueDateComponents = taipeiComponents(day: 12, hour: 9)
+        reminder.timeZone = taipei
+
+        ReminderDateSync.restore(reminder, start: dateOnlyStart, due: taipeiComponents(day: 10, hour: 15))
+
+        XCTAssertEqual(dateValue(reminder.dueDateComponents), taipeiComponents(day: 10, hour: 15))
+        XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 0))
+    }
+
+    /// A timed start beside a zoned due, the state a stored reminder has since #237, comes back as
+    /// recorded.
+    func testRestoreWritesATimedStartAndDueAsRecorded() {
+        let reminder = makeReminder()
+        reminder.startDateComponents = taipeiComponents(day: 12, hour: 0)
+        reminder.dueDateComponents = taipeiComponents(day: 12, hour: 9)
+        reminder.timeZone = taipei
+
+        ReminderDateSync.restore(reminder, start: taipeiComponents(day: 9, hour: 8), due: taipeiComponents(day: 10, hour: 15))
+
+        XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 8))
+        XCTAssertEqual(dateValue(reminder.dueDateComponents), taipeiComponents(day: 10, hour: 15))
+        XCTAssertEqual(reminder.timeZone, taipei)
+    }
+
+    /// EventKit gives a reminder without a start one equal to a due written to it (#235), in memory
+    /// too, so this pins the clearing in `restore`: without it both cases fail. A recorded absent
+    /// start stays absent, for a zoned and for a floating due.
+    func testRestoreLeavesARecordedAbsentStartAbsent() {
+        for due in [taipeiComponents(day: 10, hour: 15), DateComponents(year: 2026, month: 10, day: 10, hour: 15, minute: 0)] {
+            let reminder = makeReminder()
+
+            ReminderDateSync.restore(reminder, start: nil, due: due)
+
+            XCTAssertNil(reminder.startDateComponents)
+            XCTAssertEqual(reminder.dueDateComponents?.hour, 15)
+            XCTAssertEqual(reminder.dueDateComponents?.timeZone, due.timeZone)
+        }
+    }
 }
