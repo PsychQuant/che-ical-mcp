@@ -112,7 +112,31 @@ extension EventKitManager {
             for member in operations { try await verifyHistoryTarget(of: member, verb: verb) }
             return
         }
+        try await verifyRestoreDestination(of: operation, verb: verb)
         _ = try await verifiedHistoryTarget(of: operation, verb: verb)
+    }
+
+    /// #248 B: a member whose undo recreates the item needs the calendar or list it is recreated
+    /// in, so a batch with a member whose calendar is gone is refused before its first write
+    /// instead of failing part-way. Kept apart from the post-state check, which covers items that
+    /// exist. Not a transaction: a calendar deleted after this check still stops the batch part-way
+    /// (`UndoBatchPartiallyUndoneError`).
+    func verifyRestoreDestination(of operation: UndoOperation, verb: UndoHistoryVerb) async throws {
+        guard let destination = operation.restoreDestination(verb: verb) else { return }
+        let found: Bool
+        switch destination {
+        case .eventCalendar(let snapshot):
+            try await ensureCalendarAccess()
+            refreshIfNeeded()
+            found = (try? snapshot.resolveCalendar(in: eventStore.calendars(for: .event),
+                                                   identifier: { $0.calendarIdentifier })) != nil
+        case .reminderList(let snapshot):
+            try await ensureReminderAccess()
+            refreshIfNeeded()
+            // The lookup `applyReminderSnapshot` makes; #242 changes it, and the two must change together.
+            found = eventStore.calendars(for: .reminder).contains { $0.title == snapshot.calendarTitle }
+        }
+        if !found { throw destination.missingError }
     }
 
     /// Each undo arm knows its record kind, so a mismatch is unreachable by construction; it
