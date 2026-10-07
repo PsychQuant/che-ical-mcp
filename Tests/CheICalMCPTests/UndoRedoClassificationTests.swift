@@ -5,8 +5,13 @@ import XCTest
 /// `CalendarUndoManager.beginRedo` does with a record whose redo writes nothing: neither stack
 /// moves. Pure apart from building snapshots in memory, so no TCC prompt.
 final class UndoRedoClassificationTests: XCTestCase {
-    private let event = UndoSnapshotFixtures.event(title: "Standup")
-    private let reminder = UndoSnapshotFixtures.reminder(title: "Pay rent")
+    // Static, so each fixture (and its EKEventStore) is built once per class when first used:
+    // instance properties are built for every test when XCTest assembles the suite, and too
+    // many stores in one process make EventKit refuse the real one other tests use.
+    private static let eventFixture = UndoSnapshotFixtures.event(title: "Standup")
+    private static let reminderFixture = UndoSnapshotFixtures.reminder(title: "Pay rent")
+    private var event: EventSnapshot { Self.eventFixture }
+    private var reminder: ReminderSnapshot { Self.reminderFixture }
 
     private var completion: UndoOperation {
         .completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,

@@ -7,8 +7,13 @@ import XCTest
 /// snapshots are built in memory and the batch runs through `UndoBatchRunner`'s closures, so no
 /// EventKit store is read or written.
 final class UndoBatchRestoreTests: XCTestCase {
-    private let event = UndoSnapshotFixtures.event(title: "Standup")
-    private let reminder = UndoSnapshotFixtures.reminder(title: "Pay rent")
+    // Static, so each fixture (and its EKEventStore) is built once per class when first used:
+    // instance properties are built for every test when XCTest assembles the suite, and too
+    // many stores in one process make EventKit refuse the real one other tests use.
+    private static let eventFixture = UndoSnapshotFixtures.event(title: "Standup")
+    private static let reminderFixture = UndoSnapshotFixtures.reminder(title: "Pay rent")
+    private var event: EventSnapshot { Self.eventFixture }
+    private var reminder: ReminderSnapshot { Self.reminderFixture }
 
     // MARK: - B: where an undo recreates the item
 
