@@ -10,14 +10,23 @@ import XCTest
 final class ReminderSnapshotListTests: XCTestCase {
     /// The snapshot reads the list from the reminder, so the store lives as long as the test.
     private let store = EKEventStore()
+    private let now = Date(timeIntervalSince1970: 1_900_000_000)
 
-    private func snapshot(listTitle: String = "Reminders", reminderTitle: String = "Water plants") -> ReminderSnapshot {
+    private func list(_ title: String) -> EKCalendar {
         let list = EKCalendar(for: .reminder, eventStore: store)
-        list.title = listTitle
+        list.title = title
+        return list
+    }
+
+    private func reminder(in list: EKCalendar, title: String) -> EKReminder {
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = list
-        reminder.title = reminderTitle
-        return ReminderSnapshot(from: reminder)
+        reminder.title = title
+        return reminder
+    }
+
+    private func snapshot(listTitle: String = "Reminders", reminderTitle: String = "Water plants") -> ReminderSnapshot {
+        ReminderSnapshot(from: reminder(in: list(listTitle), title: reminderTitle))
     }
 
     private func missingListError(_ body: () throws -> Any) -> EventKitError? {
@@ -37,11 +46,19 @@ final class ReminderSnapshotListTests: XCTestCase {
         }
     }
 
+    private func message(list: String = "Reminders", account: String? = "iCloud", reminder: String = "Water plants",
+                         hasIdentifier: Bool = true, kind: ReminderRestoreKind) throws -> String {
+        try XCTUnwrap(EventKitError.undoListMissing(list: list, account: account, reminder: reminder,
+                                                    hasIdentifier: hasIdentifier, kind: kind).errorDescription)
+    }
+
+    // MARK: - Lookup by identifier
+
     func testTheRecordedIdentifierWinsOverASameNamedListInAnotherAccount() throws {
         let saved = snapshot()
         let lists = [(id: "other-account", title: "Reminders"), (id: saved.calendarIdentifier, title: "Reminders")]
 
-        let resolved = try saved.resolveList(in: lists, identifier: { $0.id })
+        let resolved = try saved.resolveList(in: lists, identifier: { $0.id }, for: .revertUpdate)
 
         XCTAssertEqual(resolved.id, saved.calendarIdentifier)
     }
@@ -50,7 +67,7 @@ final class ReminderSnapshotListTests: XCTestCase {
         let saved = snapshot(listTitle: "Groceries")
         let lists = [(id: "other", title: "Groceries"), (id: saved.calendarIdentifier, title: "Shopping")]
 
-        let resolved = try saved.resolveList(in: lists, identifier: { $0.id })
+        let resolved = try saved.resolveList(in: lists, identifier: { $0.id }, for: .recreateDeleted)
 
         XCTAssertEqual(resolved.title, "Shopping")
     }
@@ -60,8 +77,53 @@ final class ReminderSnapshotListTests: XCTestCase {
         let saved = snapshot(listTitle: "Groceries")
         let lists = [(id: "other-account", title: "Groceries")]
 
-        XCTAssertNotNil(missingListError { try saved.resolveList(in: lists, identifier: { $0.id }) })
+        XCTAssertNotNil(missingListError { try saved.resolveList(in: lists, identifier: { $0.id }, for: .revertUpdate) })
     }
+
+    /// The match itself, on any recorded identifier (closure seam): an empty one never matches,
+    /// not even a list whose identifier is empty too.
+    func testAnEmptyRecordedIdentifierMatchesNoList() {
+        struct Missing: Error {}
+        XCTAssertThrowsError(try ReminderSnapshot.list(recorded: "", in: [(id: "", title: "Reminders")], identifier: { $0.id },
+                                                       orThrow: { Missing() })) { XCTAssertTrue($0 is Missing) }
+        XCTAssertEqual(try ReminderSnapshot.list(recorded: "b", in: [(id: "a", title: "x"), (id: "b", title: "y")],
+                                                 identifier: { $0.id }, orThrow: { Missing() }).title, "y")
+    }
+
+    // MARK: - Resolve, then write (the restore of one reminder)
+
+    /// A refusal writes nothing: the update-undo target keeps its list, title and due.
+    func testARefusalLeavesTheReminderAsItWas() throws {
+        let saved = snapshot(listTitle: "Groceries", reminderTitle: "Before")
+        let current = list("Inbox")
+        let target = reminder(in: current, title: "Now")
+        let due = DateComponents(year: 2026, month: 10, day: 12)
+        target.dueDateComponents = due
+
+        XCTAssertNotNil(missingListError {
+            try saved.apply(to: target, lists: [current, list("Groceries")], for: .revertUpdate, now: now)
+        })
+
+        XCTAssertTrue(target.calendar === current)
+        XCTAssertEqual(target.title, "Now")
+        XCTAssertEqual(target.dueDateComponents?.day, 12)
+    }
+
+    /// The reminder goes back to the recorded list, found by identifier, with its recorded fields.
+    func testTheRestoreWritesTheRecordedListAndFields() throws {
+        let recorded = list("Groceries")
+        let saved = ReminderSnapshot(from: reminder(in: recorded, title: "Before"))
+        let current = list("Inbox")
+        let target = reminder(in: current, title: "Now")
+        recorded.title = "Shopping"   // renamed since
+
+        try saved.apply(to: target, lists: [current, list("Groceries"), recorded], for: .revertUpdate, now: now)
+
+        XCTAssertTrue(target.calendar === recorded)
+        XCTAssertEqual(target.title, "Before")
+    }
+
+    // MARK: - The refusal
 
     /// The message names the list and the reminder as `undoShownTitle` shows them: a shared list's
     /// title is set by someone else (#37 F1), so a quote cannot close the quotes and hidden
@@ -69,55 +131,64 @@ final class ReminderSnapshotListTests: XCTestCase {
     func testTheRefusalNamesTheListAndTheReminder() throws {
         let saved = snapshot(listTitle: "Shop'ping\u{7}", reminderTitle: "Buy\u{202E} milk")
 
-        let error = try XCTUnwrap(missingListError { try saved.resolveList(in: [(id: "x", title: "y")], identifier: { $0.id }) })
+        let error = try XCTUnwrap(missingListError {
+            try saved.resolveList(in: [(id: "x", title: "y")], identifier: { $0.id }, for: .recreateDeleted)
+        })
         let message = try XCTUnwrap(error.errorDescription)
 
-        XCTAssertTrue(message.contains("the list 'Shop\u{2019}ping'"), message)
-        XCTAssertTrue(message.contains("the reminder 'Buy milk'"), message)
+        XCTAssertTrue(message.contains("list 'Shop\u{2019}ping'"), message)
+        XCTAssertTrue(message.contains("reminder 'Buy milk'"), message)
         XCTAssertFalse(message.contains("\u{7}"))
         XCTAssertFalse(message.contains("\u{202E}"))
     }
 
-    /// Nothing is written, the record is kept, and the message says how to give the undo up.
-    func testTheRefusalKeepsTheRecordAndNamesDiscardID() throws {
+    /// The record is kept, and the claim is about this reminder only: in a batch undo, other
+    /// members may already have been written (M3).
+    func testTheRefusalKeepsTheRecordAndSpeaksForThisReminderOnly() throws {
         let saved = snapshot()
 
-        let error = try XCTUnwrap(missingListError { try saved.resolveList(in: [(id: "x", title: "Reminders")], identifier: { $0.id }) })
+        let error = try XCTUnwrap(missingListError {
+            try saved.resolveList(in: [(id: "x", title: "Reminders")], identifier: { $0.id }, for: .revertUpdate)
+        })
         let message = try XCTUnwrap(error.errorDescription)
 
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
-        XCTAssertTrue(message.contains("Nothing was written"), message)
-        XCTAssertTrue(message.contains("this history entry was kept"), message)
+        XCTAssertTrue(message.contains("Nothing was written for this reminder"), message)
+        XCTAssertFalse(message.contains("Nothing was written."), message)
+        XCTAssertTrue(message.contains("the history entry was kept"), message)
         XCTAssertTrue(message.contains("discard_id"), message)
     }
 
-    /// A list recorded without an identifier cannot be found, even next to a list whose identifier
-    /// is empty too; the message does not offer a retry.
-    func testAnEmptyRecordedIdentifierIsRefused() throws {
-        let list = EKCalendar(for: .reminder, eventStore: store)
-        list.title = "Reminders"
-        list.setValue("", forKey: "calendarIdentifier")   // no public setter; an empty identifier is otherwise unreachable here
-        let reminder = EKReminder(eventStore: store)
-        reminder.calendar = list
-        let saved = ReminderSnapshot(from: reminder)
-        XCTAssertEqual(saved.calendarIdentifier, "", "precondition")
+    /// Giving up cannot be reversed. For a delete-undo that loses the deleted reminder; for an
+    /// update-undo the reminder simply stays as it is now (M1).
+    func testTheRefusalSaysWhatGivingUpLoses() throws {
+        let delete = try message(kind: .recreateDeleted)
+        XCTAssertTrue(delete.contains("cannot be reversed"), delete)
+        XCTAssertTrue(delete.contains("cannot recover the deleted reminder"), delete)
 
-        let error = try XCTUnwrap(missingListError { try saved.resolveList(in: [(id: "", title: "Reminders")], identifier: { $0.id }) })
-        let message = try XCTUnwrap(error.errorDescription)
-
-        XCTAssertTrue(message.contains("recorded without an identifier"), message)
-        XCTAssertFalse(message.contains("again"), message)
+        let update = try message(kind: .revertUpdate)
+        XCTAssertTrue(update.contains("cannot be reversed"), update)
+        XCTAssertTrue(update.contains("the reminder stays as it is now"), update)
+        XCTAssertFalse(update.contains("deleted reminder"), update)
     }
 
-    /// The account the list belongs to is named too, shown the same way (an account title can be
-    /// set by a server).
-    func testTheRefusalNamesTheAccount() throws {
-        let error = EventKitError.undoListMissing(list: "Reminders", account: "Ex'change\u{200B}", reminder: "Water plants", hasIdentifier: true)
-        let message = try XCTUnwrap(error.errorDescription)
+    /// A list recorded without an identifier cannot be found: no retry is offered.
+    func testARecordWithoutAnIdentifierOffersNoRetry() throws {
+        let withID = try message(kind: .revertUpdate)
+        XCTAssertTrue(withID.contains("Run undo again"), withID)
 
-        XCTAssertTrue(message.contains("in the account 'Ex\u{2019}change'"), message)
+        let without = try message(hasIdentifier: false, kind: .revertUpdate)
+        XCTAssertTrue(without.contains("recorded without an identifier"), without)
+        XCTAssertFalse(without.contains("again"), without)
+    }
 
-        let withoutAccount = try XCTUnwrap(EventKitError.undoListMissing(list: "Reminders", account: nil, reminder: "Water plants", hasIdentifier: true).errorDescription)
-        XCTAssertFalse(withoutAccount.contains("account '"), withoutAccount)
+    /// The account is named too, shown the same way (an account title can be set by a server);
+    /// a title that shows as nothing is left out rather than shown as ''.
+    func testTheRefusalNamesTheAccountAndLeavesOutEmptyTitles() throws {
+        XCTAssertTrue(try message(account: "Ex'change\u{200B}", kind: .revertUpdate).contains("account 'Ex\u{2019}change'"))
+
+        let bare = try message(list: "\u{200B}", account: nil, reminder: "", kind: .revertUpdate)
+        XCTAssertFalse(bare.contains("''"), bare)
+        XCTAssertFalse(bare.contains("account '"), bare)
     }
 }

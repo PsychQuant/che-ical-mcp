@@ -175,6 +175,14 @@ struct EventSnapshot {
     }
 }
 
+/// #242: the undo a reminder's list is looked up for. Giving up a delete-undo loses the deleted
+/// reminder (this tool cannot recreate it any more); giving up an update-undo leaves the reminder
+/// as it is now.
+enum ReminderRestoreKind: Sendable {
+    case recreateDeleted
+    case revertUpdate
+}
+
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
 struct ReminderSnapshot {
     let title: String
@@ -219,19 +227,36 @@ struct ReminderSnapshot {
     /// #242: the list undo restores into, found by `calendarIdentifier` only, as
     /// `EventSnapshot.resolveCalendar` finds an event's calendar (#208). Two accounts can hold
     /// lists of the same name, and a renamed list keeps its identifier, so the title is never used
-    /// as a fallback. A missing list throws `EventKitError.undoListMissing`, which keeps the record.
-    /// Generic over the list type so it is unit-tested without EventKit (closure seam).
-    func resolveList<T>(in lists: [T], identifier: (T) -> String) throws -> T {
-        guard !calendarIdentifier.isEmpty,
-              let list = lists.first(where: { identifier($0) == calendarIdentifier }) else {
-            throw EventKitError.undoListMissing(list: calendarTitle, account: calendarSource, reminder: title,
-                                                hasIdentifier: !calendarIdentifier.isEmpty)
+    /// as a fallback. A missing list throws `EventKitError.undoListMissing`, which keeps the record;
+    /// `kind` decides what its message says giving the undo up loses. Generic over the list type so
+    /// it is unit-tested without EventKit (closure seam).
+    func resolveList<T>(in lists: [T], identifier: (T) -> String, for kind: ReminderRestoreKind) throws -> T {
+        try Self.list(recorded: calendarIdentifier, in: lists, identifier: identifier) {
+            EventKitError.undoListMissing(list: calendarTitle, account: calendarSource, reminder: title,
+                                          hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
+        }
+    }
+
+    /// The match `resolveList` makes, on any recorded identifier: only a non-empty identifier equal
+    /// to it matches, so an empty one matches no list, not even one whose identifier is empty too.
+    static func list<T>(recorded: String, in lists: [T], identifier: (T) -> String,
+                        orThrow missing: () -> Error) throws -> T {
+        guard !recorded.isEmpty, let list = lists.first(where: { identifier($0) == recorded }) else {
+            throw missing()
         }
         return list
     }
 
-    /// Writes every recorded field except the list, which `applyReminderSnapshot` looks up in
-    /// the store. The start and due dates go through `ReminderDateSync.restore` (#251), which
+    /// #242: the restore of one reminder. The list is resolved first, so a refusal leaves the
+    /// reminder as it was; then the list and every other recorded field are written.
+    func apply(to reminder: EKReminder, lists: [EKCalendar], for kind: ReminderRestoreKind, now: Date) throws {
+        let list = try resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: kind)
+        reminder.calendar = list
+        apply(to: reminder, now: now)
+    }
+
+    /// Writes every recorded field except the list, which `apply(to:lists:for:now:)` resolves
+    /// first. The start and due dates go through `ReminderDateSync.restore` (#251), which
     /// writes them in the order EventKit's coupling of the two needs. Alarms and recurrence
     /// rules are rebuilt only when they differ, so an update-undo that did not touch them leaves
     /// the existing objects in place. The rules and the due date go into the same save:
