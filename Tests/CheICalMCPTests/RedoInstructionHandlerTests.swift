@@ -62,6 +62,10 @@ final class RedoInstructionHandlerTests: XCTestCase {
             let message = try XCTUnwrap(redo["message"] as? String, operation.description)
             XCTAssertTrue(message.hasPrefix(try XCTUnwrap(operation.redoInstruction)), message)
             XCTAssertTrue(message.contains("removed from the redo history"), message)
+            // PR #282 round 2, findings 7/11/15: the next redo applies to whatever is now on top,
+            // which may be another entry that is only answered, not "the entry beneath it" redone.
+            XCTAssertTrue(message.contains("The next redo applies to whatever is now on top of the redo history"), message)
+            XCTAssertFalse(message.contains("redoes the entry beneath it"), message)
             XCTAssertEqual(redo["redo_available"] as? Int, 0, operation.description)
             XCTAssertEqual(redo["undo_available"] as? Int, 0, operation.description)
             let after = await history.historySnapshot()

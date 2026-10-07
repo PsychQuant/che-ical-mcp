@@ -442,7 +442,7 @@ actor CalendarUndoManager {
         case empty(undoCount: Int)
         /// #247: the top record's redo writes nothing (`UndoOperation.redoWrites`), so it was removed
         /// from the redo stack, to be answered with its instruction once (maintainer decision on
-        /// #247, 2026-10-07): the record beneath it is reached on the next redo. The undo stack did
+        /// #247, 2026-10-07): the next redo applies to whatever is then on top. The undo stack did
         /// not move and no history operation is active; the counts, read in the same call, are the
         /// ones after the removal.
         case dropped(UndoRecord, undoCount: Int, redoCount: Int)

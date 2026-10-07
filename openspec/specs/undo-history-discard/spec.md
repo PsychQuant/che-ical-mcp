@@ -83,15 +83,15 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch member cannot be restored (#248)
 - **WHEN** undo of a batch record finds, before its first write, that a member it would recreate (a deleted event or reminder) has no calendar or list to be recreated in, looked up as the restore looks it up (by recorded identifier; a same-named calendar or list in another account does not count)
-- **THEN** nothing of the batch is written, the error names the item and the calendar or list, and the record stays on top, whole, with the same id; a batch that also holds a delete of an occurrence and the following ones (#244) is refused by that instead, and its record is discarded
+- **THEN** the store is refreshed and the calendars and lists read once more; if one is still missing, or is there but does not allow changes, nothing of the batch is written, the error counts the items that cannot be restored, names the calendars or lists that stop them, says how many could have been restored and that discard_id drops every item of the entry, and the record stays on top, whole, with the same id; a batch that also holds a delete of an occurrence and the following ones (#244) is refused by that instead, and its record is discarded
 
 #### Scenario: Batch undo fails part-way (#248)
 - **WHEN** a batch undo fails on a member after earlier members were restored
-- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp, with the failing member placed to run last; the error says how many were restored and how many remain, and the next undo restores the members never attempted before it retries the failing one
+- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp; when they restore independently (whole events, reminders) the failing member is placed to run last, so the next undo restores the members never attempted before it retries the failing one, and when their order matters (occurrences of a recurring event) the recorded order is kept; a member whose error is permanent is dropped and the members never attempted are kept; the error says how many were restored and how many remain
 
 #### Scenario: Batch undo fails on its first write (#248)
 - **WHEN** the first write of a batch undo fails and other members have not been attempted
-- **THEN** nothing is written, and the record stays whole under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error discards the record as for a single record
+- **THEN** nothing is written; when the members restore independently, the record stays under the same id with the failing member placed to run last, so the next undo tries the others first, and otherwise it stays as it was; a permanent member error drops that member and keeps the others, and discards the record only when no other member waits, as for a single record
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
@@ -103,7 +103,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Redo of a record whose redo writes nothing (#247)
 - **WHEN** the top of the redo stack is a record whose redo writes nothing: a create, delete, update or move, or a batch with any such member (only completion records are written again)
-- **THEN** nothing is executed or written, the undo stack does not change, no undo or redo is left in progress, and redo answers `success: false` with an instruction that names the tool that repeats the operation; the record is then removed from the redo stack, so the instruction is returned once and the next redo reaches the record beneath it; the next undo does not undo that record a second time
+- **THEN** nothing is executed or written, the undo stack does not change, no undo or redo is left in progress, and redo answers `success: false` with an instruction that names the tool that repeats the operation; the record is then removed from the redo stack, so the instruction is returned once and the next redo applies to whatever record is then on top; the next undo does not undo that record a second time
 
 #### Scenario: Repeated discard
 - **WHEN** the same id is submitted after its record was removed

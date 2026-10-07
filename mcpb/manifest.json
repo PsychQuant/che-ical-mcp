@@ -141,7 +141,7 @@
     },
     {
       "name": "cleanup_completed_reminders",
-      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list. One undo recreates the deleted reminders, one at a time, from the undo snapshot."
+      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list. Each call is one undo entry and clears the redo history; one undo recreates the deleted reminders, one at a time, from the undo snapshot."
     },
     {
       "name": "undo",
