@@ -60,20 +60,28 @@ final class EventUpdateRecordTests: XCTestCase {
 
     /// The tests above pin the seam; this pins its one caller. `updateEvent` has to hand the seam
     /// the identifier read off the event after the save. Passing the requested `identifier` there,
-    /// or recording `.updateEvent` / `.updateRecurringEvent` directly, brings #246 back.
+    /// recording before the save, or recording `.updateEvent` / `.updateRecurringEvent` directly
+    /// brings #246 back. It reads the source text (comments removed, whitespace collapsed), so it
+    /// is a guard against a revert, not a behaviour test, and it is sensitive to wording: renaming
+    /// the local `event`, or `eventStore.save(event, span: span)`, turns it red with the behaviour
+    /// unchanged; update the expected text then.
     func testUpdateEventRecordsThroughTheSeamWithTheIdentifierReadAfterTheSave() throws {
-        let sources = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/CheICalMCP/EventKit")
-        let manager = try String(contentsOf: sources.appendingPathComponent("EventKitManager.swift"), encoding: .utf8)
-        let code = manager.components(separatedBy: "\n")
-            .map { $0.components(separatedBy: "//").first ?? $0 }.joined(separator: "\n")
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(
+            SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
 
-        let calls = code.components(separatedBy: "EventUpdateRecord.operation(").dropFirst()
-        XCTAssertEqual(calls.count, 1, "updateEvent builds its undo record with EventUpdateRecord.operation")
-        let arguments = calls.first.map { String($0.prefix(while: { $0 != "}" })) } ?? ""
+        XCTAssertEqual(code.components(separatedBy: "EventUpdateRecord.operation(").count - 1, 1,
+                       "updateEvent builds its undo record with EventUpdateRecord.operation")
+        let arguments = try XCTUnwrap(SourceScan.arguments(of: "EventUpdateRecord.operation(", in: code))
         XCTAssertTrue(arguments.contains("identifierAfterSave: event.eventIdentifier"), arguments)
-        XCTAssertFalse(code.contains("record(.updateEvent("), "record .updateEvent through EventUpdateRecord")
-        XCTAssertFalse(code.contains("record(.updateRecurringEvent("), "record the marker through EventUpdateRecord")
+
+        let body = try XCTUnwrap(code.range(of: "func updateEvent(")).upperBound
+        let save = try XCTUnwrap(code.range(of: "try eventStore.save(event, span: span)", range: body..<code.endIndex))
+        let record = try XCTUnwrap(code.range(of: "EventUpdateRecord.operation(", range: body..<code.endIndex))
+        XCTAssertLessThan(save.lowerBound, record.lowerBound, "the record is built after the save")
+
+        for direct in [#"record\s*\(\s*\.updateEvent\s*\("#, #"record\s*\(\s*\.updateRecurringEvent\s*\("#] {
+            XCTAssertNil(code.range(of: direct, options: .regularExpression), "record through EventUpdateRecord, not \(direct)")
+        }
     }
 }
