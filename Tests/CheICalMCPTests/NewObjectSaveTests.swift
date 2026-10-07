@@ -208,14 +208,25 @@ final class NewObjectSaveTests: XCTestCase {
     }
 
     /// Every construction of a reminder, in any form (`let`, `var`, a type annotation, `.init`,
-    /// inline), is a named local that is saved through `saveNewReminder` and nowhere else.
+    /// inline, inside a closure), is accounted for. Three forms pass, and nothing else does:
+    /// - bound to a local: `let r = EKReminder(eventStore: s)`;
+    /// - built in a closure whose result a call returns into a local, as the delete-undo arm does
+    ///   since #277 (`let r = try await applyReminderSnapshot(…, into: { EKReminder(eventStore: s) })`),
+    ///   so the reminder is created after the lists are read;
+    /// - built inline as the argument of `saveNewReminder`.
+    /// Each local is then saved through `saveNewReminder` once and never with a bare `.save`.
     func testEveryNewReminderIsSavedThroughSaveNewReminder() throws {
         let code = try code()
+        let build = #"EKReminder(?:\.init)? ?\( ?eventStore: ?\w+ ?\)"#
         let all = try matches(#"EKReminder(\.init)? ?\( ?eventStore:"#, in: code)
-        let named = try matches(#"(?:let|var) (\w+)(?: ?: ?EKReminder)? = EKReminder(?:\.init)? ?\( ?eventStore:"#, in: code)
-        XCTAssertEqual(all.count, named.count, "every EKReminder is built into a named local")
-        XCTAssertGreaterThanOrEqual(named.count, 2, "createReminder and the delete-undo recreate")
-        for construction in named {
+        let direct = try matches(#"(?:let|var) (\w+)(?: ?: ?EKReminder)? = "# + build, in: code)
+        // The call's other arguments may hold balanced parentheses but no braces or semicolons, so
+        // a match cannot run from one statement into the next.
+        let viaClosure = try matches(#"(?:let|var) (\w+)(?: ?: ?EKReminder)? = (?:try )?(?:await )?\w+\((?:[^(){};]|\([^(){};]*\))*\{ ?"# + build + #" ?\} ?\)"#, in: code)
+        let inline = try matches(#"try saveNewReminder\( ?"# + build + #" ?,"#, in: code)
+        XCTAssertEqual(all.count, direct.count + viaClosure.count + inline.count, "every EKReminder is built into a local or into saveNewReminder")
+        XCTAssertGreaterThanOrEqual(direct.count + viaClosure.count, 2, "createReminder and the delete-undo recreate")
+        for construction in direct + viaClosure {
             let name = construction.groups[1]
             let body = segment(of: code, at: construction.start)
             XCTAssertEqual(try matches(#"try saveNewReminder\( ?\#(name) ?,"#, in: body).count, 1, body)

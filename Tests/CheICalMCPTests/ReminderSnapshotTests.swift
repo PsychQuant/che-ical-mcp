@@ -39,6 +39,14 @@ final class ReminderSnapshotTests: XCTestCase {
         return c
     }
 
+    /// The date a set of components holds. A due written beside a start makes EventKit derive both
+    /// again and add era, second and weekday fields that hold nothing new (#251 writes the start
+    /// first, so the start is derived again too).
+    private func dateValue(_ c: DateComponents?) -> DateComponents? {
+        guard let c else { return nil }
+        return DateComponents(timeZone: c.timeZone, year: c.year, month: c.month, day: c.day, hour: c.hour, minute: c.minute)
+    }
+
     private func locationAlarm() -> EKAlarm {
         let place = EKStructuredLocation(title: "Probe place")
         place.geoLocation = CLLocation(latitude: 25.04, longitude: 121.61)
@@ -124,6 +132,55 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertEqual(reminder.title, "Pick up")
         XCTAssertEqual(reminder.alarms?.count, 1)
         XCTAssertEqual(reminder.alarms?.first?.structuredLocation?.title, "Probe place")
+    }
+
+    // MARK: - Start before due (#251)
+
+    /// A date-only start beside a timed due. Written start first, as `ReminderDateSync` does;
+    /// written the other way round, EventKit turns the due date-only in memory. The components
+    /// are floating, so nothing depends on the host zone.
+    private func dateOnlyStartAndTimedDue() -> ReminderSnapshot {
+        let original = makeReminder()
+        original.startDateComponents = DateComponents(year: 2026, month: 10, day: 9)
+        original.dueDateComponents = DateComponents(year: 2026, month: 10, day: 10, hour: 15, minute: 0)
+        return ReminderSnapshot(from: original)
+    }
+
+    /// #251: undo wrote the recorded due before the recorded start, so a date-only start turned
+    /// the restored due date-only. Delete-undo, on a new reminder.
+    func testApplyingOnANewReminderKeepsTheDueTimeBesideADateOnlyStart() {
+        let snapshot = dateOnlyStartAndTimedDue()
+        XCTAssertNil(snapshot.startDateComponents?.hour, "precondition: a date-only start")
+        XCTAssertEqual(snapshot.dueDateComponents?.hour, 15, "precondition: a timed due")
+        let recreated = makeReminder()
+
+        snapshot.apply(to: recreated, now: now)
+
+        XCTAssertEqual(recreated.dueDateComponents?.day, 10)
+        XCTAssertEqual(recreated.dueDateComponents?.hour, 15)
+        XCTAssertEqual(recreated.dueDateComponents?.minute, 0)
+        XCTAssertEqual(recreated.startDateComponents?.day, 9)
+        XCTAssertNil(recreated.startDateComponents?.hour)
+    }
+
+    /// #251, update-undo: the reminder holds the zoned dates an update left. In memory the recorded
+    /// floating dates come back floating and the due keeps its time; whether a saved item that had
+    /// a zone stays floating is not checked here (#237 notes, #275).
+    func testUndoOnAZonedReminderKeepsTheDueTimeBesideADateOnlyStart() {
+        let snapshot = dateOnlyStartAndTimedDue()
+        let reminder = makeReminder()
+        reminder.startDateComponents = components(2026, 10, 12, 0)
+        reminder.dueDateComponents = components(2026, 10, 12, 9)
+        reminder.timeZone = taipei
+
+        snapshot.apply(to: reminder, now: now)
+
+        XCTAssertEqual(reminder.dueDateComponents?.day, 10)
+        XCTAssertEqual(reminder.dueDateComponents?.hour, 15)
+        XCTAssertNil(reminder.dueDateComponents?.timeZone)
+        XCTAssertNil(reminder.timeZone)
+        XCTAssertEqual(reminder.startDateComponents?.day, 9)
+        XCTAssertNil(reminder.startDateComponents?.hour)
     }
 
     // MARK: - Recurrence and URL (#228 item 3, url)
@@ -238,8 +295,8 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertEqual(again.notes, snapshot.notes)
         XCTAssertEqual(again.priority, snapshot.priority)
         XCTAssertEqual(again.isCompleted, snapshot.isCompleted)
-        XCTAssertEqual(withoutCalendar(again.dueDateComponents), withoutCalendar(snapshot.dueDateComponents))
-        XCTAssertEqual(withoutCalendar(again.startDateComponents), withoutCalendar(snapshot.startDateComponents))
+        XCTAssertEqual(dateValue(again.dueDateComponents), dateValue(snapshot.dueDateComponents))
+        XCTAssertEqual(dateValue(again.startDateComponents), dateValue(snapshot.startDateComponents))
         XCTAssertEqual(again.url, snapshot.url)
         XCTAssertEqual(Set(again.alarms), Set(snapshot.alarms))
         XCTAssertEqual(again.alarms.count, 3)
