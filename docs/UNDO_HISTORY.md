@@ -12,6 +12,8 @@ Four refusals discard the record themselves, so older records stay reachable:
 
 For 3 and 4, revert the change in Calendar if it should be reverted; a safe restore is tracked in #263.
 
+Batch records (`delete_events_batch`, a series delete, `delete_reminders_batch`, `cleanup_completed_reminders`) are undone member by member (#248). Before the first write every member is checked: when a deleted event's calendar or a deleted reminder's list is gone, nothing is written and the record is kept whole, so the calendar can be brought back or the undo given up with discard_id. When a save still fails part-way, the record is put back with only the members not yet restored, under the same id, so undo again restores those and never recreates the others a second time.
+
 Redo writes only completions again (#247). For any other record on top of the redo history (a create, delete, update or move, or a batch of deletes), redo writes nothing, moves no record, and answers `success: false` with the tool that repeats the operation (for example `delete_event` after the undo of a delete). The entry stays on top of the redo history until a new change clears it, and the next undo goes on to the operation before it instead of undoing the same operation a second time (which recreated a deleted item twice).
 
 To intentionally abandon the newest record, call undo_history, inspect the first entry, and pass its id to undo as discard_id. Example: `{"discard_id":"<id returned by undo_history>"}`. This removes only that current top record. It does not edit events/reminders and does not add a redo record; discarding history cannot be undone. Existing redo records are preserved.

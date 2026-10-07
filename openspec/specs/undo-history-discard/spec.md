@@ -69,6 +69,14 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo meets the record of an `update_event`, or of a `move_events_batch` move that was not a series move, on a one-off event, and the event now repeats or is a detached occurrence (a later update or another app made it so)
 - **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and how to revert the change if it should be reverted (a move: move it back), and the record is discarded; a move of an item that was already an edited occurrence is refused the same way
 
+#### Scenario: Batch member cannot be restored (#248)
+- **WHEN** undo of a batch record finds, before its first write, that a member it would recreate (a deleted event or reminder) has no calendar or list to be recreated in
+- **THEN** nothing of the batch is written, the error names the item and the calendar or list, and the record stays on top, whole, with the same id
+
+#### Scenario: Batch undo fails part-way (#248)
+- **WHEN** a batch undo fails on a member after earlier members were restored
+- **THEN** the record is put back holding only the members not yet restored (the failing one included), under the same id and timestamp, the error says how many were restored and how many remain, and the next undo restores only those
+
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
 - **THEN** nothing is written, the record is kept, and the error offers only giving up the undo with discard_id, not changing the recurrence back; any other change of the rule is an ordinary refusal that can be changed back

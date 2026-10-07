@@ -278,9 +278,10 @@ extension UndoOperation {
     }
 }
 
-/// D4: a batch is checked whole before its first write, so a refusal never leaves it half undone
-/// (a failure *during* the writes is #248). Generic over the operation so the ordering is
-/// unit-tested without EventKit (the closure-seam variant, like `ExclusionExecutor`).
+/// D4: a batch is checked whole before its first write, so a refusal never leaves it half undone.
+/// A write that still fails is reported with how many writes succeeded before it (`Interrupted`),
+/// so the caller can keep only what was not written (#248 A). Generic over the operation so the
+/// ordering is unit-tested without EventKit (the closure-seam variant, like `ExclusionExecutor`).
 ///
 /// Only batch records reach this: lists of `.deleteEvent` (multi-event and series deletes) and of
 /// `.deleteReminder` (reminder batch deletes, #243). Their undo writes to no existing item, so the
@@ -289,8 +290,15 @@ extension UndoOperation {
 /// `verifyRestoreDestination`). It assumes the members touch different
 /// items: two members on one item would both be checked against the state before either is
 /// undone. It is not atomic: each member re-checks when it runs, and a store change in between
-/// can still stop the batch half way (#248).
+/// can still stop the batch half way, which `Interrupted` reports.
 enum UndoBatchRunner {
+    /// A write failed after `completed` writes succeeded (0: nothing was written). A refusal from
+    /// `check` is not wrapped: it comes before any write.
+    struct Interrupted: Error {
+        let completed: Int
+        let underlying: Error
+    }
+
     static func run<Operation>(_ operations: [Operation],
                                check: (Operation) async throws -> Void,
                                execute: (Operation) async throws -> String) async rethrows -> [String] {
@@ -299,7 +307,11 @@ enum UndoBatchRunner {
         }
         var results: [String] = []
         for operation in operations {
-            results.append(try await execute(operation))
+            do {
+                results.append(try await execute(operation))
+            } catch {
+                throw Interrupted(completed: results.count, underlying: error)
+            }
         }
         return results
     }

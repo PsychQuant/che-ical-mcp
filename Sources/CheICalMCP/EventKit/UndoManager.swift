@@ -306,13 +306,24 @@ enum UndoOperation {
 
 /// Timestamped record of an operation.
 struct UndoRecord {
-    let id = UUID()
+    let id: UUID
     let operation: UndoOperation
     let timestamp: Date
 
     init(_ operation: UndoOperation) {
+        self.init(id: UUID(), operation: operation, timestamp: Date())
+    }
+
+    private init(id: UUID, operation: UndoOperation, timestamp: Date) {
+        self.id = id
         self.operation = operation
-        self.timestamp = Date()
+        self.timestamp = timestamp
+    }
+
+    /// #248 A: the same history entry holding less, with its id and timestamp, which the spec keeps
+    /// stable across pop and restore.
+    func narrowed(to operation: UndoOperation) -> UndoRecord {
+        UndoRecord(id: id, operation: operation, timestamp: timestamp)
     }
 }
 
@@ -415,6 +426,13 @@ actor CalendarUndoManager {
         finishHistoryOperation(record)
         redoStack.removeAll { $0.id == record.id }
         undoStack.append(record)
+    }
+
+    /// #248 A: a batch undo that failed after some members were written. Same call contract as
+    /// `restoreFailedUndo`; puts back the record narrowed to `remaining`, the members not yet
+    /// restored, under the same id, so the next undo does not recreate the others again.
+    func restoreFailedUndo(_ record: UndoRecord, remaining: UndoOperation) {
+        restoreFailedUndo(record.narrowed(to: remaining))
     }
 
     /// #191 — symmetric restore for a failed executeRedo (same call contract).

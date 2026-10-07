@@ -1514,6 +1514,12 @@ class CheICalMCPServer {
         let message: String
         do {
             message = try await undoExecutionSource.executeUndo(record.operation)
+        } catch let partial as UndoBatchPartiallyUndoneError {
+            // #248 A: some members of a batch were restored before one failed. Put back only the
+            // members not yet restored, under the same id, so a retry does not recreate the
+            // restored ones a second time.
+            await undoManager.restoreFailedUndo(record, remaining: .batch(partial.remaining))
+            throw partial
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:
