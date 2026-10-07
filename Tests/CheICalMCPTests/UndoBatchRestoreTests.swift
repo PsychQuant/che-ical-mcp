@@ -256,6 +256,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         operations.map { operation -> String in
             switch operation {
             case .deleteEvent(let snapshot): return snapshot.title
+            case .deleteOccurrence(let snapshot, _): return "occ:" + snapshot.title
             case .batch(let members): return "[" + titles(members).joined(separator: ",") + "]"
             default: return operation.description
             }
@@ -307,12 +308,79 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(failure is SaveFailed, "nothing was written and nothing else waits: \(failure)")
     }
 
-    /// A permanent member error discards the record, as it does for a single record.
-    func testAPermanentFailureOfTheFirstWriteStandsAsBefore() {
+    /// A permanent member error (`UnrecoverableUndoError`) means that member can never be restored.
+    /// It is dropped and the members never attempted are kept, whether or not something was written
+    /// first (PR #282 round 2, findings 8, 9, 12, 17); before, the first write's permanent error
+    /// discarded the members never attempted with it.
+    func testAPermanentFailureOfTheFirstWriteDropsOnlyThatMember() throws {
         let failure = UndoOperation.batchUndoFailure(members: [deleted("A"), deleted("B")],
                                                      interrupted: .init(completed: 0, underlying: UnrecoverableUndoError(message: "x")),
-                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
+                                                     describe: { _ in "x" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(titles(partial.remaining), ["A"], "B ran first and can never be restored; A never ran")
+        XCTAssertEqual(partial.restoredCount, 0)
+        XCTAssertTrue(partial.message.contains("dropped from this history entry"), partial.message)
+    }
+
+    func testAPermanentFailureAfterAWriteDropsOnlyThatMember() throws {
+        let failure = UndoOperation.batchUndoFailure(members: ["A", "B", "C"].map(deleted),
+                                                     interrupted: .init(completed: 1, underlying: UnrecoverableUndoError(message: "x")),
+                                                     describe: { _ in "x" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(titles(partial.remaining), ["A"], "C was restored, B dropped, A kept")
+        XCTAssertEqual(partial.restoredCount, 1)
+    }
+
+    /// With nothing else waiting, the permanent error stands and discards the record, as for a
+    /// single record.
+    func testAPermanentFailureOfTheLastMemberStands() {
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("A")],
+                                                     interrupted: .init(completed: 0, underlying: UnrecoverableUndoError(message: "x")),
+                                                     describe: { _ in "x" })
         XCTAssertTrue(failure is UnrecoverableUndoError, "\(failure)")
+    }
+
+    // MARK: - A: members whose order matters (PR #282 round 2, finding 3)
+
+    private func occurrence(_ title: String) -> UndoOperation {
+        .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: title), notCarriedOver: [])
+    }
+
+    /// Two deleted occurrences of one series (#244): moving the failing one to the end would change
+    /// what the next undo does, so the order is kept. With nothing written, the record stays as it was.
+    func testSameSeriesOccurrencesKeepTheirOrderWhenTheFirstToRunFails() async throws {
+        let log = ExecutionLog()
+        let error = await undoBatch([occurrence("1"), occurrence("2")], log: log, failsOn: { $0 == "occ:2" })
+        XCTAssertTrue(error is SaveFailed, "the member error stands and the record is kept whole: \(String(describing: error))")
+        XCTAssertEqual(log.executed, [])
+    }
+
+    /// After a write, the record keeps the members not yet restored in their recorded order, so the
+    /// failing one is tried first again.
+    func testSameSeriesOccurrencesNarrowInTheirRecordedOrder() async throws {
+        let log = ExecutionLog()
+        let error = await undoBatch([occurrence("1"), occurrence("2"), occurrence("3")], log: log, failsOn: { $0 == "occ:2" })
+        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
+        XCTAssertEqual(titles(partial.remaining), ["occ:1", "occ:2"])
+        XCTAssertEqual(log.executed, ["occ:3"])
+        XCTAssertTrue(partial.message.contains("recorded order"), partial.message)
+    }
+
+    /// One member that is not proven independent keeps the order for all of them.
+    func testAMixedBatchWithAnOccurrenceKeepsItsOrder() async {
+        let log = ExecutionLog()
+        let error = await undoBatch([deleted("A"), occurrence("1")], log: log, failsOn: { $0 == "occ:1" })
+        XCTAssertTrue(error is SaveFailed, "\(String(describing: error))")
+    }
+
+    /// Only whole-event and reminder deletes are proven independent (one item each; one whole event
+    /// per identifier per batch, #185 F5).
+    func testOnlyWholeEventAndReminderDeletesAreReordered() {
+        XCTAssertTrue(UndoOperation.deleteEvent(snapshot: event).restoresIndependently)
+        XCTAssertTrue(UndoOperation.deleteReminder(snapshot: reminder).restoresIndependently)
+        XCTAssertFalse(UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: []).restoresIndependently)
+        XCTAssertFalse(UndoOperation.deleteFollowingOccurrences(title: "Standup").restoresIndependently)
+        XCTAssertFalse(UndoOperation.batch([.deleteEvent(snapshot: event)]).restoresIndependently)
     }
 
     /// Undo runs the members in reverse. The record keeps the failing member first, so it runs last
@@ -379,7 +447,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     /// No nested batch is recorded today; if one were, its own remainder replaces it, so its
-    /// restored members are not recreated either.
+    /// restored members are not recreated either. A batch member is not proven independent, so the
+    /// order is kept.
     func testANestedBatchThatStoppedPartWayKeepsOnlyItsOwnRemainder() throws {
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1")
         let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y"), deleted("Z")])]
@@ -387,7 +456,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                      interrupted: .init(completed: 0, underlying: inner),
                                                      describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
-        XCTAssertEqual(titles(partial.remaining), ["[Y]", "X"])
+        XCTAssertEqual(titles(partial.remaining), ["X", "[Y]"])
     }
 
     func testThePartialErrorSaysWhatWasRestoredAndKeptAndHowToGiveUp() {
