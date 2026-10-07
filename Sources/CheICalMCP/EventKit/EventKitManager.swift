@@ -419,7 +419,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendar.cgColor = parseColor(colorHex)
         }
 
-        try eventStore.saveCalendar(calendar, commit: true)
+        // #261: a reminder list whose save fails stays pending and would be written by the next
+        // save; an event calendar is dropped by EventKit itself.
+        try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
+                              discard: { if entityType == .reminder { try eventStore.removeCalendar(calendar, commit: false) } },
+                              logDiscardFailure: { Self.logDiscardFailure(handler: "createCalendar", identifier: calendar.calendarIdentifier, error: $0) })
         markNeedsRefresh()
         return CreateCalendarResult(calendar: calendar, isDuplicate: false)
     }
@@ -1754,13 +1758,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        try eventStore.save(reminder, commit: true)
+        try saveNewReminder(reminder, handler: "createReminder")
         markNeedsRefresh()
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
         return result
+    }
+
+    /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
+    /// the save fails, the reminder is removed from the store without committing, so the next
+    /// save by any tool does not write it (`NewObjectSave`).
+    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws {
+        try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+                              discard: { try eventStore.remove(reminder, commit: false) },
+                              logDiscardFailure: { Self.logDiscardFailure(handler: handler, identifier: reminder.calendarItemIdentifier, error: $0) })
+    }
+
+    /// A discard that failed after a failed save (#261) goes to stderr, sanitized; the caller
+    /// reports the save's error.
+    private static func logDiscardFailure(handler: String, identifier: String, error: Error) {
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "\(handler).discard", identifier: identifier, error: error)
     }
 
     func updateReminder(
@@ -2111,7 +2130,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try await ensureReminderAccess()
             let reminder = EKReminder(eventStore: eventStore)
             applyReminderSnapshot(snapshot, to: reminder)
-            try eventStore.save(reminder, commit: true)
+            try saveNewReminder(reminder, handler: "undo.deleteReminder")
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
 
