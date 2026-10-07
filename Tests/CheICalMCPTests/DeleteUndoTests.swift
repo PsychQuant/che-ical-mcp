@@ -141,8 +141,10 @@ final class DeleteUndoTests: XCTestCase {
     ///
     /// Verify round 2, findings 7/15 asked for the series-start shift instead. That shift was the
     /// move path's rule only until 2a40986 (#253 verify round 2, maintainer decision D2-b), which
-    /// replaced it with this one because its base was unreliable; the restore stays on the move
-    /// path's current rule, and this test holds the two together.
+    /// replaced it with this one because its base was unreliable. This test pins that the restore
+    /// applies the split rule (`copyOutAlarms(of:isSplit: true)`) to a series occurrence; it does
+    /// not pin the move path's own call site, whose `isSplit` comes from its executor (verify
+    /// round 3, finding 5).
     func testAnOccurrenceRestoreMovesAbsoluteAlarmsToItsStart() throws {
         let alarmDate = firstStart.addingTimeInterval(-3600)
         let series = weekly(startingAt: firstStart)
@@ -246,6 +248,44 @@ final class DeleteUndoTests: XCTestCase {
                        "nested batches are walked")
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [kept, .deleteEvent(snapshot: snapshot)], count: 2),
                        "Undone batch (2 operations)")
+    }
+
+    /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
+    /// snapshot, which hold no occurrence deleted or edited on its own before the delete, so the
+    /// undo text says so; a one-off event's text is unchanged.
+    func testAWholeSeriesRestoreSaysItCameBackFromItsRules() {
+        let series = EventSnapshot(from: weekly(startingAt: firstStart))
+        XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: series, newID: "n1"),
+                       "Undone: restored event 'Standup' (new ID: n1). Restored from the series rules: occurrences deleted or edited on their own before this delete come back as the rules define them, and undoing an earlier delete of one of them here adds it a second time")
+        XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up"), newID: "n1"),
+                       "Undone: restored event 'Standup' (new ID: n1)")
+    }
+
+    /// The batch text names it once too, after `absolute_alarms`, for a series member at any depth.
+    func testABatchUndoTextSaysASeriesCameBackFromItsRules() {
+        let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
+        let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
+        let moved = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: ["absolute_alarms"])
+        let rules = "Restored from the series rules: occurrences deleted or edited on their own before this delete come back as the rules define them, and undoing an earlier delete of one of them here adds it a second time"
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff, .batch([series])], count: 2),
+                       "Undone batch (2 operations). " + rules)
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [series, moved], count: 2),
+                       "Undone batch (2 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start). " + rules)
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operations)")
+    }
+
+    /// The whole-event arm of `executeUndo` reports through that text (pinned: it needs an
+    /// authorized store to run).
+    func testTheWholeEventUndoArmReportsTheRulesRestore() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
+        let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
+        let message = SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: body)
+        XCTAssertEqual(message.count, 1)
+        if let message = message.first {
+            XCTAssertGreaterThan(message.lowerBound, arm.lowerBound)
+            XCTAssertLessThan(message.lowerBound, next.lowerBound, "in the whole-event arm")
+        }
     }
 
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to
