@@ -133,7 +133,7 @@ extension EventKitManager {
         case .reminderList(let snapshot):
             try await ensureReminderAccess()
             refreshIfNeeded()
-            // The lookup `applyReminderSnapshot` makes; #242 changes it, and the two must change together.
+            // The lookup `applyReminderSnapshot` makes on main (by title); #242 (PR #277) makes it identifier-based.
             found = eventStore.calendars(for: .reminder).contains { $0.title == snapshot.calendarTitle }
         }
         if !found { throw destination.missingError }
