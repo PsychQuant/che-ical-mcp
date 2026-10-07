@@ -103,9 +103,8 @@ final class UndoBatchWiringTests: XCTestCase {
     }
 
     /// `firstMissing` makes the restore's own lookups: `EventSnapshot.resolveCalendar`, which
-    /// `applySnapshot` calls, and `ReminderSnapshot.resolveList(for: .recreateDeleted)`, which
-    /// `applyReminderSnapshot` calls (through `ReminderSnapshot.apply(to:lists:for:now:)`) for the
-    /// `.deleteReminder` undo, the only reminder record with a destination.
+    /// `applySnapshot` calls, and `ReminderSnapshot.resolveList` with `.recreateDeleted`, the kind
+    /// the `.deleteReminder` undo restores with (the only reminder record with a destination).
     func testThePreCheckLookupsAreTheOnesTheRestoreMakes() throws {
         let restore = try Self.code("CheICalMCP/EventKit/UndoBatchRestore.swift")
         let lookup = try Self.section(from: "static func firstMissing<", in: restore)
@@ -113,17 +112,15 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: "snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)", in: lookup))
         XCTAssertEqual(Self.occurrences(of: ".title", in: lookup), 0)
 
+        // The restore side of each lookup. The reminder write path itself is pinned by
+        // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
         let manager = try Self.code(Self.manager)
         let apply = try Self.section(from: "private func applySnapshot(_ snapshot: EventSnapshot", in: manager)
         XCTAssertNotNil(Self.offset(of: "snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })", in: apply))
-        let applyReminder = try Self.section(from: "private func applyReminderSnapshot(_ snapshot: ReminderSnapshot", in: manager)
-        XCTAssertNotNil(Self.offset(of: "try snapshot.apply(to: reminder, lists: eventStore.calendars(for: .reminder), for: kind, now: Date())", in: applyReminder))
         let undo = try Self.section(from: "func executeUndo(_ operation: UndoOperation)", in: manager)
         let deleteArm = try XCTUnwrap(undo.range(of: "case .deleteReminder(let snapshot):").map { undo[$0.lowerBound...] })
-        XCTAssertNotNil(Self.offset(of: "try applyReminderSnapshot(snapshot, to: reminder, for: .recreateDeleted)", in: deleteArm))
-        let snapshotApply = try Self.section(from: "func apply(to reminder: EKReminder, lists: [EKCalendar], for kind: ReminderRestoreKind",
-                                             in: try Self.code("CheICalMCP/EventKit/UndoManager.swift"))
-        XCTAssertNotNil(Self.offset(of: "try resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: kind)", in: snapshotApply))
+        let nextArm = try XCTUnwrap(deleteArm.range(of: "case .updateReminder(").map { deleteArm[..<$0.lowerBound] })
+        XCTAssertNotNil(Self.offset(of: "for: .recreateDeleted)", in: nextArm))
     }
 
     // MARK: - #243: the reminder batch delete record (findings 8 (1), 11)
