@@ -67,16 +67,18 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
 
 extension UndoRestoreDestinationMissingError: TrustedErrorMessage {}
 
-/// A: a batch undo stopped part-way, after `restoredCount` members were written. `handleUndo`
-/// puts back a record of `remaining` only, under the same id and timestamp
+/// A: a batch undo stopped before its end, after `restoredCount` members were written (possibly
+/// none). `handleUndo` puts back a record of `remaining` only, under the same id and timestamp
 /// (`CalendarUndoManager.restoreFailedUndo(_:remaining:)`), so the next undo does not recreate the
-/// restored members a second time.
+/// restored members a second time. The failing member comes first in `remaining`, which undo runs
+/// last, so the members never attempted get their turn even when that one keeps failing.
 ///
 /// The message is author-controlled text plus `memberError`, which is either a sanitized code or
 /// the verbatim message of a `TrustedErrorMessage` (`EventKitErrorSanitizer.writeFailureLog`). That
 /// is the condition under which this type conforms to `TrustedErrorMessage`.
 struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
-    /// The members not yet restored, in record order, the failing one included.
+    /// The members not yet restored, in record order: the failing one first, then the ones never
+    /// attempted.
     let remaining: [UndoOperation]
     let restoredCount: Int
     let memberError: String
@@ -87,9 +89,16 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.memberError = memberError
-        let restored = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
-        let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
-        message = "Undo of this batch stopped part-way: \(restored) restored, then restoring the next one failed (\(memberError)). This history entry was kept with only \(left), under the same id, so running undo again does not restore the others a second time. If the failure will not go away (for example, the calendar or list was deleted), ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+        let others = remaining.count - 1
+        let what: String
+        if restoredCount == 0 {
+            what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first."
+        } else {
+            let restored = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
+            let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
+            what = "Undo of this batch stopped part-way: \(restored) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time."
+        }
+        message = what + " If that item keeps failing (for example, its calendar or list was deleted), ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id. The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
     }
 }
 
@@ -97,21 +106,49 @@ extension UndoBatchPartiallyUndoneError: TrustedErrorMessage {}
 
 extension UndoOperation {
     /// A: the error a batch undo reports when a write failed. `members` are in record order; the
-    /// undo ran them in reverse, so the `interrupted.completed` members written are the last ones,
-    /// and the record keeps the others, the failing one included. When nothing was written the
-    /// member error stands and the record is kept whole, as before. A failing member that is itself
-    /// a batch stopped part-way is replaced by its own remainder (no nested batch is recorded today).
-    /// `describe` gives the member error for the message; it is called only when the batch stopped
-    /// part-way.
+    /// undo ran them in reverse, so the `interrupted.completed` members written are the last ones.
+    /// The record keeps the failing member, moved to the front (it runs last next time), and the
+    /// members never attempted. A failing member that is itself a batch stopped part-way is replaced
+    /// by its own remainder (no nested batch is recorded today). When nothing was written and no
+    /// other member is waiting, or the member error is permanent (`UnrecoverableUndoError`, which
+    /// discards the record), the member error stands, as for a single record. `describe` gives the
+    /// member error for the message; it is called only when the record is narrowed or reordered.
     static func batchUndoFailure(members: [UndoOperation], interrupted: UndoBatchRunner.Interrupted,
                                  describe: (Error) -> String) -> Error {
         let failedIndex = members.count - 1 - interrupted.completed
         guard members.indices.contains(failedIndex) else { return interrupted.underlying }
         let inner = interrupted.underlying as? UndoBatchPartiallyUndoneError
-        if interrupted.completed == 0 && inner == nil { return interrupted.underlying }
+        let unattempted = Array(members[..<failedIndex])
+        if inner == nil, interrupted.completed == 0,
+           unattempted.isEmpty || interrupted.underlying is UnrecoverableUndoError {
+            return interrupted.underlying
+        }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
-        return UndoBatchPartiallyUndoneError(remaining: Array(members[..<failedIndex]) + [failing],
+        return UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted,
                                              restoredCount: interrupted.completed + (inner?.restoredCount ?? 0),
                                              memberError: inner?.memberError ?? describe(interrupted.underlying))
+    }
+}
+
+/// #248 A: the one way a batch record runs, for undo and redo alike, so no caller of
+/// `UndoBatchRunner.run` can let `Interrupted` reach `handleUndo`, which would put the whole record
+/// back after some members were written. `UndoBatchWiringTests` checks it is the runner's only caller.
+enum UndoBatchExecution {
+    /// Undo runs the members in reverse record order and reports a failed write through
+    /// `UndoOperation.batchUndoFailure`. Redo runs them in record order and reports the member error
+    /// as it is: no batch whose members write on redo is recorded (#247).
+    static func run(_ members: [UndoOperation], verb: UndoHistoryVerb,
+                    check: (UndoOperation) async throws -> Void,
+                    execute: (UndoOperation) async throws -> String,
+                    describe: (Error) -> String) async throws -> [String] {
+        do {
+            return try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members,
+                                                 check: check, execute: execute)
+        } catch let interrupted as UndoBatchRunner.Interrupted {
+            switch verb {
+            case .undo: throw UndoOperation.batchUndoFailure(members: members, interrupted: interrupted, describe: describe)
+            case .redo: throw interrupted.underlying
+            }
+        }
     }
 }

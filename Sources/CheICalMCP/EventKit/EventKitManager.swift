@@ -2144,20 +2144,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
-            // #236 D4: every sub-operation is checked before the first write (#248 B: including
-            // the calendar or list a deleted item is recreated in).
-            do {
-                let results = try await UndoBatchRunner.run(
-                    Array(ops.reversed()),
-                    check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
-                    execute: { try await self.executeUndo($0) })
-                return "Undone batch (\(results.count) operations)"
-            } catch let interrupted as UndoBatchRunner.Interrupted {
-                // #248 A: after a write, the record keeps only the members not yet restored.
-                throw UndoOperation.batchUndoFailure(members: ops, interrupted: interrupted, describe: {
-                    EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0)
-                })
-            }
+            // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write
+            // keeps only the members not yet restored (`UndoBatchExecution`).
+            let results = try await UndoBatchExecution.run(
+                ops, verb: .undo,
+                check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
+                execute: { try await self.executeUndo($0) },
+                describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
+            return "Undone batch (\(results.count) operations)"
         }
     }
 
@@ -2188,17 +2182,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #247: a batch of members that write nothing used to answer "Redone batch (N
             // operations)" for a no-op.
             if let instruction = operation.redoInstruction { return instruction }
-            do {
-                let results = try await UndoBatchRunner.run(
-                    ops,
-                    check: { try await self.verifyHistoryTarget(of: $0, verb: .redo) },
-                    execute: { try await self.executeRedo($0) })
-                return "Redone batch (\(results.count) operations)"
-            } catch let interrupted as UndoBatchRunner.Interrupted {
-                // Only a batch whose members all write gets here, and none is recorded today
-                // (#247); the member error stands and the record is kept whole.
-                throw interrupted.underlying
-            }
+            let results = try await UndoBatchExecution.run(
+                ops, verb: .redo,
+                check: { try await self.verifyHistoryTarget(of: $0, verb: .redo) },
+                execute: { try await self.executeRedo($0) },
+                describe: { EventKitErrorSanitizer.writeFailureLog(handler: "redo", identifier: "batch member", error: $0) })
+            return "Redone batch (\(results.count) operations)"
         }
     }
 

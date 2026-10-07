@@ -136,48 +136,101 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(executed, [4, 3], "nothing after the failing write runs")
     }
 
-    func testAFailureOfTheFirstWriteRethrowsTheMemberErrorUnchanged() {
-        let members = [deleted("A"), deleted("B")]
-        let failure = UndoOperation.batchUndoFailure(members: members,
-                                                     interrupted: .init(completed: 0, underlying: SaveFailed.failed),
-                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
-        XCTAssertTrue(failure is SaveFailed, "nothing was written, so the record is kept whole as before: \(failure)")
+    private final class ExecutionLog { var executed: [String] = [] }
+
+    /// Undoes `members` through the production helper, as `executeUndo(.batch)` does, with
+    /// `failsOn` deciding which member writes fail; returns what it throws, or nil.
+    private func undoBatch(_ members: [UndoOperation], log: ExecutionLog,
+                           failsOn: @escaping (String) -> Bool) async -> Error? {
+        do {
+            _ = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, execute: { member in
+                let title = self.titles([member])[0]
+                if failsOn(title) { throw SaveFailed.failed }
+                log.executed.append(title)
+                return title
+            }, describe: { _ in "eventkit_error_1" })
+            return nil
+        } catch {
+            return error
+        }
     }
 
-    /// Undo runs the members in reverse; the record keeps the members not yet restored, the
-    /// failing one included, in record order.
-    func testTheRecordKeepsOnlyTheMembersNotYetRestoredInRecordOrder() throws {
+    func testAFailureOfTheOnlyMemberRethrowsTheMemberErrorUnchanged() {
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("A")],
+                                                     interrupted: .init(completed: 0, underlying: SaveFailed.failed),
+                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
+        XCTAssertTrue(failure is SaveFailed, "nothing was written and nothing else waits: \(failure)")
+    }
+
+    /// A permanent member error discards the record, as it does for a single record.
+    func testAPermanentFailureOfTheFirstWriteStandsAsBefore() {
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("A"), deleted("B")],
+                                                     interrupted: .init(completed: 0, underlying: UnrecoverableUndoError(message: "x")),
+                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
+        XCTAssertTrue(failure is UnrecoverableUndoError, "\(failure)")
+    }
+
+    /// Undo runs the members in reverse. The record keeps the failing member first, so it runs last
+    /// next time, and then the members never attempted.
+    func testTheRecordKeepsTheFailingMemberToRunLastAndTheMembersNeverAttempted() throws {
         let members = ["A", "B", "C", "D"].map(deleted)
         let failure = UndoOperation.batchUndoFailure(members: members,
                                                      interrupted: .init(completed: 2, underlying: SaveFailed.failed),
                                                      describe: { _ in "eventkit_error_1" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
-        XCTAssertEqual(titles(partial.remaining), ["A", "B"], "D and C were restored; B failed; A never ran")
+        XCTAssertEqual(titles(partial.remaining), ["B", "A"], "D and C were restored; B failed; A never ran")
         XCTAssertEqual(partial.restoredCount, 2)
     }
 
-    /// The retry of the narrowed record executes none of the members restored before the failure.
-    func testARetryOfTheNarrowedRecordDoesNotRestoreTheFirstMembersAgain() async throws {
-        let members = ["A", "B", "C", "D"].map(deleted)
-        var executed: [String] = []
-        var failB = true
-        let execute: (UndoOperation) async throws -> String = { member in
-            let title = self.titles([member])[0]
-            if title == "B", failB { failB = false; throw SaveFailed.failed }
-            executed.append(title)
-            return title
-        }
-        var remaining = members
-        do {
-            _ = try await UndoBatchRunner.run(Array(remaining.reversed()), check: { _ in }, execute: execute)
-            XCTFail("the first attempt fails at B")
-        } catch let interrupted as UndoBatchRunner.Interrupted {
-            let failure = UndoOperation.batchUndoFailure(members: remaining, interrupted: interrupted, describe: { _ in "x" })
-            remaining = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError).remaining
-        }
-        _ = try await UndoBatchRunner.run(Array(remaining.reversed()), check: { _ in }, execute: execute)
+    func testAFailedFirstWriteMovesThatMemberLastWithNothingWritten() async throws {
+        let log = ExecutionLog()
+        let error = await undoBatch(["A", "B", "C"].map(deleted), log: log, failsOn: { $0 == "C" })
+        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
+        XCTAssertEqual(partial.restoredCount, 0)
+        XCTAssertEqual(titles(partial.remaining), ["C", "A", "B"])
+        XCTAssertEqual(log.executed, [])
+    }
 
-        XCTAssertEqual(executed, ["D", "C", "B", "A"], "each member restored exactly once")
+    /// A member that keeps failing no longer stalls the members behind it (PR #282 round 1, 9).
+    func testARetryAfterADeterministicFailureReachesTheMembersNeverAttempted() async throws {
+        let log = ExecutionLog()
+        let first = await undoBatch(["A", "B", "C", "D"].map(deleted), log: log, failsOn: { $0 == "B" })
+        let kept = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))").remaining
+        let second = await undoBatch(kept, log: log, failsOn: { $0 == "B" })
+
+        let partial = try XCTUnwrap(second as? UndoBatchPartiallyUndoneError, "\(String(describing: second))")
+        XCTAssertEqual(log.executed, ["D", "C", "A"], "A, never attempted the first time, is restored on the retry")
+        XCTAssertEqual(titles(partial.remaining), ["B"])
+        XCTAssertEqual(partial.restoredCount, 1)
+    }
+
+    func testARetryAfterATransientFailureRestoresEachMemberOnce() async throws {
+        let log = ExecutionLog()
+        var failB = true
+        let first = await undoBatch(["A", "B", "C", "D"].map(deleted), log: log,
+                                    failsOn: { title in
+                                        guard title == "B", failB else { return false }
+                                        failB = false
+                                        return true
+                                    })
+        let kept = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError).remaining
+        let second = await undoBatch(kept, log: log, failsOn: { _ in false })
+
+        XCTAssertNil(second)
+        XCTAssertEqual(log.executed, ["D", "C", "A", "B"], "each member restored exactly once")
+    }
+
+    /// No batch whose members write on redo is recorded (#247); redo keeps the member error.
+    func testRedoReportsTheMemberErrorAsItIs() async {
+        do {
+            _ = try await UndoBatchExecution.run(["A", "B"].map(deleted), verb: .redo, check: { _ in }, execute: { member in
+                if self.titles([member])[0] == "B" { throw SaveFailed.failed }
+                return "ok"
+            }, describe: { _ in "unused" })
+            XCTFail("the failure must surface")
+        } catch {
+            XCTAssertTrue(error is SaveFailed, "\(error)")
+        }
     }
 
     /// No nested batch is recorded today; if one were, its own remainder replaces it, so its
@@ -189,19 +242,25 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                      interrupted: .init(completed: 0, underlying: inner),
                                                      describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
-        XCTAssertEqual(titles(partial.remaining), ["X", "[Y]"])
+        XCTAssertEqual(titles(partial.remaining), ["[Y]", "X"])
     }
 
     func testThePartialErrorSaysWhatWasRestoredAndKeptAndHowToGiveUp() {
         let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: 3,
                                                   memberError: "eventkit_error_1")
-        XCTAssertTrue(error.message.contains("3"), error.message)
+        XCTAssertTrue(error.message.contains("3 items were restored"), error.message)
         XCTAssertTrue(error.message.contains("2 items not yet restored"), error.message)
-        XCTAssertTrue(error.message.contains("eventkit_error_1"), error.message)
         XCTAssertTrue(error.message.contains("same id"), error.message)
         XCTAssertTrue(error.message.contains("discard_id"), error.message)
+        // The member's own error comes last, after this message's advice (round 1, 16).
+        XCTAssertTrue(error.message.hasSuffix("superseded by this message: eventkit_error_1"), error.message)
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         XCTAssertTrue((error as Error) is TrustedErrorMessage)
+
+        let nothing = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: 0,
+                                                    memberError: "eventkit_error_1")
+        XCTAssertTrue(nothing.message.contains("wrote nothing") && nothing.message.contains("tries the other item first"),
+                      nothing.message)
     }
 
     // MARK: - A: the history keeps the narrowed record under the same id
