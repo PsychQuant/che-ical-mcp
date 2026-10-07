@@ -210,9 +210,12 @@ struct ReminderSnapshot {
 
     init(from reminder: EKReminder) {
         self.title = reminder.title ?? ""
+        // A reminder without a list is recorded without an identifier (its undo is refused with
+        // `undoListMissing`); the title and account were read through the implicitly unwrapped
+        // `calendar` and crashed on it (PR #277 verify round 2).
         self.calendarIdentifier = reminder.calendar?.calendarIdentifier ?? ""
-        self.calendarTitle = reminder.calendar.title
-        self.calendarSource = reminder.calendar.source?.title
+        self.calendarTitle = reminder.calendar?.title ?? ""
+        self.calendarSource = reminder.calendar?.source?.title
         self.notes = reminder.notes
         self.isCompleted = reminder.isCompleted
         self.priority = reminder.priority

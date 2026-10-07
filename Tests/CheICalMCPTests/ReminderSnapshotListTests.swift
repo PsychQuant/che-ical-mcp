@@ -182,6 +182,52 @@ final class ReminderSnapshotListTests: XCTestCase {
         XCTAssertFalse(without.contains("again"), without)
     }
 
+    // MARK: - What reaches the refusal (PR #277 verify round 2)
+
+    /// The kind travels from the arm through `apply(to:lists:for:now:)` and `resolveList` into the
+    /// message: a delete-undo refused on either path says the deleted reminder cannot be recovered,
+    /// an update-undo that the reminder stays as it is now.
+    func testTheRefusalSaysWhatGivingUpLosesOnBothPaths() throws {
+        let saved = snapshot()
+        for kind in [ReminderRestoreKind.recreateDeleted, .revertUpdate] {
+            let viaResolve = try XCTUnwrap(missingListError {
+                try saved.resolveList(in: [(id: "x", title: "Reminders")], identifier: { $0.id }, for: kind)
+            }?.errorDescription)
+            let viaApply = try XCTUnwrap(missingListError {
+                try saved.apply(to: reminder(in: list("Inbox"), title: "Now"), lists: [list("Reminders")], for: kind, now: now)
+            }?.errorDescription)
+            for message in [viaResolve, viaApply] {
+                if kind == .recreateDeleted {
+                    XCTAssertTrue(message.contains("the deletion of a reminder"), message)
+                    XCTAssertTrue(message.contains("cannot recover the deleted reminder"), message)
+                } else {
+                    XCTAssertTrue(message.contains("the update of a reminder"), message)
+                    XCTAssertTrue(message.contains("the reminder stays as it is now"), message)
+                    XCTAssertFalse(message.contains("deleted reminder"), message)
+                }
+            }
+        }
+    }
+
+    /// A reminder without a list is recorded without an identifier, and the refusal raised for it
+    /// on either path says so and offers no retry, since no retry can find it. The resolve path
+    /// runs beside a list whose identifier is empty too.
+    func testARecordWithoutAnIdentifierIsRefusedWithoutRetryOnBothPaths() throws {
+        let saved = ReminderSnapshot(from: EKReminder(eventStore: store))
+        XCTAssertEqual(saved.calendarIdentifier, "")
+
+        let viaResolve = try XCTUnwrap(missingListError {
+            try saved.resolveList(in: [(id: "", title: "")], identifier: { $0.id }, for: .revertUpdate)
+        }?.errorDescription)
+        let viaApply = try XCTUnwrap(missingListError {
+            try saved.apply(to: reminder(in: list("Inbox"), title: "Now"), lists: [list("Reminders")], for: .recreateDeleted, now: now)
+        }?.errorDescription)
+        for message in [viaResolve, viaApply] {
+            XCTAssertTrue(message.contains("recorded without an identifier"), message)
+            XCTAssertFalse(message.contains("again"), message)
+        }
+    }
+
     /// The account is named too, shown the same way (an account title can be set by a server);
     /// a title that shows as nothing is left out rather than shown as ''.
     func testTheRefusalNamesTheAccountAndLeavesOutEmptyTitles() throws {
