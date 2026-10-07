@@ -114,7 +114,7 @@ final class EventLookupTests: XCTestCase {
             offsets += regex.matches(in: code, range: NSRange(location: 0, length: ns.length)).map(\.range.location)
         }
         return offsets.sorted().map { offset in
-            let line = ns.substring(to: offset).filter { $0 == "\n" }.count + 1
+            let line = ns.substring(to: offset).unicodeScalars.filter { $0 == "\n" }.count + 1
             return "\(file):\(line)"
         }
     }
@@ -152,6 +152,9 @@ final class EventLookupTests: XCTestCase {
         XCTAssertEqual(Self.eventLookups(in: ##"let r = #"a//b"#; let e = store.event(withIdentifier: id)"##, file: "x").count, 1)
         XCTAssertEqual(Self.eventLookups(in: #"let s = "\(f("//"))"; let e = store.event(withIdentifier: id)"#, file: "x").count, 1)
         XCTAssertEqual(Self.eventLookups(in: "let s = \"\"\"\n// not a comment\n\"\"\"\nlet e = store.event(withIdentifier: id)", file: "x"), ["x:4"])
+        XCTAssertEqual(Self.eventLookups(in: "// c\r\nlet e = store.event(withIdentifier: id)", file: "x"), ["x:2"])
+        XCTAssertEqual(Self.eventLookups(in: #"let r = /https?:\/\//; let e = store.event(withIdentifier: id)"#, file: "x").count, 1)
+        XCTAssertEqual(Self.eventLookups(in: "let r = #/a//b/#; let e = store.event(withIdentifier: id)", file: "x").count, 1)
     }
 
     /// `getEventTimezone` and `getEvent` called `event(withIdentifier:)` directly before #260;
