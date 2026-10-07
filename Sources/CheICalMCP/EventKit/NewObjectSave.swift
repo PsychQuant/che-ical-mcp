@@ -9,8 +9,9 @@ import EventKit
 /// the next save of any tool with no undo record (#261), and a retry of the call would make a
 /// second copy. Only direct evidence that the save committed (a new store finds the object)
 /// skips the discard. No answer is not that evidence, so the object is taken out then too. On
-/// device a new store had no sources only with about ten stores alive in one process; the server
-/// runs one long-lived store plus the one this check makes and releases.
+/// device a new store had no sources only with about ten stores that have read their sources
+/// alive in one process. The server keeps one such store (`EventKitManager`; the store made at
+/// startup only reads the authorization status), plus the one this check makes and releases.
 ///
 /// Checked on device, iCloud only (2026-10-07 and 08). The commit failures were induced: an event
 /// was staged with `save(_:span:commit: false)` into a calendar deleted through a second store,
