@@ -1541,8 +1541,9 @@ class CheICalMCPServer {
     private func handleRedo() async throws -> String {
         let record: UndoRecord
         switch try await undoManager.beginRedo() {
-        case .empty:
-            return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo"])
+        case .empty(let undoCount):
+            return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo",
+                                     "undo_available": undoCount, "redo_available": 0])
         case .notRedoable(let top, let undoCount, let redoCount):
             // #247: nothing is executed and neither stack moved, so the next undo cannot repeat
             // the undo of this record (a deleted item recreated twice).

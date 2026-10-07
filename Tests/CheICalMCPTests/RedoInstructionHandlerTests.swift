@@ -93,4 +93,19 @@ final class RedoInstructionHandlerTests: XCTestCase {
         XCTAssertEqual(state.undoCount, 1)
         XCTAssertEqual(state.redoCount, 0)
     }
+
+    /// PR #282 round 1, finding 24: "Nothing to redo" carries the same counts as a redo that writes
+    /// nothing, so a client reading them after any `success: false` redo finds them.
+    func testNothingToRedoReportsTheCountsToo() async throws {
+        let history = CalendarUndoManager()
+        await history.record(.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup")))
+        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: SpyExecutor())
+
+        let redo = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
+
+        XCTAssertEqual(redo["success"] as? Bool, false)
+        XCTAssertEqual(redo["message"] as? String, "Nothing to redo")
+        XCTAssertEqual(redo["undo_available"] as? Int, 1)
+        XCTAssertEqual(redo["redo_available"] as? Int, 0)
+    }
 }

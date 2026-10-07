@@ -369,7 +369,8 @@ actor CalendarUndoManager {
     }
     /// What `beginRedo` found on top of the redo stack.
     enum RedoStart {
-        case empty
+        /// Nothing to redo; the undo count is read in the same call (PR #282 round 1, finding 24).
+        case empty(undoCount: Int)
         /// #247: the top record's redo writes nothing (`UndoOperation.redoWrites`). Neither stack
         /// moved and no history operation is active; the counts are read in the same call.
         case notRedoable(UndoRecord, undoCount: Int, redoCount: Int)
@@ -381,11 +382,11 @@ actor CalendarUndoManager {
     /// actor call, so no other undo or redo can come between them.
     func beginRedo() throws -> RedoStart {
         guard activeHistoryID == nil else { throw UndoHistoryError.busy }
-        guard let top = redoStack.last else { return .empty }
+        guard let top = redoStack.last else { return .empty(undoCount: undoStack.count) }
         guard top.operation.redoWrites else {
             return .notRedoable(top, undoCount: undoStack.count, redoCount: redoStack.count)
         }
-        guard let record = popRedo() else { return .empty }
+        guard let record = popRedo() else { return .empty(undoCount: undoStack.count) }
         activeHistoryID = record.id
         return .started(record)
     }

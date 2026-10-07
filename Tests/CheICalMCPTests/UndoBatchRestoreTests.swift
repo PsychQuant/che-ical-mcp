@@ -299,4 +299,12 @@ final class UndoBatchRestoreTests: XCTestCase {
         guard case .batch(let members)? = next?.operation else { return XCTFail("expected the narrowed batch") }
         XCTAssertEqual(titles(members), ["A"])
     }
+
+    /// PR #282 round 1, finding 25: the partial error crosses from the EventKit actor to the server
+    /// holding `UndoOperation` values, so both must be Sendable; this does not compile otherwise.
+    func testThePartialErrorAndTheRecordsItHoldsAreSendable() {
+        func requireSendable<T: Sendable>(_: T.Type) {}
+        requireSendable(UndoOperation.self)
+        requireSendable(UndoBatchPartiallyUndoneError.self)
+    }
 }
