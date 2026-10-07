@@ -961,8 +961,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Get the timezone of an event by identifier (nil if not found or no timezone set).
+    /// `delete_event` calls this before any other lookup, so it too goes through the reminder
+    /// check (#260): a reminder's id gives nil here and not found from the delete.
     func getEventTimezone(identifier: String) -> TimeZone? {
-        return eventStore.event(withIdentifier: identifier)?.timeZone
+        return storedEvent(id: identifier)?.timeZone
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
@@ -1088,7 +1090,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Get a single event by identifier
     func getEvent(identifier: String) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let event = eventStore.event(withIdentifier: identifier) else {
+        guard let event = storedEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         return event

@@ -63,4 +63,46 @@ final class EventLookupTests: XCTestCase {
         XCTAssertEqual(calls.calendarItem, [])
         XCTAssertEqual(calls.event, [])
     }
+
+    // MARK: - Every lookup goes through the resolver
+
+    /// Returns `file:line` for each call of `event(withIdentifier:` in `text`, comments excluded.
+    static func eventLookups(in text: String, file: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_])event\(\s*withIdentifier\s*:"#)
+        var out: [String] = []
+        for (i, line) in text.components(separatedBy: "\n").enumerated() {
+            let code = line.components(separatedBy: "//").first ?? line   // comments may name it
+            let ns = code as NSString
+            if regex.firstMatch(in: code, range: NSRange(location: 0, length: ns.length)) != nil {
+                out.append("\(file):\(i + 1)")
+            }
+        }
+        return out
+    }
+
+    func testClassifierCatchesCallsAndIgnoresOtherLookupsAndComments() {
+        XCTAssertEqual(Self.eventLookups(in: "let e = eventStore.event(withIdentifier: id)", file: "x"), ["x:1"])
+        XCTAssertEqual(Self.eventLookups(in: "store.event( withIdentifier : id)", file: "x").count, 1)
+        XCTAssertTrue(Self.eventLookups(in: "store.calendarItem(withIdentifier: id)", file: "x").isEmpty)
+        XCTAssertTrue(Self.eventLookups(in: "// eventStore.event(withIdentifier:) returns the master", file: "x").isEmpty)
+    }
+
+    /// `getEventTimezone` and `getEvent` called `event(withIdentifier:)` directly before #260;
+    /// `delete_event` runs the first of them before anything else. A new direct call would skip
+    /// the reminder check again.
+    func testOnlyTheResolverCallsTheEventLookup() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" } ?? []
+        XCTAssertFalse(files.isEmpty)
+        var found: [String] = []
+        for file in files {
+            found += Self.eventLookups(in: try String(contentsOf: file, encoding: .utf8), file: file.lastPathComponent)
+        }
+        XCTAssertEqual(found.map { $0.components(separatedBy: ":")[0] }, ["EventLookup.swift"],
+                       "look events up with storedEvent(id:) (EventLookup), not event(withIdentifier:): \(found)")
+    }
 }
