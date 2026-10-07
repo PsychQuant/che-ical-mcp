@@ -88,15 +88,20 @@ final class UndoBatchWiringTests: XCTestCase {
 
     /// The calendars and lists are read once, before the per-destination lookups, and handed to
     /// `UndoRestoreDestination.firstMissing` with the identifier the restore matches on. No lookup
-    /// of its own: a title match let a same-titled list in another account pass (finding 1).
+    /// of its own: a title match let a same-titled list in another account pass (finding 1). The
+    /// reminder lists come from `reminderListsForRestore`, the entry the restore reads them through
+    /// (#242, PR #277 round 3), so the pre-check has no access check, refresh or list read of its own
+    /// for them.
     func testThePreCheckReadsEachListOnceAndHandsThemToTheSharedLookup() throws {
         let guardCode = try Self.code(Self.guardFile)
         let body = try Self.section(from: "func verifyRestoreDestinations(of members: [UndoOperation]", in: guardCode)
         XCTAssertEqual(Self.occurrences(of: "eventStore.calendars(for: .event)", in: body), 1)
-        XCTAssertEqual(Self.occurrences(of: "eventStore.calendars(for: .reminder)", in: body), 1)
+        XCTAssertEqual(Self.occurrences(of: "try await reminderListsForRestore()", in: body), 1)
+        XCTAssertEqual(Self.occurrences(of: "calendars(for: .reminder)", in: body), 0)
+        XCTAssertEqual(Self.occurrences(of: "ensureReminderAccess", in: body), 0)
         let firstMissing = try XCTUnwrap(Self.offset(of: "UndoRestoreDestination.firstMissing(", in: body))
         XCTAssertLessThan(try XCTUnwrap(Self.offset(of: "eventStore.calendars(for: .event)", in: body)), firstMissing)
-        XCTAssertLessThan(try XCTUnwrap(Self.offset(of: "eventStore.calendars(for: .reminder)", in: body)), firstMissing)
+        XCTAssertLessThan(try XCTUnwrap(Self.offset(of: "try await reminderListsForRestore()", in: body)), firstMissing)
         XCTAssertNotNil(Self.offset(of: "among: destinations, eventCalendars: eventCalendars, reminderLists: reminderLists,\n            identifier: { $0.calendarIdentifier })", in: body))
         XCTAssertEqual(Self.occurrences(of: ".title", in: body), 0, "the pre-check matches no list by title")
         XCTAssertEqual(Self.occurrences(of: "resolve", in: body), 0, "the lookups live in firstMissing")
@@ -120,7 +125,7 @@ final class UndoBatchWiringTests: XCTestCase {
         let undo = try Self.section(from: "func executeUndo(_ operation: UndoOperation)", in: manager)
         let deleteArm = try XCTUnwrap(undo.range(of: "case .deleteReminder(let snapshot):").map { undo[$0.lowerBound...] })
         let nextArm = try XCTUnwrap(deleteArm.range(of: "case .updateReminder(").map { deleteArm[..<$0.lowerBound] })
-        XCTAssertNotNil(Self.offset(of: "for: .recreateDeleted)", in: nextArm))
+        XCTAssertNotNil(Self.offset(of: "for: .recreateDeleted", in: nextArm))
     }
 
     // MARK: - #243: the reminder batch delete record (findings 8 (1), 11)

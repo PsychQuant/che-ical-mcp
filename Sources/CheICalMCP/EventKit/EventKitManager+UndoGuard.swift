@@ -131,9 +131,8 @@ extension EventKitManager {
             eventCalendars = eventStore.calendars(for: .event)
         }
         if destinations.contains(where: { if case .reminderList = $0 { return true }; return false }) {
-            try await ensureReminderAccess()
-            refreshIfNeeded()
-            reminderLists = eventStore.calendars(for: .reminder)
+            // The entry the reminder restore reads its lists through (#242).
+            reminderLists = try await reminderListsForRestore()
         }
         // The restore's own lookups (by recorded identifier), against the lists read above.
         let missing = UndoRestoreDestination.firstMissing(
