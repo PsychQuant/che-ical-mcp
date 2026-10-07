@@ -31,7 +31,7 @@ undo with discard_id SHALL remove only the current top undo record with that id.
 
 ---
 ### Requirement: Stale and busy protection
-The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the five discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, the update of a recurring event, the update or move of a one-off event that repeats at undo time, and the delete of an occurrence and the following ones that left part of the series); no other refusal discards its record.
+The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the five discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, the update of a recurring event, the update or move of a one-off event that repeats at undo time, and the delete of an occurrence and the following ones that did not start at the series' first occurrence and remove it all); no other refusal discards its record.
 
 #### Scenario: Item changed after the operation
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
@@ -70,12 +70,12 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and how to revert the change if it should be reverted (a move: move it back), and the record is discarded; a move of an item that was already an edited occurrence is refused the same way
 
 #### Scenario: Delete of an occurrence and the following ones (#244)
-- **WHEN** undo meets the record of a `delete_event` with span "future" that did not remove the whole series (it started after the first occurrence, or `event_id` named a detached occurrence), or of a `delete_events_batch` that holds such a delete
+- **WHEN** undo meets the record of a `delete_event` with span "future" that did not start at the series' first occurrence and remove it all (it started at a later occurrence, the last one or the first one left after earlier deletes included, or `event_id` named a detached occurrence, whose span "future" delete also removes the following occurrences of its series), or of a `delete_events_batch` that holds such a delete
 - **THEN** nothing is looked up or written (for a batch, no member is undone, the refusal coming before the first member runs), the error says to restore the occurrences in Calendar if they should come back, and the record is discarded, so older records stay reachable; `undo_history` lists the single record as `Deleted occurrences of recurring event: <title> (undo not available)`
 
 #### Scenario: Delete of one occurrence (#244)
 - **WHEN** undo meets the record of a `delete_event` with span "this" on a recurring event (or a detached occurrence), or such a member of a `delete_events_batch`
-- **THEN** it recreates that occurrence as a one-off event at its start and end, never a second series; `undo_history` lists the record as `Deleted occurrence of event: <title> (undo restores it as a one-off event)`
+- **THEN** it recreates that occurrence as a one-off event at its start and end, never a second series; an absolute-date alarm of the series becomes an alarm at the occurrence's start, and the undo text names `absolute_alarms`; `undo_history` lists the record as `Deleted occurrence of event: <title> (undo restores it as a one-off event)`
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it

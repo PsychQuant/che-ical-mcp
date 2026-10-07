@@ -1229,8 +1229,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var failures: [(String, String)] = []
         // #185 — collect a record per successful removal so the whole batch is one undo unit,
         // classified per item as in deleteEvent (#244): one occurrence is recorded as that
-        // occurrence, an occurrence and the following ones of a surviving series as a marker
-        // (which refuses the whole batch's undo, D3), and only a whole removal as the series.
+        // occurrence, an occurrence and the following ones as a marker (which refuses the batch's
+        // undo before any member runs, D3), and the series only when a span future delete started
+        // at its first occurrence and removed it all (`EventRemovalKind.of`).
         // Same-identifier dedupe (#185 verify F5), now for whole-event records only: two whole
         // snapshots of one identifier would rebuild it twice; occurrence records are distinct items.
         var undoOperations: [UndoOperation] = []
