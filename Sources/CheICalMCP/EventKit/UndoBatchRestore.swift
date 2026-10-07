@@ -206,40 +206,55 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case dropped
     }
 
-    /// The members not yet restored, in record order (undo runs them in reverse).
+    /// The members not yet restored, in record order (undo runs them in reverse). Empty when the
+    /// last member was dropped: `handleUndo` then discards the record.
     let remaining: [UndoOperation]
     let restoredCount: Int
+    /// The members restored before the failure, nested ones included. The batch text of the retry
+    /// covers only `remaining`, so what these did not carry over is named here (PR #278 round 3).
+    let restored: [UndoOperation]
     let memberError: String
     let failing: FailingMember
     let message: String
     var errorDescription: String? { message }
 
-    init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast) {
+    init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
+         restored: [UndoOperation] = []) {
         self.remaining = remaining
         self.restoredCount = restoredCount
+        self.restored = restored
         self.memberError = memberError
         self.failing = failing
-        let restored = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
+        let restoredText = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
         let what: String
         switch failing {
+        case .dropped where remaining.isEmpty:
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then one item cannot be restored by any retry. Nothing else was left to restore, so this history entry was discarded and earlier operations remain undoable."
         case .dropped:
             let kept = remaining.count == 1 ? "the 1 item never attempted" : "the \(remaining.count) items never attempted"
-            let start = restoredCount == 0 ? "Undo of this batch wrote nothing:" : "Undo of this batch stopped part-way: \(restored) restored, then"
+            let start = restoredCount == 0 ? "Undo of this batch wrote nothing:" : "Undo of this batch stopped part-way: \(restoredText) restored, then"
             what = "\(start) one item cannot be restored by any retry and was dropped from this history entry. The entry was kept with only \(kept), under the same id, so running undo again restores those and not the others a second time."
         case .runsLast where restoredCount == 0:
             let others = remaining.count - 1
             what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first."
         case .runsLast:
             let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
-            what = "Undo of this batch stopped part-way: \(restored) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time."
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time."
         case .runsFirst:
             let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
-            what = "Undo of this batch stopped part-way: \(restored) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, because the order of these items matters (occurrences of a recurring event), so running undo again tries the item that failed first and does not restore the others a second time."
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, because the order of these items matters (occurrences of a recurring event), so running undo again tries the item that failed first and does not restore the others a second time."
         }
-        let giveUp = failing == .dropped
-            ? " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
-            : " If that item keeps failing (for example, its calendar or list was deleted), ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
-        message = what + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
+        let loss = UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? ""
+        let giveUp: String
+        switch failing {
+        case .dropped where remaining.isEmpty:
+            giveUp = ""
+        case .dropped:
+            giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
+        case .runsLast, .runsFirst:
+            giveUp = " If that item keeps failing (for example, its calendar or list was deleted), ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+        }
+        message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
     }
 }
 
@@ -252,7 +267,12 @@ extension UndoOperation {
     ///
     /// - A permanent member error (`UnrecoverableUndoError`): that member is dropped and the members
     ///   never attempted are kept, whether or not something was written first (PR #282 round 2,
-    ///   findings 8, 9, 12, 17). With none waiting, the member error stands and discards the record.
+    ///   findings 8, 9, 12, 17). With none waiting and nothing written, the member error stands and
+    ///   discards the record; with none waiting after writes, the partial error has nothing left and
+    ///   `handleUndo` discards the record, the error still saying what was restored.
+    ///
+    /// Every partial error carries the members this call restored, so what they did not carry over
+    /// is named once (PR #278 round 3).
     /// - Otherwise, when every member left is proven independent (`restoresIndependently`), the
     ///   failing member is kept first, so it runs last next time and the members never attempted get
     ///   their turn even when it keeps failing. When one is not (#244's occurrence deletes, where
@@ -272,10 +292,13 @@ extension UndoOperation {
         let inner = interrupted.underlying as? UndoBatchPartiallyUndoneError
         let unattempted = Array(members[..<failedIndex])
         let restored = interrupted.completed + (inner?.restoredCount ?? 0)
+        // The members this call restored (the last `completed` in record order), nested ones too.
+        let restoredMembers = Array(members[(failedIndex + 1)...]) + (inner?.restored ?? [])
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
-            guard !unattempted.isEmpty else { return interrupted.underlying }
+            guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
             return UndoBatchPartiallyUndoneError(remaining: unattempted, restoredCount: restored,
-                                                 memberError: describe(interrupted.underlying), failing: .dropped)
+                                                 memberError: describe(interrupted.underlying), failing: .dropped,
+                                                 restored: restoredMembers)
         }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
         let independent = ([failing] + unattempted).allSatisfy(\.restoresIndependently)
@@ -285,9 +308,9 @@ extension UndoOperation {
         let memberError = inner?.memberError ?? describe(interrupted.underlying)
         return independent
             ? UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted, restoredCount: restored,
-                                            memberError: memberError, failing: .runsLast)
+                                            memberError: memberError, failing: .runsLast, restored: restoredMembers)
             : UndoBatchPartiallyUndoneError(remaining: unattempted + [failing], restoredCount: restored,
-                                            memberError: memberError, failing: .runsFirst)
+                                            memberError: memberError, failing: .runsFirst, restored: restoredMembers)
     }
 
     /// Whether this batch member's restore is proven not to depend on the order of the others, so a

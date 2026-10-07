@@ -340,6 +340,63 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(failure is UnrecoverableUndoError, "\(failure)")
     }
 
+    /// With nothing else waiting after a write, the record has nothing left: the error still says
+    /// what was restored, and `handleUndo` discards the record.
+    func testAPermanentFailureAfterWritesWithNothingLeftReportsWhatWasRestored() throws {
+        let failure = UndoOperation.batchUndoFailure(members: ["A", "B"].map(deleted),
+                                                     interrupted: .init(completed: 1, underlying: UnrecoverableUndoError(message: "x")),
+                                                     describe: { _ in "x" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertTrue(partial.remaining.isEmpty)
+        XCTAssertEqual(partial.restoredCount, 1)
+        XCTAssertTrue(partial.message.contains("1 item was restored") && partial.message.contains("discarded"), partial.message)
+    }
+
+    // MARK: - A: what restored occurrences did not carry over (PR #278 round 3, MEDIUM 2)
+
+    private var absoluteAlarmsNote: String { "Not carried over: absolute_alarms" }
+
+    private func moved(_ title: String) -> UndoOperation {
+        .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: title), notCarriedOver: ["absolute_alarms"])
+    }
+
+    /// The batch text names what restored occurrences did not carry over, but only for the members
+    /// of the call it reports. A member restored before a failure was in neither text: not in the
+    /// partial error, and not in the retry's, which holds only the members left. The partial error
+    /// now names it, so every restored member's loss is reported exactly once.
+    func testALossRestoredBeforeAFailureIsReportedOnceAcrossTheRetry() async throws {
+        let log = ExecutionLog()
+        let first = await undoBatch([deleted("A"), moved("M"), deleted("B")], log: log, failsOn: { $0 == "A" })
+        let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
+        XCTAssertEqual(log.executed, ["B", "occ:M"])
+        XCTAssertTrue(partial.message.contains(absoluteAlarmsNote), partial.message)
+
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        XCTAssertFalse(retry.contains(absoluteAlarmsNote), "reported once, in the partial error: \(retry)")
+    }
+
+    func testALossRestoredOnTheRetryIsReportedThenAndNotBefore() async throws {
+        let log = ExecutionLog()
+        let first = await undoBatch([moved("M"), deleted("B"), deleted("A")], log: log, failsOn: { $0 == "B" })
+        let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
+        XCTAssertEqual(log.executed, ["A"])
+        XCTAssertFalse(partial.message.contains(absoluteAlarmsNote), partial.message)
+
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        XCTAssertTrue(retry.contains(absoluteAlarmsNote), retry)
+    }
+
+    /// A nested batch that stopped part-way carries its own restored members up.
+    func testANestedBatchCarriesItsRestoredMembersLossUp() throws {
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
+                                                  restored: [moved("Z")])
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), moved("Z")])],
+                                                     interrupted: .init(completed: 0, underlying: inner),
+                                                     describe: { _ in "unused" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertTrue(partial.message.contains(absoluteAlarmsNote), partial.message)
+    }
+
     // MARK: - A: members whose order matters (PR #282 round 2, finding 3)
 
     private func occurrence(_ title: String) -> UndoOperation {

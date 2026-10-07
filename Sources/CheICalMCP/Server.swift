@@ -1518,7 +1518,12 @@ class CheICalMCPServer {
             // #248 A: some members of a batch were restored before one failed. Put back only the
             // members not yet restored, under the same id, so a retry does not recreate the
             // restored ones a second time.
-            await undoManager.restoreFailedUndo(record, remaining: .batch(partial.remaining))
+            // With nothing left (the last member dropped), the record is discarded instead.
+            if partial.remaining.isEmpty {
+                await undoManager.discardFailedUndo(record)
+            } else {
+                await undoManager.restoreFailedUndo(record, remaining: .batch(partial.remaining))
+            }
             throw partial
         } catch {
             switch UndoFailureDisposition.of(error) {

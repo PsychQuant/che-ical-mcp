@@ -87,7 +87,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo fails part-way (#248)
 - **WHEN** a batch undo fails on a member after earlier members were restored
-- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp; when they restore independently (whole events, reminders) the failing member is placed to run last, so the next undo restores the members never attempted before it retries the failing one, and when their order matters (occurrences of a recurring event) the recorded order is kept; a member whose error is permanent is dropped and the members never attempted are kept; the error says how many were restored and how many remain
+- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp; when they restore independently (whole events, reminders) the failing member is placed to run last, so the next undo restores the members never attempted before it retries the failing one, and when their order matters (occurrences of a recurring event) the recorded order is kept; a member whose error is permanent is dropped and the members never attempted are kept, and with none left the record is discarded; the error says how many were restored and how many remain and names what the members it restored did not carry over, which the retry's text does not repeat
 
 #### Scenario: Batch undo fails on its first write (#248)
 - **WHEN** the first write of a batch undo fails and other members have not been attempted

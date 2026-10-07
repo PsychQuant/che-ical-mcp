@@ -130,10 +130,17 @@ extension UndoOperation {
     /// what a restored occurrence did not carry over is named here, once.
     static func batchUndoneMessage(members: [UndoOperation], count: Int) -> String {
         var message = "Undone batch (\(count) operations)"
-        if members.contains(where: \.restoresWithoutAbsoluteAlarms) {
-            message += ". Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)"
-        }
+        if let note = batchLossNote(members: members) { message += ". " + note }
         return message
+    }
+
+    /// What the restored `members` did not carry over, or nil. Also named by a batch undo that
+    /// stopped part-way, for the members it restored before the failure (#248 A,
+    /// `UndoBatchPartiallyUndoneError`), so each restored member's loss is reported once.
+    static func batchLossNote(members: [UndoOperation]) -> String? {
+        members.contains(where: \.restoresWithoutAbsoluteAlarms)
+            ? "Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)"
+            : nil
     }
 
     private var restoresWithoutAbsoluteAlarms: Bool {

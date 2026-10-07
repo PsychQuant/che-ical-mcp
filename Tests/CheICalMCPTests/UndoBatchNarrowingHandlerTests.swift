@@ -38,6 +38,25 @@ final class UndoBatchNarrowingHandlerTests: XCTestCase {
         return text
     }
 
+    /// A partial failure with nothing left (the last member's error is permanent, after others were
+    /// restored) discards the record instead of putting back an empty batch.
+    func testAPartialFailureWithNothingLeftDiscardsTheRecord() async throws {
+        let history = CalendarUndoManager()
+        await history.record(deleted("Older"))
+        await history.record(.batch(["A", "B"].map(deleted)))
+        let executor = PartiallyFailingExecutor(firstFailure: UndoBatchPartiallyUndoneError(
+            remaining: [], restoredCount: 1, memberError: "x", failing: .dropped))
+        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+
+        let failed = await server.handleToolCallForTesting(name: "undo", arguments: [:])
+
+        XCTAssertEqual(failed.isError, true)
+        let after = await history.historySnapshot()
+        XCTAssertEqual(after.entries.map(\.description), ["Deleted event: Older"], "the empty record is discarded")
+        let next = try await history.beginUndo()   // not busy
+        XCTAssertNotNil(next)
+    }
+
     func testAPartialFailureKeepsTheRemainingMembersUnderTheSameId() async throws {
         let history = CalendarUndoManager()
         await history.record(deleted("Older"))
