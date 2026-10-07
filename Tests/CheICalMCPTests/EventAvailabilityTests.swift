@@ -30,14 +30,17 @@ final class EventAvailabilityTests: XCTestCase {
     /// snapshot reads the event's availability, and `apply` writes it after the calendar is set
     /// (support depends on the calendar). Checked on device: a free event came back free.
     func testTheSnapshotReadsTheEventsAvailabilityAndWritesItAfterTheCalendar() throws {
-        let source = try String(contentsOf: DeleteUndoTests.sourceURL("EventKit/UndoManager.swift"), encoding: .utf8)
-        XCTAssertNotNil(source.range(of: "self.availability = availability ?? event.availability"), "init(from:) reads the event")
-        let apply = try XCTUnwrap(DeleteUndoTests.body(of: "func apply(to event: EKEvent, calendar: EKCalendar)", in: source))
-        let calendar = try XCTUnwrap(apply.range(of: "event.calendar = calendar"))
-        let write = try XCTUnwrap(apply.range(of: "event.availability = value"))
-        let rule = try XCTUnwrap(apply.range(of: "availabilityToWrite(recorded: availability, supported: calendar.supportedEventAvailabilities"))
+        let source = try SourcePins.source("EventKit/UndoManager.swift")
+        let initializer = try XCTUnwrap(SourcePins.body(of: "init(from event: EKEvent,", in: source))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"self\.availability\s*=\s*availability\s*\?\?\s*event\.availability\b"#, in: initializer).count, 1,
+                       "init(from:) reads the event unless a value is given")
+        let apply = try XCTUnwrap(SourcePins.body(of: "func apply(to event: EKEvent, calendar: EKCalendar)", in: source))
+        let calendar = try XCTUnwrap(SourcePins.ranges(ofPattern: #"event\.calendar\s*=\s*calendar\b"#, in: apply).first)
+        let rule = try XCTUnwrap(SourcePins.ranges(ofPattern: #"availabilityToWrite\(recorded:\s*availability,\s*supported:\s*calendar\.supportedEventAvailabilities"#, in: apply).first)
+        let writes = SourcePins.ranges(ofPattern: #"event\.availability\s*=(?!=)"#, in: apply)
+        XCTAssertEqual(writes.count, 1, "written in one place")
         XCTAssertLessThan(calendar.lowerBound, rule.lowerBound, "decided after the calendar is set")
-        XCTAssertLessThan(rule.lowerBound, write.lowerBound)
+        if let write = writes.first { XCTAssertLessThan(rule.lowerBound, write.lowerBound, "written as the rule decided") }
     }
 
     // MARK: - Write rule
