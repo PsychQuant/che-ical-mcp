@@ -159,7 +159,8 @@ enum UndoPostState {
 
     /// A detached occurrence is an edit when it differs from the series' first occurrence in any
     /// field the guard compares: moved off the start its rule gives it (its slot), or a different
-    /// title, notes, location, URL, all-day flag, duration, alarms, time zone or place. The
+    /// title, notes, location, URL, all-day flag, duration, alarms, time zone, place or
+    /// availability (#245). The
     /// guard's tolerances apply: an alarm sound, and coordinates added to a place the series has
     /// without them, are not edits; nil and empty text are the same; instants compare to the
     /// second; time zones by their offset at the occurrence's start and at the next daylight-saving
@@ -183,6 +184,7 @@ enum UndoPostState {
             || !sameAlarms(all.alarms, one.alarms)
             || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
             || !EventSnapshot.samePlace(recorded: all, current: one)
+            || one.availability != all.availability
     }
 
     /// What the scan result adds to a create-undo check of a series: nil means the scan could not

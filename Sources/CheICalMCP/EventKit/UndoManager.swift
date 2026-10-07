@@ -100,10 +100,15 @@ struct EventSnapshot {
     // #191 — recurrence rules stored as VALUE snapshots (never raw objects)
     let recurrenceRules: [RecurrenceRuleSnapshot]?
     let timeZone: TimeZone?
+    /// #245: a delete-undo recreated a free event busy (the calendar default). `.notSupported` when
+    /// the event's calendar has none; written back only where the calendar supports it.
+    let availability: EKEventAvailability
 
     /// `alarms` replaces the event's own: the undo record of a copy-out holds the alarms the
-    /// copy was given (`EventKitManager.copyOutAlarms`).
-    init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil) {
+    /// copy was given (`EventKitManager.copyOutAlarms`). `availability` replaces the event's own
+    /// for value-level tests: an in-memory EKEvent ignores the property (#245).
+    init(from event: EKEvent, includeRecurrence: Bool = true, alarms: [AlarmSnapshot]? = nil,
+         availability: EKEventAvailability? = nil) {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
@@ -121,6 +126,7 @@ struct EventSnapshot {
         self.structuredLocationRadius = event.structuredLocation?.radius
         self.recurrenceRules = includeRecurrence ? event.recurrenceRules?.map(RecurrenceRuleSnapshot.init) : nil
         self.timeZone = event.timeZone
+        self.availability = availability ?? event.availability
     }
     /// Names can be duplicated across accounts; history restores only its original calendar.
     func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
@@ -145,6 +151,12 @@ struct EventSnapshot {
 
         // Calendar
         event.calendar = calendar
+
+        // Availability (#245): after the calendar, whose support decides whether it is written
+        if let value = Self.availabilityToWrite(recorded: availability, supported: calendar.supportedEventAvailabilities,
+                                                current: event.availability) {
+            event.availability = value
+        }
 
         // Alarms (#230): rebuilt from value snapshots, and only those that differ
         AlarmSnapshot.restore(alarms, to: event)
