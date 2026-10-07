@@ -427,6 +427,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
                                   committed: { NewObjectSave.freshStoreFinds { $0.calendar(withIdentifier: calendar.calendarIdentifier) != nil } },
                                   discard: { try eventStore.removeCalendar(calendar, commit: false) },
+                                  ifSaved: .rethrow,
                                   report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
         } else {
             try eventStore.saveCalendar(calendar, commit: true)
@@ -1769,7 +1770,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        try saveNewReminder(reminder, handler: "createReminder")
+        try saveNewReminder(reminder, ifSaved: .rethrow, handler: "createReminder")
         markNeedsRefresh()
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
         let createdID = result.reminder.calendarItemIdentifier
@@ -1780,23 +1781,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
     /// the save fails and a new store does not find the reminder, it is removed from the store
-    /// without committing, so the next save by any tool does not write it (`NewObjectSave`).
-    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws {
+    /// without committing, so the next save by any tool does not write it (`NewObjectSave`). If
+    /// that store finds it, it was saved: `create_reminder` still reports the save's error
+    /// (`.rethrow`), delete-undo takes it as restored (`.accept`).
+    private func saveNewReminder(_ reminder: EKReminder, ifSaved: NewObjectSave.IfSaved, handler: String) throws {
         try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
                               committed: { NewObjectSave.freshStoreFinds { $0.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil } },
                               discard: { try eventStore.remove(reminder, commit: false) },
+                              ifSaved: ifSaved,
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
     }
 
-    /// What a failed new-object save left (#261), on stderr only; the caller reports the save's
-    /// error. A failed discard is written as `<handler>.discard(<id>) failed: …` and means the
-    /// object may still be written by the next save; the other outcomes are notes.
+    /// What a failed new-object save left (#261), on stderr only, one escaped line per failure.
+    /// A failed discard is written as `<handler>.discard(<id>) failed: …` with both errors' domain
+    /// and code, and means the object may still be written by the next save; the other outcomes
+    /// are notes. `NewObjectSaveTests` pins this body.
     private static func logNewObjectOutcome(handler: String, identifier: String, _ outcome: NewObjectSave.Outcome) {
-        if case .discardFailed(let error) = outcome {
-            _ = EventKitErrorSanitizer.writeFailureLog(handler: "\(handler).discard", identifier: identifier, error: error)
-        } else if let note = NewObjectSave.note(for: outcome, at: EventKitErrorSanitizer.escapeForStderr("\(handler)(\(identifier))")) {
-            FileHandle.standardError.write(Data(note.utf8))
-        }
+        let note = NewObjectSave.note(for: outcome, handler: handler, identifier: identifier)
+        FileHandle.standardError.write(Data((EventKitErrorSanitizer.escapeForStderr(note) + "\n").utf8))
     }
 
     func updateReminder(
@@ -2145,8 +2147,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate. The new reminder is created only after the lists are read.
+            // #261: a save that threw but that a new store finds is taken as the restore, so the
+            // record is consumed and a retry does not make a second copy.
             let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
-            try saveNewReminder(reminder, handler: "undo.deleteReminder")
+            try saveNewReminder(reminder, ifSaved: .accept, handler: "undo.deleteReminder")
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
 

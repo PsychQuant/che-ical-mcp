@@ -9,112 +9,169 @@ import XCTest
 final class NewObjectSaveTests: XCTestCase {
     enum Failure: Error, Equatable { case commit, discard }
 
-    /// What removing a reminder that was never inserted threw on device (S10v, Gc ×3).
-    let nothingPendingError = NSError(domain: EKErrorDomain, code: EKError.Code.calendarReadOnly.rawValue)
+    /// The one pair seen on device for a save refused before the store took the object in: a
+    /// reminder with no list (EKErrorDomain 1), whose removal threw EKErrorDomain 6.
+    let refusedNoList = NSError(domain: EKErrorDomain, code: EKError.Code.noCalendar.rawValue)
+    let removalReadOnly = NSError(domain: EKErrorDomain, code: EKError.Code.calendarReadOnly.rawValue)
 
     private func name(_ outcome: NewObjectSave.Outcome) -> String {
         if case .discardFailed = outcome { return "discardFailed" }
         return "\(outcome)"
     }
 
-    private func failedSave() throws -> String { throw Failure.commit }
+    /// Same domain and code (a Swift error is compared through its NSError bridge).
+    private func code(_ error: Error?) -> String? {
+        error.map { "\(($0 as NSError).domain) \(($0 as NSError).code)" }
+    }
 
-    func testASuccessfulSaveIsReturnedAndNothingElseRuns() throws {
+    /// Runs the helper with closures that record each call; `report` records the outcome by name.
+    private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: Bool?,
+                     discard: @escaping () throws -> Void = {}, ifSaved: NewObjectSave.IfSaved = .rethrow) -> (calls: [String], error: Error?) {
         var calls: [String] = []
-        let value = try NewObjectSave.run(save: { calls.append("save"); return "saved" },
-                                          committed: { calls.append("committed"); return false },
-                                          discard: { calls.append("discard") },
-                                          report: { calls.append("report \(self.name($0))") })
-        XCTAssertEqual(value, "saved")
-        XCTAssertEqual(calls, ["save"])
+        do {
+            try NewObjectSave.run(save: { calls.append("save"); try save() },
+                                  committed: { calls.append("committed"); return committed },
+                                  discard: { calls.append("discard"); try discard() },
+                                  ifSaved: ifSaved,
+                                  report: { calls.append("report \(self.name($0))") })
+            return (calls, nil)
+        } catch {
+            return (calls, error)
+        }
+    }
+
+    func testASuccessfulSaveRunsNothingElse() {
+        let result = run(save: {}, committed: false)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.calls, ["save"])
     }
 
     /// The default: a failed save that a new store cannot find is discarded once, after the
     /// check and before the error reaches the caller. Nothing is logged.
     func testAFailedSaveANewStoreCannotFindIsDiscardedOnceBeforeItsErrorLeaves() {
-        var calls: [String] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { calls.append("save"); return try self.failedSave() },
-                                                   committed: { calls.append("committed"); return false },
-                                                   discard: { calls.append("discard") },
-                                                   report: { calls.append("report \(self.name($0))") })) { error in
-            XCTAssertEqual(error as? Failure, .commit)
-            XCTAssertEqual(calls, ["save", "committed", "discard"])
+        let result = run(committed: false)
+        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertEqual(result.calls, ["save", "committed", "discard"])
+    }
+
+    /// A new store finds the object: the save committed and then threw. It is left in place, and
+    /// a caller that creates (`.rethrow`) still gets the save's error.
+    func testAFailedSaveANewStoreFindsIsLeftInPlaceAndItsErrorRethrown() {
+        let result = run(committed: true, ifSaved: .rethrow)
+        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
+    }
+
+    /// For a caller that restores (`.accept`, delete-undo), a found object means the call did
+    /// what it was for: it returns, so the undo record is consumed and a retry cannot make a
+    /// second copy.
+    func testAFoundObjectIsTakenAsSavedByACallerThatAcceptsIt() {
+        let result = run(committed: true, ifSaved: .accept)
+        XCTAssertNil(result.error)
+        XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
+    }
+
+    /// `.accept` changes nothing when the new store does not find the object or cannot answer.
+    func testAcceptingAFoundObjectStillDiscardsAndRethrowsOtherwise() {
+        for committed in [false, nil] as [Bool?] {
+            let result = run(committed: committed, ifSaved: .accept)
+            XCTAssertEqual(result.error as? Failure, .commit, "\(String(describing: committed))")
+            XCTAssertTrue(result.calls.contains("discard"), "\(String(describing: committed))")
         }
     }
 
-    /// The one case with evidence that discarding is wrong: a new store finds the object, so
-    /// the save committed and then threw. It is left in place and reported.
-    func testAFailedSaveANewStoreFindsIsLeftInPlaceAndReported() {
-        var calls: [String] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { calls.append("save"); return try self.failedSave() },
-                                                   committed: { calls.append("committed"); return true },
-                                                   discard: { calls.append("discard") },
-                                                   report: { calls.append("report \(self.name($0))") })) { error in
-            XCTAssertEqual(error as? Failure, .commit)
-            XCTAssertEqual(calls, ["save", "committed", "report committedThenThrew"])
+    /// No answer (the new store had no sources) is no evidence, so the object is discarded, and
+    /// `unchecked` is reported only once the removal has run without an error.
+    func testAFailedSaveThatCouldNotBeCheckedIsDiscardedThenReported() {
+        let result = run(committed: nil)
+        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertEqual(result.calls, ["save", "committed", "discard", "report unchecked"])
+    }
+
+    /// When the check gave no answer and the removal failed, the failure is the one report: no
+    /// line claims a removal that did not happen.
+    func testAnUncheckedSaveWhoseRemovalFailsReportsOnlyTheFailure() {
+        let result = run(committed: nil, discard: { throw Failure.discard })
+        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertEqual(result.calls, ["save", "committed", "discard", "report discardFailed"])
+    }
+
+    /// The probed pair: a reminder refused for having no list (save EKErrorDomain 1), whose
+    /// removal throws EKErrorDomain 6, left nothing pending. Reported once, as nothing pending,
+    /// with or without an answer from the new store.
+    func testTheProbedRefusalWithItsRemovalErrorIsReportedAsNothingPending() {
+        for committed in [false, nil] as [Bool?] {
+            let result = run(save: { throw self.refusedNoList }, committed: committed, discard: { throw self.removalReadOnly })
+            XCTAssertEqual((result.error as NSError?)?.code, EKError.Code.noCalendar.rawValue)
+            XCTAssertEqual(result.calls, ["save", "committed", "discard", "report nothingPending"], "\(String(describing: committed))")
         }
     }
 
-    /// No answer (the new store had no sources) is no evidence, so the object is discarded.
-    func testAFailedSaveThatCouldNotBeCheckedIsDiscardedAndReported() {
-        var calls: [String] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { calls.append("save"); return try self.failedSave() },
-                                                   committed: { calls.append("committed"); return nil },
-                                                   discard: { calls.append("discard") },
-                                                   report: { calls.append("report \(self.name($0))") })) { error in
-            XCTAssertEqual(error as? Failure, .commit)
-            XCTAssertEqual(calls, ["save", "committed", "report unchecked", "discard"])
+    /// EKErrorDomain 6 from the removal after any other save error is a failed discard, reported
+    /// with both errors: an induced commit failure, a list with no source (removed without an
+    /// error on device, so it has no pair), a store without sources (EKErrorDomain 29).
+    func testTheRemovalErrorAfterAnyOtherSaveErrorIsAFailedDiscardWithBothErrors() throws {
+        let saves: [Error] = [Failure.commit,
+                              NSError(domain: EKErrorDomain, code: EKError.Code.calendarHasNoSource.rawValue),
+                              NSError(domain: EKErrorDomain, code: EKError.Code.eventStoreNotAuthorized.rawValue),
+                              NSError(domain: "EKCADErrorDomain", code: 1010)]
+        for saveError in saves {
+            var reported: [NewObjectSave.Outcome] = []
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
+                                                       discard: { throw self.removalReadOnly }, ifSaved: .rethrow,
+                                                       report: { reported.append($0) }))
+            XCTAssertEqual(reported.count, 1, "\(saveError)")
+            guard case .discardFailed(let save, let discard) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
+            XCTAssertEqual(code(save), code(saveError))
+            XCTAssertEqual(code(discard), code(removalReadOnly))
         }
     }
 
-    /// A save refused before the store took the object in (a reminder with no list) leaves
-    /// nothing pending, and the removal throws EKErrorDomain 6: reported as nothing pending,
-    /// not as a failed discard.
-    func testARemovalRefusedBecauseNothingWasPendingIsNotReportedAsAFailure() {
-        var outcomes: [String] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { try self.failedSave() },
-                                                   committed: { false },
-                                                   discard: { throw self.nothingPendingError },
-                                                   report: { outcomes.append(self.name($0)) })) { error in
-            XCTAssertEqual(error as? Failure, .commit)
+    /// Any other removal error, after the probed refusal too, is a failed discard (the object may
+    /// still be written by the next save); the caller still gets the save's error.
+    func testAnyOtherRemovalErrorIsAFailedDiscardAndTheSaveErrorStillSurfaces() {
+        for saveError in [refusedNoList, Failure.commit] as [Error] {
+            var reported: [String] = []
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
+                                                       discard: { throw Failure.discard }, ifSaved: .rethrow,
+                                                       report: {
+                                                           guard case .discardFailed(_, let discard) = $0 else { return XCTFail("\($0)") }
+                                                           reported.append("\(discard)")
+                                                       })) { error in
+                XCTAssertEqual(self.code(error), self.code(saveError))
+            }
+            XCTAssertEqual(reported, ["discard"])
         }
-        XCTAssertEqual(outcomes, ["nothingPending"])
     }
 
-    /// Any other discard error is a failure (the object may still be written by the next
-    /// save); the caller still gets the save's error.
-    func testAnyOtherDiscardErrorIsReportedAsAFailureAndTheSaveErrorStillSurfaces() {
-        var reported: [Error] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { try self.failedSave() },
-                                                   committed: { false },
-                                                   discard: { throw Failure.discard },
-                                                   report: {
-                                                       guard case .discardFailed(let error) = $0 else { return XCTFail("\($0)") }
-                                                       reported.append(error)
-                                                   })) { error in
-            XCTAssertEqual(error as? Failure, .commit)
-        }
-        XCTAssertEqual(reported.map { $0 as? Failure }, [.discard])
+    func testOnlyTheProbedPairCountsAsNothingPending() {
+        XCTAssertEqual([EKError.Code.noCalendar.rawValue, EKError.Code.calendarReadOnly.rawValue,
+                        EKError.Code.calendarHasNoSource.rawValue, EKError.Code.eventStoreNotAuthorized.rawValue], [1, 6, 14, 29])
+        XCTAssertTrue(NewObjectSave.isNothingPending(save: refusedNoList, discard: removalReadOnly))
+        let noSource = NSError(domain: EKErrorDomain, code: EKError.Code.calendarHasNoSource.rawValue)
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: noSource, discard: removalReadOnly))
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: Failure.commit, discard: removalReadOnly))
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: refusedNoList, discard: NSError(domain: EKErrorDomain, code: EKError.Code.noCalendar.rawValue)))
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: refusedNoList, discard: NSError(domain: "EKCADErrorDomain", code: 6)))
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: NSError(domain: "EKCADErrorDomain", code: 1), discard: removalReadOnly))
+        XCTAssertFalse(NewObjectSave.isNothingPending(save: refusedNoList, discard: Failure.discard))
     }
 
-    func testOnlyEventKitError6CountsAsNothingPending() {
-        XCTAssertTrue(NewObjectSave.isNothingPending(nothingPendingError))
-        XCTAssertFalse(NewObjectSave.isNothingPending(NSError(domain: EKErrorDomain, code: EKError.Code.noCalendar.rawValue)))
-        XCTAssertFalse(NewObjectSave.isNothingPending(NSError(domain: "EKCADErrorDomain", code: 6)))
-        XCTAssertFalse(NewObjectSave.isNothingPending(Failure.discard))
-    }
-
-    /// Each note says what happened to the object; none reads as a failure. A failed discard has
-    /// no note: it goes through the error sanitizer as `<handler>.discard(<id>) failed: …`.
-    func testTheNotesSayWhatHappenedToTheObject() throws {
-        let saved = try XCTUnwrap(NewObjectSave.note(for: .committedThenThrew, at: "h(id)"))
-        XCTAssertTrue(saved.hasPrefix("h(id): ") && saved.contains("left in place") && saved.hasSuffix("\n"), saved)
-        let unchecked = try XCTUnwrap(NewObjectSave.note(for: .unchecked, at: "h(id)"))
-        XCTAssertTrue(unchecked.contains("removed"), unchecked)
-        let nothing = try XCTUnwrap(NewObjectSave.note(for: .nothingPending, at: "h(id)"))
-        XCTAssertTrue(nothing.contains("nothing to remove"), nothing)
-        for note in [saved, unchecked, nothing] { XCTAssertFalse(note.contains("failed"), note) }
-        XCTAssertNil(NewObjectSave.note(for: .discardFailed(Failure.discard), at: "h(id)"))
+    /// Each outcome has one line, which says what happened to the object. Only a failed discard
+    /// reads as a failure, and its line names both errors by domain and code.
+    func testEachOutcomeHasOneLineThatSaysWhatHappened() {
+        let saved = NewObjectSave.note(for: .committedThenThrew, handler: "h", identifier: "id")
+        XCTAssertTrue(saved.hasPrefix("h(id): ") && saved.contains("left in place"), saved)
+        let unchecked = NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id")
+        XCTAssertTrue(unchecked.hasPrefix("h(id): ") && unchecked.contains("removed"), unchecked)
+        let nothing = NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id")
+        XCTAssertTrue(nothing.hasPrefix("h(id): ") && nothing.contains("nothing to remove"), nothing)
+        for note in [saved, unchecked, nothing] { XCTAssertFalse(note.contains("failed") || note.contains("\n"), note) }
+        let failed = NewObjectSave.note(for: .discardFailed(save: NSError(domain: "EKCADErrorDomain", code: 1010), discard: removalReadOnly),
+                                        handler: "h", identifier: "id")
+        XCTAssertTrue(failed.hasPrefix("h.discard(id) failed: "), failed)
+        XCTAssertTrue(failed.contains("EKCADErrorDomain 1010") && failed.contains("\(EKErrorDomain) 6") && failed.contains("next save"), failed)
+        XCTAssertFalse(failed.contains("\n"), failed)
     }
 
     /// Reminders and reminder lists kept a failed insert on device; events and event calendars
@@ -128,7 +185,10 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// Swift source with comments removed and string literals emptied to `""`, so neither can
     /// hide or fake a match. Handles `"""` blocks and escapes; not raw strings (`#"…"#`), which
-    /// Sources/CheICalMCP does not use. A string that runs past its line ends at the newline.
+    /// Sources/CheICalMCP does not use, nor an interpolation that holds a quote
+    /// (`"\(a ?? "x")"`), whose inner quote ends the string early. A string that runs past its
+    /// line ends at the newline, so that misreading stays on its line; no such line holds pinned
+    /// code (`testNoPinnedCodeSharesALineWithAnInterpolatedQuote`).
     private func stripped(_ source: String) -> String {
         let s = Array(source.unicodeScalars)
         var out = String.UnicodeScalarView()
@@ -207,6 +267,11 @@ final class NewObjectSaveTests: XCTestCase {
         #"committed: ?\{ ?NewObjectSave\.freshStoreFinds ?\{ ?\$0\.\#(lookup)\( ?withIdentifier: ?\#(id) ?\) ?!= ?nil ?\} ?\}"#
     }
 
+    /// The `report` closure the save sites pass: every outcome goes to `logNewObjectOutcome`.
+    private func report(_ handler: String, _ id: String) -> String {
+        #"report: ?\{ ?Self\.logNewObjectOutcome\( ?handler: ?\#(handler) ?, ?identifier: ?\#(id) ?, ?\$0 ?\) ?\}"#
+    }
+
     /// Every construction of a reminder, in any form (`let`, `var`, a type annotation, `.init`,
     /// inline, inside a closure), is accounted for. Three forms pass, and nothing else does:
     /// - bound to a local: `let r = EKReminder(eventStore: s)`;
@@ -235,8 +300,17 @@ final class NewObjectSaveTests: XCTestCase {
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
         XCTAssertEqual(try matches(#"NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
                                    + freshCheck("calendarItem", #"reminder\.calendarItemIdentifier"#)
-                                   + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\}"#,
+                                   + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?ifSaved: ?ifSaved ?, ?"#
+                                   + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\)"#,
                                    in: wrapper).count, 1, wrapper)
+        // Only the delete-undo recreate takes a found reminder as saved; every other call rethrows.
+        let calls = try matches(#"saveNewReminder\( ?(?!_ )"#, in: code).count
+        let accepting = try matches(#"saveNewReminder\( ?\w+ ?, ?ifSaved: ?\.accept ?,"#, in: code).count
+        let rethrowing = try matches(#"saveNewReminder\( ?(?:\w+|"# + build + #") ?, ?ifSaved: ?\.rethrow ?,"#, in: code).count
+        XCTAssertEqual(accepting, 1)
+        XCTAssertEqual(calls, accepting + rethrowing, "every call passes .accept or .rethrow")
+        let undoArm = try segment(of: code, from: "applyReminderSnapshot(snapshot, for: .recreateDeleted")
+        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?ifSaved: ?\.accept ?,"#, in: undoArm).count, 1, undoArm)
     }
 
     /// Every construction of a calendar is a named local; a reminder list goes through
@@ -254,9 +328,56 @@ final class NewObjectSaveTests: XCTestCase {
             XCTAssertEqual(try matches(#"saveCalendar\( ?\#(name) ?,"#, in: body).count, 2, body)
             XCTAssertEqual(try matches(#"if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
                                        + freshCheck("calendar", #"\#(name)\.calendarIdentifier"#)
-                                       + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?report: ?\{[^}]*\} ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#,
+                                       + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?ifSaved: ?\.rethrow ?, ?"#
+                                       + report(#""""#, #"\#(name)\.calendarIdentifier"#)
+                                       + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#,
                                        in: body).count, 1, body)
         }
+    }
+
+    /// The gate depends on one fact: the check reads a store made after the failure, never the
+    /// one that saved (which finds its own pending insert, 6 of 6 on device). So the body of
+    /// `freshStoreFinds` is pinned whole: one new `EKEventStore()`, released with its pool, nil
+    /// when it has no sources, and the closure given that store and nothing else. It is the only
+    /// `EKEventStore()` in its file, and the two save sites are its only callers.
+    func testTheCheckReadsANewStoreAndNothingElse() throws {
+        let code = try code()
+        let body = try segment(of: code, from: "func freshStoreFinds(")
+        XCTAssertEqual(try matches(#"^func freshStoreFinds\( ?_ find: ?\( ?EKEventStore ?\) ?-> ?Bool ?\) ?-> ?Bool\? ?\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : find\( ?store ?\) ?\} ?\} ?(?:static)? ?$"#,
+                                   in: body).count, 1, body)
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheICalMCP/EventKit/NewObjectSave.swift")
+        XCTAssertEqual(try matches(#"EKEventStore ?(?:\.init ?)?\("#, in: stripped(try String(contentsOf: file, encoding: .utf8))).count, 1)
+        XCTAssertEqual(try matches(#"freshStoreFinds"#, in: code).count, 3, "the definition and the two save sites")
+    }
+
+    /// Every outcome reaches stderr as one escaped line: `logNewObjectOutcome` is pinned whole, so
+    /// a report closure that swallows outcomes, or a log that drops one, fails here.
+    func testEveryOutcomeIsWrittenAsOneEscapedLine() throws {
+        let body = try segment(of: try code(), from: "func logNewObjectOutcome(")
+        XCTAssertEqual(try matches(#"^func logNewObjectOutcome\( ?handler: ?String ?, ?identifier: ?String ?, ?_ outcome: ?NewObjectSave\.Outcome ?\) ?\{ ?let note = NewObjectSave\.note\( ?for: ?outcome ?, ?handler: ?handler ?, ?identifier: ?identifier ?\) ?FileHandle\.standardError\.write\( ?Data\( ?\( ?EventKitErrorSanitizer\.escapeForStderr\( ?note ?\) ?\+ ?"" ?\)\.utf8 ?\) ?\) ?\} ?$"#,
+                                   in: body).count, 1, body)
+    }
+
+    /// The stripper reads an interpolation that holds a quote (`"\(a ?? "x")"`) wrongly: the
+    /// quote inside ends the string early, so the rest of the line can read as code, or code as
+    /// string. It does not cross the line's end. So no such line may hold anything the pins
+    /// above read.
+    func testNoPinnedCodeSharesALineWithAnInterpolatedQuote() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let pinned = ["commit:", "saveNewReminder", "EKReminder", "EKCalendar(", "NewObjectSave", "freshStoreFinds", "logNewObjectOutcome", "reset("]
+        var seen = 0
+        for file in files {
+            for line in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
+            where line.range(of: #"\\\([^)]*""#, options: .regularExpression) != nil {
+                seen += 1
+                XCTAssertFalse(pinned.contains { line.contains($0) }, "\(file.lastPathComponent): \(line)")
+            }
+        }
+        XCTAssertGreaterThan(seen, 0, "the pattern finds the lines it guards")
     }
 
     /// A change staged without committing is committed by whatever saves next. The only ones
