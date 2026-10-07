@@ -135,10 +135,23 @@ extension UndoOperation {
     /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
     /// snapshot (a whole-series delete: span "future" from the first occurrence, or span "all"),
     /// which hold no occurrence deleted or edited on its own before the delete. The undo text says
-    /// so for every such restore, since nothing can tell whether there were any; it says that too
-    /// (round 4, findings 8/9/12), names the series delete rather than "this delete", which a batch
-    /// text cannot point at, and says an edited occurrence loses its edit.
-    static let seriesRulesRestoreNote = "Restored from the series rules (said for every series restored from them, whether or not any of its occurrences was deleted or edited on its own before the series was deleted): an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+    /// so for every such restore, whether or not there were any, since nothing can tell (round 4,
+    /// findings 8/9/12; the text no longer says that about itself, round 5, findings 4/6/11). It
+    /// does not point at "this delete", which a batch text cannot, and says an edited occurrence
+    /// loses its edit, in the words of the tool descriptions.
+    static let seriesRulesRestoreNote = "Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+
+    /// What the `undo_history` line of a record that recreates a series from its rules adds
+    /// (verify round 4, findings 11/15; round 5, findings 1/2/7): the line is read before the undo
+    /// runs, and "from its rules alone" could be read as nothing coming back.
+    static let seriesRulesListingNote = "occurrences deleted on their own earlier come back, edited ones without their edits"
+
+    /// How many series this record's undo recreates from their rules, nested batches included, for
+    /// the `undo_history` line of a batch (verify round 5, findings 1/2). Counted from the same
+    /// exhaustive classification as the batch undo text.
+    var seriesRecreatedFromRules: Int {
+        undoDisclosures.filter { $0 == .seriesRules }.count
+    }
 
     /// The text of a recreated event. Store-derived title through `undoVisibleTitle`.
     static func eventRestoredMessage(snapshot: EventSnapshot, newID: String) -> String {

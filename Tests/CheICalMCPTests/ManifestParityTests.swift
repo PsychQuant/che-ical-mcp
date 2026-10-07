@@ -162,10 +162,13 @@ final class ManifestParityTests: XCTestCase {
     /// #244 verify round 4: undo of a whole-series delete recreates the series from its rules
     /// alone (#285), so an occurrence deleted on its own before comes back. "Comes back from its
     /// rules, without the occurrences deleted or edited on their own before" read as the opposite.
-    /// Every place a client reads about the undo before it runs states it the same way, and no
-    /// description carries the phrase that read backwards.
+    /// Every place a client reads about the undo before it runs states it in the same words; the
+    /// three tool descriptions also say what was seen on device (round 5, findings 9/12). The
+    /// negative check catches that one phrase only, not every backwards rewording (round 5,
+    /// findings 5/15): the positive clause is the guard.
     func testUndoSurfacesSayAWholeSeriesRestoreBringsDeletedOccurrencesBack() throws {
         let restored = "an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+        let evidence = restored + " (seen on iCloud only; the lost edit and the duplicate not yet checked with span 'all')"
         let backwards = "without the occurrences"
         let data = try Data(contentsOf: try locateManifest())
         let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -173,7 +176,7 @@ final class ManifestParityTests: XCTestCase {
         let declared = CheICalMCPServer.defineTools()
         for name in ["delete_event", "delete_events_batch", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
-            XCTAssertTrue(description.contains(restored), "defineTools() \(name): \(description)")
+            XCTAssertTrue(description.contains(evidence), "defineTools() \(name): \(description)")
         }
         let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
         XCTAssertTrue(summary.contains(restored), "mcpb/manifest.json undo: \(summary)")

@@ -225,11 +225,20 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(occurrence.description, "Deleted occurrence of event: Standup 'x' (undo restores it as a one-off event)")
         let marker = UndoOperation.deleteFollowingOccurrences(title: "Stand\u{200B}up")
         XCTAssertEqual(marker.description, "Deleted occurrences of recurring event: Standup (undo not available)")
-        // Verify round 4, findings 11/15: a series record says what its undo does before it runs.
+        // Verify round 4, findings 11/15, and round 5, finding 7: a series record says what its undo
+        // brings back before it runs.
+        let rules = "occurrences deleted on their own earlier come back, edited ones without their edits"
         let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
-        XCTAssertEqual(series.description, "Deleted event: Standup (undo recreates the series from its rules alone)")
-        XCTAssertEqual(UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review")).description,
-                       "Deleted event: Review", "a one-off record is listed as before")
+        XCTAssertEqual(series.description, "Deleted event: Standup (undo recreates the series from its rules: \(rules))")
+        let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
+        XCTAssertEqual(oneOff.description, "Deleted event: Review", "a one-off record is listed as before")
+        // Round 5, findings 1/2: so does a batch that removed a series whole (delete_events_batch,
+        // span all over several events), counting series at any depth; one without is listed as before.
+        XCTAssertEqual(UndoOperation.batch([series, occurrence, oneOff]).description,
+                       "Batch (3 operations; undo recreates 1 series from its rules: \(rules))")
+        XCTAssertEqual(UndoOperation.batch([.batch([series]), series]).description,
+                       "Batch (2 operations; undo recreates 2 series from their rules: \(rules))", "nested batches are walked")
+        XCTAssertEqual(UndoOperation.batch([oneOff, occurrence, marker]).description, "Batch (3 operations)")
     }
 
     /// The undo text reports a moved absolute alarm the way the move path reports it.
@@ -261,7 +270,7 @@ final class DeleteUndoTests: XCTestCase {
     func testAWholeSeriesRestoreSaysItCameBackFromItsRules() {
         let series = EventSnapshot(from: weekly(startingAt: firstStart))
         XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: series, newID: "n1"),
-                       "Undone: restored event 'Standup' (new ID: n1). Restored from the series rules (said for every series restored from them, whether or not any of its occurrences was deleted or edited on its own before the series was deleted): an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time")
+                       "Undone: restored event 'Standup' (new ID: n1). Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time")
         XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up"), newID: "n1"),
                        "Undone: restored event 'Standup' (new ID: n1)")
     }
@@ -271,7 +280,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
         let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
         let moved = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: ["absolute_alarms"])
-        let rules = "Restored from the series rules (said for every series restored from them, whether or not any of its occurrences was deleted or edited on its own before the series was deleted): an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+        let rules = "Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff, .batch([series])], count: 2),
                        "Undone batch (2 operations). " + rules)
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [series, moved], count: 2),

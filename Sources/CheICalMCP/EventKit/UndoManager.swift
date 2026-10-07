@@ -305,7 +305,7 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
-            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules alone)" : ""
+            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))" : ""
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
@@ -329,7 +329,10 @@ enum UndoOperation {
             let action = requestedCompleted ? "Completed" : "Reopened"
             return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
         case .batch(let ops):
-            return "Batch (\(ops.count) operations)"
+            // Verify round 5, findings 1/2: a batch that removed series whole says it as well.
+            let series = seriesRecreatedFromRules
+            guard series > 0 else { return "Batch (\(ops.count) operations)" }
+            return "Batch (\(ops.count) operations; undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
         }
     }
 }
