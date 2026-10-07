@@ -32,38 +32,74 @@ enum UndoRestoreDestination {
         }
     }
 
-    /// The first destination whose calendar or list is gone from `eventCalendars` / `reminderLists`,
-    /// which the batch pre-check reads once. The lookups are the ones the restore makes, by recorded
-    /// identifier: `EventSnapshot.resolveCalendar` (`applySnapshot`) and
+    /// Every destination that cannot take its item back, in record order: its calendar or list is
+    /// not in `eventCalendars` / `reminderLists` (`.missing`), or is there but does not allow changes
+    /// (`.readOnly`: a read-only shared or subscribed one, where the save would fail part-way through
+    /// the batch, PR #282 round 2, finding 5). The lookups are the ones the restore makes, by
+    /// recorded identifier: `EventSnapshot.resolveCalendar` (`applySnapshot`) and
     /// `ReminderSnapshot.resolveList(for: .recreateDeleted)` (`applyReminderSnapshot` for the
     /// `.deleteReminder` undo). A list that only shares the recorded title, such as another
     /// account's "Reminders", does not pass (PR #282 round 1, finding 1). Generic over the list type
     /// so it is unit-tested without EventKit, as the two resolvers are.
-    static func firstMissing<C>(among destinations: [UndoRestoreDestination], eventCalendars: [C],
-                                reminderLists: [C], identifier: (C) -> String) -> UndoRestoreDestination? {
-        destinations.first { destination in
+    static func problems<C>(among destinations: [UndoRestoreDestination], eventCalendars: [C], reminderLists: [C],
+                            identifier: (C) -> String, allowsModifications: (C) -> Bool) -> [UndoRestoreFinding] {
+        destinations.compactMap { destination in
+            let container: C?
             switch destination {
             case .eventCalendar(let snapshot):
-                return (try? snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)) == nil
+                container = try? snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)
             case .reminderList(let snapshot):
-                return (try? snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)) == nil
+                container = try? snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)
             }
+            guard let container else { return UndoRestoreFinding(destination: destination, problem: .missing) }
+            return allowsModifications(container) ? nil : UndoRestoreFinding(destination: destination, problem: .readOnly)
         }
     }
 
-    /// The refusal when the destination is gone.
-    var missingError: UndoRestoreDestinationMissingError {
+    /// The batch pre-check (#248 B): `read` gives the calendars and lists, read once for the whole
+    /// batch. A refusal writes nothing, so it would not make the store refresh, and a list missing
+    /// only from a stale view would be refused on every retry; so when a destination is missing,
+    /// `invalidate` marks the view stale and `read` runs once more before the refusal (PR #282
+    /// round 2, finding 2). A read-only destination is refused without a second read. Closure seam,
+    /// so the order is unit-tested without EventKit.
+    static func verify<C>(_ destinations: [UndoRestoreDestination], identifier: (C) -> String,
+                          allowsModifications: (C) -> Bool,
+                          read: () async throws -> (eventCalendars: [C], reminderLists: [C]),
+                          invalidate: () -> Void) async throws {
+        guard !destinations.isEmpty else { return }
+        func check(_ lists: (eventCalendars: [C], reminderLists: [C])) -> [UndoRestoreFinding] {
+            problems(among: destinations, eventCalendars: lists.eventCalendars, reminderLists: lists.reminderLists,
+                     identifier: identifier, allowsModifications: allowsModifications)
+        }
+        var findings = check(try await read())
+        if findings.contains(where: { $0.problem == .missing }) {
+            invalidate()
+            findings = check(try await read())
+        }
+        if !findings.isEmpty { throw UndoRestoreDestinationMissingError(findings: findings, total: destinations.count) }
+    }
+
+    /// The words and the recorded container of the item, for the refusal.
+    fileprivate var refusalTerms: (item: String, container: String, containerID: String, containerTitle: String, account: String?) {
         switch self {
         case .eventCalendar(let snapshot):
-            return UndoRestoreDestinationMissingError(item: "event", title: snapshot.title, container: "calendar",
-                                                      containerTitle: snapshot.calendarTitle,
-                                                      accountTitle: snapshot.calendarSource)
+            return ("event", "calendar", snapshot.calendarIdentifier, snapshot.calendarTitle, snapshot.calendarSource)
         case .reminderList(let snapshot):
-            return UndoRestoreDestinationMissingError(item: "reminder", title: snapshot.title, container: "list",
-                                                      containerTitle: snapshot.calendarTitle,
-                                                      accountTitle: snapshot.calendarSource)
+            return ("reminder", "list", snapshot.calendarIdentifier, snapshot.calendarTitle, snapshot.calendarSource)
         }
     }
+}
+
+/// Why a destination cannot take its item back.
+enum UndoRestoreProblem: Equatable, Sendable {
+    case missing
+    case readOnly
+}
+
+/// One destination the pre-check refuses, and why.
+struct UndoRestoreFinding {
+    let destination: UndoRestoreDestination
+    let problem: UndoRestoreProblem
 }
 
 extension UndoOperation {
@@ -90,10 +126,13 @@ extension UndoOperation {
     }
 }
 
-/// B: a batch member cannot be restored because the calendar or list it would be recreated in is
-/// not there. Raised by the batch pre-check, so nothing of the batch was written; kept like a
-/// not-found (`UndoFailureDisposition.of` maps it to `.restore`), since the calendar may only be
-/// syncing.
+/// B: some members of a batch cannot be restored, because the calendar or list each would be
+/// recreated in is not there or does not allow changes. Raised by the batch pre-check, so nothing of
+/// the batch was written; kept like a not-found (`UndoFailureDisposition.of` maps it to
+/// `.restore`), since the calendar may only be syncing or its access may change. The message says
+/// how many of the batch's items could have been restored and which containers stop the rest, and
+/// that discard_id drops every item of the entry (PR #282 round 2, finding 1): the batch is restored
+/// whole or not at all. A partial restore that keeps a narrowed record is a follow-up.
 ///
 /// The message is author-controlled text: the item and container words come from this file, and
 /// the store-derived titles (a shared calendar's title is set by someone else, #37 F1) pass
@@ -102,9 +141,45 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
     let message: String
     var errorDescription: String? { message }
 
-    init(item: String, title: String, container: String, containerTitle: String, accountTitle: String?) {
-        let account = accountTitle.map { " in '\(undoShownTitle($0))'" } ?? ""
-        message = "Cannot undo: the deleted \(item) '\(undoShownTitle(title))' cannot be restored because the \(container) it was in ('\(undoShownTitle(containerTitle))'\(account)) is not available. Nothing in this batch was written and this history entry was kept. If that \(container) was deleted or its account removed, no retry can restore it: ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id. Run undo again only if the \(container) may still be syncing."
+    /// How many containers and item titles the message names before it summarizes the rest.
+    private static let containersShown = 5
+    private static let itemsShown = 3
+
+    init(findings: [UndoRestoreFinding], total: Int) {
+        // One line per container and problem, in the order the batch first meets them.
+        var groups: [(key: String, words: String, item: String, titles: [String])] = []
+        for finding in findings {
+            let d = finding.destination.refusalTerms
+            let state = finding.problem == .missing ? "is not available" : "is read-only"
+            let key = "\(d.container)|\(d.containerID)|\(state)"
+            let account = d.account.map { " in '\(undoShownTitle($0))'" } ?? ""
+            let words = "the \(d.container) '\(undoShownTitle(d.containerTitle))'\(account) \(state)"
+            if let index = groups.firstIndex(where: { $0.key == key }) {
+                groups[index].titles.append(finding.destination.itemTitle)
+            } else {
+                groups.append((key, words, d.item, [finding.destination.itemTitle]))
+            }
+        }
+        let lines = groups.prefix(Self.containersShown).map { group -> String in
+            let shown = group.titles.prefix(Self.itemsShown).map { "'\(undoShownTitle($0))'" }.joined(separator: ", ")
+            let more = group.titles.count > Self.itemsShown ? ", …" : ""
+            let noun = group.titles.count == 1 ? group.item : group.item + "s"
+            return "\(group.words) (\(group.titles.count) \(noun): \(shown)\(more))"
+        }
+        let moreGroups = groups.count > Self.containersShown ? "; and \(groups.count - Self.containersShown) more" : ""
+        let blocked = findings.count
+        let others = total - blocked
+        let restorable = others > 0
+            ? " The other \(others) could be restored, but a batch undo restores all of its items or none of them."
+            : ""
+        message = "Cannot undo this batch: \(blocked) of its \(total) deleted items cannot be restored: "
+            + lines.joined(separator: "; ") + moreGroups + "."
+            + restorable
+            + " Nothing was written and this history entry was kept, whole, under the same id."
+            + " Giving up this undo with discard_id drops all \(total) items of this entry"
+            + (others > 0 ? ", including the \(others) that could be restored," : "")
+            + " and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
+            + " A calendar or list that was deleted, or whose account was removed, does not come back, so retrying cannot restore its items; run undo again only if it may still be syncing or its access may change."
     }
 }
 

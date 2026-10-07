@@ -123,29 +123,33 @@ extension EventKitManager {
     }
 
     /// #248 B: a batch whose undo recreates items (deleted events and reminders) needs the calendar
-    /// or list each is recreated in, so a batch with a member whose calendar is gone is refused
-    /// before its first write instead of failing part-way. Run once per batch, before the per-member
-    /// checks: the calendars and lists are read once however many members the batch holds (a
-    /// cleanup holds up to its `limit`). Not a transaction: a calendar deleted after this check
-    /// still stops the batch part-way (`UndoBatchPartiallyUndoneError`).
+    /// or list each is recreated in, so a batch with a member whose calendar is gone or read-only is
+    /// refused before its first write instead of failing part-way. Run once per batch, before the
+    /// per-member checks: the calendars and lists are read once however many members the batch holds
+    /// (a cleanup holds up to its `limit`), and once more after a miss (`UndoRestoreDestination.verify`).
+    /// Not a transaction: a calendar deleted after this check still stops the batch part-way
+    /// (`UndoBatchPartiallyUndoneError`).
     func verifyRestoreDestinations(of members: [UndoOperation], verb: UndoHistoryVerb) async throws {
         let destinations = UndoRestoreDestination.of(members, verb: verb)
-        var eventCalendars: [EKCalendar] = []
-        var reminderLists: [EKCalendar] = []
-        if destinations.contains(where: { if case .eventCalendar = $0 { return true }; return false }) {
-            try await ensureCalendarAccess()
-            refreshIfNeeded()
-            eventCalendars = eventStore.calendars(for: .event)
-        }
-        if destinations.contains(where: { if case .reminderList = $0 { return true }; return false }) {
-            // The entry the reminder restore reads its lists through (#242).
-            reminderLists = try await reminderListsForRestore()
-        }
-        // The restore's own lookups (by recorded identifier), against the lists read above.
-        let missing = UndoRestoreDestination.firstMissing(
-            among: destinations, eventCalendars: eventCalendars, reminderLists: reminderLists,
-            identifier: { $0.calendarIdentifier })
-        if let missing { throw missing.missingError }
+        let needsCalendars = destinations.contains { if case .eventCalendar = $0 { return true }; return false }
+        let needsLists = destinations.contains { if case .reminderList = $0 { return true }; return false }
+        try await UndoRestoreDestination.verify(
+            destinations, identifier: { $0.calendarIdentifier }, allowsModifications: { $0.allowsContentModifications },
+            read: {
+                var eventCalendars: [EKCalendar] = []
+                var reminderLists: [EKCalendar] = []
+                if needsCalendars {
+                    try await self.ensureCalendarAccess()
+                    self.refreshIfNeeded()
+                    eventCalendars = self.eventStore.calendars(for: .event)
+                }
+                if needsLists {
+                    // The entry the reminder restore reads its lists through (#242).
+                    reminderLists = try await self.reminderListsForRestore()
+                }
+                return (eventCalendars, reminderLists)
+            },
+            invalidate: { self.markNeedsRefresh() })
     }
 
     /// Each undo arm knows its record kind, so a mismatch is unreachable by construction; it

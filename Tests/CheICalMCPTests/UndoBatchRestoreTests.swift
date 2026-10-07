@@ -57,30 +57,73 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertNil(UndoOperation.deleteReminder(snapshot: reminder).restoreDestination(verb: .redo))
     }
 
-    func testTheRefusalSaysNothingWasWrittenAndHowToGiveUp() {
-        let eventError = UndoRestoreDestination.eventCalendar(event).missingError
-        XCTAssertTrue(eventError.message.contains("event 'Standup'"), eventError.message)
-        XCTAssertTrue(eventError.message.contains("calendar"), eventError.message)
-        let reminderError = UndoRestoreDestination.reminderList(reminder).missingError
-        XCTAssertTrue(reminderError.message.contains("reminder 'Pay rent'"), reminderError.message)
-        XCTAssertTrue(reminderError.message.contains("list"), reminderError.message)
-        for message in [eventError.message, reminderError.message] {
-            XCTAssertTrue(message.contains("Nothing in this batch was written"), message)
-            XCTAssertTrue(message.contains("discard_id"), message)
-        }
+    // MARK: - B: the refusal (PR #282 round 2, findings 1 and 5)
+
+    /// A calendar or list as the pre-check sees it: the store's lists, read once per batch.
+    private typealias Container = (id: String, title: String, writable: Bool)
+
+    private func problems(_ destinations: [UndoRestoreDestination], eventCalendars: [Container] = [],
+                          reminderLists: [Container] = []) -> [UndoRestoreFinding] {
+        UndoRestoreDestination.problems(among: destinations, eventCalendars: eventCalendars, reminderLists: reminderLists,
+                                        identifier: { $0.id }, allowsModifications: { $0.writable })
+    }
+
+    private func refusal(_ findings: [UndoRestoreFinding], total: Int) -> String {
+        UndoRestoreDestinationMissingError(findings: findings, total: total).message
+    }
+
+    /// The refusal says how many items could have been restored and which lists or calendars stop
+    /// the rest, and that giving up drops every item of the entry, so the choice is informed.
+    func testTheRefusalCountsWhatCouldBeRestoredAndNamesWhatIsMissing() {
+        let rent = UndoSnapshotFixtures.reminder(title: "Pay rent")
+        let milk = UndoSnapshotFixtures.reminder(title: "Milk")
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: rent),
+                                                      .deleteReminder(snapshot: milk)], verb: .undo)
+        let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)])
+        XCTAssertEqual(found.map(\.problem), [.missing, .missing])
+
+        let message = refusal(found, total: 3)
+        XCTAssertTrue(message.contains("2 of its 3 deleted items cannot be restored"), message)
+        XCTAssertTrue(message.contains("is not available") && message.contains("'Pay rent'") && message.contains("'Milk'"), message)
+        XCTAssertTrue(message.contains("The other 1 could be restored"), message)
+        XCTAssertTrue(message.contains("Nothing was written"), message)
+        XCTAssertTrue(message.contains("discard_id drops all 3 items of this entry, including the 1 that could be restored"), message)
+    }
+
+    func testARefusalOfEveryItemSaysNoneCouldBeRestored() {
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+        let message = refusal(problems(destinations), total: 1)
+        XCTAssertTrue(message.contains("1 of its 1 deleted items cannot be restored"), message)
+        XCTAssertFalse(message.contains("The other"), message)
+        XCTAssertTrue(message.contains("discard_id drops all 1 items of this entry"), message)
+    }
+
+    /// Finding 5: a calendar or list that is found but does not allow changes (a read-only shared
+    /// or subscribed one) would fail at save, part-way through the batch; the pre-check refuses it.
+    func testAReadOnlyDestinationIsRefusedBeforeAnyWrite() {
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Holidays", false)],
+                             reminderLists: [(reminder.calendarIdentifier, "Reminders", true)])
+        XCTAssertEqual(found.map(\.problem), [.readOnly])
+        XCTAssertEqual(found.first?.destination.itemTitle, "Standup")
+        let message = refusal(found, total: 2)
+        XCTAssertTrue(message.contains("is read-only"), message)
+        XCTAssertTrue(message.contains("1 of its 2 deleted items cannot be restored"), message)
     }
 
     /// The titles come from the store (a shared calendar's title is set by someone else), so they
     /// pass `undoShownTitle` like every other undo error.
     func testTheRefusalShowsTitlesLikeTheOtherUndoErrors() {
-        let error = UndoRestoreDestination.eventCalendar(UndoSnapshotFixtures.event(title: "Stand\u{202E}up 'x'")).missingError
-        XCTAssertTrue(error.message.contains("'Standup \u{2019}x\u{2019}'"), error.message)
-        XCTAssertFalse(error.message.unicodeScalars.contains { $0.value == 0x202E }, error.message)
+        let hidden = UndoSnapshotFixtures.event(title: "Stand\u{202E}up 'x'")
+        let message = refusal(problems(UndoRestoreDestination.of([.deleteEvent(snapshot: hidden)], verb: .undo)), total: 1)
+        XCTAssertTrue(message.contains("'Standup \u{2019}x\u{2019}'"), message)
+        XCTAssertFalse(message.unicodeScalars.contains { $0.value == 0x202E }, message)
     }
 
     /// Kept like a not-found (#191, #236 D2): the user can recreate the calendar or give up.
     func testTheRefusalKeepsTheRecordAndReachesTheClientVerbatim() {
-        let error: Error = UndoRestoreDestination.reminderList(reminder).missingError
+        let findings = problems(UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo))
+        let error: Error = UndoRestoreDestinationMissingError(findings: findings, total: 1)
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         XCTAssertTrue(error is TrustedErrorMessage)
     }
@@ -99,30 +142,17 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(UndoRestoreDestination.of(members, verb: .redo).isEmpty)
     }
 
-    /// A calendar or list as the pre-check sees it: the store's lists, read once per batch.
-    private typealias Container = (id: String, title: String)
-
-    private func firstMissing(_ destinations: [UndoRestoreDestination], eventCalendars: [Container] = [],
-                              reminderLists: [Container] = []) -> UndoRestoreDestination? {
-        UndoRestoreDestination.firstMissing(among: destinations, eventCalendars: eventCalendars,
-                                            reminderLists: reminderLists, identifier: { $0.id })
-    }
-
-    func testTheFirstMissingDestinationIsTheOneTheRefusalNames() {
+    func testEveryDestinationWithAProblemIsReportedInRecordOrder() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
+        XCTAssertNotEqual(event.calendarIdentifier, gone.calendarIdentifier, "precondition: fixtures have distinct calendars")
         let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteEvent(snapshot: gone),
                                                       .deleteReminder(snapshot: reminder)], verb: .undo)
-        let calendar: Container = (event.calendarIdentifier, event.calendarTitle)
-        let list: Container = (reminder.calendarIdentifier, reminder.calendarTitle)
+        let calendar: Container = (event.calendarIdentifier, event.calendarTitle, true)
+        let list: Container = (reminder.calendarIdentifier, reminder.calendarTitle, true)
 
-        XCTAssertEqual(firstMissing(destinations, eventCalendars: [calendar], reminderLists: [])?.itemTitle, "Gone",
-                       "stops at the first destination that is gone")
-        XCTAssertNil(firstMissing(destinations, eventCalendars: [calendar, (gone.calendarIdentifier, "")],
-                                  reminderLists: [list]))
-        guard case .reminderList? = firstMissing(destinations, eventCalendars: [calendar, (gone.calendarIdentifier, "")],
-                                                 reminderLists: []) else {
-            return XCTFail("a gone list is reported as the reminder's destination")
-        }
+        XCTAssertEqual(problems(destinations, eventCalendars: [calendar]).map(\.destination.itemTitle), ["Gone", "Pay rent"])
+        XCTAssertTrue(problems(destinations, eventCalendars: [calendar, (gone.calendarIdentifier, "", true)],
+                               reminderLists: [list]).isEmpty)
     }
 
     /// PR #282 round 1, finding 1 (HIGH): the pre-check matched the list by title, so a list with the
@@ -133,12 +163,11 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(reminder.calendarIdentifier.isEmpty)
         let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
 
-        guard case .reminderList? = firstMissing(destinations, reminderLists: [("other-account", reminder.calendarTitle)]) else {
-            return XCTFail("a same-titled list in another account must not pass the pre-check")
-        }
-        XCTAssertNil(firstMissing(destinations, reminderLists: [("other-account", reminder.calendarTitle),
-                                                                (reminder.calendarIdentifier, "Renamed")]),
-                     "the list with the recorded identifier passes, whatever its title is now")
+        XCTAssertEqual(problems(destinations, reminderLists: [("other-account", reminder.calendarTitle, true)]).map(\.problem),
+                       [.missing], "a same-titled list in another account must not pass the pre-check")
+        XCTAssertTrue(problems(destinations, reminderLists: [("other-account", reminder.calendarTitle, true),
+                                                             (reminder.calendarIdentifier, "Renamed", true)]).isEmpty,
+                      "the list with the recorded identifier passes, whatever its title is now")
     }
 
     /// The same for an event's calendar (`EventSnapshot.resolveCalendar`, #208).
@@ -146,10 +175,73 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(event.calendarIdentifier.isEmpty)
         let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
 
-        guard case .eventCalendar? = firstMissing(destinations, eventCalendars: [("other-account", event.calendarTitle)]) else {
-            return XCTFail("a same-titled calendar in another account must not pass the pre-check")
+        XCTAssertEqual(problems(destinations, eventCalendars: [("other-account", event.calendarTitle, true)]).map(\.problem),
+                       [.missing], "a same-titled calendar in another account must not pass the pre-check")
+        XCTAssertTrue(problems(destinations, eventCalendars: [(event.calendarIdentifier, "Renamed", true)]).isEmpty)
+    }
+
+    // MARK: - B: refresh before refusing (PR #282 round 2, finding 2)
+
+    /// A refusal writes nothing, so it set no refresh: a list missing only from a stale view of the
+    /// store was refused on every retry. On a miss the pre-check invalidates the view and reads once
+    /// more before it refuses.
+    private final class Reads {
+        var count = 0
+        var invalidations = 0
+    }
+
+    private func verify(_ destinations: [UndoRestoreDestination], reads: Reads,
+                        lists: @escaping (Int) -> (eventCalendars: [Container], reminderLists: [Container])) async throws {
+        try await UndoRestoreDestination.verify(destinations, identifier: { $0.id }, allowsModifications: { $0.writable },
+                                                read: { reads.count += 1; return lists(reads.count) },
+                                                invalidate: { reads.invalidations += 1 })
+    }
+
+    func testAListMissingFromAStaleViewIsFoundOnTheSecondRead() async throws {
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let reads = Reads()
+        try await verify(destinations, reads: reads) { read in
+            ([], read == 1 ? [] : [(self.reminder.calendarIdentifier, "Reminders", true)])
         }
-        XCTAssertNil(firstMissing(destinations, eventCalendars: [(event.calendarIdentifier, "Renamed")]))
+        XCTAssertEqual(reads.count, 2)
+        XCTAssertEqual(reads.invalidations, 1, "the view is invalidated before the second read")
+    }
+
+    func testAListStillMissingAfterTheSecondReadIsRefused() async {
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let reads = Reads()
+        do {
+            try await verify(destinations, reads: reads) { _ in ([], []) }
+            XCTFail("expected a refusal")
+        } catch let refusal as UndoRestoreDestinationMissingError {
+            XCTAssertTrue(refusal.message.contains("1 of its 1"), refusal.message)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertEqual(reads.count, 2, "read once more, and only once")
+        XCTAssertEqual(reads.invalidations, 1)
+    }
+
+    func testEveryDestinationFoundOnTheFirstReadNeedsNoSecondRead() async throws {
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let reads = Reads()
+        try await verify(destinations, reads: reads) { _ in ([], [(self.reminder.calendarIdentifier, "Reminders", true)]) }
+        XCTAssertEqual(reads.count, 1)
+        XCTAssertEqual(reads.invalidations, 0)
+    }
+
+    /// A read-only destination is not a stale view: no second read, refused at once.
+    func testAReadOnlyDestinationIsRefusedWithoutASecondRead() async {
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let reads = Reads()
+        do {
+            try await verify(destinations, reads: reads) { _ in ([], [(self.reminder.calendarIdentifier, "Shared", false)]) }
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertTrue(error is UndoRestoreDestinationMissingError, "\(error)")
+        }
+        XCTAssertEqual(reads.count, 1)
+        XCTAssertEqual(reads.invalidations, 0)
     }
 
     // MARK: - A: a write fails part-way
