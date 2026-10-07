@@ -125,8 +125,9 @@ final class EventCopyHandlerTests: XCTestCase {
         XCTAssertTrue(text.contains(expected), text)
     }
 
-    /// #260: the manager answers a reminder's id with not found instead of aborting
-    /// (`EventLookup`); copy_event reports it as the call's error.
+    /// #260: since `EventLookup` the manager answers a reminder's id with not found instead of
+    /// aborting. The fake answers the same way, so this pins how copy_event reports it (the
+    /// envelope), not the guard itself (`EventLookupTests`).
     func testCopyEventGivenAnIdThatIsNotAnEventReportsNotFound() async throws {
         let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let result = await server.handleToolCallForTesting(name: "copy_event", arguments: [
@@ -137,7 +138,8 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     /// #260: in move_events_batch the not-found row fails on its own and the rows after it still
-    /// run; before the fix the process aborted there with earlier rows already moved.
+    /// run (envelope only, as above); before the fix the process aborted there with earlier rows
+    /// already moved.
     func testMoveBatchReportsANotFoundRowAndMovesTheRest() async throws {
         let history = CalendarUndoManager()
         let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: history))
