@@ -261,7 +261,9 @@ enum UndoOperation {
     case deleteEvent(snapshot: EventSnapshot)
     /// #244: one occurrence of a series deleted (span "this"). The snapshot is the occurrence
     /// without rules; undo recreates it as a one-off event, never a second series (`EventRemovalKind`).
-    case deleteOccurrence(snapshot: EventSnapshot)
+    /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
+    /// of the series was moved to the occurrence's start.
+    case deleteOccurrence(snapshot: EventSnapshot, notCarriedOver: [String])
     /// #244: an occurrence and the following ones deleted from a series that is still there, kept
     /// only as a marker. Its undo is refused and the record discarded; nothing is restored.
     case deleteFollowingOccurrences(title: String)
@@ -299,7 +301,7 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             return "Deleted event: \(undoVisibleTitle(snapshot.title))"
-        case .deleteOccurrence(let snapshot):
+        case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
         case .deleteFollowingOccurrences(let title):
             return "Deleted occurrences of recurring event: \(undoVisibleTitle(title)) (undo not available)"

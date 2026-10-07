@@ -9,9 +9,15 @@ import XCTest
 final class DeleteUndoTests: XCTestCase {
     private let store = EKEventStore()
     private let firstStart = Date(timeIntervalSince1970: 1_800_000_000)
+    private let week: TimeInterval = 7 * 86_400
 
-    private func kind(hadRules: Bool, detached: Bool = false, span: EKSpan, seriesRemains: Bool) -> EventRemovalKind {
-        EventRemovalKind.of(hadRules: hadRules, isDetached: detached, span: span, seriesRemains: seriesRemains)
+    private final class Lookups { var count = 0 }
+
+    /// `seriesResolves` answers the post-removal lookup and counts how often it was asked.
+    private func kind(hadRules: Bool, detached: Bool = false, span: EKSpan, fromFirst: Bool = false,
+                      resolves: Bool = true, lookups: Lookups = Lookups()) -> EventRemovalKind {
+        EventRemovalKind.of(hadRules: hadRules, isDetached: detached, span: span, fromFirstOccurrence: fromFirst,
+                            seriesResolves: { lookups.count += 1; return resolves })
     }
 
     /// A weekly series of three, as the issue's probe; an occurrence object carries the rules too.
@@ -29,32 +35,86 @@ final class DeleteUndoTests: XCTestCase {
 
     func testAOneOffEventIsRemovedWhole() {
         for span in [EKSpan.thisEvent, .futureEvents] {
-            XCTAssertEqual(kind(hadRules: false, span: span, seriesRemains: false), .wholeEvent)
+            XCTAssertEqual(kind(hadRules: false, span: span, resolves: false), .wholeEvent)
         }
     }
 
     /// D1: span "this" removes one occurrence; undo brings it back as a one-off whatever is left of
     /// the series, so a second series can never come back.
     func testSpanThisOnASeriesRemovesOneOccurrence() {
-        XCTAssertEqual(kind(hadRules: true, span: .thisEvent, seriesRemains: true), .occurrence)
-        XCTAssertEqual(kind(hadRules: true, span: .thisEvent, seriesRemains: false), .occurrence)
+        for (first, resolves) in [(false, true), (false, false), (true, true), (true, false)] {
+            XCTAssertEqual(kind(hadRules: true, span: .thisEvent, fromFirst: first, resolves: resolves), .occurrence)
+        }
     }
 
-    /// Span "future" from the first occurrence leaves nothing: the series is recreated, as before.
-    /// From a later one the series is still there, and the delete is refused at undo (D2).
-    func testSpanFutureOnASeriesDependsOnWhetherTheSeriesRemains() {
-        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, seriesRemains: true), .followingOccurrences)
-        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, seriesRemains: false), .wholeEvent)
+    /// Verify round 1, findings 1/2/12/22: "whole" needs evidence from before the removal (it
+    /// started at the series' first occurrence) and the series gone after it. A lookup that finds
+    /// nothing after a span "future" delete from a later occurrence is not proof that nothing is
+    /// left: it is refused, never recorded as the series (which undo would recreate beside the
+    /// surviving part).
+    func testSpanFutureFromALaterOccurrenceIsRefusedEvenWhenTheLookupFindsNothing() {
+        let lookups = Lookups()
+        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, fromFirst: false, resolves: false, lookups: lookups),
+                       .followingOccurrences)
+        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, fromFirst: false, resolves: true, lookups: lookups),
+                       .followingOccurrences)
+        XCTAssertEqual(lookups.count, 0, "nothing the lookup says can make a later start whole")
+    }
+
+    /// From the first occurrence nothing is left and the series is recreated whole, but only when
+    /// the identifier no longer resolves; a series that still resolves is refused.
+    func testSpanFutureFromTheFirstOccurrenceIsWholeOnlyWhenTheSeriesIsGone() {
+        let lookups = Lookups()
+        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, fromFirst: true, resolves: false, lookups: lookups), .wholeEvent)
+        XCTAssertEqual(kind(hadRules: true, span: .futureEvents, fromFirst: true, resolves: true, lookups: lookups),
+                       .followingOccurrences)
+        XCTAssertEqual(lookups.count, 2)
     }
 
     /// A detached occurrence addressed by its own identifier has no rules. Span "future" removes the
-    /// following occurrences of its series too, which its snapshot does not hold: restoring the
-    /// snapshot alone would leave them out silently, so it is refused, whether the series remains.
+    /// following occurrences of its series too (checked on iCloud, 2026-10-07: the 3rd went with
+    /// the edited 2nd), which its snapshot does not hold: restoring the snapshot alone would leave
+    /// them out silently, so it is refused.
     func testADetachedOccurrenceIsAnOccurrenceAndWithSpanFutureIsRefused() {
-        for remains in [true, false] {
-            XCTAssertEqual(kind(hadRules: false, detached: true, span: .thisEvent, seriesRemains: remains), .occurrence)
-            XCTAssertEqual(kind(hadRules: false, detached: true, span: .futureEvents, seriesRemains: remains), .followingOccurrences)
+        let lookups = Lookups()
+        for resolves in [true, false] {
+            XCTAssertEqual(kind(hadRules: false, detached: true, span: .thisEvent, resolves: resolves, lookups: lookups), .occurrence)
+            XCTAssertEqual(kind(hadRules: false, detached: true, span: .futureEvents, fromFirst: true, resolves: resolves, lookups: lookups),
+                           .followingOccurrences)
         }
+        XCTAssertEqual(lookups.count, 0)
+    }
+
+    // MARK: - Evidence taken before the removal
+
+    /// The record site passes the two events it resolved; the facts come from them, so the
+    /// classification cannot be fed the wrong flag.
+    func testTheFactsComeFromTheEventsBeforeTheRemoval() {
+        let series = weekly(startingAt: firstStart)
+        let first = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart))
+        let second = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
+
+        XCTAssertEqual(first.kind(span: .futureEvents, seriesResolves: { false }), .wholeEvent)
+        XCTAssertEqual(second.kind(span: .futureEvents, seriesResolves: { false }), .followingOccurrences)
+        XCTAssertEqual(second.kind(span: .thisEvent, seriesResolves: { false }), .occurrence)
+
+        let oneOff = EKEvent(eventStore: store)
+        oneOff.calendar = series.calendar
+        oneOff.title = "Review"
+        oneOff.startDate = firstStart
+        oneOff.endDate = firstStart.addingTimeInterval(1800)
+        XCTAssertEqual(DeletedEventSnapshots(series: oneOff, removed: oneOff).kind(span: .futureEvents, seriesResolves: { true }),
+                       .wholeEvent)
+    }
+
+    /// On iCloud the series object keeps its original first slot after that occurrence was deleted
+    /// on its own (checked 2026-10-07), so span "future" from the first remaining occurrence is not
+    /// "from the first": refused, instead of recreating the series with the deleted occurrence in it.
+    func testTheFirstSlotIsTheSeriesStartNotTheFirstRemainingOccurrence() {
+        let series = weekly(startingAt: firstStart)
+        let firstRemaining = weekly(startingAt: firstStart.addingTimeInterval(week))
+        XCTAssertEqual(DeletedEventSnapshots(series: series, removed: firstRemaining).kind(span: .futureEvents, seriesResolves: { false }),
+                       .followingOccurrences)
     }
 
     // MARK: - Record shapes
@@ -62,14 +122,50 @@ final class DeleteUndoTests: XCTestCase {
     /// As the #208 move copy-out: the occurrence without its rules, at its own slot.
     func testAnOccurrenceDeleteRecordsTheOccurrenceWithoutRules() throws {
         let series = weekly(startingAt: firstStart)
-        let second = weekly(startingAt: firstStart.addingTimeInterval(7 * 86_400))
+        let second = weekly(startingAt: firstStart.addingTimeInterval(week))
         let record = DeletedEventSnapshots(series: series, removed: second).record(for: .occurrence)
 
-        guard case .deleteOccurrence(let snapshot) = record else { return XCTFail("\(record)") }
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = record else { return XCTFail("\(record)") }
         XCTAssertNil(snapshot.recurrenceRules, "no second series")
         XCTAssertEqual(snapshot.startDate, second.startDate)
         XCTAssertEqual(snapshot.endDate, second.endDate)
         XCTAssertEqual(snapshot.title, "Standup")
+        XCTAssertEqual(notCarriedOver, [])
+    }
+
+    /// Verify round 1, finding 6: an occurrence of a series reads the series' absolute alarm date,
+    /// which a later occurrence has passed. As the #253 split path does, an absolute alarm goes to
+    /// the occurrence's start and is reported; other alarms are kept.
+    func testAnOccurrenceRestoreMovesAbsoluteAlarmsToItsStart() throws {
+        let alarmDate = firstStart.addingTimeInterval(-3600)
+        let series = weekly(startingAt: firstStart)
+        series.addAlarm(EKAlarm(absoluteDate: alarmDate))
+        let second = weekly(startingAt: firstStart.addingTimeInterval(week))
+        second.addAlarm(EKAlarm(absoluteDate: alarmDate))
+        second.addAlarm(EKAlarm(relativeOffset: -900))
+
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second)
+            .record(for: .occurrence) else { return XCTFail() }
+        XCTAssertEqual(notCarriedOver, ["absolute_alarms"])
+        XCTAssertEqual(snapshot.alarms.map(\.absoluteDate), [nil, nil])
+        XCTAssertEqual(Set(snapshot.alarms.map(\.relativeOffset)), [0, -900])
+    }
+
+    /// A one-off event, or a detached occurrence addressed by its own identifier, carries its own
+    /// alarm dates (the move path keeps them too).
+    func testAOneOffKeepsItsAbsoluteAlarms() throws {
+        let alarmDate = firstStart.addingTimeInterval(-3600)
+        let oneOff = EKEvent(eventStore: store)
+        oneOff.calendar = EKCalendar(for: .event, eventStore: store)
+        oneOff.title = "Review"
+        oneOff.startDate = firstStart
+        oneOff.endDate = firstStart.addingTimeInterval(1800)
+        oneOff.addAlarm(EKAlarm(absoluteDate: alarmDate))
+
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: oneOff, removed: oneOff)
+            .record(for: .occurrence) else { return XCTFail() }
+        XCTAssertEqual(notCarriedOver, [])
+        XCTAssertEqual(snapshot.alarms.map(\.absoluteDate), [alarmDate])
     }
 
     func testAWholeEventDeleteRecordsTheSeriesWithItsRules() throws {
@@ -83,7 +179,7 @@ final class DeleteUndoTests: XCTestCase {
 
     func testAFollowingOccurrencesDeleteRecordsOnlyAMarker() {
         let series = weekly(startingAt: firstStart)
-        let record = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(7 * 86_400)))
+        let record = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
             .record(for: .followingOccurrences)
 
         guard case .deleteFollowingOccurrences(let title) = record else { return XCTFail("\(record)") }
@@ -93,17 +189,25 @@ final class DeleteUndoTests: XCTestCase {
     }
 
     func testTheNewRecordsHaveNoPostStateToCompare() {
-        XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup")).undoPostState,
+        XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: []).undoPostState,
                      "undo recreates; there is no item to overwrite")
     }
 
-    // MARK: - undo_history
+    // MARK: - Texts
 
     func testHistoryDescriptionsSayWhatUndoWillDo() {
-        let occurrence = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up 'x'"))
+        let occurrence = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up 'x'"), notCarriedOver: [])
         XCTAssertEqual(occurrence.description, "Deleted occurrence of event: Standup 'x' (undo restores it as a one-off event)")
         let marker = UndoOperation.deleteFollowingOccurrences(title: "Stand\u{200B}up")
         XCTAssertEqual(marker.description, "Deleted occurrences of recurring event: Standup (undo not available)")
+    }
+
+    /// The undo text reports a moved absolute alarm the way the move path reports it.
+    func testTheRestoreMessageReportsWhatWasNotCarriedOver() {
+        XCTAssertEqual(UndoOperation.occurrenceRestoredMessage(title: "Stand\u{202E}up", newID: "n1", notCarriedOver: []),
+                       "Undone: restored the deleted occurrence of 'Standup' as a one-off event (new ID: n1)")
+        XCTAssertEqual(UndoOperation.occurrenceRestoredMessage(title: "Standup", newID: "n1", notCarriedOver: ["absolute_alarms"]),
+                       "Undone: restored the deleted occurrence of 'Standup' as a one-off event (new ID: n1). Not carried over: absolute_alarms (an absolute-date alarm of the series is now an alarm at the occurrence's start)")
     }
 
     // MARK: - Refusals (D2, D3)
@@ -121,6 +225,8 @@ final class DeleteUndoTests: XCTestCase {
     }
 
     /// D3: a batch that holds such a delete is refused before any member writes, and discarded.
+    /// Verify round 1, finding 3: the text claims only that, not atomicity (a write that fails part
+    /// way through is #248).
     func testABatchMemberThatCannotBeRestoredRefusesTheWholeBatch() throws {
         let error = try XCTUnwrap(UndoOperation.deleteFollowingOccurrences(title: "Standup").batchMemberUndoRefusal)
         XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
@@ -129,12 +235,41 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertTrue(message.contains("'Standup'"), message)
         XCTAssertTrue(message.contains("none of the batch's events were restored"), message)
         XCTAssertTrue(message.contains("earlier operations remain undoable"), message)
+        XCTAssertFalse(message.contains("whole or not at all"), message)
     }
 
     func testRestorableBatchMembersPassTheCheck() {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup")
         XCTAssertNil(UndoOperation.deleteEvent(snapshot: snapshot).batchMemberUndoRefusal)
-        XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: snapshot).batchMemberUndoRefusal)
+        XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: []).batchMemberUndoRefusal)
         XCTAssertNil(UndoOperation.createEvent(id: "e", title: "Standup", created: snapshot).batchMemberUndoRefusal)
+    }
+
+    // MARK: - Record sites (source pins, verify round 1 finding 19)
+
+    /// Both delete paths take the snapshots before the removal and classify through
+    /// `DeletedEventSnapshots`; an in-memory store cannot run them, so the order is pinned here.
+    func testBothDeletePathsSnapshotBeforeTheyRemove() throws {
+        let source = try String(contentsOf: Self.sourceURL("EventKit/EventKitManager.swift"), encoding: .utf8)
+        for name in ["func deleteEvent(identifier:", "func deleteEventsBatch("] {
+            let body = try XCTUnwrap(Self.body(of: name, in: source), name)
+            let snapshot = try XCTUnwrap(body.range(of: "DeletedEventSnapshots(series:"), "\(name) records through DeletedEventSnapshots")
+            let remove = try XCTUnwrap(body.range(of: "eventStore.remove("), name)
+            XCTAssertLessThan(snapshot.lowerBound, remove.lowerBound, "\(name): snapshot before the removal")
+            XCTAssertNotNil(body.range(of: ".kind(span: span, seriesResolves:"), "\(name) classifies after the removal")
+        }
+    }
+
+    static func sourceURL(_ relative: String) -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheICalMCP").appendingPathComponent(relative)
+    }
+
+    /// From the declaration to the next declaration at the same indentation.
+    static func body(of declaration: String, in source: String) -> Substring? {
+        guard let start = source.range(of: declaration) else { return nil }
+        let rest = source[start.upperBound...]
+        let end = rest.range(of: "\n    func ") ?? rest.range(of: "\n    private func ") ?? rest.range(of: "\n    static func ")
+        return rest[..<(end?.lowerBound ?? rest.endIndex)]
     }
 }
