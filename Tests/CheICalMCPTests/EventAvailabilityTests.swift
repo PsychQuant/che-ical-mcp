@@ -74,6 +74,15 @@ final class EventAvailabilityTests: XCTestCase {
         XCTAssertEqual(created.changedFields(in: snapshot(availability: .busy), restoring: nil), [])
     }
 
+    /// Verify round 3, finding 14: unlike the occurrence scan, the event's own fields are compared
+    /// strictly, so a value on one read and none on the other blocks the undo (by design; not seen
+    /// on device, where iCloud reports a value both times).
+    func testTheGuardTakesAValueOnOneReadOnlyAsAChange() {
+        let created = snapshot(availability: .busy)
+        XCTAssertEqual(created.changedFields(in: snapshot(availability: .notSupported), restoring: nil), ["availability"])
+        XCTAssertEqual(snapshot(availability: .notSupported).changedFields(in: created, restoring: nil), ["availability"])
+    }
+
     /// An update-undo writes the recorded value back, so a field already at it does not block.
     func testAnAvailabilityAlreadyAtTheRestoredValueDoesNotBlock() {
         let saved = snapshot(availability: .busy)
