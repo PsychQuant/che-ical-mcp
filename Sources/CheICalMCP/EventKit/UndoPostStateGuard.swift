@@ -160,7 +160,7 @@ enum UndoPostState {
     /// A detached occurrence is an edit when it differs from the series' first occurrence in any
     /// field the guard compares: moved off the start its rule gives it (its slot), or a different
     /// title, notes, location, URL, all-day flag, duration, alarms, time zone, place or
-    /// availability (#245). The
+    /// availability (#245; not when either side reports none). The
     /// guard's tolerances apply: an alarm sound, and coordinates added to a place the series has
     /// without them, are not edits; nil and empty text are the same; instants compare to the
     /// second; time zones by their offset at the occurrence's start and at the next daylight-saving
@@ -184,7 +184,16 @@ enum UndoPostState {
             || !sameAlarms(all.alarms, one.alarms)
             || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
             || !EventSnapshot.samePlace(recorded: all, current: one)
-            || one.availability != all.availability
+            || !sameOccurrenceAvailability(one.availability, all.availability)
+    }
+
+    /// #245, verify round 1 findings 4/8/14/16: a side that reports no availability
+    /// (`.notSupported`) is not compared, so a store that leaves it unreported on occurrences (or
+    /// on the series object) cannot make every create-undo of a series refuse. iCloud reports the
+    /// same value for both (checked on device 2026-10-07: an untouched series undid, one occurrence
+    /// made free refused).
+    static func sameOccurrenceAvailability(_ a: EKEventAvailability, _ b: EKEventAvailability) -> Bool {
+        a == .notSupported || b == .notSupported || a == b
     }
 
     /// What the scan result adds to a create-undo check of a series: nil means the scan could not

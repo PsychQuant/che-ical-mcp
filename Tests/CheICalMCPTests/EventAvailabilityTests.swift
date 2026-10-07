@@ -21,13 +21,23 @@ final class EventAvailabilityTests: XCTestCase {
 
     // MARK: - Record
 
-    func testTheSnapshotRecordsTheEventsAvailability() {
-        let event = EKEvent(eventStore: store)
-        event.calendar = EKCalendar(for: .event, eventStore: store)
-        event.startDate = Date(timeIntervalSince1970: 1_800_000_000)
-        event.endDate = event.startDate
-        XCTAssertEqual(EventSnapshot(from: event).availability, event.availability, "read from the event")
+    func testTheOverrideSetsTheRecordedValue() {
         XCTAssertEqual(snapshot(availability: .free).availability, .free)
+    }
+
+    /// Verify round 1, finding 21: an in-memory event reads `.notSupported` whatever is set, so a
+    /// value test cannot tell a read from a hard-coded value. Pinned in the source instead: the
+    /// snapshot reads the event's availability, and `apply` writes it after the calendar is set
+    /// (support depends on the calendar). Checked on device: a free event came back free.
+    func testTheSnapshotReadsTheEventsAvailabilityAndWritesItAfterTheCalendar() throws {
+        let source = try String(contentsOf: DeleteUndoTests.sourceURL("EventKit/UndoManager.swift"), encoding: .utf8)
+        XCTAssertNotNil(source.range(of: "self.availability = availability ?? event.availability"), "init(from:) reads the event")
+        let apply = try XCTUnwrap(DeleteUndoTests.body(of: "func apply(to event: EKEvent, calendar: EKCalendar)", in: source))
+        let calendar = try XCTUnwrap(apply.range(of: "event.calendar = calendar"))
+        let write = try XCTUnwrap(apply.range(of: "event.availability = value"))
+        let rule = try XCTUnwrap(apply.range(of: "availabilityToWrite(recorded: availability, supported: calendar.supportedEventAvailabilities"))
+        XCTAssertLessThan(calendar.lowerBound, rule.lowerBound, "decided after the calendar is set")
+        XCTAssertLessThan(rule.lowerBound, write.lowerBound)
     }
 
     // MARK: - Write rule
@@ -77,5 +87,17 @@ final class EventAvailabilityTests: XCTestCase {
         }
         XCTAssertTrue(UndoPostState.differsFromSeries(face(snapshot(availability: .free)), series: face(series)))
         XCTAssertFalse(UndoPostState.differsFromSeries(face(snapshot(availability: .busy)), series: face(series)))
+    }
+
+    /// Verify round 1, findings 4/8/14/16: a store that reports no availability for one side
+    /// (occurrence or series) is not taken as an edit, or every create-undo of a series there
+    /// would be refused with only discard as the way out. iCloud reports the same value for both
+    /// (checked on device 2026-10-07, both directions).
+    func testNoAvailabilityOnOneSideIsNotAnEdit() {
+        func face(_ event: EventSnapshot) -> UndoPostState.OccurrenceFace {
+            UndoPostState.OccurrenceFace(slot: event.startDate, event: event)
+        }
+        XCTAssertFalse(UndoPostState.differsFromSeries(face(snapshot(availability: .notSupported)), series: face(snapshot(availability: .busy))))
+        XCTAssertFalse(UndoPostState.differsFromSeries(face(snapshot(availability: .free)), series: face(snapshot(availability: .notSupported))))
     }
 }
