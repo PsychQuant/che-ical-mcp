@@ -419,10 +419,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendar.cgColor = parseColor(colorHex)
         }
 
-        // #261: a reminder list whose save fails stays pending and would be written by the next
-        // save; an event calendar is dropped by EventKit itself.
+        // #261: a reminder list whose save failed after the store took it in would be written by
+        // the next save, so it is discarded; an event calendar needs no discard (see NewObjectSave).
         try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
-                              discard: { if entityType == .reminder { try eventStore.removeCalendar(calendar, commit: false) } },
+                              pending: { NewObjectSave.keepsFailedInsert(entityType) && !calendar.isNew },
+                              discard: { try eventStore.removeCalendar(calendar, commit: false) },
                               logDiscardFailure: { Self.logDiscardFailure(handler: "createCalendar", identifier: calendar.calendarIdentifier, error: $0) })
         markNeedsRefresh()
         return CreateCalendarResult(calendar: calendar, isDuplicate: false)
@@ -1768,16 +1769,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
-    /// the save fails, the reminder is removed from the store without committing, so the next
-    /// save by any tool does not write it (`NewObjectSave`).
+    /// the save fails after the store took the reminder in, it is removed from the store without
+    /// committing, so the next save by any tool does not write it (`NewObjectSave`).
     private func saveNewReminder(_ reminder: EKReminder, handler: String) throws {
         try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+                              pending: { !reminder.isNew },
                               discard: { try eventStore.remove(reminder, commit: false) },
                               logDiscardFailure: { Self.logDiscardFailure(handler: handler, identifier: reminder.calendarItemIdentifier, error: $0) })
     }
 
     /// A discard that failed after a failed save (#261) goes to stderr, sanitized; the caller
-    /// reports the save's error.
+    /// reports the save's error. It runs only when the store held the object, so a line here
+    /// means a failed save may still be written by the next save.
     private static func logDiscardFailure(handler: String, identifier: String, error: Error) {
         _ = EventKitErrorSanitizer.writeFailureLog(handler: "\(handler).discard", identifier: identifier, error: error)
     }
