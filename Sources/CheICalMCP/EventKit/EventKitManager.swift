@@ -420,7 +420,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // #261: a reminder list whose save failed after the store took it in would be written by
-        // the next save, so it is discarded; an event calendar needs no discard (see NewObjectSave).
+        // the next save, so it is discarded; an event calendar needs no discard: a failed one was
+        // not written by a later save (device probe, NewObjectSave).
         try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
                               pending: { NewObjectSave.keepsFailedInsert(entityType) && !calendar.isNew },
                               discard: { try eventStore.removeCalendar(calendar, commit: false) },
@@ -660,6 +661,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.structuredLocation = structured
         }
 
+        // #261: no discard needed; a failed new event was not written by a later save (device probe, NewObjectSave).
         try eventStore.save(event, span: .thisEvent)
 
         // #182 — two-pass exclusion (resolve all → remove all); any failure
@@ -2083,7 +2085,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
-            // Undo delete = recreate from snapshot
+            // Undo delete = recreate from snapshot. #261: no discard needed; a failed new event was
+            // not written by a later save (device probe, NewObjectSave).
             let event = EKEvent(eventStore: eventStore)
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
