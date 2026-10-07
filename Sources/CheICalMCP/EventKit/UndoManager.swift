@@ -178,8 +178,8 @@ struct EventSnapshot {
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
 struct ReminderSnapshot {
     let title: String
-    /// #236: the post-state guard compares the list by identifier; the restore still picks the
-    /// list by title (#242).
+    /// #236: the post-state guard compares the list by identifier; since #242 the restore looks
+    /// the list up by it too (`resolveList`).
     let calendarIdentifier: String
     let calendarTitle: String
     let calendarSource: String?
@@ -214,6 +214,20 @@ struct ReminderSnapshot {
         self.recurrenceRules = (reminder.recurrenceRules ?? []).map(RecurrenceRuleSnapshot.init(from:))
         self.url = reminder.url
         self.completionDate = reminder.completionDate
+    }
+
+    /// #242: the list undo restores into, found by `calendarIdentifier` only, as
+    /// `EventSnapshot.resolveCalendar` finds an event's calendar (#208). Two accounts can hold
+    /// lists of the same name, and a renamed list keeps its identifier, so the title is never used
+    /// as a fallback. A missing list throws `EventKitError.undoListMissing`, which keeps the record.
+    /// Generic over the list type so it is unit-tested without EventKit (closure seam).
+    func resolveList<T>(in lists: [T], identifier: (T) -> String) throws -> T {
+        guard !calendarIdentifier.isEmpty,
+              let list = lists.first(where: { identifier($0) == calendarIdentifier }) else {
+            throw EventKitError.undoListMissing(list: calendarTitle, account: calendarSource, reminder: title,
+                                                hasIdentifier: !calendarIdentifier.isEmpty)
+        }
+        return list
     }
 
     /// Writes every recorded field except the list, which `applyReminderSnapshot` looks up in

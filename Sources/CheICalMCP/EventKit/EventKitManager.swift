@@ -2110,7 +2110,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // Undo delete = recreate
             try await ensureReminderAccess()
             let reminder = EKReminder(eventStore: eventStore)
-            applyReminderSnapshot(snapshot, to: reminder)
+            try applyReminderSnapshot(snapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
@@ -2118,7 +2118,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
-            applyReminderSnapshot(oldSnapshot, to: reminder)
+            try applyReminderSnapshot(oldSnapshot, to: reminder)
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
@@ -2211,11 +2211,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Apply a ReminderSnapshot to an EKReminder: the list here, because it needs the store;
-    /// every other recorded field in `ReminderSnapshot.apply` (#228).
-    private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, to reminder: EKReminder) {
-        if let cal = eventStore.calendars(for: .reminder).first(where: { $0.title == snapshot.calendarTitle }) {
-            reminder.calendar = cal
-        }
+    /// every other recorded field in `ReminderSnapshot.apply` (#228). The list is resolved by its
+    /// recorded identifier before anything is written (#242), so a refusal leaves the reminder as
+    /// it was.
+    private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, to reminder: EKReminder) throws {
+        let list = try snapshot.resolveList(in: eventStore.calendars(for: .reminder), identifier: { $0.calendarIdentifier })
+        reminder.calendar = list
         snapshot.apply(to: reminder, now: Date())
     }
 }
@@ -2318,6 +2319,12 @@ enum EventKitError: LocalizedError {
     /// underlying error and `alarmKinds` are `AlarmSnapshot.kindsSomeCalendarsMayRefuse`
     /// names, so the message holds no EventKit text and no user input.
     case copyRefused(code: String, alarmKinds: [String])
+    /// #242: reminder undo found no list under the recorded identifier (the list was deleted, or
+    /// its account is turned off or not synced yet), or the record has none. Nothing was written
+    /// and the record is kept (`UndoFailureDisposition.of` gives `.restore`, the #206 / #236 D2
+    /// posture for not-found). The three titles are store-derived (a shared list's title is set by
+    /// someone else, #37 F1), so the message shows them through `undoShownTitle`.
+    case undoListMissing(list: String, account: String?, reminder: String, hasIdentifier: Bool)
 
     var errorDescription: String? {
         switch self {
@@ -2402,6 +2409,16 @@ enum EventKitError: LocalizedError {
             return reason
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."
+        case .undoListMissing(let list, let account, let reminder, let hasIdentifier):
+            let shownAccount = account.map(undoShownTitle) ?? ""
+            let inAccount = shownAccount.isEmpty ? "" : " in the account '\(shownAccount)'"
+            let target = "the list '\(undoShownTitle(list))'\(inAccount), which the reminder '\(undoShownTitle(reminder))' is restored into,"
+            let giveUp = "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id"
+            let noFallback = "Undo does not restore into another list of the same name."
+            if hasIdentifier {
+                return "Cannot undo: \(target) was not found under its recorded identifier. \(noFallback) Nothing was written and this history entry was kept. If the list was deleted, no retry can find it: \(giveUp). Run undo again only if the list's account may be turned off or still syncing."
+            }
+            return "Cannot undo: \(target) was recorded without an identifier, so it cannot be found. \(noFallback) Nothing was written and this history entry was kept: \(giveUp)."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
