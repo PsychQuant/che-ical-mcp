@@ -59,6 +59,9 @@ final class UndoRedoClassificationTests: XCTestCase {
     func testInstructionsNameTheTitleAndToolNotTheIdentifier() throws {
         let expectedTool = ["create_event", "delete_event", "delete_event", nil, "update_event", nil, "move_events_batch",
                             "create_reminder", "delete_reminder", "update_reminder"]
+        // `zip` stops at the shorter list, so a kind added to one list only would be skipped
+        // silently (PR #282 round 3, finding 37).
+        XCTAssertEqual(instructionOnly.count, expectedTool.count)
         for (operation, tool) in zip(instructionOnly, expectedTool) {
             let text = try XCTUnwrap(operation.redoInstruction)
             XCTAssertFalse(text.contains("EVT-1") || text.contains("REM-1"), text)

@@ -126,7 +126,8 @@ extension EventKitManager {
     /// or list each is recreated in, so a batch with a member whose calendar is gone or read-only is
     /// refused before its first write instead of failing part-way. Run once per batch, before the
     /// per-member checks: the calendars and lists are read once however many members the batch holds
-    /// (a cleanup holds up to its `limit`), and once more after a miss (`UndoRestoreDestination.verify`).
+    /// (a cleanup holds up to its `limit`), and once more after a missing or read-only destination
+    /// (`UndoRestoreDestination.verify`).
     /// Not a transaction: a calendar deleted after this check still stops the batch part-way
     /// (`UndoBatchPartiallyUndoneError`).
     func verifyRestoreDestinations(of members: [UndoOperation], verb: UndoHistoryVerb) async throws {
