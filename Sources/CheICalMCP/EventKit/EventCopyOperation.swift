@@ -26,11 +26,13 @@ enum EventCopyOperation {
     /// live calendar whose `save(_:span:commit: true)` failed, because an event staged into a
     /// calendar deleted elsewhere made the commit fail, was not seen from another process after
     /// an unrelated save (which succeeded) or after a bare `commit()`, although the copy still
-    /// reported unsaved changes. When the failure came from an explicit `commit()` instead (S2,
-    /// a call this server does not make), the staged change stayed and the next save failed
-    /// too. This covers the failure classes tried, not every possible failure. The copy gets
-    /// no discard, unlike a new reminder (`NewObjectSave`): removing a recurring event without
-    /// committing after its failed save made the next save fail.
+    /// reported unsaved changes (`hasChanges`). When the copy was staged and the failure came
+    /// from an explicit `commit()` instead (S2, a call this server does not make), the staged
+    /// copy stayed: the next save failed too, and that failed save dropped it (a bare `commit()`
+    /// after it succeeded and wrote nothing). This covers the failure classes tried, not every
+    /// possible failure. The copy gets no discard, unlike a new reminder (`NewObjectSave`):
+    /// removing a recurring event without committing after its failed save made the next save
+    /// fail and lose what that save wrote.
     static func saveCopy<Value>(carrying alarms: [AlarmSnapshot], logFailure: (Error) -> String,
                                 save: () throws -> Value) throws -> Value {
         do {

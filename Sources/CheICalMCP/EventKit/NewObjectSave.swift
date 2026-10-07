@@ -15,23 +15,28 @@ import EventKit
 ///   commit after either discard, which also carried the removal of the staged event, succeeded
 ///   for each kind tried, 3 runs each: an event save, a recurring event save, an event delete, a
 ///   recurring event delete, a reminder save with an alarm and a recurrence, a reminder delete,
-///   a reminder list rename and a new reminder list. The discarded reminder had a recurrence,
-///   two alarms and a location alarm. Nothing else in the calendars and lists checked was lost.
-/// - a store made after the failure did not find the failed object (6 of 6), while the store
-///   that saved it did; such a store found each normally saved reminder and list (10 of 10,
-///   about 30 ms). A store made while about ten others are alive in the process has no sources
-///   and finds nothing: `freshStoreFinds` then gives no answer, and no answer means discard.
+///   a reminder list rename and a new reminder list. The discarded reminder had a recurrence, a
+///   relative and an absolute alarm, and a location alarm. Nothing else in the calendars and
+///   lists checked was lost.
+/// - a store made after the failure did not find the failed object (54 of 54), while the store
+///   that saved it did. Such a store found each normally saved reminder and list (10 of 10,
+///   about 30 ms), and each one saved through this helper with a throw added after a real
+///   commit (4 of 4), which was then left in place and kept by the next save. A store made
+///   while about ten others that have read their sources are alive in the process has no
+///   sources and finds nothing: `freshStoreFinds` then gives no answer, and the object is
+///   discarded (`unchecked`).
 /// - a reminder refused by validation (no list) was not found, and removing it threw
-///   EKErrorDomain 6 (`isNothingPending`); a list refused the same way (no source) was removed
-///   without an error. Nothing was pending in either case.
+///   EKErrorDomain 6 (`isNothingPending`, 10 of 10); a list refused the same way (no source) was
+///   removed without an error (8 of 8). Nothing was pending in either case.
 /// - a new event or event calendar was not written by later saves, in the failure classes tried
 ///   (target deleted elsewhere, an induced commit failure, invalid dates), so those sites do not
 ///   come here. `remove(event, span: .thisEvent, commit: false)` after a recurring event's
 ///   failed save made the next save fail (EKCADErrorDomain 1001) and lose what that save wrote.
 ///
-/// Not seen, so not tested: a save that throws after the object reached the store. A new store
-/// should then find it, and it is left in place. If that check misses it (no answer, or a read
-/// that lags the commit), the discard deletes the saved object at the next write by any tool.
+/// Not seen: a real save that throws after the object reached the store (the 4 runs above added
+/// the throw by hand). A new store should find such an object, and it is left in place. If that
+/// check misses it (no answer, or a read that lags the commit), the discard deletes the saved
+/// object at the next write by any tool.
 /// Every outcome other than a plain discard is reported on stderr only; the caller gets the
 /// save's error either way.
 enum NewObjectSave {
