@@ -133,9 +133,16 @@ extension UndoOperation {
 /// recreated in is not there or does not allow changes. Raised by the batch pre-check, so nothing of
 /// the batch was written; kept like a not-found (`UndoFailureDisposition.of` maps it to
 /// `.restore`), since the calendar may only be syncing or its access may change. The message says
-/// how many of the batch's items could have been restored and which containers stop the rest, and
-/// that discard_id drops every item of the entry (PR #282 round 2, finding 1): the batch is restored
-/// whole or not at all. A partial restore that keeps a narrowed record is a follow-up.
+/// how many of the batch's items have their calendar or list in place and which containers stop
+/// the rest, and that discard_id drops every item of the entry (PR #282 round 2, finding 1): this
+/// check refuses the whole batch; a partial restore that keeps a narrowed record is #287. An item
+/// whose calendar or list is in place can still fail at its own save, after the check (round 3,
+/// finding 7).
+///
+/// The counts are of the members that recreate an item (`UndoRestoreDestination.of`, so `total` is
+/// `destinations.count`). Every member of a recorded batch is one: batches hold delete records
+/// only, and the #244 marker, which has no destination, is refused before this check (round 3,
+/// finding 12).
 ///
 /// The message is author-controlled text: the item and container words come from this file, and
 /// the store-derived titles (a shared calendar's title is set by someone else, #37 F1) pass
@@ -173,14 +180,15 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
         let blocked = findings.count
         let others = total - blocked
         let restorable = others > 0
-            ? " The other \(others) could be restored, but a batch undo restores all of its items or none of them."
+            ? " The calendar or list of the other \(others) is in place, but this check refuses the whole batch when any item's calendar or list is missing or read-only."
             : ""
-        message = "Cannot undo this batch: \(blocked) of its \(total) deleted items cannot be restored: "
+        let count = total == 1 ? "its 1 deleted item cannot" : "\(blocked) of its \(total) deleted items cannot"
+        message = "Cannot undo this batch: \(count) be restored: "
             + lines.joined(separator: "; ") + moreGroups + "."
             + restorable
             + " Nothing was written and this history entry was kept, whole, under the same id."
-            + " Giving up this undo with discard_id drops all \(total) items of this entry"
-            + (others > 0 ? ", including the \(others) that could be restored," : "")
+            + " Giving up this undo with discard_id drops " + (total == 1 ? "the 1 item" : "all \(total) items") + " of this entry"
+            + (others > 0 ? ", including the \(others) whose calendar or list is in place," : "")
             + " and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
             + " A calendar or list that was deleted, or whose account was removed, does not come back, so retrying cannot restore its items; run undo again only if it may still be syncing or its access may change."
     }
@@ -229,17 +237,17 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         let what: String
         switch failing {
         case .dropped where remaining.isEmpty:
-            what = "Undo of this batch stopped part-way: \(restoredText) restored, then one item cannot be restored by any retry. Nothing else was left to restore, so this history entry was discarded and earlier operations remain undoable."
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then one item cannot be restored by any retry; its own error, which names it, follows. Nothing else was left to restore, so this history entry was discarded and earlier operations remain undoable."
         case .dropped:
             let kept = remaining.count == 1 ? "the 1 item never attempted" : "the \(remaining.count) items never attempted"
             let start = restoredCount == 0 ? "Undo of this batch wrote nothing:" : "Undo of this batch stopped part-way: \(restoredText) restored, then"
-            what = "\(start) one item cannot be restored by any retry and was dropped from this history entry. The entry was kept with only \(kept), under the same id, so running undo again restores those and not the others a second time."
+            what = "\(start) one item cannot be restored by any retry and was dropped from this history entry; its own error, which names it, follows. The entry was kept with only \(kept), under the same id, so running undo again restores those and not the others a second time."
         case .runsLast where restoredCount == 0:
             let others = remaining.count - 1
-            what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first."
+            what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
         case .runsLast:
             let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
-            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time."
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time and tries the item that failed after them, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
         }
         let loss = UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? ""
         let giveUp: String
@@ -249,7 +257,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
         case .runsLast:
-            giveUp = " If that item keeps failing (for example, its calendar or list was deleted), ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+            giveUp = " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id. That drops every item not yet restored, not only the one that failed."
         }
         message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
     }

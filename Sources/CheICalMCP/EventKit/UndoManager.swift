@@ -562,6 +562,12 @@ actor CalendarUndoManager {
 /// a store that cannot find the item right now, which keep their history
 /// entry for a retry (#191).
 ///
+/// A batch member whose write throws this is dropped from its batch without a
+/// retry or the user's agreement (`UndoOperation.batchUndoFailure`, #248), so
+/// throw it only for a member no retry can restore. Today no delete member's
+/// write throws it: the #244 marker's refusal runs in the batch pre-check
+/// first (PR #282 round 3, findings 15 and 39).
+///
 /// `message` MUST be author-controlled literal text; any store-derived value
 /// interpolated into it (today: the reminder title) MUST pass
 /// `EventKitErrorSanitizer.sanitizeForInterpolation` first. That is the

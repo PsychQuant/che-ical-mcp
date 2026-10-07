@@ -85,17 +85,29 @@ final class UndoBatchRestoreTests: XCTestCase {
         let message = refusal(found, total: 3)
         XCTAssertTrue(message.contains("2 of its 3 deleted items cannot be restored"), message)
         XCTAssertTrue(message.contains("is not available") && message.contains("'Pay rent'") && message.contains("'Milk'"), message)
-        XCTAssertTrue(message.contains("The other 1 could be restored"), message)
+        XCTAssertTrue(message.contains("The calendar or list of the other 1 is in place"), message)
         XCTAssertTrue(message.contains("Nothing was written"), message)
-        XCTAssertTrue(message.contains("discard_id drops all 3 items of this entry, including the 1 that could be restored"), message)
+        XCTAssertTrue(message.contains("discard_id drops all 3 items of this entry, including the 1 whose calendar or list is in place"), message)
+    }
+
+    /// PR #282 round 3, finding 7: the refusal said a batch undo restores all of its items or none of
+    /// them, which a batch that stops part-way contradicts. It is this check that refuses the whole
+    /// batch; and an item whose calendar or list is in place may still fail at its save.
+    func testTheRefusalSaysItIsThisCheckThatRefusesTheWholeBatch() {
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let message = refusal(problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)]), total: 2)
+        XCTAssertTrue(message.contains("this check refuses the whole batch when any item's calendar or list is missing or read-only"), message)
+        XCTAssertFalse(message.contains("all of its items or none of them"), message)
+        XCTAssertFalse(message.contains("could be restored"), message)
     }
 
     func testARefusalOfEveryItemSaysNoneCouldBeRestored() {
         let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
         let message = refusal(problems(destinations), total: 1)
-        XCTAssertTrue(message.contains("1 of its 1 deleted items cannot be restored"), message)
-        XCTAssertFalse(message.contains("The other"), message)
-        XCTAssertTrue(message.contains("discard_id drops all 1 items of this entry"), message)
+        XCTAssertTrue(message.contains("its 1 deleted item cannot be restored"), message)
+        XCTAssertFalse(message.contains("The calendar or list of the other"), message)
+        XCTAssertTrue(message.contains("discard_id drops the 1 item of this entry"), message)
+        XCTAssertFalse(message.contains("1 items"), message)
     }
 
     /// Finding 5: a calendar or list that is found but does not allow changes (a read-only shared
@@ -214,7 +226,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             try await verify(destinations, reads: reads) { _ in ([], []) }
             XCTFail("expected a refusal")
         } catch let refusal as UndoRestoreDestinationMissingError {
-            XCTAssertTrue(refusal.message.contains("1 of its 1"), refusal.message)
+            XCTAssertTrue(refusal.message.contains("its 1 deleted item cannot be restored"), refusal.message)
         } catch {
             XCTFail("unexpected error: \(error)")
         }
@@ -563,6 +575,46 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                     memberError: "eventkit_error_1")
         XCTAssertTrue(nothing.message.contains("wrote nothing") && nothing.message.contains("tries the other item first"),
                       nothing.message)
+    }
+
+    /// PR #282 round 3, findings 2 and 21: moving the failing item last helps only when its failure is
+    /// not its calendar or list. If that is now missing or read-only, the next undo's pre-check
+    /// refuses the whole batch before any write, so the text no longer gives a deleted calendar as
+    /// the example of a failure that running last gets around.
+    func testThePartialErrorSaysRunningLastDoesNotGetPastAMissingOrReadOnlyDestination() {
+        for restoredCount in [0, 2] {
+            let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: restoredCount,
+                                                      memberError: "eventkit_error_1")
+            XCTAssertTrue(error.message.contains("unless its calendar or list is now missing or read-only"), error.message)
+            XCTAssertTrue(error.message.contains("refuses the whole batch before it writes anything"), error.message)
+            XCTAssertFalse(error.message.contains("its calendar or list was deleted"), error.message)
+            XCTAssertTrue(error.message.contains("drops every item not yet restored, not only the one that failed"), error.message)
+        }
+    }
+
+    /// PR #282 round 3, finding 15: the `.dropped` branch, driven by a permanent error the undo arms
+    /// really throw (the #244 marker's refusal; the batch pre-check refuses that marker first today,
+    /// so this is the branch any later permanent member error takes). The member is dropped without
+    /// a retry, so the text says its own error, which names it, follows.
+    func testAPermanentErrorAtAWriteDropsThatMemberAndTheTextPointsToItsName() async throws {
+        let log = ExecutionLog()
+        var thrown: Error?
+        do {
+            _ = try await UndoBatchExecution.run(["A", "B", "C"].map(deleted), verb: .undo, check: { _ in }, execute: { member in
+                let title = self.titles([member])[0]
+                if title == "B" { throw UndoOperation.followingOccurrencesDeleteRefusal(title: "Standup") }
+                log.executed.append(title)
+                return title
+            }, describe: { EventKitErrorSanitizer.sanitizeForResponse($0).code })
+        } catch {
+            thrown = error
+        }
+        let partial = try XCTUnwrap(thrown as? UndoBatchPartiallyUndoneError, "\(String(describing: thrown))")
+        XCTAssertEqual(partial.failing, .dropped)
+        XCTAssertEqual(titles(partial.remaining), ["A"], "C restored, B dropped, A never attempted and kept")
+        XCTAssertEqual(log.executed, ["C"])
+        XCTAssertTrue(partial.message.contains("its own error, which names it, follows"), partial.message)
+        XCTAssertTrue(partial.message.contains("'Standup'"), partial.message)
     }
 
     // MARK: - A: the history keeps the narrowed record under the same id
