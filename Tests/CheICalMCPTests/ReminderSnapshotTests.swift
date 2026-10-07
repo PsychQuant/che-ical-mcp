@@ -163,8 +163,9 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertNil(recreated.startDateComponents?.hour)
     }
 
-    /// #251, update-undo: the reminder holds the zoned dates an update left. The recorded
-    /// floating dates come back floating, and the due keeps its time.
+    /// #251, update-undo: the reminder holds the zoned dates an update left. In memory the recorded
+    /// floating dates come back floating and the due keeps its time; whether a saved item that had
+    /// a zone stays floating is not checked here (#237 notes, #275).
     func testUndoOnAZonedReminderKeepsTheDueTimeBesideADateOnlyStart() {
         let snapshot = dateOnlyStartAndTimedDue()
         let reminder = makeReminder()

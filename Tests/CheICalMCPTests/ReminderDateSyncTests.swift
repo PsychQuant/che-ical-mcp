@@ -1113,7 +1113,9 @@ final class ReminderDateSyncTests: XCTestCase {
 
     /// A date-only start beside a zoned timed due. Written due first (undo before #251), the start
     /// turned the due date-only; written start first with a plain due write, the due lost its zone
-    /// and, in memory, took the host's wall clock. `restore` writes the due as `setDue` does.
+    /// and, in memory, took the host's wall clock. `restore` writes the due as `setDue` does, so
+    /// the recorded date-only start comes back as 00:00 of its day in the due's zone, the way the
+    /// store hands a date-only start back.
     func testRestoreKeepsTheTimeAndZoneOfADueBesideADateOnlyStart() {
         let reminder = makeReminder()
 
@@ -1121,8 +1123,7 @@ final class ReminderDateSyncTests: XCTestCase {
 
         XCTAssertEqual(dateValue(reminder.dueDateComponents), taipeiComponents(day: 10, hour: 15))
         XCTAssertEqual(reminder.timeZone, taipei)
-        XCTAssertEqual(reminder.startDateComponents?.day, 9)
-        XCTAssertEqual(reminder.startDateComponents?.hour ?? 0, 0, "the start stays at the start of its day")
+        XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 0))
     }
 
     /// The same on a reminder that an update zoned and moved (update-undo).
@@ -1135,8 +1136,7 @@ final class ReminderDateSyncTests: XCTestCase {
         ReminderDateSync.restore(reminder, start: dateOnlyStart, due: taipeiComponents(day: 10, hour: 15))
 
         XCTAssertEqual(dateValue(reminder.dueDateComponents), taipeiComponents(day: 10, hour: 15))
-        XCTAssertEqual(reminder.startDateComponents?.day, 9)
-        XCTAssertEqual(reminder.startDateComponents?.hour ?? 0, 0)
+        XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 0))
     }
 
     /// A timed start beside a zoned due, the state a stored reminder has since #237, comes back as
@@ -1154,8 +1154,9 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(reminder.timeZone, taipei)
     }
 
-    /// EventKit gives a reminder without a start one equal to a due written to it (#235). A recorded
-    /// absent start stays absent, for a zoned and for a floating due.
+    /// EventKit gives a reminder without a start one equal to a due written to it (#235), in memory
+    /// too, so this pins the clearing in `restore`: without it both cases fail. A recorded absent
+    /// start stays absent, for a zoned and for a floating due.
     func testRestoreLeavesARecordedAbsentStartAbsent() {
         for due in [taipeiComponents(day: 10, hour: 15), DateComponents(year: 2026, month: 10, day: 10, hour: 15, minute: 0)] {
             let reminder = makeReminder()
