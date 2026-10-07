@@ -247,6 +247,12 @@ struct ReminderSnapshot {
 enum UndoOperation {
     case createEvent(id: String, title: String, created: EventSnapshot)
     case deleteEvent(snapshot: EventSnapshot)
+    /// #244: one occurrence of a series deleted (span "this"). The snapshot is the occurrence
+    /// without rules; undo recreates it as a one-off event, never a second series (`EventRemovalKind`).
+    case deleteOccurrence(snapshot: EventSnapshot)
+    /// #244: an occurrence and the following ones deleted from a series that is still there, kept
+    /// only as a marker. Its undo is refused and the record discarded; nothing is restored.
+    case deleteFollowingOccurrences(title: String)
     /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
     case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
     /// #236: an update that touched a recurring event, kept only as a marker. Its undo is refused
@@ -281,6 +287,10 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             return "Deleted event: \(undoVisibleTitle(snapshot.title))"
+        case .deleteOccurrence(let snapshot):
+            return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
+        case .deleteFollowingOccurrences(let title):
+            return "Deleted occurrences of recurring event: \(undoVisibleTitle(title)) (undo not available)"
         case .updateEvent(_, let old, _):
             return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):

@@ -112,7 +112,14 @@ extension EventKitManager {
             for member in operations { try await verifyHistoryTarget(of: member, verb: verb) }
             return
         }
+        try verifyBatchMemberRestorable(operation, verb: verb)
         _ = try await verifiedHistoryTarget(of: operation, verb: verb)
+    }
+
+    /// #244 D3: a member whose undo can never restore it (a delete of an occurrence and the
+    /// following ones) refuses the whole batch here, before any member writes.
+    func verifyBatchMemberRestorable(_ operation: UndoOperation, verb: UndoHistoryVerb) throws {
+        if verb == .undo, let refusal = operation.batchMemberUndoRefusal { throw refusal }
     }
 
     /// Each undo arm knows its record kind, so a mismatch is unreachable by construction; it

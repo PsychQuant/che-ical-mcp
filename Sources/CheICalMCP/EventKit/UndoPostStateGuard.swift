@@ -243,7 +243,7 @@ extension UndoOperation {
             guard let completion = completionStates else { return nil }
             return .reminderCompletion(id: completion.id, title: completion.title, state: completion.written,
                                        restoring: completion.identityConfirmed ? completion.undoWrites : nil)
-        case .deleteEvent, .deleteReminder, .batch, .updateRecurringEvent:
+        case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .deleteReminder, .batch, .updateRecurringEvent:
             return nil
         }
     }
@@ -282,9 +282,10 @@ extension UndoOperation {
 /// (a failure *during* the writes is #248). Generic over the operation so the ordering is
 /// unit-tested without EventKit (the closure-seam variant, like `ExclusionExecutor`).
 ///
-/// Only batch records reach this, and today every batch record is a list of `.deleteEvent`
-/// (multi-event and series deletes), whose undo writes to no existing item, so the pre-flight has
-/// nothing to check yet (PR #259 verify #12 / #25 / #28). It assumes the members touch different
+/// Only batch records reach this, and today every batch record is a list of delete records
+/// (multi-event and series deletes), whose undo writes to no existing item, so the post-state
+/// check has nothing to compare yet (PR #259 verify #12 / #25 / #28); the pre-flight refuses a
+/// member that can never be restored (#244 D3, `verifyBatchMemberRestorable`). It assumes the members touch different
 /// items: two members on one item would both be checked against the state before either is
 /// undone. It is not atomic: each member re-checks when it runs, and a store change in between
 /// can still stop the batch half way (#248).
