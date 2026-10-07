@@ -135,11 +135,10 @@ extension EventKitManager {
             refreshIfNeeded()
             reminderLists = eventStore.calendars(for: .reminder)
         }
+        // The restore's own lookups (by recorded identifier), against the lists read above.
         let missing = UndoRestoreDestination.firstMissing(
-            among: destinations,
-            eventCalendarResolves: { (try? $0.resolveCalendar(in: eventCalendars, identifier: { $0.calendarIdentifier })) != nil },
-            // The lookup `applyReminderSnapshot` makes on main (by title); #242 (PR #277) makes it identifier-based.
-            reminderListResolves: { snapshot in reminderLists.contains { $0.title == snapshot.calendarTitle } })
+            among: destinations, eventCalendars: eventCalendars, reminderLists: reminderLists,
+            identifier: { $0.calendarIdentifier })
         if let missing { throw missing.missingError }
     }
 

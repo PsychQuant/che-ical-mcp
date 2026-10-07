@@ -31,15 +31,21 @@ enum UndoRestoreDestination {
         }
     }
 
-    /// The first destination whose calendar or list is gone. The two closures must make the lookup
-    /// the restore makes (`applySnapshot`, `applyReminderSnapshot`), against lists read once.
-    static func firstMissing(among destinations: [UndoRestoreDestination],
-                             eventCalendarResolves: (EventSnapshot) -> Bool,
-                             reminderListResolves: (ReminderSnapshot) -> Bool) -> UndoRestoreDestination? {
+    /// The first destination whose calendar or list is gone from `eventCalendars` / `reminderLists`,
+    /// which the batch pre-check reads once. The lookups are the ones the restore makes, by recorded
+    /// identifier: `EventSnapshot.resolveCalendar` (`applySnapshot`) and
+    /// `ReminderSnapshot.resolveList(for: .recreateDeleted)` (`applyReminderSnapshot` for the
+    /// `.deleteReminder` undo). A list that only shares the recorded title, such as another
+    /// account's "Reminders", does not pass (PR #282 round 1, finding 1). Generic over the list type
+    /// so it is unit-tested without EventKit, as the two resolvers are.
+    static func firstMissing<C>(among destinations: [UndoRestoreDestination], eventCalendars: [C],
+                                reminderLists: [C], identifier: (C) -> String) -> UndoRestoreDestination? {
         destinations.first { destination in
             switch destination {
-            case .eventCalendar(let snapshot): return !eventCalendarResolves(snapshot)
-            case .reminderList(let snapshot): return !reminderListResolves(snapshot)
+            case .eventCalendar(let snapshot):
+                return (try? snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)) == nil
+            case .reminderList(let snapshot):
+                return (try? snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)) == nil
             }
         }
     }

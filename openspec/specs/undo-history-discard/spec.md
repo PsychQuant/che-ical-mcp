@@ -70,7 +70,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and how to revert the change if it should be reverted (a move: move it back), and the record is discarded; a move of an item that was already an edited occurrence is refused the same way
 
 #### Scenario: Batch member cannot be restored (#248)
-- **WHEN** undo of a batch record finds, before its first write, that a member it would recreate (a deleted event or reminder) has no calendar or list to be recreated in
+- **WHEN** undo of a batch record finds, before its first write, that a member it would recreate (a deleted event or reminder) has no calendar or list to be recreated in, looked up as the restore looks it up (by recorded identifier; a same-named calendar or list in another account does not count)
 - **THEN** nothing of the batch is written, the error names the item and the calendar or list, and the record stays on top, whole, with the same id
 
 #### Scenario: Batch undo fails part-way (#248)

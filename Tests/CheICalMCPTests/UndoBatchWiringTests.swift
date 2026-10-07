@@ -25,7 +25,7 @@ final class UndoBatchWiringTests: XCTestCase {
     private static func section(from start: String, in text: String) throws -> Substring {
         guard let range = text.range(of: start) else { throw Missing(description: "not found: \(start)") }
         let rest = text[range.lowerBound...]
-        let ends = ["\n    func ", "\n    private func ", "\n    fileprivate func ", "\n    static func ", "\n}\n"]
+        let ends = ["\n    func ", "\n    private func ", "\n    fileprivate func ", "\n    static func ", "\n    var ", "\n}\n"]
             .compactMap { rest.dropFirst(start.count).range(of: $0)?.lowerBound }
         return rest[..<(ends.min() ?? rest.endIndex)]
     }
@@ -86,9 +86,10 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertLessThan(check, run)
     }
 
-    /// The calendars and lists are read once, before the per-destination lookups, and the event
-    /// lookup is the one the restore makes (`EventSnapshot.resolveCalendar`).
-    func testThePreCheckReadsEachListOnceAndResolvesEventsAsTheRestoreDoes() throws {
+    /// The calendars and lists are read once, before the per-destination lookups, and handed to
+    /// `UndoRestoreDestination.firstMissing` with the identifier the restore matches on. No lookup
+    /// of its own: a title match let a same-titled list in another account pass (finding 1).
+    func testThePreCheckReadsEachListOnceAndHandsThemToTheSharedLookup() throws {
         let guardCode = try Self.code(Self.guardFile)
         let body = try Self.section(from: "func verifyRestoreDestinations(of members: [UndoOperation]", in: guardCode)
         XCTAssertEqual(Self.occurrences(of: "eventStore.calendars(for: .event)", in: body), 1)
@@ -96,11 +97,33 @@ final class UndoBatchWiringTests: XCTestCase {
         let firstMissing = try XCTUnwrap(Self.offset(of: "UndoRestoreDestination.firstMissing(", in: body))
         XCTAssertLessThan(try XCTUnwrap(Self.offset(of: "eventStore.calendars(for: .event)", in: body)), firstMissing)
         XCTAssertLessThan(try XCTUnwrap(Self.offset(of: "eventStore.calendars(for: .reminder)", in: body)), firstMissing)
-        XCTAssertNotNil(Self.offset(of: ".resolveCalendar(in: eventCalendars, identifier: { $0.calendarIdentifier })", in: body))
+        XCTAssertNotNil(Self.offset(of: "among: destinations, eventCalendars: eventCalendars, reminderLists: reminderLists,\n            identifier: { $0.calendarIdentifier })", in: body))
+        XCTAssertEqual(Self.occurrences(of: ".title", in: body), 0, "the pre-check matches no list by title")
+        XCTAssertEqual(Self.occurrences(of: "resolve", in: body), 0, "the lookups live in firstMissing")
+    }
+
+    /// `firstMissing` makes the restore's own lookups: `EventSnapshot.resolveCalendar`, which
+    /// `applySnapshot` calls, and `ReminderSnapshot.resolveList(for: .recreateDeleted)`, which
+    /// `applyReminderSnapshot` calls (through `ReminderSnapshot.apply(to:lists:for:now:)`) for the
+    /// `.deleteReminder` undo, the only reminder record with a destination.
+    func testThePreCheckLookupsAreTheOnesTheRestoreMakes() throws {
+        let restore = try Self.code("CheICalMCP/EventKit/UndoBatchRestore.swift")
+        let lookup = try Self.section(from: "static func firstMissing<", in: restore)
+        XCTAssertNotNil(Self.offset(of: "snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)", in: lookup))
+        XCTAssertNotNil(Self.offset(of: "snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)", in: lookup))
+        XCTAssertEqual(Self.occurrences(of: ".title", in: lookup), 0)
 
         let manager = try Self.code(Self.manager)
         let apply = try Self.section(from: "private func applySnapshot(_ snapshot: EventSnapshot", in: manager)
         XCTAssertNotNil(Self.offset(of: "snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })", in: apply))
+        let applyReminder = try Self.section(from: "private func applyReminderSnapshot(_ snapshot: ReminderSnapshot", in: manager)
+        XCTAssertNotNil(Self.offset(of: "try snapshot.apply(to: reminder, lists: eventStore.calendars(for: .reminder), for: kind, now: Date())", in: applyReminder))
+        let undo = try Self.section(from: "func executeUndo(_ operation: UndoOperation)", in: manager)
+        let deleteArm = try XCTUnwrap(undo.range(of: "case .deleteReminder(let snapshot):").map { undo[$0.lowerBound...] })
+        XCTAssertNotNil(Self.offset(of: "try applyReminderSnapshot(snapshot, to: reminder, for: .recreateDeleted)", in: deleteArm))
+        let snapshotApply = try Self.section(from: "func apply(to reminder: EKReminder, lists: [EKCalendar], for kind: ReminderRestoreKind",
+                                             in: try Self.code("CheICalMCP/EventKit/UndoManager.swift"))
+        XCTAssertNotNil(Self.offset(of: "try resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: kind)", in: snapshotApply))
     }
 
     // MARK: - #243: the reminder batch delete record (findings 8 (1), 11)

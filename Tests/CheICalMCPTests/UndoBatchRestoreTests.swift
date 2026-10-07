@@ -91,27 +91,57 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(UndoRestoreDestination.of(members, verb: .redo).isEmpty)
     }
 
+    /// A calendar or list as the pre-check sees it: the store's lists, read once per batch.
+    private typealias Container = (id: String, title: String)
+
+    private func firstMissing(_ destinations: [UndoRestoreDestination], eventCalendars: [Container] = [],
+                              reminderLists: [Container] = []) -> UndoRestoreDestination? {
+        UndoRestoreDestination.firstMissing(among: destinations, eventCalendars: eventCalendars,
+                                            reminderLists: reminderLists, identifier: { $0.id })
+    }
+
     func testTheFirstMissingDestinationIsTheOneTheRefusalNames() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
         let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteEvent(snapshot: gone),
                                                       .deleteReminder(snapshot: reminder)], verb: .undo)
-        var asked: [String] = []
-        let missing = UndoRestoreDestination.firstMissing(
-            among: destinations,
-            eventCalendarResolves: { asked.append($0.title); return $0.title != "Gone" },
-            reminderListResolves: { asked.append($0.title); return true })
-        XCTAssertEqual(missing?.itemTitle, "Gone")
-        XCTAssertEqual(asked, ["Standup", "Gone"], "stops at the first destination that is gone")
+        let calendar: Container = (event.calendarIdentifier, event.calendarTitle)
+        let list: Container = (reminder.calendarIdentifier, reminder.calendarTitle)
 
-        let none = UndoRestoreDestination.firstMissing(among: destinations,
-                                                       eventCalendarResolves: { _ in true },
-                                                       reminderListResolves: { _ in true })
-        XCTAssertNil(none)
-        guard case .reminderList? = UndoRestoreDestination.firstMissing(among: destinations,
-                                                                        eventCalendarResolves: { _ in true },
-                                                                        reminderListResolves: { _ in false }) else {
+        XCTAssertEqual(firstMissing(destinations, eventCalendars: [calendar], reminderLists: [])?.itemTitle, "Gone",
+                       "stops at the first destination that is gone")
+        XCTAssertNil(firstMissing(destinations, eventCalendars: [calendar, (gone.calendarIdentifier, "")],
+                                  reminderLists: [list]))
+        guard case .reminderList? = firstMissing(destinations, eventCalendars: [calendar, (gone.calendarIdentifier, "")],
+                                                 reminderLists: []) else {
             return XCTFail("a gone list is reported as the reminder's destination")
         }
+    }
+
+    /// PR #282 round 1, finding 1 (HIGH): the pre-check matched the list by title, so a list with the
+    /// recorded title in another account passed it. It now makes the lookup the restore makes
+    /// (`ReminderSnapshot.resolveList`, by recorded identifier), so that batch is refused before its
+    /// first write, as the restore would refuse that member.
+    func testAListWithTheRecordedTitleButAnotherIdentifierDoesNotPassThePreCheck() {
+        XCTAssertFalse(reminder.calendarIdentifier.isEmpty)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+
+        guard case .reminderList? = firstMissing(destinations, reminderLists: [("other-account", reminder.calendarTitle)]) else {
+            return XCTFail("a same-titled list in another account must not pass the pre-check")
+        }
+        XCTAssertNil(firstMissing(destinations, reminderLists: [("other-account", reminder.calendarTitle),
+                                                                (reminder.calendarIdentifier, "Renamed")]),
+                     "the list with the recorded identifier passes, whatever its title is now")
+    }
+
+    /// The same for an event's calendar (`EventSnapshot.resolveCalendar`, #208).
+    func testACalendarWithTheRecordedTitleButAnotherIdentifierDoesNotPassThePreCheck() {
+        XCTAssertFalse(event.calendarIdentifier.isEmpty)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+
+        guard case .eventCalendar? = firstMissing(destinations, eventCalendars: [("other-account", event.calendarTitle)]) else {
+            return XCTFail("a same-titled calendar in another account must not pass the pre-check")
+        }
+        XCTAssertNil(firstMissing(destinations, eventCalendars: [(event.calendarIdentifier, "Renamed")]))
     }
 
     // MARK: - A: a write fails part-way
