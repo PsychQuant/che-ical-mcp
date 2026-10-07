@@ -26,12 +26,13 @@ enum EventRemovalKind: String, Sendable, Hashable {
     /// "future" on it removes the following occurrences of its series too (checked on iCloud,
     /// 2026-10-07), which its snapshot does not hold; it is refused.
     ///
-    /// Span "future" on a series is whole only when both sides agree (verify round 1, findings
-    /// 1/2/12/22): it started at the series' first occurrence, and after the removal the identifier
-    /// no longer resolves (`seriesResolves`, asked only then). Anything else is refused, so a store
-    /// that keeps the series resolvable never turns into a second series. The lookup cannot tell a
-    /// series that is gone from one it failed to find (verify round 4, finding 16); only a delete
-    /// from the first occurrence, which removes the whole series, reaches it. Span "future" from the
+    /// Span "future" on a series is whole only when it started at the series' first occurrence and,
+    /// after the removal, the identifier no longer resolves (verify round 1, findings 1/2/12/22;
+    /// `seriesResolves`, asked only then). Anything else is refused, so a store that keeps the
+    /// series resolvable never turns into a second series. Only the first is evidence: the lookup
+    /// cannot tell a series that is gone from one it failed to find (verify round 4, finding 16;
+    /// round 5, findings 3/14), and only a delete from the first occurrence, which removes the
+    /// whole series, reaches it. Span "future" from the
     /// last occurrence removes only that one, but nothing tells it apart from one with occurrences
     /// after it; it is refused too.
     static func of(hadRules: Bool, isDetached: Bool, span: EKSpan, fromFirstOccurrence: Bool,
