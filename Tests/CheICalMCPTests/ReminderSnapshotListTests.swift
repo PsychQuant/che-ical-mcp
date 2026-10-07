@@ -172,14 +172,18 @@ final class ReminderSnapshotListTests: XCTestCase {
         XCTAssertFalse(update.contains("deleted reminder"), update)
     }
 
-    /// A list recorded without an identifier cannot be found: no retry is offered.
+    /// A list recorded without an identifier cannot be found: no retry is offered, and older
+    /// entries stay blocked until the entry is given up, since it can never be undone.
     func testARecordWithoutAnIdentifierOffersNoRetry() throws {
         let withID = try message(kind: .revertUpdate)
         XCTAssertTrue(withID.contains("Run undo again"), withID)
+        XCTAssertTrue(withID.contains("until it is undone or given up"), withID)
 
         let without = try message(hasIdentifier: false, kind: .revertUpdate)
         XCTAssertTrue(without.contains("recorded without an identifier"), without)
         XCTAssertFalse(without.contains("again"), without)
+        XCTAssertTrue(without.contains("until it is given up"), without)
+        XCTAssertFalse(without.contains("undone or given up"), without)
     }
 
     // MARK: - What reaches the refusal (PR #277 verify round 2)

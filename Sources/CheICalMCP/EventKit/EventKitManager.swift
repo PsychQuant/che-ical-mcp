@@ -2437,13 +2437,15 @@ enum EventKitError: LocalizedError {
                 ? "the deletion of a reminder: the list it was in when it was deleted\(named)"
                 : "the update of a reminder: the list it was in before the update\(named)"
             let state = hasIdentifier ? "was not found under its recorded identifier" : "was recorded without an identifier, so it cannot be found"
+            // Without an identifier the entry can never be undone, only given up.
+            let blocked = hasIdentifier ? "until it is undone or given up" : "until it is given up"
             let retry = hasIdentifier
                 ? " Run undo again if the list's account may be turned off or still syncing; if the list was deleted, no retry can find it."
                 : ""
             let loss = kind == .recreateDeleted
                 ? "Giving up this undo cannot be reversed, and this tool cannot recover the deleted reminder afterwards"
                 : "Giving up this undo cannot be reversed; the reminder stays as it is now"
-            return "Cannot undo \(which) \(state). Undo does not use another list of the same name. Nothing was written for this reminder and the history entry was kept; older undo entries stay blocked until it is undone or given up.\(retry) \(loss): ask the user whether to give it up; if they agree, read undo_history and call undo with discard_id set to its id."
+            return "Cannot undo \(which) \(state). Undo does not use another list of the same name. Nothing was written for this reminder and the history entry was kept; older undo entries stay blocked \(blocked).\(retry) \(loss): ask the user whether to give it up; if they agree, read undo_history and call undo with discard_id set to its id."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
