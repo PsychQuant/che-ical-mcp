@@ -96,7 +96,8 @@ final class UndoBatchWiringTests: XCTestCase {
     }
 
     /// The calendars and lists are read inside `UndoRestoreDestination.verify`'s `read`, which runs
-    /// once, and once more after a miss with the view invalidated first (round 2, finding 2). The
+    /// once, and once more after a missing or read-only destination with the view invalidated first
+    /// (round 2, finding 2; round 3, finding 1). The
     /// reminder lists come from `reminderListsForRestore`, the entry the restore reads them through
     /// (#242, PR #277 round 3); the event calendars after the calendar access check (round 2,
     /// finding 10). The containers are matched by the identifier the restore matches on and must
@@ -123,7 +124,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertEqual(Self.count("resolve", in: body), 0, "the lookups live in UndoRestoreDestination.problems")
     }
 
-    /// `verify` re-reads only after a miss, with the view invalidated first, and `problems` makes the
+    /// `verify` re-reads only after a finding, with the view invalidated first, and `problems` makes the
     /// restore's own lookups: `EventSnapshot.resolveCalendar`, which `applySnapshot` calls, and
     /// `ReminderSnapshot.resolveList` with `.recreateDeleted`, the kind the `.deleteReminder` undo
     /// restores with (the only reminder record with a destination).

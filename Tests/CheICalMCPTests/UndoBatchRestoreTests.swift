@@ -230,18 +230,52 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(reads.invalidations, 0)
     }
 
-    /// A read-only destination is not a stale view: no second read, refused at once.
-    func testAReadOnlyDestinationIsRefusedWithoutASecondRead() async {
+    /// PR #282 round 3, finding 1: a read-only destination may come from a stale view too (a shared
+    /// calendar's or list's write access can change elsewhere), so it is read once more like a
+    /// missing one before the refusal.
+    func testADestinationReadOnlyOnTheFirstReadAndWritableAfterTheRefreshPasses() async throws {
+        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let reads = Reads()
+        try await verify(destinations, reads: reads) { read in
+            ([], [(self.reminder.calendarIdentifier, "Shared", read > 1)])
+        }
+        XCTAssertEqual(reads.count, 2)
+        XCTAssertEqual(reads.invalidations, 1, "the view is invalidated before the second read")
+    }
+
+    func testADestinationStillReadOnlyAfterTheSecondReadIsRefused() async {
         let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
         let reads = Reads()
         do {
             try await verify(destinations, reads: reads) { _ in ([], [(self.reminder.calendarIdentifier, "Shared", false)]) }
             XCTFail("expected a refusal")
+        } catch let refusal as UndoRestoreDestinationMissingError {
+            XCTAssertTrue(refusal.message.contains("is read-only"), refusal.message)
         } catch {
-            XCTAssertTrue(error is UndoRestoreDestinationMissingError, "\(error)")
+            XCTFail("unexpected error: \(error)")
         }
-        XCTAssertEqual(reads.count, 1)
-        XCTAssertEqual(reads.invalidations, 0)
+        XCTAssertEqual(reads.count, 2, "read once more, and only once")
+        XCTAssertEqual(reads.invalidations, 1)
+    }
+
+    /// Each refused call marks the view stale again, so a retry refreshes as well: the refresh is
+    /// only requested (EventKit syncs in the background), and what the first call's second read
+    /// could not see yet, a retry may.
+    func testEveryRefusedCallRefreshesAgain() async {
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+        let reads = Reads()
+        for _ in 0..<2 {
+            do {
+                try await verify(destinations, reads: reads) { _ in
+                    ([(self.event.calendarIdentifier, "Holidays", false)], [])
+                }
+                XCTFail("expected a refusal")
+            } catch {
+                XCTAssertTrue(error is UndoRestoreDestinationMissingError, "\(error)")
+            }
+        }
+        XCTAssertEqual(reads.invalidations, 2, "one refresh per refused call, as for a missing one")
+        XCTAssertEqual(reads.count, 4)
     }
 
     // MARK: - A: a write fails part-way
@@ -397,47 +431,45 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(partial.message.contains(absoluteAlarmsNote), partial.message)
     }
 
-    // MARK: - A: members whose order matters (PR #282 round 2, finding 3)
+    // MARK: - A: occurrence deletes restore independently (PR #282 round 3, finding 5)
 
     private func occurrence(_ title: String) -> UndoOperation {
         .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: title), notCarriedOver: [])
     }
 
-    /// Two deleted occurrences of one series (#244): moving the failing one to the end would change
-    /// what the next undo does, so the order is kept. With nothing written, the record stays as it was.
-    func testSameSeriesOccurrencesKeepTheirOrderWhenTheFirstToRunFails() async throws {
+    /// Each deleted occurrence comes back as its own one-off event (#244), reading no other
+    /// member's result, so the order the members run in does not change what any of them
+    /// restores. Round 2 kept the recorded order for them; round 3 found no dependence, and a
+    /// member that kept failing then held back every occurrence behind it. The failing one is now
+    /// moved to run last, as for whole-event and reminder deletes.
+    func testAFailedOccurrenceIsMovedToRunLastWithNothingWritten() async throws {
         let log = ExecutionLog()
         let error = await undoBatch([occurrence("1"), occurrence("2")], log: log, failsOn: { $0 == "occ:2" })
-        XCTAssertTrue(error is SaveFailed, "the member error stands and the record is kept whole: \(String(describing: error))")
+        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
+        XCTAssertEqual(titles(partial.remaining), ["occ:2", "occ:1"])
+        XCTAssertEqual(partial.restoredCount, 0)
         XCTAssertEqual(log.executed, [])
     }
 
-    /// After a write, the record keeps the members not yet restored in their recorded order, so the
-    /// failing one is tried first again.
-    func testSameSeriesOccurrencesNarrowInTheirRecordedOrder() async throws {
+    func testARetryOfOccurrencesReachesTheOnesNeverAttempted() async throws {
         let log = ExecutionLog()
-        let error = await undoBatch([occurrence("1"), occurrence("2"), occurrence("3")], log: log, failsOn: { $0 == "occ:2" })
+        let first = await undoBatch([occurrence("1"), occurrence("2"), occurrence("3")], log: log, failsOn: { $0 == "occ:2" })
+        let kept = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))").remaining
+        XCTAssertEqual(titles(kept), ["occ:2", "occ:1"])
+        let second = await undoBatch(kept, log: log, failsOn: { $0 == "occ:2" })
+
+        let partial = try XCTUnwrap(second as? UndoBatchPartiallyUndoneError, "\(String(describing: second))")
+        XCTAssertEqual(log.executed, ["occ:3", "occ:1"], "occ:1, never attempted the first time, is restored on the retry")
+        XCTAssertEqual(titles(partial.remaining), ["occ:2"])
+    }
+
+    /// The text no longer says the order of the members matters.
+    func testNoPartialErrorSaysTheOrderMatters() async throws {
+        let log = ExecutionLog()
+        let error = await undoBatch([deleted("A"), occurrence("1"), occurrence("2")], log: log, failsOn: { $0 == "occ:1" })
         let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
-        XCTAssertEqual(titles(partial.remaining), ["occ:1", "occ:2"])
-        XCTAssertEqual(log.executed, ["occ:3"])
-        XCTAssertTrue(partial.message.contains("recorded order"), partial.message)
-    }
-
-    /// One member that is not proven independent keeps the order for all of them.
-    func testAMixedBatchWithAnOccurrenceKeepsItsOrder() async {
-        let log = ExecutionLog()
-        let error = await undoBatch([deleted("A"), occurrence("1")], log: log, failsOn: { $0 == "occ:1" })
-        XCTAssertTrue(error is SaveFailed, "\(String(describing: error))")
-    }
-
-    /// Only whole-event and reminder deletes are proven independent (one item each; one whole event
-    /// per identifier per batch, #185 F5).
-    func testOnlyWholeEventAndReminderDeletesAreReordered() {
-        XCTAssertTrue(UndoOperation.deleteEvent(snapshot: event).restoresIndependently)
-        XCTAssertTrue(UndoOperation.deleteReminder(snapshot: reminder).restoresIndependently)
-        XCTAssertFalse(UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: []).restoresIndependently)
-        XCTAssertFalse(UndoOperation.deleteFollowingOccurrences(title: "Standup").restoresIndependently)
-        XCTAssertFalse(UndoOperation.batch([.deleteEvent(snapshot: event)]).restoresIndependently)
+        XCTAssertEqual(titles(partial.remaining), ["occ:1", "A"])
+        XCTAssertFalse(partial.message.contains("order"), partial.message)
     }
 
     /// Undo runs the members in reverse. The record keeps the failing member first, so it runs last
@@ -504,8 +536,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     /// No nested batch is recorded today; if one were, its own remainder replaces it, so its
-    /// restored members are not recreated either. A batch member is not proven independent, so the
-    /// order is kept.
+    /// restored members are not recreated either, and it is moved to run last like any member.
     func testANestedBatchThatStoppedPartWayKeepsOnlyItsOwnRemainder() throws {
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1")
         let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y"), deleted("Z")])]
@@ -513,7 +544,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                      interrupted: .init(completed: 0, underlying: inner),
                                                      describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
-        XCTAssertEqual(titles(partial.remaining), ["X", "[Y]"])
+        XCTAssertEqual(titles(partial.remaining), ["[Y]", "X"])
     }
 
     func testThePartialErrorSaysWhatWasRestoredAndKeptAndHowToGiveUp() {
