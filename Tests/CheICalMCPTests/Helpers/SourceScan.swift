@@ -43,16 +43,25 @@ enum SourceScan {
     /// The text between the parentheses of the first call that starts with `marker` (which ends
     /// in `(`), balanced on parentheses; nil when `marker` is absent or unbalanced.
     static func arguments(of marker: String, in code: String) -> String? {
+        enclosed(after: marker, in: code, open: "(", close: ")")
+    }
+
+    /// The text between the braces of the first declaration that starts with `marker` (which ends
+    /// in `{`), balanced on braces; nil when `marker` is absent or unbalanced.
+    static func body(of marker: String, in code: String) -> String? {
+        enclosed(after: marker, in: code, open: "{", close: "}")
+    }
+
+    private static func enclosed(after marker: String, in code: String, open: Character, close: Character) -> String? {
         guard let start = code.range(of: marker) else { return nil }
         var depth = 1
         var index = start.upperBound
         while index < code.endIndex {
-            switch code[index] {
-            case "(": depth += 1
-            case ")":
+            if code[index] == open {
+                depth += 1
+            } else if code[index] == close {
                 depth -= 1
                 if depth == 0 { return String(code[start.upperBound..<index]) }
-            default: break
             }
             index = code.index(after: index)
         }
