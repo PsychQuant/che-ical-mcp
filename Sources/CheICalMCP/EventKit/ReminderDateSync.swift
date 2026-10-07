@@ -135,10 +135,14 @@ enum ReminderDateSync {
     /// order the coupling needs (in memory, a date-only start written after a timed due turns the
     /// due date-only):
     /// - a timed due is written after the start: a zoned one through `writeZonedDue`, as `setDue`
-    ///   writes it, so a floating item is zoned from it (#237) and a recorded date-only start comes
-    ///   back as 00:00 of its day, the way the store hands one back; a floating one as it is,
-    ///   which in memory leaves the item floating. EventKit gives a reminder without a start one
-    ///   equal to a due written to it (#235), so a recorded absent start is cleared after the due;
+    ///   writes it, so a floating item is zoned from it (#237); a floating one as it is, which in
+    ///   memory leaves the item floating. A recorded date-only start beside a zoned due comes back
+    ///   as 00:00 of its day in the due's zone, through `writeZonedDue`: in memory, writing a
+    ///   date-only start leaves the item floating even when it had a zone, so `writeZonedDue`
+    ///   stamps the start 00:00 before it writes the due, and its fallback does the same when the
+    ///   due lost its time or zone. Seen in memory (`ReminderDateSyncTests`), not after a save.
+    ///   EventKit gives a reminder without a start one equal to a due written to it (#235), so a
+    ///   recorded absent start is cleared after the due;
     /// - a date-only or absent due is written before the start, as undo always wrote it: a
     ///   floating date-only due returns an item that #237 zoned to floating.
     static func restore(_ reminder: EKReminder, start: DateComponents?, due: DateComponents?) {

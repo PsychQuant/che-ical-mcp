@@ -2117,18 +2117,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created reminder '\(undoVisibleTitle(title))'"
 
         case .deleteReminder(let snapshot):
-            // Undo delete = recreate
-            try await ensureReminderAccess()
-            let reminder = EKReminder(eventStore: eventStore)
-            try applyReminderSnapshot(snapshot, to: reminder, for: .recreateDeleted)
+            // Undo delete = recreate. The new reminder is created only after the lists are read.
+            let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
-            let reminder = try await verifiedReminder(of: operation, verb: .undo)
-            try applyReminderSnapshot(oldSnapshot, to: reminder, for: .revertUpdate)
+            let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })
             try eventStore.save(reminder, commit: true)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
@@ -2208,14 +2205,31 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         write.apply(to: reminder)
     }
 
-    /// Apply a ReminderSnapshot to an EKReminder: the store's lists here, because they need the
-    /// store; `ReminderSnapshot.apply(to:lists:for:now:)` resolves the list by its recorded
-    /// identifier before it writes anything (#242), so a refusal leaves the reminder as it was.
-    /// Refreshed first, so a list created or synced since this server's last write is not judged
-    /// missing (PR #277 verify round 1). `ReminderUndoWiringTests` pins this body and both arms.
-    private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, to reminder: EKReminder, for kind: ReminderRestoreKind) throws {
+    /// #242: the reminder lists an undo restores into, and the one entry for every caller that
+    /// resolves a recorded list with `ReminderSnapshot.resolveList`: `applyReminderSnapshot`, and a
+    /// batch undo's pre-check before its first write (PR #282). Reminders access is checked first:
+    /// without it the store lists no list, and every recorded list would be judged missing. The
+    /// refresh runs only when this server has written since its last refresh (`markNeedsRefresh`);
+    /// a list another client or an account sync added in the meantime is not covered by it, which
+    /// is what the refusal's retry advice is for. `ReminderUndoWiringTests` pins this body and that
+    /// the undo path reads the lists nowhere else.
+    func reminderListsForRestore() async throws -> [EKCalendar] {
+        try await ensureReminderAccess()
         refreshIfNeeded()
-        try snapshot.apply(to: reminder, lists: eventStore.calendars(for: .reminder), for: kind, now: Date())
+        return eventStore.calendars(for: .reminder)
+    }
+
+    /// Apply a ReminderSnapshot to the reminder `target` creates or fetches. The lists are read
+    /// first (`reminderListsForRestore`), so the delete-undo arm creates its new reminder only
+    /// after the read; then `ReminderSnapshot.apply(to:lists:for:now:)` resolves the list by its
+    /// recorded identifier before it writes anything (#242), so a refusal leaves the reminder as
+    /// it was. `ReminderUndoWiringTests` pins this body and both arms.
+    private func applyReminderSnapshot(_ snapshot: ReminderSnapshot, for kind: ReminderRestoreKind,
+                                       into target: () async throws -> EKReminder) async throws -> EKReminder {
+        let lists = try await reminderListsForRestore()
+        let reminder = try await target()
+        try snapshot.apply(to: reminder, lists: lists, for: kind, now: Date())
+        return reminder
     }
 }
 
@@ -2421,13 +2435,15 @@ enum EventKitError: LocalizedError {
                 ? "the deletion of a reminder: the list it was in when it was deleted\(named)"
                 : "the update of a reminder: the list it was in before the update\(named)"
             let state = hasIdentifier ? "was not found under its recorded identifier" : "was recorded without an identifier, so it cannot be found"
+            // Without an identifier the entry can never be undone, only given up.
+            let blocked = hasIdentifier ? "until it is undone or given up" : "until it is given up"
             let retry = hasIdentifier
                 ? " Run undo again if the list's account may be turned off or still syncing; if the list was deleted, no retry can find it."
                 : ""
             let loss = kind == .recreateDeleted
                 ? "Giving up this undo cannot be reversed, and this tool cannot recover the deleted reminder afterwards"
                 : "Giving up this undo cannot be reversed; the reminder stays as it is now"
-            return "Cannot undo \(which) \(state). Undo does not use another list of the same name. Nothing was written for this reminder and the history entry was kept; older undo entries stay blocked until it is undone or given up.\(retry) \(loss): ask the user whether to give it up; if they agree, read undo_history and call undo with discard_id set to its id."
+            return "Cannot undo \(which) \(state). Undo does not use another list of the same name. Nothing was written for this reminder and the history entry was kept; older undo entries stay blocked \(blocked).\(retry) \(loss): ask the user whether to give it up; if they agree, read undo_history and call undo with discard_id set to its id."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
