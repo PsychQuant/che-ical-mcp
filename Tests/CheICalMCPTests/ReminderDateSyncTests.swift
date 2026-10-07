@@ -1113,9 +1113,9 @@ final class ReminderDateSyncTests: XCTestCase {
 
     /// A date-only start beside a zoned timed due. Written due first (undo before #251), the start
     /// turned the due date-only; written start first with a plain due write, the due lost its zone
-    /// and, in memory, took the host's wall clock. `restore` writes the due as `setDue` does, so
-    /// the recorded date-only start comes back as 00:00 of its day in the due's zone, the way the
-    /// store hands a date-only start back.
+    /// and, in memory, took the host's wall clock. `restore` writes the due as `setDue` does:
+    /// `writeZonedDue` stamps the date-only start 00:00 on the floating item and zones the item
+    /// from the due, so the start comes back as 00:00 of its day in the due's zone (in memory).
     func testRestoreKeepsTheTimeAndZoneOfADueBesideADateOnlyStart() {
         let reminder = makeReminder()
 
@@ -1126,7 +1126,10 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(dateValue(reminder.startDateComponents), taipeiComponents(day: 9, hour: 0))
     }
 
-    /// The same on a reminder that an update zoned and moved (update-undo).
+    /// The same on a reminder that an update zoned and moved (update-undo): in memory, writing the
+    /// date-only start leaves the item floating again, so the same path applies. Checked in PR
+    /// #277 verify round 2: with neither the 00:00 stamp in `writeZonedDue` nor its fallback
+    /// (`writeDueAroundStart`), this test and the one above fail; with either one, both pass.
     func testRestoreOnAZonedReminderKeepsTheTimeAndZoneOfADueBesideADateOnlyStart() {
         let reminder = makeReminder()
         reminder.startDateComponents = taipeiComponents(day: 12, hour: 0)
@@ -1155,8 +1158,9 @@ final class ReminderDateSyncTests: XCTestCase {
     }
 
     /// EventKit gives a reminder without a start one equal to a due written to it (#235), in memory
-    /// too, so this pins the clearing in `restore`: without it both cases fail. A recorded absent
-    /// start stays absent, for a zoned and for a floating due.
+    /// too. A recorded absent start stays absent, for a zoned and for a floating due. This pins the
+    /// clearing in `restore`: checked in PR #277 verify round 2, without it both cases fail, each
+    /// reading back a start equal to the due (the zoned one with the due's zone).
     func testRestoreLeavesARecordedAbsentStartAbsent() {
         for due in [taipeiComponents(day: 10, hour: 15), DateComponents(year: 2026, month: 10, day: 10, hour: 15, minute: 0)] {
             let reminder = makeReminder()
