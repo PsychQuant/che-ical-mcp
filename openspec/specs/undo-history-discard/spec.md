@@ -75,7 +75,11 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo fails part-way (#248)
 - **WHEN** a batch undo fails on a member after earlier members were restored
-- **THEN** the record is put back holding only the members not yet restored (the failing one included), under the same id and timestamp, the error says how many were restored and how many remain, and the next undo restores only those
+- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp, with the failing member placed to run last; the error says how many were restored and how many remain, and the next undo restores the members never attempted before it retries the failing one
+
+#### Scenario: Batch undo fails on its first write (#248)
+- **WHEN** the first write of a batch undo fails and other members have not been attempted
+- **THEN** nothing is written, and the record stays whole under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error discards the record as for a single record
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
