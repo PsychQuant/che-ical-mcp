@@ -28,10 +28,12 @@ enum EventRemovalKind: String, Sendable, Hashable {
     ///
     /// Span "future" on a series is whole only when both sides agree (verify round 1, findings
     /// 1/2/12/22): it started at the series' first occurrence, and after the removal the identifier
-    /// no longer resolves (`seriesResolves`, asked only then). Anything else is refused, so a
-    /// lookup that finds nothing for another reason, or a store that keeps the series resolvable,
-    /// never turns into a second series. Span "future" from the last occurrence removes only that
-    /// one, but nothing tells it apart from one with occurrences after it; it is refused too.
+    /// no longer resolves (`seriesResolves`, asked only then). Anything else is refused, so a store
+    /// that keeps the series resolvable never turns into a second series. The lookup cannot tell a
+    /// series that is gone from one it failed to find (verify round 4, finding 16); only a delete
+    /// from the first occurrence, which removes the whole series, reaches it. Span "future" from the
+    /// last occurrence removes only that one, but nothing tells it apart from one with occurrences
+    /// after it; it is refused too.
     static func of(hadRules: Bool, isDetached: Bool, span: EKSpan, fromFirstOccurrence: Bool,
                    seriesResolves: () -> Bool) -> EventRemovalKind {
         guard hadRules || isDetached else { return .wholeEvent }
@@ -118,7 +120,10 @@ extension UndoOperation {
     }
 
     /// The text of a restored occurrence. Store-derived title through `undoVisibleTitle`, as the
-    /// other "Undone:" texts; `notCarriedOver` names fields in the move path's terms.
+    /// other "Undone:" texts; `notCarriedOver` names fields in the move path's terms. When the
+    /// series was deleted whole and recreated from its rules after this delete, this restore is the
+    /// write that adds the second copy (#285); the warning is in the series' own undo text, one
+    /// response earlier (verify round 4, finding 10), since nothing here knows what ran in between.
     static func occurrenceRestoredMessage(title: String, newID: String, notCarriedOver: [String]) -> String {
         var message = "Undone: restored the deleted occurrence of '\(undoVisibleTitle(title))' as a one-off event (new ID: \(newID))"
         if notCarriedOver.contains("absolute_alarms") {
@@ -130,8 +135,10 @@ extension UndoOperation {
     /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
     /// snapshot (a whole-series delete: span "future" from the first occurrence, or span "all"),
     /// which hold no occurrence deleted or edited on its own before the delete. The undo text says
-    /// so, since nothing can tell whether there were any.
-    static let seriesRulesRestoreNote = "Restored from the series rules: occurrences deleted or edited on their own before this delete come back as the rules define them, and undoing an earlier delete of one of them here adds it a second time"
+    /// so for every such restore, since nothing can tell whether there were any; it says that too
+    /// (round 4, findings 8/9/12), names the series delete rather than "this delete", which a batch
+    /// text cannot point at, and says an edited occurrence loses its edit.
+    static let seriesRulesRestoreNote = "Restored from the series rules (said for every series restored from them, whether or not any of its occurrences was deleted or edited on its own before the series was deleted): an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
 
     /// The text of a recreated event. Store-derived title through `undoVisibleTitle`.
     static func eventRestoredMessage(snapshot: EventSnapshot, newID: String) -> String {

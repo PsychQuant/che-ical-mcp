@@ -304,7 +304,9 @@ enum UndoOperation {
         case .createEvent(_, let title, _):
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(undoVisibleTitle(snapshot.title))"
+            // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
+            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules alone)" : ""
+            return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
         case .deleteFollowingOccurrences(let title):
