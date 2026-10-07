@@ -6,7 +6,9 @@ import Foundation
 /// delete of one occurrence came back as a second series beside the surviving one (on device: 3
 /// occurrences, delete one, 2, undo, 5). The record now says what was removed:
 ///
-/// - the whole event: recreated, rules included, as before;
+/// - the whole event: recreated, rules included, as before. For a series that is its rules only:
+///   occurrences deleted or edited on their own earlier are not recorded, so an earlier-deleted one
+///   comes back and an edited one comes back unedited (on device 2026-10-08; #285);
 /// - one occurrence: recreated as a one-off event at its slot (maintainer decision D1, the #208
 ///   copy-out precedent). EventKit has no public way to put an occurrence back into its series;
 /// - an occurrence and the following ones, unless that removed the whole series: a marker whose
@@ -52,7 +54,11 @@ struct DeletedEventSnapshots {
     let isDetached: Bool
     /// The removed occurrence is the series' first: its slot is the series object's. On iCloud the
     /// series object keeps its original first slot after that occurrence was deleted on its own
-    /// (checked 2026-10-07), so the first remaining occurrence does not count as the first.
+    /// (checked 2026-10-07), so the first remaining occurrence does not count as the first. Today
+    /// that delete fails earlier, as "Event not found" (#284); a fix of #284 makes this path live
+    /// and its premise has to be checked on device again. Both objects report the slot as
+    /// `occurrenceDate` equal to `startDate` for a timed, an all-day and a New York series
+    /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool
 
     init(series: EKEvent, removed: EKEvent) {
@@ -63,6 +69,8 @@ struct DeletedEventSnapshots {
         self.series = EventSnapshot(from: series)
         // Verify round 1, finding 6: an occurrence of a series reads the series' absolute alarm
         // dates, which a later occurrence has passed; the #253 split rule puts them at its start.
+        // That is the move path's rule since 2a40986 (#253 round 2, D2-b), not the series-start
+        // shift it replaced (verify round 2, findings 7/15).
         // A one-off, or a detached occurrence by its own identifier, keeps its own (as a move does).
         let alarms = EventKitManager.copyOutAlarms(of: removed, isSplit: hadRules)
         occurrence = EventSnapshot(from: removed, includeRecurrence: false, alarms: alarms.alarms)
@@ -116,6 +124,24 @@ extension UndoOperation {
             message += ". Not carried over: absolute_alarms (an absolute-date alarm of the series is now an alarm at the occurrence's start)"
         }
         return message
+    }
+
+    /// The text of an undone batch (verify round 2, finding 5): the member texts are not shown, so
+    /// what a restored occurrence did not carry over is named here, once.
+    static func batchUndoneMessage(members: [UndoOperation], count: Int) -> String {
+        var message = "Undone batch (\(count) operations)"
+        if members.contains(where: \.restoresWithoutAbsoluteAlarms) {
+            message += ". Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)"
+        }
+        return message
+    }
+
+    private var restoresWithoutAbsoluteAlarms: Bool {
+        switch self {
+        case .deleteOccurrence(_, let notCarriedOver): return notCarriedOver.contains("absolute_alarms")
+        case .batch(let members): return members.contains(where: \.restoresWithoutAbsoluteAlarms)
+        default: return false
+        }
     }
 }
 

@@ -110,6 +110,8 @@ final class DeleteUndoTests: XCTestCase {
     /// On iCloud the series object keeps its original first slot after that occurrence was deleted
     /// on its own (checked 2026-10-07), so span "future" from the first remaining occurrence is not
     /// "from the first": refused, instead of recreating the series with the deleted occurrence in it.
+    /// Unreachable on iCloud while #284 stands (the delete fails as "Event not found"); re-check
+    /// the premise on device when #284 is fixed.
     func testTheFirstSlotIsTheSeriesStartNotTheFirstRemainingOccurrence() {
         let series = weekly(startingAt: firstStart)
         let firstRemaining = weekly(startingAt: firstStart.addingTimeInterval(week))
@@ -136,6 +138,11 @@ final class DeleteUndoTests: XCTestCase {
     /// Verify round 1, finding 6: an occurrence of a series reads the series' absolute alarm date,
     /// which a later occurrence has passed. As the #253 split path does, an absolute alarm goes to
     /// the occurrence's start and is reported; other alarms are kept.
+    ///
+    /// Verify round 2, findings 7/15 asked for the series-start shift instead. That shift was the
+    /// move path's rule only until 2a40986 (#253 verify round 2, maintainer decision D2-b), which
+    /// replaced it with this one because its base was unreliable; the restore stays on the move
+    /// path's current rule, and this test holds the two together.
     func testAnOccurrenceRestoreMovesAbsoluteAlarmsToItsStart() throws {
         let alarmDate = firstStart.addingTimeInterval(-3600)
         let series = weekly(startingAt: firstStart)
@@ -149,6 +156,22 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(notCarriedOver, ["absolute_alarms"])
         XCTAssertEqual(snapshot.alarms.map(\.absoluteDate), [nil, nil])
         XCTAssertEqual(Set(snapshot.alarms.map(\.relativeOffset)), [0, -900])
+
+        let split = EventKitManager.copyOutAlarms(of: second, isSplit: true)
+        XCTAssertEqual(snapshot.alarms, split.alarms, "the alarms a move that splits this occurrence out would write")
+        XCTAssertEqual(notCarriedOver, split.notCarriedOver)
+    }
+
+    /// Nothing is reported when nothing was moved: relative alarms only.
+    func testAnOccurrenceWithoutAbsoluteAlarmsReportsNothing() throws {
+        let series = weekly(startingAt: firstStart)
+        let second = weekly(startingAt: firstStart.addingTimeInterval(week))
+        second.addAlarm(EKAlarm(relativeOffset: -900))
+
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second)
+            .record(for: .occurrence) else { return XCTFail() }
+        XCTAssertEqual(notCarriedOver, [])
+        XCTAssertEqual(snapshot.alarms.map(\.relativeOffset), [-900])
     }
 
     /// A one-off event, or a detached occurrence addressed by its own identifier, carries its own
@@ -210,6 +233,31 @@ final class DeleteUndoTests: XCTestCase {
                        "Undone: restored the deleted occurrence of 'Standup' as a one-off event (new ID: n1). Not carried over: absolute_alarms (an absolute-date alarm of the series is now an alarm at the occurrence's start)")
     }
 
+    /// Verify round 2, finding 5: a batch undo names what its restored occurrences did not carry
+    /// over, once, as the single undo does; a batch that moved nothing says only the count.
+    func testABatchUndoTextNamesWhatItsRestoredOccurrencesDidNotCarryOver() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup")
+        let moved = UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: ["absolute_alarms"])
+        let kept = UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: [])
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [moved, kept, moved], count: 3),
+                       "Undone batch (3 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [.batch([kept, moved])], count: 2),
+                       "Undone batch (2 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)",
+                       "nested batches are walked")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [kept, .deleteEvent(snapshot: snapshot)], count: 2),
+                       "Undone batch (2 operations)")
+    }
+
+    /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to
+    /// run, so it is pinned here).
+    func testTheBatchUndoArmReportsItsMembers() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .batch(let ops):", in: body).first)
+        let message = SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.batchUndoneMessage\(members:\s*ops,\s*count:\s*results\.count\)"#, in: body)
+        XCTAssertEqual(message.count, 1)
+        if let message = message.first { XCTAssertGreaterThan(message.lowerBound, arm.lowerBound) }
+    }
+
     // MARK: - Refusals (D2, D3)
 
     func testUndoOfTheMarkerIsRefusedPermanently() {
@@ -245,31 +293,40 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertNil(UndoOperation.createEvent(id: "e", title: "Standup", created: snapshot).batchMemberUndoRefusal)
     }
 
-    // MARK: - Record sites (source pins, verify round 1 finding 19)
+    // MARK: - Record sites (source pins: verify round 1 finding 19, round 2 findings 12/16/20/25/26)
 
     /// Both delete paths take the snapshots before the removal and classify through
-    /// `DeletedEventSnapshots`; an in-memory store cannot run them, so the order is pinned here.
-    func testBothDeletePathsSnapshotBeforeTheyRemove() throws {
-        let source = try String(contentsOf: Self.sourceURL("EventKit/EventKitManager.swift"), encoding: .utf8)
-        for name in ["func deleteEvent(identifier:", "func deleteEventsBatch("] {
-            let body = try XCTUnwrap(Self.body(of: name, in: source), name)
-            let snapshot = try XCTUnwrap(body.range(of: "DeletedEventSnapshots(series:"), "\(name) records through DeletedEventSnapshots")
-            let remove = try XCTUnwrap(body.range(of: "eventStore.remove("), name)
-            XCTAssertLessThan(snapshot.lowerBound, remove.lowerBound, "\(name): snapshot before the removal")
-            XCTAssertNotNil(body.range(of: ".kind(span: span, seriesResolves:"), "\(name) classifies after the removal")
+    /// `DeletedEventSnapshots` after it; an in-memory store cannot run them, so the order is pinned
+    /// here, branch by branch: every removal has its own snapshot just before it, and the
+    /// classification comes after the last removal (before it, the lookup would always find the
+    /// series and every span "future" delete would be refused).
+    func testBothDeletePathsSnapshotBeforeTheyRemoveAndClassifyAfter() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        for (name, identifier) in [("func deleteEvent(identifier:", "identifier"), ("func deleteEventsBatch(", "item.identifier")] {
+            let body = try XCTUnwrap(SourcePins.body(of: name, in: source), name)
+            let snapshots = SourcePins.ranges(of: "DeletedEventSnapshots(series:", in: body)
+            let removals = SourcePins.ranges(of: "eventStore.remove(", in: body)
+            XCTAssertEqual(snapshots.count, 2, "\(name): one snapshot per removing branch")
+            XCTAssertEqual(removals.count, snapshots.count, "\(name): one removal per snapshot")
+            for (index, (snapshot, removal)) in zip(snapshots, removals).enumerated() {
+                XCTAssertLessThan(snapshot.lowerBound, removal.lowerBound, "\(name), branch \(index): snapshot before the removal")
+                if index + 1 < snapshots.count {
+                    XCTAssertLessThan(removal.lowerBound, snapshots[index + 1].lowerBound, "\(name), branch \(index): its own snapshot")
+                }
+            }
+            let classify = SourcePins.ranges(ofPattern: #"\.kind\(span:\s*span,\s*seriesResolves:\s*\{\s*seriesResolves\(identifier:\s*"# + NSRegularExpression.escapedPattern(for: identifier) + #"\s*\)\s*\}\)"#, in: body)
+            XCTAssertEqual(classify.count, 1, "\(name) classifies once, looking its own identifier up again")
+            if let classify = classify.first, let last = removals.last {
+                XCTAssertGreaterThan(classify.lowerBound, last.lowerBound, "\(name): classified after the removal")
+            }
         }
     }
 
-    static func sourceURL(_ relative: String) -> URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/CheICalMCP").appendingPathComponent(relative)
-    }
-
-    /// From the declaration to the next declaration at the same indentation.
-    static func body(of declaration: String, in source: String) -> Substring? {
-        guard let start = source.range(of: declaration) else { return nil }
-        let rest = source[start.upperBound...]
-        let end = rest.range(of: "\n    func ") ?? rest.range(of: "\n    private func ") ?? rest.range(of: "\n    static func ")
-        return rest[..<(end?.lowerBound ?? rest.endIndex)]
+    /// Verify round 1, finding 17: the post-removal lookup marks the store stale before it reads.
+    func testThePostRemovalLookupMarksTheStoreStaleFirst() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func seriesResolves(identifier:", in: try SourcePins.source("EventKit/DeleteUndo.swift")))
+        let stale = try XCTUnwrap(SourcePins.ranges(of: "markNeedsRefresh()", in: body).first)
+        let read = try XCTUnwrap(SourcePins.ranges(of: "freshEvent(id: identifier)", in: body).first)
+        XCTAssertLessThan(stale.lowerBound, read.lowerBound)
     }
 }

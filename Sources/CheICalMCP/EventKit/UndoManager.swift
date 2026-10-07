@@ -264,8 +264,11 @@ enum UndoOperation {
     /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
     /// of the series was moved to the occurrence's start.
     case deleteOccurrence(snapshot: EventSnapshot, notCarriedOver: [String])
-    /// #244: an occurrence and the following ones deleted from a series that is still there, kept
-    /// only as a marker. Its undo is refused and the record discarded; nothing is restored.
+    /// #244: a span "future" delete that undo does not restore, kept only as a marker: every one
+    /// `EventRemovalKind.of` does not prove removed the whole series (it left part of the series,
+    /// started at the last occurrence or after earlier deletes, named a detached occurrence, or the
+    /// lookup after it was inconclusive). Its undo is refused and the record discarded; nothing is
+    /// restored.
     case deleteFollowingOccurrences(title: String)
     /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
     case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)

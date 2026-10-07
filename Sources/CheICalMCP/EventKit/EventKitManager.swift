@@ -2159,7 +2159,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 Array(ops.reversed()),
                 check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
                 execute: { try await self.executeUndo($0) })
-            return "Undone batch (\(results.count) operations)"
+            return UndoOperation.batchUndoneMessage(members: ops, count: results.count)
         }
     }
 
