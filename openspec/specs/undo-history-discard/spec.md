@@ -91,7 +91,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo fails on its first write (#248)
 - **WHEN** the first write of a batch undo fails and other members have not been attempted
-- **THEN** nothing is written; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error drops that member and keeps the others, and discards the record only when no other member waits, as for a single record
+- **THEN** nothing is written; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; when no other member waits, the member error stands and the record stays as it was, as for a single record; a permanent member error drops that member and keeps the others, and discards the record only when no other member waits
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
