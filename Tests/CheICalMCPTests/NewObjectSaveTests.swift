@@ -15,8 +15,13 @@ final class NewObjectSaveTests: XCTestCase {
     let removalReadOnly = NSError(domain: EKErrorDomain, code: EKError.Code.calendarReadOnly.rawValue)
 
     private func name(_ outcome: NewObjectSave.Outcome) -> String {
-        if case .discardFailed = outcome { return "discardFailed" }
-        return "\(outcome)"
+        switch outcome {
+        case .committedThenThrew: return "committedThenThrew"
+        case .committedButDiffers: return "committedButDiffers"
+        case .unchecked: return "unchecked"
+        case .nothingPending: return "nothingPending"
+        case .discardFailed: return "discardFailed"
+        }
     }
 
     /// Same domain and code (a Swift error is compared through its NSError bridge).
@@ -25,7 +30,7 @@ final class NewObjectSaveTests: XCTestCase {
     }
 
     /// Runs the helper with closures that record each call; `report` records the outcome by name.
-    private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: Bool?,
+    private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: NewObjectSave.Found?,
                      discard: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?) {
         var calls: [String] = []
         do {
@@ -40,7 +45,7 @@ final class NewObjectSaveTests: XCTestCase {
     }
 
     func testASuccessfulSaveRunsNothingElse() {
-        let result = run(save: {}, committed: false)
+        let result = run(save: {}, committed: .absent)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save"])
     }
@@ -48,18 +53,70 @@ final class NewObjectSaveTests: XCTestCase {
     /// The default: a failed save that a new store cannot find is discarded once, after the
     /// check and before the error reaches the caller. Nothing is logged.
     func testAFailedSaveANewStoreCannotFindIsDiscardedOnceBeforeItsErrorLeaves() {
-        let result = run(committed: false)
+        let result = run(committed: .absent)
         XCTAssertEqual(result.error as? Failure, .commit)
         XCTAssertEqual(result.calls, ["save", "committed", "discard"])
     }
 
-    /// A new store finds the object: the save committed and then threw. The object is kept and
-    /// `run` returns, so every caller takes its success path (the create's result and undo
-    /// record, the refresh mark; delete-undo consumes its record). Reported once, nothing removed.
-    func testAFailedSaveANewStoreFindsIsKeptAndTheCallSucceeds() {
-        let result = run(committed: true)
+    /// A new store finds the object as it was saved (`Found.saved`): the save committed and then
+    /// threw. The object is kept and `run` returns, so every caller takes its success path (the
+    /// create's result and undo record, the refresh mark; delete-undo consumes its record).
+    /// Reported once, with the save's error, and nothing removed.
+    func testAFailedSaveANewStoreFindsAsSavedIsKeptAndTheCallSucceeds() throws {
+        let result = run(committed: .saved)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
+        var reported: [NewObjectSave.Outcome] = []
+        try NewObjectSave.run(save: { throw Failure.commit }, committed: { .saved }, discard: { XCTFail("discarded") },
+                              report: { reported.append($0) })
+        guard case .committedThenThrew(let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
+        XCTAssertEqual(save as? Failure, .commit)
+    }
+
+    /// A new store finds an item under the identifier, but a compared field differs: something
+    /// was written, maybe not all of it. The item is kept (removing it would delete what was
+    /// written) and the save's error reaches the caller, so a create reports no success and
+    /// records no undo entry, and a delete-undo keeps its record.
+    func testAFoundItemThatDiffersIsKeptAndTheSaveErrorReported() throws {
+        let result = run(committed: .differs(["due", "title"]))
+        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertEqual(result.calls, ["save", "committed", "report committedButDiffers"])
+        var reported: [NewObjectSave.Outcome] = []
+        XCTAssertThrowsError(try NewObjectSave.run(save: { throw Failure.commit }, committed: { .differs(["list"]) },
+                                                   discard: { XCTFail("discarded") }, report: { reported.append($0) }))
+        guard case .committedButDiffers(let fields, let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
+        XCTAssertEqual(fields, ["list"])
+        XCTAssertEqual(save as? Failure, .commit)
+    }
+
+    /// The comparison: nothing under the identifier is `absent`; the same values are `saved`; any
+    /// value that differs, or is present on one side only, is named in `differs`, sorted.
+    func testTheCheckNamesEveryFieldThatDiffers() {
+        let saved = NewObjectSave.Fields(["title": "a", "list": "L1", "due": "2030 1 15 10 0"])
+        XCTAssertEqual(NewObjectSave.check(saved, against: nil), .absent)
+        XCTAssertEqual(NewObjectSave.check(saved, against: saved), .saved)
+        XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "b", "list": "L1", "due": "2030 1 15 10 0"])), .differs(["title"]))
+        XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "a", "list": "L2", "due": "2030 1 15 11 0"])), .differs(["due", "list"]))
+        XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "a", "list": "L1"])), .differs(["due"]))
+    }
+
+    /// What is compared, read from in-memory objects (one store, nothing saved): a reminder's
+    /// title, list and due date to the minute (no seconds, no zone; a date-only due has no time),
+    /// and a list's title and account. A missing value reads as empty.
+    func testTheFieldsAreTitleListAndDueOrTitleAndAccount() {
+        let store = EKEventStore()
+        let reminder = EKReminder(eventStore: store)
+        reminder.title = "a"
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder), .init(["title": "a", "list": "", "due": ""]))
+        var due = DateComponents(year: 2030, month: 1, day: 15, hour: 10, minute: 5, second: 30)
+        due.timeZone = TimeZone(identifier: "Asia/Taipei")
+        reminder.dueDateComponents = due
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due"], "2030 1 15 10 5")
+        reminder.dueDateComponents = DateComponents(year: 2030, month: 1, day: 15)
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due"], "2030 1 15 - -")
+        let list = EKCalendar(for: .reminder, eventStore: store)
+        list.title = "l"
+        XCTAssertEqual(NewObjectSave.Fields(list: list), .init(["title": "l", "account": ""]))
     }
 
     /// No answer (the new store had no sources) is no evidence, so the object is discarded, and
@@ -82,7 +139,7 @@ final class NewObjectSaveTests: XCTestCase {
     /// removal throws EKErrorDomain 6, left nothing pending. Reported once, as nothing pending,
     /// with or without an answer from the new store.
     func testTheProbedRefusalWithItsRemovalErrorIsReportedAsNothingPending() {
-        for committed in [false, nil] as [Bool?] {
+        for committed in [.absent, nil] as [NewObjectSave.Found?] {
             let result = run(save: { throw self.refusedNoList }, committed: committed, discard: { throw self.removalReadOnly })
             XCTAssertEqual((result.error as NSError?)?.code, EKError.Code.noCalendar.rawValue)
             XCTAssertEqual(result.calls, ["save", "committed", "discard", "report nothingPending"], "\(String(describing: committed))")
@@ -99,7 +156,7 @@ final class NewObjectSaveTests: XCTestCase {
                               NSError(domain: "EKCADErrorDomain", code: 1010)]
         for saveError in saves {
             var reported: [NewObjectSave.Outcome] = []
-            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent },
                                                        discard: { throw self.removalReadOnly },
                                                        report: { reported.append($0) }))
             XCTAssertEqual(reported.count, 1, "\(saveError)")
@@ -114,7 +171,7 @@ final class NewObjectSaveTests: XCTestCase {
     func testAnyOtherRemovalErrorIsAFailedDiscardAndTheSaveErrorStillSurfaces() {
         for saveError in [refusedNoList, Failure.commit] as [Error] {
             var reported: [String] = []
-            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent },
                                                        discard: { throw Failure.discard },
                                                        report: {
                                                            guard case .discardFailed(_, let discard) = $0 else { return XCTFail("\($0)") }
@@ -143,8 +200,11 @@ final class NewObjectSaveTests: XCTestCase {
     /// pinned word for word. Only a failed discard reads as a failure, and its line names both
     /// errors by domain and code.
     func testEachOutcomeHasOneLineThatSaysWhatHappened() {
-        XCTAssertEqual(NewObjectSave.note(for: .committedThenThrew, handler: "h", identifier: "id"),
-                       "h(id): the save threw, but a new store finds the item, so it was saved; it is kept and the call succeeds")
+        let commitFailure = NSError(domain: "EKCADErrorDomain", code: 1010)
+        XCTAssertEqual(NewObjectSave.note(for: .committedThenThrew(save: commitFailure), handler: "h", identifier: "id"),
+                       "h(id): the save threw EKCADErrorDomain 1010, but a new store finds the item as it was saved, so it was saved; it is kept and the call succeeds")
+        XCTAssertEqual(NewObjectSave.note(for: .committedButDiffers(fields: ["due", "title"], save: commitFailure), handler: "h", identifier: "id"),
+                       "h(id): the save threw EKCADErrorDomain 1010, and a new store finds the item, but its due, title differ from what was saved, so it may be only partly written; it is kept and the save's error is reported")
         XCTAssertEqual(NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id"),
                        "h(id): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing")
         XCTAssertEqual(NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id"),
@@ -258,9 +318,11 @@ final class NewObjectSaveTests: XCTestCase {
         segment(of: text, at: try XCTUnwrap(text.range(of: start), "missing \(start)").lowerBound)
     }
 
-    /// The `committed` check the save sites pass: a store made after the failure finds the object.
-    private func freshCheck(_ lookup: String, _ id: String) -> String {
-        #"committed: ?\{ ?NewObjectSave\.freshStoreFinds ?\{ ?\$0\.\#(lookup)\( ?withIdentifier: ?\#(id) ?\) ?!= ?nil ?\} ?\}"#
+    /// The `committed` check the save sites pass: a store made after the failure looks the object
+    /// up and compares it (`reminderCheck` / `listCheck`, pinned in
+    /// `testTheCheckReadsANewStoreAndNothingElse`).
+    private func freshCheck(_ check: String, _ object: String) -> String {
+        #"committed: ?\{ ?NewObjectSave\.freshStoreFinds\( ?NewObjectSave\.\#(check)\( ?\#(object) ?\) ?\) ?\}"#
     }
 
     /// The `report` closure the save sites pass: every outcome goes to `logNewObjectOutcome`.
@@ -295,7 +357,7 @@ final class NewObjectSaveTests: XCTestCase {
         }
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
         XCTAssertEqual(try matches(#"NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
-                                   + freshCheck("calendarItem", #"reminder\.calendarItemIdentifier"#)
+                                   + freshCheck("reminderCheck", "reminder")
                                    + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?"#
                                    + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\) ?\}$"#,
                                    in: try body(of: "func saveNewReminder(", in: code)).count, 1, wrapper)
@@ -327,7 +389,7 @@ final class NewObjectSaveTests: XCTestCase {
             let body = segment(of: code, at: construction.start)
             XCTAssertEqual(try matches(#"saveCalendar\( ?\#(name) ?,"#, in: body).count, 2, body)
             XCTAssertEqual(try matches(#"if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
-                                       + freshCheck("calendar", #"\#(name)\.calendarIdentifier"#)
+                                       + freshCheck("listCheck", name)
                                        + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?"#
                                        + report(#""""#, #"\#(name)\.calendarIdentifier"#)
                                        + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?markNeedsRefresh\( ?\) ?return CreateCalendarResult\( ?calendar: ?\#(name) ?, ?isDuplicate: ?false ?\) ?\}"#,
@@ -343,13 +405,22 @@ final class NewObjectSaveTests: XCTestCase {
     /// one that saved (which finds its own pending insert, 6 of 6 on device). So the body of
     /// `freshStoreFinds` is pinned whole: one new `EKEventStore()`, released with its pool, nil
     /// when it has no sources, and the closure given that store and nothing else. It is the only
-    /// `EKEventStore()` in its file, and the two save sites are its only callers.
+    /// `EKEventStore()` in its file, and the two save sites are its only callers. The closures
+    /// they hand it (`reminderCheck`, `listCheck`) are pinned too: what they look up in that
+    /// store, by which identifier, and that they compare it with the object as it was saved.
     func testTheCheckReadsANewStoreAndNothingElse() throws {
         let code = try code()
-        XCTAssertEqual(try matches(#"func freshStoreFinds\( ?_ find: ?\( ?EKEventStore ?\) ?-> ?Bool ?\) ?-> ?Bool\? ?\{"#, in: code).count, 1)
-        let body = try body(of: "func freshStoreFinds(", in: code)
-        XCTAssertEqual(try matches(#"^\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : find\( ?store ?\) ?\} ?\}$"#,
-                                   in: body).count, 1, body)
+        XCTAssertEqual(try matches(#"func freshStoreFinds\( ?_ check: ?\( ?EKEventStore ?\) ?-> ?Found ?\) ?-> ?Found\? ?\{"#, in: code).count, 1)
+        let finds = try body(of: "func freshStoreFinds(", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : check\( ?store ?\) ?\} ?\}$"#,
+                                   in: finds).count, 1, finds)
+        // What each site's check looks up in that store, and what it compares the object with.
+        let reminderCheck = try body(of: "func reminderCheck(_ reminder: EKReminder) -> (EKEventStore) -> Found", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?\{ ?check\( ?Fields\( ?reminder: ?reminder ?\) ?, ?against: ?\( ?\$0\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?as\? ?EKReminder ?\)\.map\( ?Fields\.init\( ?reminder:\) ?\) ?\) ?\} ?\}$"#,
+                                   in: reminderCheck).count, 1, reminderCheck)
+        let listCheck = try body(of: "func listCheck(_ list: EKCalendar) -> (EKEventStore) -> Found", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?\{ ?check\( ?Fields\( ?list: ?list ?\) ?, ?against: ?\$0\.calendar\( ?withIdentifier: ?list\.calendarIdentifier ?\)\.map\( ?Fields\.init\( ?list:\) ?\) ?\) ?\} ?\}$"#,
+                                   in: listCheck).count, 1, listCheck)
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CheICalMCP/EventKit/NewObjectSave.swift")
         XCTAssertEqual(try matches(#"EKEventStore ?(?:\.init ?)?\("#, in: stripped(try String(contentsOf: file, encoding: .utf8))).count, 1)
@@ -387,9 +458,11 @@ final class NewObjectSaveTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(seen, 0, "the pattern finds the lines it guards")
-        for nested in [#""\(list.joined(separator: ", "))""#, #""\(a ?? "x")""#] {
+        for nested in [#""\(list.joined(separator: ", "))""#, #""\(a ?? "x")""#, #""\(f(x) ?? "y")""#] {
             XCTAssertNotNil(nested.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression), nested)
         }
+        // The stated limit: two levels of parentheses before the quote are not found.
+        XCTAssertNil(#""\(f(g(x)) ?? "y")""#.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression))
         XCTAssertNil(#""\(handler)(\(identifier))""#.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression))
     }
 
