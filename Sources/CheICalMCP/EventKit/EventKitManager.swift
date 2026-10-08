@@ -425,7 +425,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // tried, a failed one was not written by a later save (see NewObjectSave).
         if NewObjectSave.keepsFailedInsert(entityType) {
             try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
-                                  committed: { NewObjectSave.freshStoreFinds { $0.calendar(withIdentifier: calendar.calendarIdentifier) != nil } },
+                                  committed: { NewObjectSave.freshStoreFinds(NewObjectSave.listCheck(calendar)) },
                                   discard: { try eventStore.removeCalendar(calendar, commit: false) },
                                   report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
         } else {
@@ -1791,7 +1791,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// path runs (the create's result and undo entry, the delete-undo's restore).
     private func saveNewReminder(_ reminder: EKReminder, handler: String) throws {
         try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
-                              committed: { NewObjectSave.freshStoreFinds { $0.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil } },
+                              committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
                               discard: { try eventStore.remove(reminder, commit: false) },
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
     }

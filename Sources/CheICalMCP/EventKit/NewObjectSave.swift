@@ -4,26 +4,35 @@ import EventKit
 /// of the store unless a store made after the failure finds it. Behind closures (the
 /// closure-seam variant, #182), so the order is tested without EventKit.
 ///
-/// Found is success: when a new store finds the object after the save threw, the save committed,
-/// so the object is kept and `run` returns. Every caller then goes on as after a save:
-/// `create_reminder` returns the reminder and records its undo entry, `create_calendar` returns
-/// the list, delete-undo reports the restore and consumes its record, and each marks the store
-/// for a refresh.
-///
-/// Not found is a discard: the caller is told the save failed, and taking the object out keeps
-/// the store consistent with that answer. Left in, it would be written by the next save of any
-/// tool with no undo record (#261); a retry of delete-undo would also recreate it a second time
-/// (`create_reminder` and `create_calendar` first look for an item with the same title in the
-/// same list or of the same type, and return it).
-///
-/// No answer (the new store has no sources) is discarded too. This is the one exception to the
-/// #261 rule "no defensive discard without probe evidence", tracked in #289: nothing shows that
-/// such a save did not commit. Grounds: the caller has already been told the save failed; on
-/// device a new store had no sources only with about ten stores that have read their sources
-/// alive in one process, while the server keeps one such store (`EventKitManager`; the store
-/// made at startup only reads the authorization status) plus the one this check makes and
-/// releases; and with a long-lived store alive every check answered, up to 100 in a row in one
-/// process, 280 over four runs.
+/// The new store's answer (`Found`) decides, comparing its copy with the object as it was saved
+/// (`Fields`: a reminder's title, list and due date to the minute; a list's title and account):
+/// - found as saved is success: the save committed, so the object is kept and `run` returns.
+///   Every caller then goes on as after a save: `create_reminder` returns the reminder and
+///   records its undo entry, `create_calendar` returns the list, delete-undo reports the restore
+///   and consumes its record, and each marks the store for a refresh.
+/// - found but differing: something was written, maybe not all of it. The item is kept
+///   (removing it would delete what was written) and the save's error is rethrown, so a create
+///   reports no success and records no undo entry, and a delete-undo keeps its record.
+/// - not found is a discard: the caller is told the save failed, and taking the object out keeps
+///   the store consistent with that answer. Left in, it would be written by the next save of any
+///   tool with no undo record (#261), and a retried delete-undo would recreate it a second time.
+///   The creates differ there only as far as their duplicate checks reach: `create_reminder`
+///   first looks for an incomplete reminder of the same title in the same list whose due date
+///   agrees within a minute (or neither has one), `create_calendar` for a calendar of the same
+///   title and type, and either returns what it finds. Whether those checks see an item still
+///   pending was read from the code, not tried.
+/// - no answer (the new store has no sources) is a discard too. This is the one exception to the
+///   #261 rule "no defensive discard without probe evidence", tracked in #289: nothing shows that
+///   such a save did not commit. Grounds: the caller has already been told the save failed; on
+///   device a new store had no sources only with about ten stores that have read their sources
+///   alive in one process, while the server keeps one such store (`EventKitManager`; the store
+///   made at startup only reads the authorization status) plus the one this check makes and
+///   releases; and with a long-lived store alive every check answered: up to 100 in a row in one
+///   process, 280 over four runs (round 4), and 200 more over two runs in which that store was
+///   held alive explicitly through the loop and read after it (round 5). The exception assumes
+///   that a failing save and a new store without sources are unrelated; nothing on device shows
+///   that (a save broken by a lost connection to the calendar daemon might also leave a new store
+///   without sources).
 ///
 /// Checked on device, iCloud only (2026-10-07 and 08). The commit failures were induced: an event
 /// was staged with `save(_:span:commit: false)` into a calendar deleted through a second store,
@@ -46,9 +55,15 @@ import EventKit
 ///   left in place and kept by the next save. A store made while about ten others that have read
 ///   their sources are alive in the process has no sources and finds nothing: `freshStoreFinds`
 ///   then gives no answer, and the object is discarded (`unchecked`). The check's own stores are
-///   released: with a long-lived store alive, every check answered, up to 100 in a row in one
-///   process, 280 over four runs, and 200 over two more runs with that store held alive
-///   explicitly through the loop.
+///   released (the counts above).
+/// - the comparison, on device (round 6): each new store's copy of a clean save compared as
+///   saved (a reminder with no due date, one with a zoned due date, a recurrence and alarms, one
+///   with a date-only due date, one with a floating due date, and a list; 5 of 5). Saved through
+///   this helper with a throw added after `save` returned, the same shapes were found as saved,
+///   kept, and the call succeeded (5 of 5); the saving store's copy then reported `isNew` and
+///   `hasChanges` false, and the next save did not write it again. Renamed through a second store
+///   after the commit, then thrown, a reminder (2 of 2) and a list were found differing in their
+///   title, kept, and the save's error was rethrown.
 ///
 /// Refused by validation, with no induced failure: a reminder with no list (the save threw
 /// EKErrorDomain 1) or a list with no source (EKErrorDomain 14) was not found by a new store.
@@ -64,30 +79,37 @@ import EventKit
 /// failed save made the next save fail (EKCADErrorDomain 1001) and lose what that save wrote.
 ///
 /// Not covered (closed list):
-/// - a real save that throws after the object reached the store. The 4 runs above threw only
-///   after `save` returned. A throw inside `save`, after the commit but while the object may still
+/// - a real save that throws after the object reached the store. The runs above threw only after
+///   `save` returned. A throw inside `save`, after the commit but while the object may still
 ///   hold an identifier that is not the saved one, was not seen. If the check misses such an
 ///   object (no answer, a read behind the commit, or a lookup by an identifier that was never the
 ///   saved one), the discard deletes the saved object at the next write by any tool. For
 ///   `create_reminder`, a retry in between would find that reminder by its title and report it as
 ///   existing, and the staged removal would still delete it (read from the code, not tried).
-/// - found is success on a bare identifier lookup: the new store's item is not compared with the
-///   object (title, list, alarms, recurrence), so an object only partly written would count as
-///   saved. The found branch is covered by closure tests only; no device run had a real throw
-///   inside `save`.
+/// - the comparison covers the title, the list and the due date (a list: title and account), not
+///   the notes, alarms, recurrence or location alarm, so an object written without only those
+///   would count as saved. No device run had a real throw inside `save`; the found branches were
+///   reached only with throws added after `save` returned, when the saving store's copy was
+///   already clean. A throw inside `save` may leave that copy pending, to be written again by the
+///   next save.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
 /// - stores other than iCloud.
 ///
-/// Every outcome is one line on stderr. The caller gets the save's error unless a new store finds
-/// the object.
+/// Every outcome is one line on stderr; the lines for a found item and for a failed removal name
+/// the save's error by domain and code. The caller gets the save's error unless a new store finds
+/// the object as it was saved.
 enum NewObjectSave {
     /// What `run` reports after a failed save, once, after the removal (if any) has run. A plain
     /// discard that succeeded after the new store did not find the object is not reported.
     enum Outcome {
-        /// A store made after the failure found the object: the save committed, then threw. The
-        /// object is kept and `run` returns, so the call succeeds.
-        case committedThenThrew
+        /// A store made after the failure found the object as it was saved (`Found.saved`): the
+        /// save committed, then threw. The object is kept and `run` returns, so the call succeeds.
+        case committedThenThrew(save: Error)
+        /// That store found an item under the identifier, but the named fields differ from the
+        /// object (`Found.differs`): something was written, maybe not all of it. The item is kept
+        /// and the save's error is rethrown.
+        case committedButDiffers(fields: [String], save: Error)
         /// That store had no sources and could not answer; the object was removed anyway, and the
         /// removal ran without an error.
         case unchecked
@@ -104,14 +126,67 @@ enum NewObjectSave {
         type == .reminder
     }
 
-    /// Whether a store made now finds the object, or nil when that store has no sources and
-    /// cannot answer. It shares nothing in memory with the store that saved, which finds its own
-    /// pending insert. The store is released when the pool drains. `NewObjectSaveTests` pins this
-    /// body: one new store, nothing else, and nil when it has no sources.
-    static func freshStoreFinds(_ find: (EKEventStore) -> Bool) -> Bool? {
+    /// What a store made after the failure holds under the object's identifier.
+    enum Found: Equatable {
+        /// An item whose compared fields (`Fields`) agree with the object: the save committed.
+        case saved
+        /// An item whose fields named here differ from the object.
+        case differs([String])
+        /// Nothing.
+        case absent
+    }
+
+    /// The fields compared between the object and a new store's copy, by name. Values are
+    /// compared, never printed: only the names reach stderr.
+    struct Fields: Equatable {
+        let values: [String: String]
+
+        init(_ values: [String: String]) {
+            self.values = values
+        }
+
+        /// A reminder: its title, its list, and its due date to the minute (no seconds and no
+        /// zone; a date-only due has no time).
+        init(reminder: EKReminder) {
+            let due = reminder.dueDateComponents.map { due in
+                [due.year, due.month, due.day, due.hour, due.minute].map { $0.map(String.init) ?? "-" }.joined(separator: " ")
+            }
+            self.init(["title": reminder.title ?? "", "list": reminder.calendar?.calendarIdentifier ?? "", "due": due ?? ""])
+        }
+
+        /// A reminder list: its title and its account (source).
+        init(list: EKCalendar) {
+            self.init(["title": list.title, "account": list.source?.sourceIdentifier ?? ""])
+        }
+    }
+
+    /// `saved` when the new store's copy has the object's values, `differs` with every name
+    /// whose value differs or is on one side only, `absent` when there is no copy.
+    static func check(_ saved: Fields, against stored: Fields?) -> Found {
+        guard let stored else { return .absent }
+        let differing = Set(saved.values.keys).union(stored.values.keys).filter { saved.values[$0] != stored.values[$0] }
+        return differing.isEmpty ? .saved : .differs(differing.sorted())
+    }
+
+    /// The check `saveNewReminder` hands `freshStoreFinds`: the item under the reminder's
+    /// identifier, compared with the reminder as it was saved.
+    static func reminderCheck(_ reminder: EKReminder) -> (EKEventStore) -> Found {
+        { check(Fields(reminder: reminder), against: ($0.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder).map(Fields.init(reminder:))) }
+    }
+
+    /// The check `createCalendar` hands `freshStoreFinds` for a reminder list.
+    static func listCheck(_ list: EKCalendar) -> (EKEventStore) -> Found {
+        { check(Fields(list: list), against: $0.calendar(withIdentifier: list.calendarIdentifier).map(Fields.init(list:))) }
+    }
+
+    /// What a store made now holds, or nil when that store has no sources and cannot answer. It
+    /// shares nothing in memory with the store that saved, which finds its own pending insert.
+    /// The store is released when the pool drains. `NewObjectSaveTests` pins this body: one new
+    /// store, nothing else, and nil when it has no sources.
+    static func freshStoreFinds(_ check: (EKEventStore) -> Found) -> Found? {
         autoreleasepool {
             let store = EKEventStore()
-            return store.sources.isEmpty ? nil : find(store)
+            return store.sources.isEmpty ? nil : check(store)
         }
     }
 
@@ -127,19 +202,24 @@ enum NewObjectSave {
             && discard.domain == EKErrorDomain && discard.code == EKError.Code.calendarReadOnly.rawValue
     }
 
-    /// Runs `save`. When it throws, asks `committed`. True reports `.committedThenThrew`, keeps
-    /// the object and returns: the save committed, so the caller goes on as after a save. False
-    /// or nil runs `discard` and then reports one outcome: `.unchecked` (nil, and the removal
-    /// ran), `.nothingPending` or `.discardFailed`; then rethrows the save's error.
-    static func run(save: () throws -> Void, committed: () -> Bool?, discard: () throws -> Void,
+    /// Runs `save`. When it throws, asks `committed`. `.saved` reports `.committedThenThrew`,
+    /// keeps the object and returns: the save committed, so the caller goes on as after a save.
+    /// `.differs` reports `.committedButDiffers`, keeps the item and rethrows the save's error.
+    /// `.absent` or nil runs `discard` and then reports one outcome: `.unchecked` (nil, and the
+    /// removal ran), `.nothingPending` or `.discardFailed`; then rethrows the save's error.
+    static func run(save: () throws -> Void, committed: () -> Found?, discard: () throws -> Void,
                     report: (Outcome) -> Void) throws {
         do {
             try save()
         } catch {
             let found = committed()
-            if found == true {
-                report(.committedThenThrew)
+            if found == .saved {
+                report(.committedThenThrew(save: error))
                 return
+            }
+            if case .differs(let fields)? = found {
+                report(.committedButDiffers(fields: fields, save: error))
+                throw error
             }
             do {
                 try discard()
@@ -158,8 +238,10 @@ enum NewObjectSave {
         let site = "\(handler)(\(identifier))"
         func code(_ error: Error) -> String { "\((error as NSError).domain) \((error as NSError).code)" }
         switch outcome {
-        case .committedThenThrew:
-            return "\(site): the save threw, but a new store finds the item, so it was saved; it is kept and the call succeeds"
+        case .committedThenThrew(let save):
+            return "\(site): the save threw \(code(save)), but a new store finds the item as it was saved, so it was saved; it is kept and the call succeeds"
+        case .committedButDiffers(let fields, let save):
+            return "\(site): the save threw \(code(save)), and a new store finds the item, but its \(fields.joined(separator: ", ")) differ from what was saved, so it may be only partly written; it is kept and the save's error is reported"
         case .unchecked:
             return "\(site): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing"
         case .nothingPending:
