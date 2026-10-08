@@ -419,7 +419,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendar.cgColor = parseColor(colorHex)
         }
 
-        try eventStore.saveCalendar(calendar, commit: true)
+        // #261: a reminder list whose save failed may stay pending and be written by the next
+        // save, so it is discarded unless a new store finds it. An event calendar is saved as
+        // before: in the failure classes tried, a failed one was not written by a later save
+        // (see NewObjectSave).
+        if NewObjectSave.keepsFailedInsert(entityType) {
+            try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
+                                  committed: { NewObjectSave.freshStoreFinds { $0.calendar(withIdentifier: calendar.calendarIdentifier) != nil } },
+                                  discard: { try eventStore.removeCalendar(calendar, commit: false) },
+                                  ifSaved: .rethrow,
+                                  report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
+        } else {
+            try eventStore.saveCalendar(calendar, commit: true)
+        }
         markNeedsRefresh()
         return CreateCalendarResult(calendar: calendar, isDuplicate: false)
     }
@@ -655,6 +667,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.structuredLocation = structured
         }
 
+        // #261: no discard; in the failure classes tried on device, a failed new event was not
+        // written by a later save (see NewObjectSave).
         try eventStore.save(event, span: .thisEvent)
 
         // #182 — two-pass exclusion (resolve all → remove all); any failure
@@ -1393,6 +1407,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let alarms = (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:))
         let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
+        // #261: no discard for a failed copy (see EventCopyOperation.saveCopy).
         try EventCopyOperation.saveCopy(carrying: alarms,
                                         logFailure: { Self.logCopyFailure(handler: "copyEvent", identifier: identifier, error: $0) }) {
             try eventStore.save(newEvent, span: .thisEvent)
@@ -1473,7 +1488,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // A refused copy names its location, email or sound alarms; the source is removed
-                // only after the copy is saved (#253 verify round 2, D1).
+                // only after the copy is saved (#253 verify round 2, D1). #261: no discard for a
+                // failed copy (see EventCopyOperation.saveCopy).
                 try EventCopyOperation.saveCopy(carrying: planned.alarms,
                                                 logFailure: { Self.logCopyFailure(handler: isSplit ? "moveEvent.split" : "moveEvent.fallbackCopy",
                                                                                   identifier: identifier, error: $0) }) {
@@ -1760,13 +1776,35 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        try eventStore.save(reminder, commit: true)
+        try saveNewReminder(reminder, ifSaved: .rethrow, handler: "createReminder")
         markNeedsRefresh()
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
         return result
+    }
+
+    /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
+    /// the save fails and a new store does not find the reminder, it is removed from the store
+    /// without committing, so the next save by any tool does not write it (`NewObjectSave`). If
+    /// that store finds it, it was saved: `create_reminder` still reports the save's error
+    /// (`.rethrow`), delete-undo takes it as restored (`.accept`).
+    private func saveNewReminder(_ reminder: EKReminder, ifSaved: NewObjectSave.IfSaved, handler: String) throws {
+        try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+                              committed: { NewObjectSave.freshStoreFinds { $0.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil } },
+                              discard: { try eventStore.remove(reminder, commit: false) },
+                              ifSaved: ifSaved,
+                              report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
+    }
+
+    /// What a failed new-object save left (#261), on stderr only, one escaped line per failure.
+    /// A failed discard is written as `<handler>.discard(<id>) failed: …` with both errors' domain
+    /// and code, and means the object may still be written by the next save; the other outcomes
+    /// are notes. `NewObjectSaveTests` pins this body.
+    private static func logNewObjectOutcome(handler: String, identifier: String, _ outcome: NewObjectSave.Outcome) {
+        let note = NewObjectSave.note(for: outcome, handler: handler, identifier: identifier)
+        FileHandle.standardError.write(Data((EventKitErrorSanitizer.escapeForStderr(note) + "\n").utf8))
     }
 
     func updateReminder(
@@ -2077,7 +2115,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
-            // Undo delete = recreate from snapshot
+            // Undo delete = recreate from snapshot. #261: no discard; in the failure classes tried
+            // on device, a failed new event was not written by a later save (see NewObjectSave).
             let event = EKEvent(eventStore: eventStore)
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
@@ -2138,8 +2177,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate. The new reminder is created only after the lists are read.
+            // #261: a save that threw but that a new store finds is taken as the restore, so the
+            // record is consumed and a retry does not make a second copy.
             let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
-            try eventStore.save(reminder, commit: true)
+            try saveNewReminder(reminder, ifSaved: .accept, handler: "undo.deleteReminder")
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
 
