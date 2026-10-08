@@ -2155,7 +2155,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Undo delete = recreate (`restoreDeletedReminder`, shared with the batch arm).
         case .deleteReminder(let snapshot):
-            return restoredReminderMessage(try await restoreDeletedReminder(snapshot))
+            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
@@ -2186,7 +2186,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     guard case .deleteReminder(let snapshot) = operation else { return try await self.executeUndo(operation) }
                     let restored = try await self.restoreDeletedReminder(snapshot)
                     differing.append((shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers))
-                    return self.restoredReminderMessage(restored)
+                    return Self.restoredReminderMessage(restored)
                 })
             return "Undone batch (\(results.count) operations)" + NewObjectSave.batchNote(differing)
         }
@@ -2206,9 +2206,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// The message of a delete-undo: the restore, then `NewObjectSave.undoSuffix` naming the fields
-    /// the store holds differently, if any.
-    func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
-        "Undone: restored reminder '\(undoVisibleTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
+    /// the store holds differently, if any. The title is shown through `undoShownTitle` (quotes
+    /// replaced, control characters dropped, capped), so a title that holds the note's wording
+    /// stays inside its quotes and cannot pass for the note (`NewObjectSaveTests`).
+    static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
+        "Undone: restored reminder '\(undoShownTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
     }
 
     /// Execute an operation again (for redo). Same as the original mutation.

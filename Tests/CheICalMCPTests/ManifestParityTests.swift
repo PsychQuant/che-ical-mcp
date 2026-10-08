@@ -146,6 +146,29 @@ final class ManifestParityTests: XCTestCase {
 
     /// #231: `alarms[].minutes_before` flips EventKit's sign (EventKit: negative =
     /// before), so both places a client first reads about the field state the sign.
+    /// #261: the create tools say that a save reported as an error but found saved succeeds, and
+    /// that `store_differs` names the differing fields with the exact keys `NewObjectSave.Fields`
+    /// compares; undo says its message names them. Both in defineTools() and in the manifest.
+    func testCreateAndUndoDescriptionsNameTheStoreDiffersKeys() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        func declared(_ name: String) -> String { CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? "" }
+        func summary(_ name: String) -> String { entries.first { $0["name"] as? String == name }?["description"] as? String ?? "" }
+        for key in NewObjectSave.reminderFieldNames {
+            XCTAssertTrue(declared("create_reminder").contains("`\(key)`"), "create_reminder lists \(key)")
+        }
+        for key in NewObjectSave.listFieldNames {
+            XCTAssertTrue(declared("create_calendar").contains("`\(key)`"), "create_calendar lists \(key)")
+        }
+        for name in ["create_reminder", "create_reminders_batch", "create_calendar"] {
+            XCTAssertTrue(declared(name).contains("store_differs") && declared(name).contains("note"), "defineTools() \(name)")
+            XCTAssertTrue(summary(name).contains("store_differs"), "mcpb/manifest.json \(name): \(summary(name))")
+        }
+        XCTAssertTrue(declared("undo").contains("names those fields"), declared("undo"))
+        XCTAssertTrue(summary("undo").contains("names the fields"), summary("undo"))
+    }
+
     func testReminderReadToolsStateTheSignOfMinutesBefore() throws {
         let sign = "positive = before the due date, negative = after"
         let data = try Data(contentsOf: try locateManifest())
