@@ -235,7 +235,8 @@ final class UndoBatchWiringTests: XCTestCase {
     /// `undoBatchMember`, which restores a deleted reminder through `restoreDeletedReminder` and
     /// passes the names it returns as data (`UndoRestoredDifference`); every other member runs
     /// `executeUndo`. The batch text is built from those names (`batchUndoneMessage(…, differing:)`,
-    /// which calls `NewObjectSave.batchNote`), and no member text is read back: the arm uses only
+    /// which calls `UndoRestoredDifference.sentences`, worded by `NewObjectSave.differingFieldsNote`),
+    /// and no member text is read back: the arm uses only
     /// the count of the member texts.
     func testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData() throws {
         let batch = try Self.undoBatchBody()

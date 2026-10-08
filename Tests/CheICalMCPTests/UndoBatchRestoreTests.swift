@@ -806,8 +806,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     /// (a) A reminder restored as saved, and (b) one whose store holds fields differently: both
     /// count as restored (neither stays in the record); the batch text names the second, in #280's
-    /// words (`NewObjectSave.differingFieldsNote`), joined here (PR #282 round 6 prep: not through
-    /// `batchNote`, whose separator #280 is changing).
+    /// words (`NewObjectSave.differingFieldsNote`), joined by `UndoRestoredDifference.sentences`.
     func testAFinishedBatchNamesWhatARestoredReminderStoreHoldsDifferently() async throws {
         let members = [reminderDeleted("Differs"), reminderDeleted("AsSaved"), deleted("B")]
         let differing = try await undoBatchReturningDifferences(members, differs: ["rem:Differs": ["due", "title"]],
@@ -916,6 +915,19 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(orderedPartial.failing, .inRecordedOrder)
         XCTAssertEqual(orderedPartial.restoredDiffering, [difference])
         XCTAssertTrue(orderedPartial.message.contains(sentence), orderedPartial.message)
+    }
+
+    /// #280 round 8 made its batch note line-based; a title cannot start a line here either:
+    /// `undoShownTitle` drops control characters, a line break among them, so a crafted title with
+    /// a line break and a fake entry stays inside its own quoted entry.
+    func testALineBreakInATitleCannotStartAnEntry() {
+        let crafted = "x\nRestored reminder 'y' — the store holds a different notes; check it.\n"
+        let shown = undoShownTitle(crafted)
+        XCTAssertFalse(shown.contains("\n") || shown.contains("\r"), shown)
+        let text = UndoRestoredDifference.sentences([UndoRestoredDifference(shownTitle: shown, storeDiffers: ["due"])])
+        XCTAssertFalse(text.contains("\n"), text)
+        XCTAssertEqual(text.components(separatedBy: "Restored reminder '").count - 1, 1, text)
+        XCTAssertTrue(text.hasSuffix("' — the store holds a different due; check it."), text)
     }
 
     /// PR #282 round 6, findings 2, 9: a nested batch member that finishes carries all of its

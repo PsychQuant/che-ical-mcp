@@ -17,8 +17,9 @@ import EventKit
 ///   `differingFieldsNote`: `store_differs` and a `note` in a create's response
 ///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`, the
 ///   title shown through `undoShownTitle` so it cannot pass for the note), and in a batch undo one
-///   line per restored reminder with differing fields (`batchNote`, built from the names
-///   `EventKitManager.restoreDeletedReminder` returns, never from message text). Names only, never
+///   entry per restored reminder with differing fields (`UndoRestoredDifference.sentences`, built
+///   from the names `EventKitManager.restoreDeletedReminder` returns, never from message text; PR
+///   #282 joins the entries itself). Names only, never
 ///   values. The difference may come from a partial write or from an edit made elsewhere between
 ///   the commit and the check (the only device case was the second: a rename through another
 ///   store); a partial write was not seen. The caller has the item's identifier and, for a
@@ -134,8 +135,9 @@ import EventKit
 ///   normalizes (host case, a trailing slash, percent-encoding); priority values other than 0 and
 ///   5; another calendar system; text the store normalizes; sources other than iCloud.
 /// - behaviour of the batch undo arm: its pins show its shape (each delete member through
-///   `restoreDeletedReminder`, the names collected with `undoShownTitle` titles, `batchNote` from
-///   them), not a run; pairing each member with its names is tested on #282's side. The
+///   `restoreDeletedReminder`, the names collected with `undoShownTitle` titles,
+///   `UndoRestoredDifference.sentences` from them), not a run; pairing each member with its names
+///   is tested on #282's side. The
 ///   `create_calendar` response's `store_differs` is pinned in source only (no seam fakes its
 ///   store), and a `create_reminders_batch` response's totals do not count rows that carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
@@ -305,7 +307,8 @@ enum NewObjectSave {
 
     /// The one formatter for the note that names the compared fields the store holds differently,
     /// or nil when none: "the store holds a different due, title; check it". Names only, never
-    /// values. Every caller builds its wording on it (`responseFields`, `undoSuffix`, `batchNote`).
+    /// values. Every caller builds its wording on it (`responseFields`, `undoSuffix`, and the batch
+    /// undo's `UndoRestoredDifference.sentences`).
     static func differingFieldsNote(_ fields: [String]) -> String? {
         fields.isEmpty ? nil : "the store holds a different \(fields.joined(separator: ", ")); check it"
     }
@@ -322,15 +325,6 @@ enum NewObjectSave {
     /// What a delete-undo message adds after the restore: " — <note>", or nothing.
     static func undoSuffix(_ fields: [String]) -> String {
         differingFieldsNote(fields).map { " — \($0)" } ?? ""
-    }
-
-    /// What a batch undo message adds: one line per restored member with differing fields,
-    /// "restored reminder '<title>' — <note>", each after a line break. Built from the names each
-    /// member returned (`EventKitManager.restoreDeletedReminder`), never from member text. Titles
-    /// come in already shown (`undoShownTitle`: quotes replaced, control characters dropped), so a
-    /// title can neither close its quotes nor start a line of its own.
-    static func batchNote(_ members: [(shownTitle: String, storeDiffers: [String])]) -> String {
-        members.compactMap { member in differingFieldsNote(member.storeDiffers).map { "\nrestored reminder '\(member.shownTitle)' — \($0)" } }.joined()
     }
 
     /// The stderr line for an outcome (without the newline; the caller escapes it). The errors of
