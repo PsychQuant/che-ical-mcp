@@ -46,7 +46,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: ["title": .string("differs")]))
         XCTAssertEqual(result["action"] as? String, "created")
         XCTAssertEqual(result["store_differs"] as? [String], ["due", "title"])
-        XCTAssertEqual(result["note"] as? String, "Saved, but the store holds a different due, title; check it.")
+        XCTAssertEqual(result["note"] as? String, "Saved, but the store holds a different due, title; check it. Creating it again with the same parameters may make a second copy.")
         let plain = try object(await server.executeToolCall(name: "create_reminder", arguments: ["title": .string("new")]))
         XCTAssertNil(plain["store_differs"])
         XCTAssertNil(plain["note"])

@@ -15,13 +15,17 @@ import EventKit
 /// - found, but some compared fields differ: the item counts as saved too, and `run` returns the
 ///   names of those fields. The caller goes on as above and names them, always through
 ///   `differingFieldsNote`: `store_differs` and a `note` in a create's response
-///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`), and
-///   in a batch undo one entry per restored reminder with differing fields (`batchNote`, built
-///   from the names `EventKitManager.restoreDeletedReminder` returns, never from message text).
-///   Names only, never values. The difference may come from a partial write or from an edit made elsewhere between
+///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`, the
+///   title shown through `undoShownTitle` so it cannot pass for the note), and in a batch undo one
+///   line per restored reminder with differing fields (`batchNote`, built from the names
+///   `EventKitManager.restoreDeletedReminder` returns, never from message text). Names only, never
+///   values. The difference may come from a partial write or from an edit made elsewhere between
 ///   the commit and the check (the only device case was the second: a rename through another
-///   store); a partial write was not seen. Keeping the item, and its undo entry or the consumed
-///   record, means a retry cannot make a second copy, and the caller has the item's identifier.
+///   store); a partial write was not seen. The caller has the item's identifier and, for a
+///   create, its undo entry. A retried delete-undo cannot make a second copy, since its record is
+///   consumed. A retried create can: its duplicate check matches the title, list and due date,
+///   which may be among the differing fields, so the create note says that creating it again with
+///   the same parameters may make a second copy.
 /// - not found: the object is discarded and the save's error rethrown. The caller is told the save
 ///   failed, and taking the object out keeps the store consistent with that answer. Left in, it
 ///   would be written by the next save of any tool with no undo record (#261), and a retried
@@ -75,9 +79,13 @@ import EventKit
 /// - 09:10, comparing every field above: clean saves of 8 reminder shapes and a list compared as
 ///   saved with no names (9 of 9). The shapes: no due date; a zoned due with a recurrence and a
 ///   relative, an absolute and a location alarm; a date-only due; a floating timed due; notes,
-///   priority, URL, a timed start, a zoned due, an alarm and an every-other-week rule; completed,
-///   with a completion date; a date-only start written before a zoned due; a title and notes with
-///   leading and trailing spaces and a newline. Saved with a throw added after `save` returned,
+///   priority 5, one URL (`https://example.com/che-ical-261`), a timed start, a zoned due, an
+///   alarm and an every-other-week rule; completed, with a completion date; a date-only start
+///   written first and a zoned due then set directly (in memory the due then reads floating, as it
+///   does when a date-only start comes after it; delete-undo's own path, `writeZonedDue`, was not
+///   run on device); a title and notes with leading and trailing spaces and a newline. Every other
+///   shape had priority 0. All in the host's zone, Asia/Taipei (+08:00, no daylight saving), on
+///   iCloud. Saved with a throw added after `save` returned,
 ///   all 9 were found as saved with no names and the call succeeded; the saving store's copy of
 ///   each reminder was clean (8 of 8 reminders), the next saves succeeded (12 of 12), and a
 ///   separate process saw no item twice. Renamed through a second store after the commit, then
@@ -103,8 +111,10 @@ import EventKit
 /// `Fields` or into this list.
 /// - a reminder: (1) the completion date (only whether it is completed); (2) what each alarm holds:
 ///   its offset or date, its location (title, coordinates, radius), proximity, sound and email
-///   (only how many alarms there are); (3) what each recurrence rule holds: frequency, interval,
-///   end, days, months, set positions and week start (only how many rules there are); (4) the
+///   (only how many alarms there are); (3) what each recurrence rule holds: its frequency,
+///   interval, end (date or occurrence count), daysOfTheWeek (with week numbers), daysOfTheMonth,
+///   daysOfTheYear, weeksOfTheYear, monthsOfTheYear, setPositions and firstDayOfTheWeek (only how
+///   many rules there are); (4) the
 ///   start date's time zone and the reminder's own time zone; (5) seconds and smaller units of
 ///   the start and due date, and whether a start at 00:00 had a time (a date-only start reads
 ///   back as 00:00, so the two compare equal); (6) the calendar system of the date components.
@@ -118,8 +128,16 @@ import EventKit
 ///   saved one), the discard deletes it at the next write by any tool; a `create_reminder` retried
 ///   in between would find the reminder by its title and report it as existing, and the staged
 ///   removal would still delete it (read from the code, not tried).
-/// - a store that hands a compared field back changed (other sources, other time zones, other
-///   calendar systems, text the store normalizes): the call still succeeds, with that field named.
+/// - a store that hands a compared field back changed: the call still succeeds, with that field
+///   named, a false note. Not tried, and so the likely sources of one: a time-zone alias (GMT and
+///   UTC, Asia/Calcutta and Asia/Kolkata) or a zone the host does not use; a URL the store
+///   normalizes (host case, a trailing slash, percent-encoding); priority values other than 0 and
+///   5; another calendar system; text the store normalizes; sources other than iCloud.
+/// - behaviour of the batch undo arm: its pins show its shape (each delete member through
+///   `restoreDeletedReminder`, the names collected with `undoShownTitle` titles, `batchNote` from
+///   them), not a run; pairing each member with its names is tested on #282's side. The
+///   `create_calendar` response's `store_differs` is pinned in source only (no seam fakes its
+///   store), and a `create_reminders_batch` response's totals do not count rows that carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
 /// - stores other than iCloud.
@@ -163,6 +181,12 @@ enum NewObjectSave {
         /// Nothing.
         case absent
     }
+
+    /// The names `Fields` compares, and so the only names a `store_differs` can hold: for a
+    /// reminder, and for a reminder list. The tool descriptions list them (`ManifestParityTests`).
+    static let reminderFieldNames = ["title", "list", "notes", "priority", "completion", "url", "start", "due",
+                                     "due time zone", "alarm count", "recurrence rule count"]
+    static let listFieldNames = ["title", "account"]
 
     /// The fields compared between the object and a new store's copy, by name. Values are
     /// compared, never printed: only the names reach stderr.
@@ -287,9 +311,12 @@ enum NewObjectSave {
     }
 
     /// What a create response adds: `store_differs` (the names) and a `note`. Empty when none.
+    /// The note warns that a retry may duplicate the item: the duplicate checks of
+    /// `create_reminder` and `create_calendar` match the title, list and due date, which may be
+    /// among the fields the store holds differently.
     static func responseFields(_ fields: [String]) -> [String: Any] {
         guard let note = differingFieldsNote(fields) else { return [:] }
-        return ["store_differs": fields, "note": "Saved, but \(note)."]
+        return ["store_differs": fields, "note": "Saved, but \(note). Creating it again with the same parameters may make a second copy."]
     }
 
     /// What a delete-undo message adds after the restore: " — <note>", or nothing.
@@ -297,12 +324,13 @@ enum NewObjectSave {
         differingFieldsNote(fields).map { " — \($0)" } ?? ""
     }
 
-    /// What a batch undo message adds: for each restored member with differing fields,
-    /// "; restored reminder '<title>' — <note>". Built from the names each member returned
-    /// (`EventKitManager.restoreDeletedReminder`), never from member text, so a title that holds
-    /// the note's wording adds nothing. Titles come in already shown (`undoShownTitle`).
+    /// What a batch undo message adds: one line per restored member with differing fields,
+    /// "restored reminder '<title>' — <note>", each after a line break. Built from the names each
+    /// member returned (`EventKitManager.restoreDeletedReminder`), never from member text. Titles
+    /// come in already shown (`undoShownTitle`: quotes replaced, control characters dropped), so a
+    /// title can neither close its quotes nor start a line of its own.
     static func batchNote(_ members: [(shownTitle: String, storeDiffers: [String])]) -> String {
-        members.compactMap { member in differingFieldsNote(member.storeDiffers).map { "; restored reminder '\(member.shownTitle)' — \($0)" } }.joined()
+        members.compactMap { member in differingFieldsNote(member.storeDiffers).map { "\nrestored reminder '\(member.shownTitle)' — \($0)" } }.joined()
     }
 
     /// The stderr line for an outcome (without the newline; the caller escapes it). The errors of

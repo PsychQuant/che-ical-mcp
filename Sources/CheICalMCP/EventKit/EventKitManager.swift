@@ -2186,7 +2186,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Undo delete = recreate (`restoreDeletedReminder`, shared with the batch arm).
         case .deleteReminder(let snapshot):
-            return restoredReminderMessage(try await restoreDeletedReminder(snapshot))
+            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
@@ -2247,9 +2247,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// The message of a delete-undo: the restore, then `NewObjectSave.undoSuffix` naming the fields
-    /// the store holds differently, if any.
-    func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
-        "Undone: restored reminder '\(undoVisibleTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
+    /// the store holds differently, if any. The title is shown through `undoShownTitle` (quotes
+    /// replaced, control characters dropped, capped), so a title that holds the note's wording
+    /// stays inside its quotes and cannot pass for the note (`NewObjectSaveTests`).
+    static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
+        "Undone: restored reminder '\(undoShownTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
     }
 
     /// One member of a batch undo (#248). A deleted reminder is recreated through
@@ -2267,7 +2269,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])
         }
         let restored = try await restoreDeletedReminder(snapshot)
-        return UndoMemberOutcome(text: restoredReminderMessage(restored),
+        return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
                                  differing: [UndoRestoredDifference(shownTitle: undoShownTitle(restored.title),
                                                                     storeDiffers: restored.storeDiffers)])
     }
