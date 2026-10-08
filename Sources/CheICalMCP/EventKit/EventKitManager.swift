@@ -2176,8 +2176,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .deleteReminder(let snapshot):
             // Undo delete = recreate. The new reminder is created only after the lists are read.
-            // #261: a save that threw but that a new store finds counts as the restore, so the
-            // record is consumed and a retry does not make a second copy.
+            // #261: a save that threw but that a new store finds as it was saved counts as the
+            // restore, so the record is consumed and a retry does not make a second copy. One found
+            // with a compared field differing is kept and the save's error stands, so the record is
+            // kept (in a batch, as its failing member) and a retry can write a second copy.
             let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
             try saveNewReminder(reminder, handler: "undo.deleteReminder")
             markNeedsRefresh()
