@@ -181,7 +181,9 @@ final class ManifestParityTests: XCTestCase {
     /// clause passes every other test. Each clause is pinned in both places a client reads it; the
     /// phrasing may differ between them, the fact may not go.
     func testUndoDescriptionsKeepEveryClause() throws {
-        let clauses: [(what: String, declared: String, summary: String)] = [
+        // `summary` is nil for a clause the manifest summary does not carry: the summary is short,
+        // and the error counts are named only in the description (PR #282 round 4, findings 5, 10).
+        let clauses: [(what: String, declared: String, summary: String?)] = [
             ("#242: a reminder's recorded list not found",
              "the reminder list it restores into is not found under its recorded identifier",
              "a reminder's recorded list is not found"),
@@ -199,18 +201,20 @@ final class ManifestParityTests: XCTestCase {
              "a batch undo is refused before any write when an item's calendar or list is missing or read-only"),
             ("#248: the refusal counts the items",
              "the error counts the items this stops and those whose calendar or list is in place",
-             "a batch undo is refused before any write"),
+             nil),
             ("#248: giving up a batch undo drops every item",
              "giving up that undo with discard_id drops every item of the entry",
              "discarding it drops every item of the batch"),
-            ("#248: a batch undo that fails part-way keeps only the items not yet restored",
-             "A batch undo that fails part-way keeps only the items not yet restored",
-             "a batch undo that fails part-way keeps only the items not yet restored"),
+            ("#248: a batch undo that fails part-way keeps only the items not yet restored, except one no retry can restore",
+             "A batch undo that fails part-way keeps only the items not yet restored, except an item no retry can restore, which is dropped",
+             "a batch undo that fails part-way keeps only the items not yet restored, except an item no retry can restore"),
         ]
         let (declared, summary) = try descriptions(of: "undo")
         for clause in clauses {
             XCTAssertTrue(declared.contains(clause.declared), "defineTools() undo lost \(clause.what): \(declared)")
-            XCTAssertTrue(summary.contains(clause.summary), "mcpb/manifest.json undo lost \(clause.what): \(summary)")
+            if let pinned = clause.summary {
+                XCTAssertTrue(summary.contains(pinned), "mcpb/manifest.json undo lost \(clause.what): \(summary)")
+            }
         }
     }
 
@@ -232,6 +236,16 @@ final class ManifestParityTests: XCTestCase {
         for (tool, clause) in clauses {
             let declared = try descriptions(of: tool).declared
             XCTAssertTrue(declared.contains(clause), "defineTools() \(tool) lost: \(clause)\n\(declared)")
+        }
+        // The manifest summaries say it too, shorter (PR #282 round 4, findings 4, 16).
+        let summaries: [(tool: String, clause: String)] = [
+            ("delete_events_batch", "refused before any write when an event's calendar is missing or read-only, and discarding it drops every event"),
+            ("delete_reminders_batch", "refused before any write when a reminder's list is missing or read-only, and discarding it drops every reminder"),
+            ("cleanup_completed_reminders", "refused before any write when a reminder's list is missing or read-only, and discarding it drops every reminder"),
+        ]
+        for (tool, clause) in summaries {
+            let summary = try descriptions(of: tool).summary
+            XCTAssertTrue(summary.contains(clause), "mcpb/manifest.json \(tool) lost: \(clause)\n\(summary)")
         }
     }
 
