@@ -232,13 +232,30 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(series.description, "Deleted event: Standup (undo recreates the series from its rules: \(rules))")
         let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
         XCTAssertEqual(oneOff.description, "Deleted event: Review", "a one-off record is listed as before")
-        // Round 5, findings 1/2: so does a batch that removed a series whole (delete_events_batch,
-        // span all over several events), counting series at any depth; one without is listed as before.
+        // Round 5, findings 1/2: so does a delete_events_batch record that removed a series whole,
+        // counting series at any depth; one without is listed as before.
         XCTAssertEqual(UndoOperation.batch([series, occurrence, oneOff]).description,
                        "Batch (3 operations; undo recreates 1 series from its rules: \(rules))")
         XCTAssertEqual(UndoOperation.batch([.batch([series]), series]).description,
                        "Batch (2 operations; undo recreates 2 series from their rules: \(rules))", "nested batches are walked")
-        XCTAssertEqual(UndoOperation.batch([oneOff, occurrence, marker]).description, "Batch (3 operations)")
+        XCTAssertEqual(UndoOperation.batch([oneOff, occurrence]).description, "Batch (2 operations)")
+        // Round 6, finding 6: only series count, not an occurrence restore that moved an alarm.
+        let moved = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: ["absolute_alarms"])
+        XCTAssertEqual(UndoOperation.batch([series, moved]).description,
+                       "Batch (2 operations; undo recreates 1 series from its rules: \(rules))")
+        XCTAssertEqual(UndoOperation.batch([moved, oneOff]).description, "Batch (2 operations)")
+        // Round 6, findings 1/2/4: a batch holding a member undo refuses, at any depth, is refused
+        // before any member writes and discarded, so it promises no restore (one series deleted from
+        // its 3rd occurrence and then from its 1st in one batch gives [marker, series]).
+        let refused = "undo not available: a member deleted an occurrence and the following ones of a recurring event"
+        XCTAssertEqual(UndoOperation.batch([series, marker]).description, "Batch (2 operations; \(refused))")
+        XCTAssertEqual(UndoOperation.batch([.batch([marker]), series]).description, "Batch (2 operations; \(refused))",
+                       "a refusal at any depth")
+        XCTAssertEqual(UndoOperation.batch([oneOff, occurrence, marker]).description, "Batch (3 operations; \(refused))")
+        // Round 6, findings 7/14: a batch of one (delete_events_batch records one even for one event).
+        XCTAssertEqual(UndoOperation.batch([series]).description,
+                       "Batch (1 operation; undo recreates 1 series from its rules: \(rules))")
+        XCTAssertEqual(UndoOperation.batch([oneOff]).description, "Batch (1 operation)")
     }
 
     /// The undo text reports a moved absolute alarm the way the move path reports it.

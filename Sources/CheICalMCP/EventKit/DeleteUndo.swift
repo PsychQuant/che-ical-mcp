@@ -29,12 +29,12 @@ enum EventRemovalKind: String, Sendable, Hashable {
     /// Span "future" on a series is whole only when it started at the series' first occurrence and,
     /// after the removal, the identifier no longer resolves (verify round 1, findings 1/2/12/22;
     /// `seriesResolves`, asked only then). Anything else is refused, so a store that keeps the
-    /// series resolvable never turns into a second series. Only the first is evidence: the lookup
-    /// cannot tell a series that is gone from one it failed to find (verify round 4, finding 16;
-    /// round 5, findings 3/14), and only a delete from the first occurrence, which removes the
-    /// whole series, reaches it. Span "future" from the
-    /// last occurrence removes only that one, but nothing tells it apart from one with occurrences
-    /// after it; it is refused too.
+    /// series resolvable never turns into a second series. The start at the first occurrence is the
+    /// only evidence: the lookup cannot tell a series that is gone from one it failed to find
+    /// (verify round 4, finding 16; round 5, findings 3/14; round 6, finding 11), and only a delete
+    /// from the first occurrence, which removes the whole series, reaches it. Span "future" from
+    /// the last occurrence removes only that one, but nothing tells it apart from one with
+    /// occurrences after it; it is refused too.
     static func of(hadRules: Bool, isDetached: Bool, span: EKSpan, fromFirstOccurrence: Bool,
                    seriesResolves: () -> Bool) -> EventRemovalKind {
         guard hadRules || isDetached else { return .wholeEvent }
@@ -149,7 +149,9 @@ extension UndoOperation {
 
     /// How many series this record's undo recreates from their rules, nested batches included, for
     /// the `undo_history` line of a batch (verify round 5, findings 1/2). Counted from the same
-    /// exhaustive classification as the batch undo text.
+    /// exhaustive classification as the batch undo text, which treats a refused member as
+    /// disclosing nothing; a batch holding one is listed by that refusal instead, since its undo
+    /// writes nothing (round 6, findings 1/2/4).
     var seriesRecreatedFromRules: Int {
         undoDisclosures.filter { $0 == .seriesRules }.count
     }

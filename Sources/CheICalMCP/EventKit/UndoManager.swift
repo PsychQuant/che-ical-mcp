@@ -329,10 +329,16 @@ enum UndoOperation {
             let action = requestedCompleted ? "Completed" : "Reopened"
             return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
         case .batch(let ops):
-            // Verify round 5, findings 1/2: a batch that removed series whole says it as well.
+            // Verify round 5, findings 1/2: a batch that removed series whole says it as well;
+            // round 6, findings 1/2/4: unless a member's undo is refused, which refuses the whole
+            // batch before any write (`batchMemberUndoRefusal`, any depth).
+            let operations = "\(ops.count) operation\(ops.count == 1 ? "" : "s")"
+            if batchMemberUndoRefusal != nil {
+                return "Batch (\(operations); undo not available: a member deleted an occurrence and the following ones of a recurring event)"
+            }
             let series = seriesRecreatedFromRules
-            guard series > 0 else { return "Batch (\(ops.count) operations)" }
-            return "Batch (\(ops.count) operations; undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
+            guard series > 0 else { return "Batch (\(operations))" }
+            return "Batch (\(operations); undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
         }
     }
 }

@@ -145,7 +145,7 @@
     },
     {
       "name": "undo",
-      "description": "Undo the last operation (refused without writing when the item was changed since; the record stays until the change is reverted or the user discards it; updates to recurring events are never undone; a delete of an occurrence and the following ones is undone only when it started at the series' first occurrence and removed it all; a deleted occurrence comes back as a one-off event; a series deleted whole comes back from its rules alone: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time), or explicitly discard the current top history record using discard_id from undo_history"
+      "description": "Undo the last operation (refused without writing when the item was changed since; the record stays until the change is reverted or the user discards it; updates to recurring events are never undone; a delete of an occurrence and the following ones is undone only when it started at the series' first occurrence and removed it all; a deleted occurrence comes back as a one-off event; a series deleted whole comes back from its rules alone: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time (seen on iCloud only, with delete_event; the lost edit and the duplicate not yet checked with span 'all')), or explicitly discard the current top history record using discard_id from undo_history"
     },
     {
       "name": "redo",
