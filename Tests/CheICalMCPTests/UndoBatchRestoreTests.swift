@@ -763,13 +763,16 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     /// PR #282 round 5, findings 1, 6, 9: a failed save may have written the item (an event that
-    /// committed and then threw; a reminder found differing, or whose removal after the failure
-    /// failed), so the text says a retry can add a second copy.
+    /// committed and then threw; a reminder whose removal after the failure failed), so the text
+    /// says a retry can add a second copy. A reminder that a new store finds counts as restored
+    /// (#280 round 7), so it is not one of them.
     func testThePartialErrorSaysARetryCanAddASecondCopy() {
         for restoredCount in [0, 2] {
             let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: restoredCount,
                                                       memberError: "eventkit_error_1")
             XCTAssertTrue(error.message.contains("running undo again can add a second copy"), error.message)
+            XCTAssertTrue(error.message.contains("an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed"), error.message)
+            XCTAssertFalse(error.message.contains("differs"), error.message)
         }
     }
 

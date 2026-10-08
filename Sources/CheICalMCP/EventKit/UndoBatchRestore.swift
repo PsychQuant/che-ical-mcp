@@ -279,7 +279,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
         case .runsLast, .inRecordedOrder:
-            giveUp = " Its save may have written it anyway (a save that failed after the store took the item, or a reminder kept because what was written differs), so running undo again can add a second copy: check first. If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+            giveUp = " Its save may have written it anyway (an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed), so running undo again can add a second copy: check first. If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
                 + (remaining.count > 1 ? " That drops every item not yet restored, not only the one that failed." : "")
         }
         message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
