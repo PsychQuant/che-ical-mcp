@@ -322,23 +322,25 @@ extension UndoOperation {
         let restoredMembers = Array(members[(failedIndex + 1)...]) + (inner?.restored ?? [])
         // What those members' stores hold differently, nested ones too.
         let restoredDiffering = differing + (inner?.restoredDiffering ?? [])
+        // Every branch reports the restored members and their differences the same way (PR #282
+        // round 6, finding 18: two branches used to pass them on separately, and dropping them
+        // there went unnoticed).
+        func partial(_ remaining: [UndoOperation], _ failing: UndoBatchPartiallyUndoneError.FailingMember,
+                     _ memberError: String) -> UndoBatchPartiallyUndoneError {
+            UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
+                                          failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering)
+        }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
-            return UndoBatchPartiallyUndoneError(remaining: unattempted, restoredCount: restored,
-                                                 memberError: describe(interrupted.underlying), failing: .dropped,
-                                                 restored: restoredMembers, restoredDiffering: restoredDiffering)
+            return partial(unattempted, .dropped, describe(interrupted.underlying))
         }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
         let runsLast = ([failing] + unattempted).allSatisfy(\.mayRunLastAfterAFailure)
         if inner == nil, interrupted.completed == 0, unattempted.isEmpty || !runsLast { return interrupted.underlying }
         let memberError = inner?.memberError ?? describe(interrupted.underlying)
         return runsLast
-            ? UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted, restoredCount: restored,
-                                            memberError: memberError, failing: .runsLast, restored: restoredMembers,
-                                            restoredDiffering: restoredDiffering)
-            : UndoBatchPartiallyUndoneError(remaining: unattempted + [failing], restoredCount: restored,
-                                            memberError: memberError, failing: .inRecordedOrder, restored: restoredMembers,
-                                            restoredDiffering: restoredDiffering)
+            ? partial([failing] + unattempted, .runsLast, memberError)
+            : partial(unattempted + [failing], .inRecordedOrder, memberError)
     }
 
     /// Whether a batch undo may move this member to run last when its write fails (#248 A). True for

@@ -868,6 +868,29 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(quiet.message.components(separatedBy: entry).count - 1, 0, quiet.message)
     }
 
+    /// PR #282 round 6, finding 18: every way a batch stops part-way names the differences of the
+    /// reminders it restored: a member dropped for a permanent error, and members kept in their
+    /// recorded order, as well as the usual failing member run last.
+    func testEveryPartWayBranchNamesTheRestoredRemindersDifferences() throws {
+        let difference = UndoRestoredDifference(shownTitle: "R", storeDiffers: ["notes"])
+        let sentence = "Restored reminder 'R' — the store holds a different notes; check it."
+        let dropped = UndoOperation.batchUndoFailure(members: [deleted("A"), deleted("B"), reminderDeleted("R")],
+                                                     interrupted: .init(completed: 1, underlying: UnrecoverableUndoError(message: "x")),
+                                                     differing: [difference], describe: { _ in "x" })
+        let droppedPartial = try XCTUnwrap(dropped as? UndoBatchPartiallyUndoneError, "\(dropped)")
+        XCTAssertEqual(droppedPartial.failing, .dropped)
+        XCTAssertEqual(droppedPartial.restoredDiffering, [difference])
+        XCTAssertTrue(droppedPartial.message.contains(sentence), droppedPartial.message)
+
+        let ordered = UndoOperation.batchUndoFailure(members: [edited("A"), edited("B"), reminderDeleted("R")],
+                                                     interrupted: .init(completed: 1, underlying: SaveFailed.failed),
+                                                     differing: [difference], describe: { _ in "eventkit_error_1" })
+        let orderedPartial = try XCTUnwrap(ordered as? UndoBatchPartiallyUndoneError, "\(ordered)")
+        XCTAssertEqual(orderedPartial.failing, .inRecordedOrder)
+        XCTAssertEqual(orderedPartial.restoredDiffering, [difference])
+        XCTAssertTrue(orderedPartial.message.contains(sentence), orderedPartial.message)
+    }
+
     /// A nested batch that stopped part-way carries its restored reminders' differences up.
     func testANestedBatchCarriesItsRestoredDifferencesUp() throws {
         let difference = UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["notes"])
