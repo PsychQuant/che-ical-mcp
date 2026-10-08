@@ -2250,7 +2250,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 check: { try await self.verifyHistoryTarget(of: $0, verb: .redo) },
                 execute: { try await self.executeRedo($0) },
                 describe: { EventKitErrorSanitizer.writeFailureLog(handler: "redo", identifier: "batch member", error: $0) })
-            return "Redone batch (\(results.count) operations)"
+            return UndoOperation.batchRedoneMessage(count: results.count)
         }
     }
 

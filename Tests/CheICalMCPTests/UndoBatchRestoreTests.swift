@@ -1,5 +1,4 @@
 import CheMCPKit
-import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -13,17 +12,9 @@ final class UndoBatchRestoreTests: XCTestCase {
     // many stores in one process make EventKit refuse the real one other tests use.
     private static let eventFixture = UndoSnapshotFixtures.event(title: "Standup")
     private static let reminderFixture = UndoSnapshotFixtures.reminder(title: "Pay rent")
-    /// A weekly series, so its delete-undo recreates it from its rules (#278, #285).
-    private static let seriesFixture: EventSnapshot = {
-        let store = EKEventStore()
-        let event = EKEvent(eventStore: store)
-        event.calendar = EKCalendar(for: .event, eventStore: store)
-        event.title = "Weekly"
-        event.startDate = Date(timeIntervalSince1970: 1_800_000_000)
-        event.endDate = event.startDate.addingTimeInterval(1800)
-        event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 3)))
-        return EventSnapshot(from: event)
-    }()
+    /// A weekly series, so its delete-undo recreates it from its rules (#278, #285). Built by
+    /// `UndoSnapshotFixtures` like the others (PR #282 round 5, finding 13).
+    private static let seriesFixture = UndoSnapshotFixtures.event(title: "Weekly", weeklyOccurrences: 3)
     private var event: EventSnapshot { Self.eventFixture }
     private var reminder: ReminderSnapshot { Self.reminderFixture }
 
@@ -147,6 +138,21 @@ final class UndoBatchRestoreTests: XCTestCase {
         let message = refusal(found, total: 2)
         XCTAssertTrue(message.contains("is read-only"), message)
         XCTAssertTrue(message.contains("1 of its 2 deleted items cannot be restored"), message)
+    }
+
+    /// PR #282 round 5, finding 8 (#37): the refusal is a trusted message beside the discard_id
+    /// directive, so it names no calendar or list (a shared or subscribed one's title is set
+    /// remotely) and no account (often an e-mail address). It says what kind of container, why,
+    /// and which of the user's own items it holds.
+    func testTheRefusalNamesNoCalendarListOrAccount() {
+        let shared = UndoSnapshotFixtures.event(title: "Standup", calendarTitle: "Team Calendar (shared)")
+        XCTAssertEqual(shared.calendarTitle, "Team Calendar (shared)", "precondition: the fixture records its calendar's title")
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: shared), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let found = problems(destinations, reminderLists: [(reminder.calendarIdentifier, "Reminders", false)])
+        let message = refusal(found, total: 2)
+        XCTAssertFalse(message.contains("Team Calendar"), message)
+        XCTAssertTrue(message.contains("1 event in a calendar that is not available: 'Standup'"), message)
+        XCTAssertTrue(message.contains("1 reminder in a list that is read-only: 'Pay rent'"), message)
     }
 
     /// The titles come from the store (a shared calendar's title is set by someone else), so they
@@ -329,6 +335,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             switch operation {
             case .deleteEvent(let snapshot): return snapshot.title
             case .deleteOccurrence(let snapshot, _): return "occ:" + snapshot.title
+            case .deleteReminder(let snapshot): return "rem:" + snapshot.title
             case .batch(let members): return "[" + titles(members).joined(separator: ",") + "]"
             default: return operation.description
             }
@@ -716,6 +723,10 @@ final class UndoBatchRestoreTests: XCTestCase {
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
             .completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                               title: "Pay rent", redoCompletionDate: nil, wasRecurring: false),
+            .completeRecurringReminder(before: ReminderCompletionSnapshot(id: "r", title: "Pay rent", calendarID: "c", sourceID: "s",
+                                                                         isCompleted: false, hasRecurrence: true, due: nil,
+                                                                         rules: [], completionDate: nil),
+                                       requestedCompleted: true, redoCompletionDate: nil),
             .batch([.deleteEvent(snapshot: event), edited("e")]),
         ]
         for operation in others { XCTAssertFalse(operation.mayRunLastAfterAFailure, operation.description) }
@@ -749,6 +760,52 @@ final class UndoBatchRestoreTests: XCTestCase {
             guard case .deleteReminder = member else { return XCTFail("\(member)") }
             XCTAssertTrue(member.mayRunLastAfterAFailure)
         }
+    }
+
+    // MARK: - A: reminder members after #280's found-or-not check (PR #282 round 5, finding 1)
+
+    /// A reminder member runs the `.deleteReminder` undo arm, whose `saveNewReminder` (#261) returns
+    /// when a new store finds the reminder as it was saved, and rethrows the save's error when it
+    /// finds it with a compared field differing (the item is kept). The batch treats them as the
+    /// single delete-undo does: the first is restored and leaves the record; the second is the
+    /// failing member, and the record keeps it, so a retry can write a second copy.
+    func testAReminderFoundAsSavedIsRestoredAndOneFoundDifferingIsTheFailingMember() async throws {
+        let log = ExecutionLog()
+        let differs = UndoOperation.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs"))
+        let asSaved = UndoOperation.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "AsSaved"))
+        // Record order; undo runs B, then AsSaved (its save threw, found as saved: returns), then
+        // Differs (found differing: the save's error is rethrown).
+        let error = await undoBatch([differs, asSaved, deleted("B")], log: log, failsOn: { $0 == "rem:Differs" })
+        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
+        XCTAssertEqual(log.executed, ["B", "rem:AsSaved"])
+        XCTAssertEqual(partial.restoredCount, 2, "the reminder found as saved counts as restored")
+        XCTAssertEqual(titles(partial.remaining), ["rem:Differs"], "the one found differing is kept to run again")
+        XCTAssertEqual(partial.failing, .runsLast)
+    }
+
+    /// PR #282 round 5, findings 1, 6, 9: a failed save may have written the item (an event that
+    /// committed and then threw; a reminder found differing, or whose removal after the failure
+    /// failed), so the text says a retry can add a second copy.
+    func testThePartialErrorSaysARetryCanAddASecondCopy() {
+        for restoredCount in [0, 2] {
+            let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: restoredCount,
+                                                      memberError: "eventkit_error_1")
+            XCTAssertTrue(error.message.contains("running undo again can add a second copy"), error.message)
+        }
+    }
+
+    // MARK: - A: batch texts for one member (PR #282 round 5, findings 4, 12)
+
+    /// Narrowing makes a batch of one usual, so its texts are in the singular.
+    func testTheBatchTextsOfOneMemberAreSingular() async throws {
+        let log = ExecutionLog()
+        let first = await undoBatch(["A", "B"].map(deleted), log: log, failsOn: { $0 == "A" })
+        let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count),
+                       "Undone batch (1 operation)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: ["A", "B"].map(deleted), count: 2), "Undone batch (2 operations)")
+        XCTAssertEqual(UndoOperation.batchRedoneMessage(count: 1), "Redone batch (1 operation)")
+        XCTAssertEqual(UndoOperation.batchRedoneMessage(count: 3), "Redone batch (3 operations)")
     }
 
     // MARK: - A: the history keeps the narrowed record under the same id

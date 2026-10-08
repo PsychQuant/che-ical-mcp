@@ -128,7 +128,8 @@ final class DeleteUndoTests: XCTestCase {
     func testEveryRemovalKindRecordsADeleteThatABatchUndoMayRunLast() {
         let series = weekly(startingAt: firstStart)
         let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
-        for kind in [EventRemovalKind.wholeEvent, .occurrence, .followingOccurrences] {
+        XCTAssertEqual(EventRemovalKind.allCases.count, 3)
+        for kind in EventRemovalKind.allCases {
             let record = snapshots.record(for: kind)
             switch record {
             case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences:
@@ -320,7 +321,7 @@ final class DeleteUndoTests: XCTestCase {
                        "Undone batch (2 operations). " + rules)
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [series, moved], count: 2),
                        "Undone batch (2 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start). " + rules)
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operations)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operation)")
     }
 
     /// The whole-event arm of `executeUndo` reports through that text (pinned: it needs an

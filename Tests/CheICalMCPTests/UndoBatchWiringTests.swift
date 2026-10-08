@@ -92,10 +92,19 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
+        // Round 5, findings 5, 16: an `insert`, `+=` or reassignment passed the append count, so
+        // every use of the builder's array is counted: its declaration, the one append, the
+        // emptiness check and the record.
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(series)).count, 4)
+        XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [EventSnapshot] = []"), in: series))
+
         let events = Substring(try Self.body("func deleteEventsBatch(", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoOperations))"), in: events))
         XCTAssertEqual(Self.count("undoOperations.append(", in: events), 1)
         XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(snapshots.record(for: kind))"), in: events))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoOperations\b"#, in: String(events)).count, 4)
+        XCTAssertNotNil(Self.offset(of: Self.call("var undoOperations: [UndoOperation] = []"), in: events))
+        XCTAssertNotNil(Self.offset(of: Self.call("if !undoOperations.isEmpty {"), in: events))
 
         let reminders = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String]", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("UndoOperation.reminderBatchDelete(undoSnapshots)"), in: reminders))
@@ -117,6 +126,21 @@ final class UndoBatchWiringTests: XCTestCase {
         }
         XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 1, "Server.swift": 1, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
+    }
+
+    /// Round 5, finding 8 (#37): the batch refusal puts no calendar or list title and no account on
+    /// the trusted path; `UndoBatchRestore.swift` reads neither field.
+    func testTheBatchRefusalReadsNoCalendarTitleOrAccount() throws {
+        let code = SourcePins.code(try SourcePins.source("EventKit/UndoBatchRestore.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "calendarTitle", in: code).count, 0)
+        XCTAssertEqual(SourcePins.ranges(of: "calendarSource", in: code).count, 0)
+    }
+
+    /// Round 5, findings 4, 12: the redo batch arm's text comes from the helper that says
+    /// "1 operation" for one member.
+    func testTheRedoBatchArmUsesTheBatchTextHelper() throws {
+        let redo = try Self.from("case .batch(let ops):", in: try Self.body("func executeRedo(_ operation: UndoOperation)", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoOperation.batchRedoneMessage(count: results.count)"), in: redo))
     }
 
     // MARK: - #248 B: the destination pre-check (findings 8 (3), 12, 5)

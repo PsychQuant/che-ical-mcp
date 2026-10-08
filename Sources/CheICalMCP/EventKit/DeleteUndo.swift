@@ -15,7 +15,7 @@ import Foundation
 ///   undo is refused and discarded (D2, the #236/#262 precedent). Recreating them would add a
 ///   second series, and putting back the rule end is the store-dependent restore #236 round 4
 ///   rejected.
-enum EventRemovalKind: String, Sendable, Hashable {
+enum EventRemovalKind: String, Sendable, Hashable, CaseIterable {
     case wholeEvent
     case occurrence
     case followingOccurrences
@@ -167,9 +167,20 @@ extension UndoOperation {
     /// are not shown, so what a member did not restore as it was is named here, once each. A pure
     /// function of the members it is given.
     static func batchUndoneMessage(members: [UndoOperation], count: Int) -> String {
-        var message = "Undone batch (\(count) operations)"
+        var message = "Undone batch (\(batchCount(count)))"
         if let note = batchLossNote(members: members) { message += ". " + note }
         return message
+    }
+
+    /// The text of a redone batch; no batch whose members write on redo is recorded today (#247).
+    static func batchRedoneMessage(count: Int) -> String {
+        "Redone batch (\(batchCount(count)))"
+    }
+
+    /// "1 operation", "N operations": a narrowed batch often holds one member (PR #282 round 5,
+    /// findings 4, 12).
+    private static func batchCount(_ count: Int) -> String {
+        count == 1 ? "1 operation" : "\(count) operations"
     }
 
     /// What the restored `members` did not restore as they were (`undoDisclosures`: an occurrence's

@@ -82,13 +82,16 @@ enum UndoRestoreDestination {
         if !findings.isEmpty { throw UndoRestoreDestinationMissingError(findings: findings, total: destinations.count) }
     }
 
-    /// The words and the recorded container of the item, for the refusal.
-    fileprivate var refusalTerms: (item: String, container: String, containerID: String, containerTitle: String, account: String?) {
+    /// The words and the recorded container of the item, for the refusal. No container title and
+    /// no account: the refusal is a trusted message beside the discard_id directive, and a shared
+    /// or subscribed calendar's title is set remotely, an account's name is often an e-mail
+    /// address (#37; PR #282 round 5, finding 8). The identifier only groups the items.
+    fileprivate var refusalTerms: (item: String, container: String, containerID: String) {
         switch self {
         case .eventCalendar(let snapshot):
-            return ("event", "calendar", snapshot.calendarIdentifier, snapshot.calendarTitle, snapshot.calendarSource)
+            return ("event", "calendar", snapshot.calendarIdentifier)
         case .reminderList(let snapshot):
-            return ("reminder", "list", snapshot.calendarIdentifier, snapshot.calendarTitle, snapshot.calendarSource)
+            return ("reminder", "list", snapshot.calendarIdentifier)
         }
     }
 }
@@ -133,8 +136,8 @@ extension UndoOperation {
 /// recreated in is not there or does not allow changes. Raised by the batch pre-check, so nothing of
 /// the batch was written; kept like a not-found (`UndoFailureDisposition.of` maps it to
 /// `.restore`), since the calendar may only be syncing or its access may change. The message says
-/// how many of the batch's items have their calendar or list in place and which containers stop
-/// the rest, and that discard_id drops every item of the entry (PR #282 round 2, finding 1): this
+/// how many of the batch's items have their calendar or list in place and describes, without
+/// naming them, the calendars or lists that stop the rest (round 5, finding 8), and that discard_id drops every item of the entry (PR #282 round 2, finding 1): this
 /// check refuses the whole batch; a partial restore that keeps a narrowed record is #287. An item
 /// whose calendar or list is in place can still fail at its own save, after the check (round 3,
 /// finding 7).
@@ -144,9 +147,10 @@ extension UndoOperation {
 /// only, and the #244 marker, which has no destination, is refused before this check (round 3,
 /// finding 12).
 ///
-/// The message is author-controlled text: the item and container words come from this file, and
-/// the store-derived titles (a shared calendar's title is set by someone else, #37 F1) pass
-/// `undoShownTitle`. That is the condition under which this type conforms to `TrustedErrorMessage`.
+/// The message is author-controlled text: the item and container words come from this file; the
+/// only store-derived text is the deleted items' own titles, which pass `undoShownTitle`; no
+/// calendar or list title and no account name is included (#37 F1, round 5, finding 8). That is
+/// the condition under which this type conforms to `TrustedErrorMessage`.
 struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
     let message: String
     var errorDescription: String? { message }
@@ -156,14 +160,14 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
     private static let itemsShown = 3
 
     init(findings: [UndoRestoreFinding], total: Int) {
-        // One line per container and problem, in the order the batch first meets them.
+        // One line per container and problem, in the order the batch first meets them. A container
+        // is described, not named (finding 8): "2 events in a calendar that is not available".
         var groups: [(key: String, words: String, item: String, titles: [String])] = []
         for finding in findings {
             let d = finding.destination.refusalTerms
             let state = finding.problem == .missing ? "is not available" : "is read-only"
             let key = "\(d.container)|\(d.containerID)|\(state)"
-            let account = d.account.map { " in '\(undoShownTitle($0))'" } ?? ""
-            let words = "the \(d.container) '\(undoShownTitle(d.containerTitle))'\(account) \(state)"
+            let words = "in a \(d.container) that \(state)"
             if let index = groups.firstIndex(where: { $0.key == key }) {
                 groups[index].titles.append(finding.destination.itemTitle)
             } else {
@@ -174,9 +178,10 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
             let shown = group.titles.prefix(Self.itemsShown).map { "'\(undoShownTitle($0))'" }.joined(separator: ", ")
             let more = group.titles.count > Self.itemsShown ? ", …" : ""
             let noun = group.titles.count == 1 ? group.item : group.item + "s"
-            return "\(group.words) (\(group.titles.count) \(noun): \(shown)\(more))"
+            return "\(group.titles.count) \(noun) \(group.words): \(shown)\(more)"
         }
-        let moreGroups = groups.count > Self.containersShown ? "; and \(groups.count - Self.containersShown) more" : ""
+        let moreGroups = groups.count > Self.containersShown
+            ? "; and items in \(groups.count - Self.containersShown) more calendars or lists" : ""
         let blocked = findings.count
         let others = total - blocked
         let inPlace = others == 1 ? "The other item's calendar or list is in place" : "The other \(others) items' calendars or lists are in place"
@@ -266,7 +271,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
         case .runsLast, .inRecordedOrder:
-            giveUp = " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+            giveUp = " Its save may have written it anyway (a save that failed after the store took the item, or a reminder kept because what was written differs), so running undo again can add a second copy: check first. If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
                 + (remaining.count > 1 ? " That drops every item not yet restored, not only the one that failed." : "")
         }
         message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
