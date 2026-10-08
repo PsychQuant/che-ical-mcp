@@ -868,6 +868,27 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(quiet.message.components(separatedBy: entry).count - 1, 0, quiet.message)
     }
 
+    /// PR #282 round 6, findings 13, 16: the entries are capped like the refusal's titles, so a
+    /// cleanup of many reminders cannot grow the text without bound: the first five, then a count.
+    func testTheDifferingEntriesAreCappedAtFiveThenCounted() {
+        func differences(_ count: Int) -> [UndoRestoredDifference] {
+            (1...count).map { UndoRestoredDifference(shownTitle: "R\($0)", storeDiffers: ["due"]) }
+        }
+        let entry = "Restored reminder '"
+        let five = UndoRestoredDifference.sentences(differences(5))
+        XCTAssertEqual(five.components(separatedBy: entry).count - 1, 5, five)
+        XCTAssertFalse(five.contains("more restored"), five)
+        let six = UndoRestoredDifference.sentences(differences(6))
+        XCTAssertEqual(six.components(separatedBy: entry).count - 1, 5, six)
+        XCTAssertFalse(six.contains("'R6'"), six)
+        XCTAssertTrue(six.hasSuffix(" And 1 more restored reminder whose store holds some fields differently; check it."), six)
+        let seven = UndoRestoredDifference.sentences(differences(7))
+        XCTAssertTrue(seven.hasSuffix(" And 2 more restored reminders whose store holds some fields differently; check them."), seven)
+        // Members restored as saved are not counted.
+        let mixed = UndoRestoredDifference.sentences(differences(5) + [UndoRestoredDifference(shownTitle: "Plain", storeDiffers: [])])
+        XCTAssertFalse(mixed.contains("more restored"), mixed)
+    }
+
     /// PR #282 round 6, finding 18: every way a batch stops part-way names the differences of the
     /// reminders it restored: a member dropped for a permanent error, and members kept in their
     /// recorded order, as well as the usual failing member run last.

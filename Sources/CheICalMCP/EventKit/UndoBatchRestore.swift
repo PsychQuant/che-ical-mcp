@@ -426,9 +426,20 @@ struct UndoRestoredDifference: Sendable, Equatable {
     /// the joining is this server's, so the batch text and a part-way error read alike (PR #282).
     /// Each entry pairs one member's title with its own names; the title is already shown, its
     /// ASCII quotes turned curly, so it cannot close the entry or open another.
+    ///
+    /// Capped like the refusal's titles (PR #282 round 6, findings 13, 16): the first
+    /// `entriesShown`, then how many more, so a cleanup of many reminders cannot grow the text
+    /// without bound beside the discard_id directive.
     static func sentences(_ differences: [UndoRestoredDifference]) -> String {
-        differences.compactMap { difference in
+        let entries = differences.compactMap { difference in
             NewObjectSave.differingFieldsNote(difference.storeDiffers).map { " Restored reminder '\(difference.shownTitle)' — \($0)." }
-        }.joined()
+        }
+        let more = entries.count - entriesShown
+        let rest = more == 1 ? " And 1 more restored reminder whose store holds some fields differently; check it."
+            : more > 1 ? " And \(more) more restored reminders whose store holds some fields differently; check them." : ""
+        return entries.prefix(entriesShown).joined() + rest
     }
+
+    /// How many entries `sentences` names before it counts the rest.
+    static let entriesShown = 5
 }
