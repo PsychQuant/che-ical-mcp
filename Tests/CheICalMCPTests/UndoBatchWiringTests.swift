@@ -80,6 +80,45 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("UndoBatchExecution.run(ops, verb: .redo,"), in: redo))
     }
 
+    // MARK: - #248 A: what a batch record holds (PR #282 round 4, finding 2)
+
+    /// A batch undo moves a failed member to run last because every batch record holds deletes whose
+    /// restores do not depend on each other (`mayRunLastAfterAFailure`). These pins keep the batch
+    /// records to the three builders that make them: `deleteEventSeriesBatch` (whole-event deletes),
+    /// `deleteEventsBatch` (`DeletedEventSnapshots.record(for:)` only) and the reminder batch delete
+    /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
+    func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
+        let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
+        XCTAssertEqual(Self.count(".batch(", in: series), 1)
+
+        let events = Substring(try Self.body("func deleteEventsBatch(", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoOperations))"), in: events))
+        XCTAssertEqual(Self.count("undoOperations.append(", in: events), 1)
+        XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(snapshots.record(for: kind))"), in: events))
+
+        let reminders = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String]", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("UndoOperation.reminderBatchDelete(undoSnapshots)"), in: reminders))
+        XCTAssertEqual(Self.count(".batch(", in: reminders), 0)
+
+        // Every `.batch(...)` built in Sources (a `case .batch(` match is not one): the two event
+        // builders, the reminder builder, and three that rebuild an existing record's members (the
+        // #244 refusal check of a batch, a narrowed batch, and a nested batch's remainder).
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
+        XCTAssertFalse(files.isEmpty)
+        var built: [String: Int] = [:]
+        for file in files {
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            let count = SourcePins.ranges(ofPattern: #"(?<!case )\.batch\s*\("#, in: code).count
+            if count > 0 { built[file.lastPathComponent, default: 0] += count }
+        }
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 1, "Server.swift": 1, "UndoBatchRestore.swift": 1],
+                       "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
+    }
+
     // MARK: - #248 B: the destination pre-check (findings 8 (3), 12, 5)
 
     /// The undo batch arm refuses a member that can never be restored (#244 D3, which discards the

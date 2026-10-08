@@ -179,8 +179,9 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
         let moreGroups = groups.count > Self.containersShown ? "; and \(groups.count - Self.containersShown) more" : ""
         let blocked = findings.count
         let others = total - blocked
+        let inPlace = others == 1 ? "The other item's calendar or list is in place" : "The other \(others) items' calendars or lists are in place"
         let restorable = others > 0
-            ? " The calendar or list of the other \(others) is in place, but this check refuses the whole batch when any item's calendar or list is missing or read-only."
+            ? " \(inPlace), but this check refuses the whole batch when any item's calendar or list is missing or read-only."
             : ""
         let count = total == 1 ? "its 1 deleted item cannot" : "\(blocked) of its \(total) deleted items cannot"
         message = "Cannot undo this batch: \(count) be restored: "
@@ -188,7 +189,8 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
             + restorable
             + " Nothing was written and this history entry was kept, whole, under the same id."
             + " Giving up this undo with discard_id drops " + (total == 1 ? "the 1 item" : "all \(total) items") + " of this entry"
-            + (others > 0 ? ", including the \(others) whose calendar or list is in place," : "")
+            + (others == 1 ? ", including the 1 whose calendar or list is in place," : "")
+            + (others > 1 ? ", including the \(others) whose calendars or lists are in place," : "")
             + " and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
             + " A calendar or list that was deleted, or whose account was removed, does not come back, so retrying cannot restore its items; run undo again only if it may still be syncing or its access may change."
     }
@@ -208,8 +210,11 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// Where the member whose write failed is in `remaining`.
     enum FailingMember: Sendable {
         /// First in record order, so it runs last next time and the members never attempted get
-        /// their turn (`UndoOperation.batchUndoFailure` says why the order does not matter).
+        /// their turn (every member may run last, `UndoOperation.mayRunLastAfterAFailure`).
         case runsLast
+        /// In its recorded place, so it runs first again: a member left may not run last. No batch
+        /// recorded today holds one (PR #282 round 4, finding 2).
+        case inRecordedOrder
         /// Not kept: its error is permanent (`UnrecoverableUndoError`), so no retry restores it.
         case dropped
     }
@@ -245,9 +250,13 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .runsLast where restoredCount == 0:
             let others = remaining.count - 1
             what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
+        case .runsLast where remaining.count == 1:
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the last one failed. This history entry was kept with only the item that failed, under the same id, so running undo again tries that item and does not restore the restored ones a second time, unless its calendar or list is now missing or read-only: then the next undo refuses it before it writes anything."
         case .runsLast:
-            let left = remaining.count == 1 ? "the 1 item not yet restored" : "the \(remaining.count) items not yet restored"
-            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, and the item that failed comes last, so running undo again does not restore the others a second time and tries the item that failed after them, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only the \(remaining.count) items not yet restored, under the same id, and the item that failed comes last, so running undo again does not restore the restored ones a second time and tries the item that failed after the others, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
+        case .inRecordedOrder:
+            let left = remaining.count == 1 ? "the item that failed" : "the \(remaining.count) items not yet restored"
+            what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, so running undo again tries the item that failed first and does not restore the restored ones a second time."
         }
         let loss = UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? ""
         let giveUp: String
@@ -256,8 +265,9 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             giveUp = ""
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
-        case .runsLast:
-            giveUp = " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id. That drops every item not yet restored, not only the one that failed."
+        case .runsLast, .inRecordedOrder:
+            giveUp = " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+                + (remaining.count > 1 ? " That drops every item not yet restored, not only the one that failed." : "")
         }
         message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
     }
@@ -275,16 +285,14 @@ extension UndoOperation {
     ///   findings 8, 9, 12, 17). With none waiting and nothing written, the member error stands and
     ///   discards the record; with none waiting after writes, the partial error has nothing left and
     ///   `handleUndo` discards the record, the error still saying what was restored.
-    /// - Otherwise the failing member is kept first, so it runs last next time and the members never
-    ///   attempted get their turn even when it keeps failing. The order does not change what a member
-    ///   restores: every batch recorded today holds delete records (delete_events_batch,
-    ///   delete_reminders_batch, cleanup_completed_reminders), and each restore writes one new item
-    ///   without reading another member's result, a deleted occurrence too, which comes back as its
-    ///   own one-off event (#244; PR #282 round 3, finding 5, which removed round 2's kept order for
-    ///   occurrences). A batch of records whose undo depends on order would need the recorded order
-    ///   kept here.
-    /// - When nothing was written and no other member waits, the member error stands and the record
-    ///   is put back whole, as for a single record.
+    /// - Otherwise, when every member left may run last (`mayRunLastAfterAFailure`: every kind a
+    ///   batch records, PR #282 round 3, finding 5, and round 4, finding 2), the failing member is
+    ///   kept first, so it runs last next time and the members never attempted get their turn even
+    ///   when it keeps failing. When one may not (no batch records such a kind today), the recorded
+    ///   order is kept and the failing member runs first again.
+    /// - When nothing was written and the record would not change (no other member waits, or the
+    ///   order is kept), the member error stands and the record is put back whole, as for a single
+    ///   record.
     ///
     /// Every partial error carries the members this call restored, so what they did not carry over
     /// is named once (PR #278 round 3).
@@ -307,11 +315,36 @@ extension UndoOperation {
                                                  memberError: describe(interrupted.underlying), failing: .dropped,
                                                  restored: restoredMembers)
         }
-        if inner == nil, interrupted.completed == 0, unattempted.isEmpty { return interrupted.underlying }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
-        return UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted, restoredCount: restored,
-                                             memberError: inner?.memberError ?? describe(interrupted.underlying),
-                                             failing: .runsLast, restored: restoredMembers)
+        let runsLast = ([failing] + unattempted).allSatisfy(\.mayRunLastAfterAFailure)
+        if inner == nil, interrupted.completed == 0, unattempted.isEmpty || !runsLast { return interrupted.underlying }
+        let memberError = inner?.memberError ?? describe(interrupted.underlying)
+        return runsLast
+            ? UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted, restoredCount: restored,
+                                            memberError: memberError, failing: .runsLast, restored: restoredMembers)
+            : UndoBatchPartiallyUndoneError(remaining: unattempted + [failing], restoredCount: restored,
+                                            memberError: memberError, failing: .inRecordedOrder, restored: restoredMembers)
+    }
+
+    /// Whether a batch undo may move this member to run last when its write fails (#248 A). True for
+    /// every kind a batch record holds (PR #282 round 4, finding 2; the builders are pinned by
+    /// `UndoBatchWiringTests.testBatchRecordsAreBuiltOnlyFromDeletes`): a whole event, an occurrence
+    /// or a reminder restore writes one new item and reads no other member's result, and the #244
+    /// marker never runs (its refusal comes first). A whole-series delete and a delete of one of its
+    /// occurrences in one batch bring that occurrence back twice whichever runs first (#285), so
+    /// their order does not change the outcome either. False for the kinds no batch records: two
+    /// of them can write to one item, where the order matters. Exhaustive, so a new record kind
+    /// has to be classified to compile (#196 convention).
+    var mayRunLastAfterAFailure: Bool {
+        switch self {
+        case .deleteEvent, .deleteOccurrence, .deleteReminder, .deleteFollowingOccurrences:
+            return true
+        case .batch(let members):
+            return members.allSatisfy(\.mayRunLastAfterAFailure)
+        case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
+             .completeReminder, .completeRecurringReminder:
+            return false
+        }
     }
 }
 

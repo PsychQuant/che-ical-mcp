@@ -85,9 +85,23 @@ final class UndoBatchRestoreTests: XCTestCase {
         let message = refusal(found, total: 3)
         XCTAssertTrue(message.contains("2 of its 3 deleted items cannot be restored"), message)
         XCTAssertTrue(message.contains("is not available") && message.contains("'Pay rent'") && message.contains("'Milk'"), message)
-        XCTAssertTrue(message.contains("The calendar or list of the other 1 is in place"), message)
+        XCTAssertTrue(message.contains("The other item's calendar or list is in place"), message)
         XCTAssertTrue(message.contains("Nothing was written"), message)
         XCTAssertTrue(message.contains("discard_id drops all 3 items of this entry, including the 1 whose calendar or list is in place"), message)
+    }
+
+    /// PR #282 round 4, finding 8: "the other 2 is in place" for more than one.
+    func testTheRefusalCountsSeveralItemsInPlaceInThePlural() {
+        let gone = UndoSnapshotFixtures.event(title: "Gone")
+        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: gone), .deleteEvent(snapshot: event),
+                                                      .deleteReminder(snapshot: reminder)], verb: .undo)
+        let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)],
+                             reminderLists: [(reminder.calendarIdentifier, "Reminders", true)])
+        XCTAssertEqual(found.map(\.destination.itemTitle), ["Gone"])
+        let message = refusal(found, total: 3)
+        XCTAssertTrue(message.contains("The other 2 items' calendars or lists are in place"), message)
+        XCTAssertTrue(message.contains("including the 2 whose calendars or lists are in place"), message)
+        XCTAssertFalse(message.contains("other 2 is"), message)
     }
 
     /// PR #282 round 3, finding 7: the refusal said a batch undo restores all of its items or none of
@@ -615,6 +629,87 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(log.executed, ["C"])
         XCTAssertTrue(partial.message.contains("its own error, which names it, follows"), partial.message)
         XCTAssertTrue(partial.message.contains("'Standup'"), partial.message)
+    }
+
+    /// PR #282 round 4, findings 9 and 18: with only the failing item left, there are no "others"
+    /// for it to run after, and giving up drops only that item.
+    func testThePartialErrorWithOnlyTheFailingItemLeftSpeaksOfThatItemAlone() async throws {
+        let log = ExecutionLog()
+        let error = await undoBatch(["A", "B"].map(deleted), log: log, failsOn: { $0 == "A" })
+        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
+        XCTAssertEqual(titles(partial.remaining), ["A"])
+        XCTAssertTrue(partial.message.contains("kept with only the item that failed"), partial.message)
+        XCTAssertFalse(partial.message.contains("after them"), partial.message)
+        XCTAssertFalse(partial.message.contains("not only the one that failed"), partial.message)
+        XCTAssertFalse(partial.message.contains("the whole batch"), partial.message)
+    }
+
+    // MARK: - A: which members may run last (PR #282 round 4, finding 2)
+
+    private func edited(_ id: String) -> UndoOperation {
+        .updateEvent(id: id, oldSnapshot: UndoSnapshotFixtures.event(title: id), saved: UndoSnapshotFixtures.event(title: id))
+    }
+
+    private func ids(_ operations: [UndoOperation]) -> [String] {
+        operations.map { operation -> String in
+            if case .updateEvent(let id, _, _) = operation { return id }
+            return titles([operation])[0]
+        }
+    }
+
+    /// Exhaustive, so a new record kind has to say whether a failed one may be moved to run last
+    /// before it compiles. Every kind a batch builder records may (each restores one new item and
+    /// reads no other member; the #244 marker never runs), and so may a batch of them. The kinds no
+    /// batch records may not: two of them can write to one item, where the order matters.
+    func testEveryKindABatchRecordsMayRunLastAndNoOtherKindMay() {
+        let recorded: [UndoOperation] = [
+            .deleteEvent(snapshot: event), .deleteOccurrence(snapshot: event, notCarriedOver: []),
+            .deleteFollowingOccurrences(title: "Standup"), .deleteReminder(snapshot: reminder),
+            .batch([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)]),
+        ]
+        for operation in recorded { XCTAssertTrue(operation.mayRunLastAfterAFailure, operation.description) }
+        let others: [UndoOperation] = [
+            .createEvent(id: "e", title: "Standup", created: event),
+            edited("e"),
+            .updateRecurringEvent(id: "e", title: "Standup", kind: .series),
+            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
+            .createReminder(id: "r", title: "Pay rent", created: reminder),
+            .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
+            .completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
+                              title: "Pay rent", redoCompletionDate: nil, wasRecurring: false),
+            .batch([.deleteEvent(snapshot: event), edited("e")]),
+        ]
+        for operation in others { XCTAssertFalse(operation.mayRunLastAfterAFailure, operation.description) }
+    }
+
+    /// A batch holding a member that may not run last keeps the recorded order: after a write the
+    /// failing member stays in its place and runs first again; with nothing written the member error
+    /// stands and the record is put back whole.
+    func testMembersThatMayNotRunLastKeepTheirRecordedOrder() throws {
+        let members = ["A", "B", "C"].map(edited)
+        let failure = UndoOperation.batchUndoFailure(members: members,
+                                                     interrupted: .init(completed: 1, underlying: SaveFailed.failed),
+                                                     describe: { _ in "eventkit_error_1" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(partial.failing, .inRecordedOrder)
+        XCTAssertEqual(ids(partial.remaining), ["A", "B"], "C was restored; B failed and stays in its place")
+        XCTAssertTrue(partial.message.contains("in their recorded order"), partial.message)
+
+        let nothing = UndoOperation.batchUndoFailure(members: members,
+                                                     interrupted: .init(completed: 0, underlying: SaveFailed.failed),
+                                                     describe: { _ in "eventkit_error_1" })
+        XCTAssertTrue(nothing is SaveFailed, "\(nothing)")
+    }
+
+    /// The reminder batch builder records only reminder deletes (#243).
+    func testTheReminderBatchBuilderRecordsOnlyReminderDeletes() throws {
+        let record = try XCTUnwrap(UndoOperation.reminderBatchDelete([reminder, UndoSnapshotFixtures.reminder(title: "Milk")]))
+        guard case .batch(let members) = record else { return XCTFail("\(record)") }
+        XCTAssertEqual(members.count, 2)
+        for member in members {
+            guard case .deleteReminder = member else { return XCTFail("\(member)") }
+            XCTAssertTrue(member.mayRunLastAfterAFailure)
+        }
     }
 
     // MARK: - A: the history keeps the narrowed record under the same id

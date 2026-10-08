@@ -121,6 +121,24 @@ final class DeleteUndoTests: XCTestCase {
 
     // MARK: - Record shapes
 
+    /// PR #282 round 4, finding 2: the event batch builder (`deleteEventsBatch`) records only what
+    /// this returns, and every kind it returns may be moved to run last when its write fails in a
+    /// batch undo (#248): a whole event or an occurrence restores one new item and reads no other
+    /// member; the marker never runs.
+    func testEveryRemovalKindRecordsADeleteThatABatchUndoMayRunLast() {
+        let series = weekly(startingAt: firstStart)
+        let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
+        for kind in [EventRemovalKind.wholeEvent, .occurrence, .followingOccurrences] {
+            let record = snapshots.record(for: kind)
+            switch record {
+            case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences:
+                XCTAssertTrue(record.mayRunLastAfterAFailure, "\(kind)")
+            default:
+                XCTFail("\(kind) recorded \(record)")
+            }
+        }
+    }
+
     /// As the #208 move copy-out: the occurrence without its rules, at its own slot.
     func testAnOccurrenceDeleteRecordsTheOccurrenceWithoutRules() throws {
         let series = weekly(startingAt: firstStart)
