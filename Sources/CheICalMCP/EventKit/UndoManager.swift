@@ -306,11 +306,12 @@ enum UndoOperation {
     /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
     /// of the series was moved to the occurrence's start.
     case deleteOccurrence(snapshot: EventSnapshot, notCarriedOver: [String])
-    /// #244: a span "future" delete that undo does not restore, kept only as a marker: every one
-    /// `EventRemovalKind.of` does not prove removed the whole series (it left part of the series,
-    /// started at the last occurrence or after earlier deletes, named a detached occurrence, or the
-    /// lookup after it was inconclusive). Its undo is refused and the record discarded; nothing is
-    /// restored.
+    /// #244: a span "future" delete that undo does not restore, kept only as a marker. Exactly the
+    /// three cases `EventRemovalKind.of` gives it (no others): a detached occurrence addressed by
+    /// its own identifier; a series delete that did not start at the series' first occurrence (a
+    /// later one, the last one, or the first one left after earlier deletes); a series delete that
+    /// started at the first occurrence after which the identifier still resolves. Its undo is
+    /// refused and the record discarded; nothing is restored.
     case deleteFollowingOccurrences(title: String)
     /// `id` is the identifier after the save (#246: a calendar change across accounts changes it).
     case updateEvent(id: String, oldSnapshot: EventSnapshot, saved: EventSnapshot)
@@ -345,7 +346,9 @@ enum UndoOperation {
         case .createEvent(_, let title, _):
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
-            return "Deleted event: \(undoVisibleTitle(snapshot.title))"
+            // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
+            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))" : ""
+            return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
         case .deleteFollowingOccurrences(let title):
@@ -368,7 +371,16 @@ enum UndoOperation {
             let action = requestedCompleted ? "Completed" : "Reopened"
             return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
         case .batch(let ops):
-            return "Batch (\(ops.count) operations)"
+            // Verify round 5, findings 1/2: a batch that removed series whole says it as well;
+            // round 6, findings 1/2/4: unless a member's undo is refused, which refuses the whole
+            // batch before any write (`batchMemberUndoRefusal`, any depth).
+            let operations = "\(ops.count) operation\(ops.count == 1 ? "" : "s")"
+            if batchMemberUndoRefusal != nil {
+                return "Batch (\(operations); undo not available: a member deleted an occurrence and the following ones of a recurring event)"
+            }
+            let series = seriesRecreatedFromRules
+            guard series > 0 else { return "Batch (\(operations))" }
+            return "Batch (\(operations); undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
         }
     }
 }

@@ -26,12 +26,15 @@ enum EventRemovalKind: String, Sendable, Hashable {
     /// "future" on it removes the following occurrences of its series too (checked on iCloud,
     /// 2026-10-07), which its snapshot does not hold; it is refused.
     ///
-    /// Span "future" on a series is whole only when both sides agree (verify round 1, findings
-    /// 1/2/12/22): it started at the series' first occurrence, and after the removal the identifier
-    /// no longer resolves (`seriesResolves`, asked only then). Anything else is refused, so a
-    /// lookup that finds nothing for another reason, or a store that keeps the series resolvable,
-    /// never turns into a second series. Span "future" from the last occurrence removes only that
-    /// one, but nothing tells it apart from one with occurrences after it; it is refused too.
+    /// Span "future" on a series is whole only when it started at the series' first occurrence and,
+    /// after the removal, the identifier no longer resolves (verify round 1, findings 1/2/12/22;
+    /// `seriesResolves`, asked only then). Anything else is refused, so a store that keeps the
+    /// series resolvable never turns into a second series. The start at the first occurrence is the
+    /// only evidence: the lookup cannot tell a series that is gone from one it failed to find
+    /// (verify round 4, finding 16; round 5, findings 3/14; round 6, finding 11), and only a delete
+    /// from the first occurrence, which removes the whole series, reaches it. Span "future" from
+    /// the last occurrence removes only that one, but nothing tells it apart from one with
+    /// occurrences after it; it is refused too.
     static func of(hadRules: Bool, isDetached: Bool, span: EKSpan, fromFirstOccurrence: Bool,
                    seriesResolves: () -> Bool) -> EventRemovalKind {
         guard hadRules || isDetached else { return .wholeEvent }
@@ -55,8 +58,9 @@ struct DeletedEventSnapshots {
     /// The removed occurrence is the series' first: its slot is the series object's. On iCloud the
     /// series object keeps its original first slot after that occurrence was deleted on its own
     /// (checked 2026-10-07), so the first remaining occurrence does not count as the first. Today
-    /// that delete fails earlier, as "Event not found" (#284); a fix of #284 makes this path live
-    /// and its premise has to be checked on device again. Both objects report the slot as
+    /// that delete fails earlier on iCloud, as "Event not found" (#284); on a store where the
+    /// series object still refreshes, or once #284 is fixed, this path is live and its premise has
+    /// to be checked there on device. Both objects report the slot as
     /// `occurrenceDate` equal to `startDate` for a timed, an all-day and a New York series
     /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool
@@ -117,7 +121,10 @@ extension UndoOperation {
     }
 
     /// The text of a restored occurrence. Store-derived title through `undoVisibleTitle`, as the
-    /// other "Undone:" texts; `notCarriedOver` names fields in the move path's terms.
+    /// other "Undone:" texts; `notCarriedOver` names fields in the move path's terms. When the
+    /// series was deleted whole and recreated from its rules after this delete, this restore is the
+    /// write that adds the second copy (#285); the warning is in the series' own undo text, one
+    /// response earlier (verify round 4, finding 10), since nothing here knows what ran in between.
     static func occurrenceRestoredMessage(title: String, newID: String, notCarriedOver: [String]) -> String {
         var message = "Undone: restored the deleted occurrence of '\(undoVisibleTitle(title))' as a one-off event (new ID: \(newID))"
         if notCarriedOver.contains("absolute_alarms") {
@@ -126,30 +133,81 @@ extension UndoOperation {
         return message
     }
 
-    /// The text of an undone batch (verify round 2, finding 5): the member texts are not shown, so
-    /// what a restored occurrence did not carry over is named here, once.
+    /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
+    /// snapshot (a whole-series delete: span "future" from the first occurrence, or span "all"),
+    /// which hold no occurrence deleted or edited on its own before the delete. The undo text says
+    /// so for every such restore, whether or not there were any, since nothing can tell (round 4,
+    /// findings 8/9/12; the text no longer says that about itself, round 5, findings 4/6/11). It
+    /// does not point at "this delete", which a batch text cannot, and says an edited occurrence
+    /// loses its edit, in the words of the tool descriptions.
+    static let seriesRulesRestoreNote = "Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+
+    /// What the `undo_history` line of a record that recreates a series from its rules adds
+    /// (verify round 4, findings 11/15; round 5, findings 1/2/7): the line is read before the undo
+    /// runs, and "from its rules alone" could be read as nothing coming back.
+    static let seriesRulesListingNote = "occurrences deleted on their own earlier come back, edited ones without their edits"
+
+    /// How many series this record's undo recreates from their rules, nested batches included, for
+    /// the `undo_history` line of a batch (verify round 5, findings 1/2). Counted from the same
+    /// exhaustive classification as the batch undo text, which treats a refused member as
+    /// disclosing nothing; a batch holding one is listed by that refusal instead, since its undo
+    /// writes nothing (round 6, findings 1/2/4).
+    var seriesRecreatedFromRules: Int {
+        undoDisclosures.filter { $0 == .seriesRules }.count
+    }
+
+    /// The text of a recreated event. Store-derived title through `undoVisibleTitle`.
+    static func eventRestoredMessage(snapshot: EventSnapshot, newID: String) -> String {
+        var message = "Undone: restored event '\(undoVisibleTitle(snapshot.title))' (new ID: \(newID))"
+        if snapshot.restoresFromRules { message += ". " + seriesRulesRestoreNote }
+        return message
+    }
+
+    /// The text of an undone batch (verify round 2, finding 5; round 3, finding 3): the member texts
+    /// are not shown, so what a member did not restore as it was is named here, once each. A pure
+    /// function of the members it is given.
     static func batchUndoneMessage(members: [UndoOperation], count: Int) -> String {
         var message = "Undone batch (\(count) operations)"
         if let note = batchLossNote(members: members) { message += ". " + note }
         return message
     }
 
-    /// What the restored `members` did not carry over, or nil. Also named by a batch undo that
-    /// stopped part-way, for the members it restored before the failure (#248 A,
-    /// `UndoBatchPartiallyUndoneError`), so each restored member's loss is reported once.
+    /// What the restored `members` did not restore as they were (`undoDisclosures`: an occurrence's
+    /// absolute-date alarm, a series recreated from its rules), or nil. Also named by a batch undo
+    /// that stopped part-way, for the members it restored before the failure (#248 A,
+    /// `UndoBatchPartiallyUndoneError`), so each restored member's disclosure is made once (PR #282
+    /// round 3, finding 3: both kinds, not the alarm alone).
     static func batchLossNote(members: [UndoOperation]) -> String? {
-        members.contains(where: \.restoresWithoutAbsoluteAlarms)
-            ? "Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)"
-            : nil
+        let disclosures = Set(members.flatMap(\.undoDisclosures))
+        var notes: [String] = []
+        if disclosures.contains(.absoluteAlarms) {
+            notes.append("Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
+        }
+        if disclosures.contains(.seriesRules) { notes.append(seriesRulesRestoreNote) }
+        return notes.isEmpty ? nil : notes.joined(separator: ". ")
     }
 
-    private var restoresWithoutAbsoluteAlarms: Bool {
+    private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules }
+
+    /// Exhaustive, so a new record kind has to be classified here (verify round 3, finding 2).
+    private var undoDisclosures: [UndoDisclosure] {
         switch self {
-        case .deleteOccurrence(_, let notCarriedOver): return notCarriedOver.contains("absolute_alarms")
-        case .batch(let members): return members.contains(where: \.restoresWithoutAbsoluteAlarms)
-        default: return false
+        case .deleteOccurrence(_, let notCarriedOver):
+            return notCarriedOver.contains("absolute_alarms") ? [.absoluteAlarms] : []
+        case .deleteEvent(let snapshot):
+            return snapshot.restoresFromRules ? [.seriesRules] : []
+        case .batch(let members):
+            return members.flatMap(\.undoDisclosures)
+        case .createEvent, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
+             .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+            return []
         }
     }
+}
+
+extension EventSnapshot {
+    /// A recreate writes these rules, so the event comes back as a series built from them.
+    var restoresFromRules: Bool { !(recurrenceRules ?? []).isEmpty }
 }
 
 extension EventKitManager {

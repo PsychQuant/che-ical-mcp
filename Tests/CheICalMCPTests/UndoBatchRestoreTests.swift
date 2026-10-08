@@ -726,7 +726,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
         let after = await history.historySnapshot()
         XCTAssertEqual(after.entries.map(\.id), listed.entries.map(\.id), "same ids, same order")
-        XCTAssertEqual(after.entries.first?.description, "Batch (1 operations)")
+        XCTAssertEqual(after.entries.first?.description, "Batch (1 operation)", "#278 round 6: a batch of one in the singular")
         XCTAssertEqual(after.entries.first?.timestamp, listed.entries.first?.timestamp)
         XCTAssertEqual(after.redoCount, 0)
         let next = try await history.beginUndo()   // not busy

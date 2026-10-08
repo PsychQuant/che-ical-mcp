@@ -2115,13 +2115,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
-            // Undo delete = recreate from snapshot. #261: no discard; in the failure classes tried
-            // on device, a failed new event was not written by a later save (see NewObjectSave).
+            // Undo delete = recreate from snapshot; a series from its rules only (#285), which the
+            // text says. #261: no discard; in the failure classes tried on device, a failed new
+            // event was not written by a later save (see NewObjectSave).
             let event = EKEvent(eventStore: eventStore)
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return "Undone: restored event '\(undoVisibleTitle(snapshot.title))' (new ID: \(event.eventIdentifier ?? "unknown"))"
+            return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: event.eventIdentifier ?? "unknown")
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
             // #244: the snapshot holds no rules, so the occurrence comes back as a one-off event at

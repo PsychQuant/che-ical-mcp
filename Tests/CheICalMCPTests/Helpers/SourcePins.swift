@@ -4,6 +4,12 @@ import Foundation
 /// findings 12/16/20/25/26). A pin reads one function: from its declaration to the brace that
 /// closes it, with comments and string literals blanked out, so text in a comment never satisfies
 /// a pin and the next declaration, of whatever kind, is never part of the body.
+///
+/// Limits (verify round 3, findings 6/13/15): it reads `Character`s, so a CRLF file reads as one
+/// comment after its first `//` and every pin fails (closed); raw strings (`#"…"#`) and regex
+/// literals are not recognised, so a `\(` or a quote in one shifts the blanking. The scanned files
+/// have none. #276's `SourceScan` handles scalars, CRLF and regex literals; the two readers are to
+/// be unified after both PRs merge.
 enum SourcePins {
     static func source(_ relative: String) throws -> String {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
