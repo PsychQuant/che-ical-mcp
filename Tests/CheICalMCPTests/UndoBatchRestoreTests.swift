@@ -1,4 +1,5 @@
 import CheMCPKit
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -12,6 +13,17 @@ final class UndoBatchRestoreTests: XCTestCase {
     // many stores in one process make EventKit refuse the real one other tests use.
     private static let eventFixture = UndoSnapshotFixtures.event(title: "Standup")
     private static let reminderFixture = UndoSnapshotFixtures.reminder(title: "Pay rent")
+    /// A weekly series, so its delete-undo recreates it from its rules (#278, #285).
+    private static let seriesFixture: EventSnapshot = {
+        let store = EKEventStore()
+        let event = EKEvent(eventStore: store)
+        event.calendar = EKCalendar(for: .event, eventStore: store)
+        event.title = "Weekly"
+        event.startDate = Date(timeIntervalSince1970: 1_800_000_000)
+        event.endDate = event.startDate.addingTimeInterval(1800)
+        event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 3)))
+        return EventSnapshot(from: event)
+    }()
     private var event: EventSnapshot { Self.eventFixture }
     private var reminder: ReminderSnapshot { Self.reminderFixture }
 
@@ -444,6 +456,33 @@ final class UndoBatchRestoreTests: XCTestCase {
 
         let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
         XCTAssertTrue(retry.contains(absoluteAlarmsNote), retry)
+    }
+
+    /// PR #282 round 3, finding 3: after #278, a whole-series delete recreated from its rules is
+    /// disclosed too (`seriesRulesRestoreNote`, from `undoDisclosures`), and the same once-only rule
+    /// holds: a series restored before the failure is named in the partial error, not in the retry.
+    func testASeriesRestoredBeforeAFailureIsDisclosedOnceAcrossTheRetry() async throws {
+        let log = ExecutionLog()
+        let series = UndoOperation.deleteEvent(snapshot: Self.seriesFixture)
+        let first = await undoBatch([deleted("A"), series], log: log, failsOn: { $0 == "A" })
+        let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
+        XCTAssertEqual(log.executed, ["Weekly"], "undo runs in reverse: the series, then A, which fails")
+        XCTAssertTrue(partial.message.contains(UndoOperation.seriesRulesRestoreNote), partial.message)
+
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        XCTAssertFalse(retry.contains(UndoOperation.seriesRulesRestoreNote), "disclosed once, in the partial error: \(retry)")
+    }
+
+    func testASeriesRestoredOnTheRetryIsDisclosedThenAndNotBefore() async throws {
+        let log = ExecutionLog()
+        let series = UndoOperation.deleteEvent(snapshot: Self.seriesFixture)
+        let first = await undoBatch([series, deleted("B"), deleted("A")], log: log, failsOn: { $0 == "B" })
+        let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
+        XCTAssertEqual(log.executed, ["A"])
+        XCTAssertFalse(partial.message.contains(UndoOperation.seriesRulesRestoreNote), partial.message)
+
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        XCTAssertTrue(retry.contains(UndoOperation.seriesRulesRestoreNote), retry)
     }
 
     /// A nested batch that stopped part-way carries its own restored members up.
