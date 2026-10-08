@@ -1,10 +1,12 @@
 import CheMCPKit
 import Foundation
 
-/// #248 — a batch undo restores all of its members or none of them when one cannot be restored.
-/// The batch record is the unit of history while the writes are per member, so a member that
-/// failed after earlier members were written used to put the whole record back, and the next undo
-/// recreated those members again.
+/// #248 — a batch undo restores each member once. The batch record is the unit of history while
+/// the writes are per member, so a member that failed after earlier members were written used to
+/// put the whole record back, and the next undo recreated those members again. Now a pre-check
+/// refuses the whole batch before any write when a member's calendar or list is missing or
+/// read-only (B), and a write that fails part-way keeps only the members not yet restored in the
+/// record (A); a partial restore after the pre-check is #287.
 
 /// B: where the undo of a batch member recreates its item. Only the delete records recreate (a
 /// deleted occurrence as a one-off event, #244); every other record writes to an existing item,

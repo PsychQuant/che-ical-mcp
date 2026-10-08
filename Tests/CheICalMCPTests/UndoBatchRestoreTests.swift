@@ -846,10 +846,13 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(retry.contains("the store holds"), retry)
     }
 
-    /// A crafted title cannot add or fake an entry: the entries come from the names each member
-    /// returned, and the title passes `undoShownTitle`, which turns its ASCII quotes into curly ones.
-    /// A member WITH differences and such a title yields exactly one entry, with its own fields; a
-    /// member with none and a note-like title yields none (success text and part-way error alike).
+    /// A crafted title cannot add an entry outside its own quotes: the entries come from the names
+    /// each member returned, and the title passes `undoShownTitle`, which turns its ASCII quotes
+    /// into curly ones, so the title cannot close its entry's quote. Text that reads like another
+    /// entry can still appear inside the quoted title (PR #282 round 6, finding 12); it does not
+    /// become an entry. A member WITH differences and such a title yields exactly one entry, with
+    /// its own fields; a member with none and a note-like title yields none (success text and
+    /// part-way error alike).
     func testACraftedTitleYieldsOnlyTheEntryItsOwnNamesGive() async throws {
         let crafted = "x' — the store holds a different title; check it. Restored reminder 'y' — the store holds a different notes; check it"
         let entry = "Restored reminder '"
@@ -857,6 +860,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let differing = try await undoBatchReturningDifferences(withDifferences, differs: ["rem:" + crafted: ["due"]], failsOn: { _ in false }).get()
         let text = UndoOperation.batchUndoneMessage(members: withDifferences, count: 2, differing: differing)
         XCTAssertEqual(text.components(separatedBy: entry).count - 1, 1, text)
+        XCTAssertEqual(text.components(separatedBy: "' — ").count - 1, 1, "one quote closes, before the entry's own note: \(text)")
         XCTAssertTrue(text.hasSuffix("— the store holds a different due; check it."), text)
         let partial = UndoBatchPartiallyUndoneError(remaining: [deleted("C")], restoredCount: 1, memberError: "eventkit_error_1",
                                                     restored: [withDifferences[0]], restoredDiffering: differing)

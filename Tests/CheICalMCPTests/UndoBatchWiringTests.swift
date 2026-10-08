@@ -117,6 +117,11 @@ final class UndoBatchWiringTests: XCTestCase {
         let reminders = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String]", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("UndoOperation.reminderBatchDelete(undoSnapshots)"), in: reminders))
         XCTAssertEqual(Self.count(".batch(", in: reminders), 0)
+        // Round 6, finding 28: every use of the reminder builder's array too: its declaration, the
+        // one append (after the remove succeeded) and the record.
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(reminders)).count, 3)
+        XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [ReminderSnapshot] = []"), in: reminders))
+        XCTAssertEqual(Self.count("undoSnapshots.append(snapshot)", in: reminders), 1)
 
         // Every `.batch(...)` built in Sources (a `case .batch(` match is not one): the two event
         // builders, the reminder builder, and three that rebuild an existing record's members (the
