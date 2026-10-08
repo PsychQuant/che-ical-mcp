@@ -136,6 +136,15 @@ final class UndoBatchWiringTests: XCTestCase {
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 
+    /// Round 6, findings 7, 17 (#283): the snapshot fixtures share one in-memory store instead of
+    /// building one per call; too many stores in one process make EventKit refuse the real one.
+    func testTheSnapshotFixturesShareOneStore() throws {
+        let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Helpers/UndoSnapshotFixtures.swift")
+        let code = SourcePins.code(try String(contentsOf: fixtures, encoding: .utf8))
+        XCTAssertEqual(SourcePins.ranges(of: "EKEventStore()", in: code).count, 1, code)
+        XCTAssertNotNil(Self.offset(of: Self.call("private static let store = EKEventStore()"), in: Substring(code)))
+    }
+
     /// Round 5, finding 8 (#37): the batch refusal puts no calendar or list title and no account on
     /// the trusted path; `UndoBatchRestore.swift` reads neither field.
     func testTheBatchRefusalReadsNoCalendarTitleOrAccount() throws {

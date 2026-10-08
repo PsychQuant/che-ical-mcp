@@ -2,14 +2,14 @@ import CheMCPKit
 import XCTest
 @testable import CheICalMCP
 
-/// #248: a batch undo restores every member or writes nothing when a member's calendar or list
-/// is gone (B), and a failure part-way keeps only the members not yet restored (A). Pure: the
-/// snapshots are built in memory and the batch runs through `UndoBatchRunner`'s closures, so no
-/// EventKit store is read or written.
+/// #248: a batch undo is refused before any write when a member's calendar or list is gone or
+/// read-only (B), and a failure part-way keeps only the members not yet restored (A). The
+/// snapshots are built in memory by `UndoSnapshotFixtures` on its one shared in-memory store,
+/// which is never fetched from or saved to, and the batch runs through `UndoBatchRunner`'s
+/// closures, so no store with the user's data is read or written.
 final class UndoBatchRestoreTests: XCTestCase {
-    // Static, so each fixture (and its EKEventStore) is built once per class when first used:
-    // instance properties are built for every test when XCTest assembles the suite, and too
-    // many stores in one process make EventKit refuse the real one other tests use.
+    // Static, so each fixture is built once per class when first used: instance properties are
+    // built for every test when XCTest assembles the suite (#283).
     private static let eventFixture = UndoSnapshotFixtures.event(title: "Standup")
     private static let reminderFixture = UndoSnapshotFixtures.reminder(title: "Pay rent")
     /// A weekly series, so its delete-undo recreates it from its rules (#278, #285). Built by
