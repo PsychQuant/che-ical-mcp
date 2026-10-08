@@ -389,6 +389,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     struct CreateCalendarResult {
         let calendar: EKCalendar
         let isDuplicate: Bool
+        /// #261: compared fields a new store holds differently after a save that threw but
+        /// committed (`NewObjectSave.run`); empty otherwise.
+        let storeDiffers: [String]
     }
 
     func createCalendar(title: String, entityType: EKEntityType, color: String? = nil) async throws -> CreateCalendarResult {
@@ -401,7 +404,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Idempotency: check for existing calendar with same title and type
         let existing = eventStore.calendars(for: entityType).first { $0.title == title }
         if let existing = existing {
-            return CreateCalendarResult(calendar: existing, isDuplicate: true)
+            return CreateCalendarResult(calendar: existing, isDuplicate: true, storeDiffers: [])
         }
 
         let calendar = EKCalendar(for: entityType, eventStore: eventStore)
@@ -423,8 +426,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // save, so it is discarded unless a new store finds it; then it was saved, and it is
         // returned as created. An event calendar is saved as before: in the failure classes
         // tried, a failed one was not written by a later save (see NewObjectSave).
+        var storeDiffers: [String] = []
         if NewObjectSave.keepsFailedInsert(entityType) {
-            try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
+            storeDiffers = try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
                                   committed: { NewObjectSave.freshStoreFinds(NewObjectSave.listCheck(calendar)) },
                                   discard: { try eventStore.removeCalendar(calendar, commit: false) },
                                   report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
@@ -432,7 +436,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try eventStore.saveCalendar(calendar, commit: true)
         }
         markNeedsRefresh()
-        return CreateCalendarResult(calendar: calendar, isDuplicate: false)
+        return CreateCalendarResult(calendar: calendar, isDuplicate: false, storeDiffers: storeDiffers)
     }
 
     func updateCalendar(
@@ -1661,6 +1665,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     struct CreateReminderResult: Sendable {
         let reminder: ReminderWriteSnapshot
         let isDuplicate: Bool
+        /// #261: compared fields a new store holds differently after a save that threw but
+        /// committed (`NewObjectSave.run`); empty otherwise.
+        let storeDiffers: [String]
     }
 
     /// Find an existing incomplete reminder that matches by title on the same list.
@@ -1720,7 +1727,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Idempotency: check for existing reminder with same title (+due date) on same list
         if let existing = await findDuplicateReminder(title: title, dueDate: dueDate, calendar: calendar) {
-            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true)
+            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true, storeDiffers: [])
         }
 
         let reminder = EKReminder(eventStore: eventStore)
@@ -1769,9 +1776,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        try saveNewReminder(reminder, handler: "createReminder")
+        let storeDiffers = try saveNewReminder(reminder, handler: "createReminder")
         markNeedsRefresh()
-        let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false)
+        let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers)
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
@@ -1782,8 +1789,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// the save fails and a new store does not find the reminder, it is removed from the store
     /// without committing, so the next save by any tool does not write it (`NewObjectSave`). If
     /// that store finds it, it was saved, and this returns as after a save: the caller's success
-    /// path runs (the create's result and undo entry, the delete-undo's restore).
-    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws {
+    /// path runs (the create's result and undo entry, the delete-undo's restore). Returns the
+    /// compared fields the store holds differently, for the caller to name.
+    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws -> [String] {
         try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
                               committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
                               discard: { try eventStore.remove(reminder, commit: false) },
@@ -2146,11 +2154,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .deleteReminder(let snapshot):
             // Undo delete = recreate. The new reminder is created only after the lists are read.
             // #261: a save that threw but that a new store finds counts as the restore, so the
-            // record is consumed and a retry does not make a second copy.
+            // record is consumed and a retry does not make a second copy; fields the store holds
+            // differently are named in the message.
             let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
-            try saveNewReminder(reminder, handler: "undo.deleteReminder")
+            let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder")
             markNeedsRefresh()
-            return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'"
+            return "Undone: restored reminder '\(undoVisibleTitle(snapshot.title))'" + NewObjectSave.undoSuffix(storeDiffers)
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
@@ -2175,7 +2184,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 Array(ops.reversed()),
                 check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
                 execute: { try await self.executeUndo($0) })
-            return "Undone batch (\(results.count) operations)"
+            return "Undone batch (\(results.count) operations)" + NewObjectSave.batchSuffix(results)
         }
     }
 

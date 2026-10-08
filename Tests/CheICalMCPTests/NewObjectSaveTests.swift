@@ -31,16 +31,16 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// Runs the helper with closures that record each call; `report` records the outcome by name.
     private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: NewObjectSave.Found?,
-                     discard: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?) {
+                     discard: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?, differing: [String]) {
         var calls: [String] = []
         do {
-            try NewObjectSave.run(save: { calls.append("save"); try save() },
-                                  committed: { calls.append("committed"); return committed },
-                                  discard: { calls.append("discard"); try discard() },
-                                  report: { calls.append("report \(self.name($0))") })
-            return (calls, nil)
+            let differing = try NewObjectSave.run(save: { calls.append("save"); try save() },
+                                                  committed: { calls.append("committed"); return committed },
+                                                  discard: { calls.append("discard"); try discard() },
+                                                  report: { calls.append("report \(self.name($0))") })
+            return (calls, nil, differing)
         } catch {
-            return (calls, error)
+            return (calls, error, [])
         }
     }
 
@@ -48,6 +48,7 @@ final class NewObjectSaveTests: XCTestCase {
         let result = run(save: {}, committed: .absent)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save"])
+        XCTAssertEqual(result.differing, [])
     }
 
     /// The default: a failed save that a new store cannot find is discarded once, after the
@@ -66,27 +67,48 @@ final class NewObjectSaveTests: XCTestCase {
         let result = run(committed: .saved)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
+        XCTAssertEqual(result.differing, [], "nothing to note")
         var reported: [NewObjectSave.Outcome] = []
-        try NewObjectSave.run(save: { throw Failure.commit }, committed: { .saved }, discard: { XCTFail("discarded") },
-                              report: { reported.append($0) })
+        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .saved }, discard: { XCTFail("discarded") },
+                                  report: { reported.append($0) })
         guard case .committedThenThrew(let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
         XCTAssertEqual(save as? Failure, .commit)
     }
 
-    /// A new store finds an item under the identifier, but a compared field differs: something
-    /// was written, maybe not all of it. The item is kept (removing it would delete what was
-    /// written) and the save's error reaches the caller, so a create reports no success and
-    /// records no undo entry, and a delete-undo keeps its record.
-    func testAFoundItemThatDiffersIsKeptAndTheSaveErrorReported() throws {
+    /// A new store finds an item under the identifier, but a compared field differs (a partial
+    /// write, or an edit made elsewhere between the commit and the check). The item counts as
+    /// saved too: it is kept and `run` returns, so every caller takes its success path (the
+    /// create's result and undo entry, delete-undo consumes its record), and `run` returns the
+    /// names of the differing fields for the caller to report. Nothing is removed.
+    func testAFoundItemThatDiffersCountsAsSavedAndItsFieldsAreReturned() throws {
         let result = run(committed: .differs(["due", "title"]))
-        XCTAssertEqual(result.error as? Failure, .commit)
+        XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save", "committed", "report committedButDiffers"])
+        XCTAssertEqual(result.differing, ["due", "title"])
         var reported: [NewObjectSave.Outcome] = []
-        XCTAssertThrowsError(try NewObjectSave.run(save: { throw Failure.commit }, committed: { .differs(["list"]) },
-                                                   discard: { XCTFail("discarded") }, report: { reported.append($0) }))
+        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .differs(["list"]) },
+                                  discard: { XCTFail("discarded") }, report: { reported.append($0) })
         guard case .committedButDiffers(let fields, let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
         XCTAssertEqual(fields, ["list"])
         XCTAssertEqual(save as? Failure, .commit)
+    }
+
+    /// What the caller says about differing fields: a create response gets `store_differs` (the
+    /// names) and a `note`; an undo message gets a clause after a dash; a batch undo message
+    /// repeats the members' clauses. Names only, never values. Nothing when nothing differs.
+    func testTheDifferingFieldsAreNamedInTheResponseAndTheUndoMessage() throws {
+        XCTAssertNil(NewObjectSave.storeDiffersClause([]))
+        XCTAssertEqual(NewObjectSave.storeDiffersClause(["due", "title"]), "the store holds a different due, title; check it")
+        XCTAssertTrue(NewObjectSave.responseFields([]).isEmpty)
+        let fields = NewObjectSave.responseFields(["due", "title"])
+        XCTAssertEqual(fields["store_differs"] as? [String], ["due", "title"])
+        XCTAssertEqual(fields["note"] as? String, "Saved, but the store holds a different due, title; check it.")
+        XCTAssertEqual(fields.count, 2)
+        XCTAssertEqual(NewObjectSave.undoSuffix([]), "")
+        XCTAssertEqual(NewObjectSave.undoSuffix(["title"]), " — the store holds a different title; check it")
+        let members = ["Undone: restored reminder 'a'", "Undone: restored reminder 'b'" + NewObjectSave.undoSuffix(["due"])]
+        XCTAssertEqual(NewObjectSave.batchSuffix(members), "; Undone: restored reminder 'b' — the store holds a different due; check it")
+        XCTAssertEqual(NewObjectSave.batchSuffix(["Undone: restored reminder 'a'"]), "")
     }
 
     /// The comparison: nothing under the identifier is `absent`; the same values are `saved`; any
@@ -98,24 +120,50 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "b", "list": "L1", "due": "2030 1 15 10 0"])), .differs(["title"]))
         XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "a", "list": "L2", "due": "2030 1 15 11 0"])), .differs(["due", "list"]))
         XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "a", "list": "L1"])), .differs(["due"]))
+        XCTAssertEqual(NewObjectSave.check(saved, against: .init(["title": "a", "list": "L1", "due": "2030 1 15 10 0", "notes": "n"])), .differs(["notes"]),
+                       "a field only the store's copy has")
     }
 
-    /// What is compared, read from in-memory objects (one store, nothing saved): a reminder's
-    /// title, list and due date to the minute (no seconds, no zone; a date-only due has no time),
-    /// and a list's title and account. A missing value reads as empty.
-    func testTheFieldsAreTitleListAndDueOrTitleAndAccount() {
+    /// What is compared, read from in-memory objects (one store, nothing saved). A reminder: its
+    /// title, list (by identifier), notes, priority, completion, URL, start and due date to the
+    /// minute (a date-only start reads as 00:00, which is how the store hands one back; a
+    /// date-only due has no time), the due date's time zone, and how many alarms and recurrence
+    /// rules it has. A list: its title and account. A missing value reads as empty.
+    func testTheFieldsAreTheOnesTheSaveWritesThatReadBackSimply() {
         let store = EKEventStore()
         let reminder = EKReminder(eventStore: store)
         reminder.title = "a"
-        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder), .init(["title": "a", "list": "", "due": ""]))
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder), .init([
+            "title": "a", "list": "", "notes": "", "priority": "0", "completion": "open", "url": "",
+            "start": "", "due": "", "due time zone": "", "alarm count": "0", "recurrence rule count": "0"]))
+        let list = EKCalendar(for: .reminder, eventStore: store)
+        list.title = "l"
+        reminder.calendar = list
+        reminder.notes = "n"
+        reminder.priority = 5
+        reminder.isCompleted = true
+        reminder.url = URL(string: "https://example.com/x")
         var due = DateComponents(year: 2030, month: 1, day: 15, hour: 10, minute: 5, second: 30)
         due.timeZone = TimeZone(identifier: "Asia/Taipei")
         reminder.dueDateComponents = due
-        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due"], "2030 1 15 10 5")
+        reminder.addAlarm(EKAlarm(relativeOffset: -900))
+        reminder.addAlarm(EKAlarm(relativeOffset: -60))
+        reminder.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: nil))
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder), .init([
+            "title": "a", "list": list.calendarIdentifier, "notes": "n", "priority": "5", "completion": "completed",
+            "url": "https://example.com/x", "start": "2030 1 15 10 5", "due": "2030 1 15 10 5", "due time zone": "Asia/Taipei",
+            "alarm count": "2", "recurrence rule count": "1"]), "EventKit gives a reminder without a start one equal to a due written to it (#235)")
+        XCTAssertFalse(list.calendarIdentifier.isEmpty)
+        // The time zone is read as EventKit reports it after the writes: a date-only start written
+        // after the due leaves the reminder floating (#251, in memory), and the field follows.
+        reminder.startDateComponents = DateComponents(year: 2030, month: 1, day: 14)
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["start"], "2030 1 14 0 0")
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due time zone"], reminder.dueDateComponents?.timeZone?.identifier ?? "")
+        reminder.startDateComponents = DateComponents(year: 2030, month: 1, day: 14, hour: 9, minute: 30)
         reminder.dueDateComponents = DateComponents(year: 2030, month: 1, day: 15)
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["start"], "2030 1 14 9 30")
         XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due"], "2030 1 15 - -")
-        let list = EKCalendar(for: .reminder, eventStore: store)
-        list.title = "l"
+        XCTAssertEqual(NewObjectSave.Fields(reminder: reminder).values["due time zone"], "")
         XCTAssertEqual(NewObjectSave.Fields(list: list), .init(["title": "l", "account": ""]))
     }
 
@@ -204,7 +252,7 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(NewObjectSave.note(for: .committedThenThrew(save: commitFailure), handler: "h", identifier: "id"),
                        "h(id): the save threw EKCADErrorDomain 1010, but a new store finds the item as it was saved, so it was saved; it is kept and the call succeeds")
         XCTAssertEqual(NewObjectSave.note(for: .committedButDiffers(fields: ["due", "title"], save: commitFailure), handler: "h", identifier: "id"),
-                       "h(id): the save threw EKCADErrorDomain 1010, and a new store finds the item, but its due, title differ from what was saved, so it may be only partly written; it is kept and the save's error is reported")
+                       "h(id): the save threw EKCADErrorDomain 1010, and a new store finds the item, but its due, title differ from what was written (a partial write or an edit made elsewhere); it is kept and the call succeeds with a note naming them")
         XCTAssertEqual(NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id"),
                        "h(id): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing")
         XCTAssertEqual(NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id"),
@@ -320,7 +368,7 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// The `committed` check the save sites pass: a store made after the failure looks the object
     /// up and compares it (`reminderCheck` / `listCheck`, pinned in
-    /// `testTheCheckReadsANewStoreAndNothingElse`).
+    /// `testTheCheckReadsANewStoreOnlyAndComparesItsCopy`).
     private func freshCheck(_ check: String, _ object: String) -> String {
         #"committed: ?\{ ?NewObjectSave\.freshStoreFinds\( ?NewObjectSave\.\#(check)\( ?\#(object) ?\) ?\) ?\}"#
     }
@@ -365,11 +413,19 @@ final class NewObjectSaveTests: XCTestCase {
         // store finds, each caller goes on to its success path, with nothing caught in between:
         // create_reminder marks the store for a refresh, builds the result and records the undo
         // entry; delete-undo marks the refresh and reports the restore (its record is consumed).
+        // The names of fields the store holds differently travel with the success: into the
+        // create's result, and onto the undo message.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         let undoArm = try segment(of: code, from: "applyReminderSnapshot(snapshot, for: .recreateDeleted")
-        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return "" ?$"#, in: undoArm).count, 1, undoArm)
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return "" ?\+ ?NewObjectSave\.undoSuffix\( ?storeDiffers ?\) ?$"#, in: undoArm).count, 1, undoArm)
+        XCTAssertEqual(try matches(#"execute: ?\{ ?try await self\.executeUndo\( ?\$0 ?\) ?\} ?\) ?return "" ?\+ ?NewObjectSave\.batchSuffix\( ?results ?\)"#, in: code).count, 1,
+                       "a batch undo repeats its members' notes")
+        for handler in ["func handleCreateReminder(", "func handleCreateRemindersBatch(", "func handleCreateCalendar("] {
+            let body = try body(of: handler, in: code)
+            XCTAssertEqual(try matches(#"NewObjectSave\.responseFields\( ?result\.storeDiffers ?\)"#, in: body).count, 1, handler)
+        }
         for site in [create, undoArm] {
             XCTAssertEqual(try matches(#"\bcatch\b|try[?!] ?saveNewReminder"#, in: site).count, 0, site)
         }
@@ -388,11 +444,11 @@ final class NewObjectSaveTests: XCTestCase {
             let (name, type) = (construction.groups[1], construction.groups[2])
             let body = segment(of: code, at: construction.start)
             XCTAssertEqual(try matches(#"saveCalendar\( ?\#(name) ?,"#, in: body).count, 2, body)
-            XCTAssertEqual(try matches(#"if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
+            XCTAssertEqual(try matches(#"var storeDiffers: ?\[String\] ?= ?\[ ?\] ?if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?storeDiffers = try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
                                        + freshCheck("listCheck", name)
                                        + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?"#
                                        + report(#""""#, #"\#(name)\.calendarIdentifier"#)
-                                       + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?markNeedsRefresh\( ?\) ?return CreateCalendarResult\( ?calendar: ?\#(name) ?, ?isDuplicate: ?false ?\) ?\}"#,
+                                       + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?markNeedsRefresh\( ?\) ?return CreateCalendarResult\( ?calendar: ?\#(name) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?\) ?\}"#,
                                        in: body).count, 1, body)
         }
         // A list a new store finds after its save threw is created: nothing is caught on the way
@@ -404,11 +460,11 @@ final class NewObjectSaveTests: XCTestCase {
     /// The gate depends on one fact: the check reads a store made after the failure, never the
     /// one that saved (which finds its own pending insert, 6 of 6 on device). So the body of
     /// `freshStoreFinds` is pinned whole: one new `EKEventStore()`, released with its pool, nil
-    /// when it has no sources, and the closure given that store and nothing else. It is the only
+    /// when it has no sources, and the closure given that store and no other. It is the only
     /// `EKEventStore()` in its file, and the two save sites are its only callers. The closures
     /// they hand it (`reminderCheck`, `listCheck`) are pinned too: what they look up in that
     /// store, by which identifier, and that they compare it with the object as it was saved.
-    func testTheCheckReadsANewStoreAndNothingElse() throws {
+    func testTheCheckReadsANewStoreOnlyAndComparesItsCopy() throws {
         let code = try code()
         XCTAssertEqual(try matches(#"func freshStoreFinds\( ?_ check: ?\( ?EKEventStore ?\) ?-> ?Found ?\) ?-> ?Found\? ?\{"#, in: code).count, 1)
         let finds = try body(of: "func freshStoreFinds(", in: code)
@@ -418,6 +474,10 @@ final class NewObjectSaveTests: XCTestCase {
         let reminderCheck = try body(of: "func reminderCheck(_ reminder: EKReminder) -> (EKEventStore) -> Found", in: code)
         XCTAssertEqual(try matches(#"^\{ ?\{ ?check\( ?Fields\( ?reminder: ?reminder ?\) ?, ?against: ?\( ?\$0\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?as\? ?EKReminder ?\)\.map\( ?Fields\.init\( ?reminder:\) ?\) ?\) ?\} ?\}$"#,
                                    in: reminderCheck).count, 1, reminderCheck)
+        let listFields = try body(of: "init(list: EKCalendar)", in: code)
+        XCTAssertEqual(try matches(#"list\.title ?, ?"" ?: ?list\.source\?\.sourceIdentifier ?\?\? ?"" ?\]"#, in: listFields).count, 1, listFields)
+        let reminderFields = try body(of: "init(reminder: EKReminder)", in: code)
+        XCTAssertEqual(try matches(#"reminder\.calendar\?\.calendarIdentifier ?\?\? ?"""#, in: reminderFields).count, 1, reminderFields)
         let listCheck = try body(of: "func listCheck(_ list: EKCalendar) -> (EKEventStore) -> Found", in: code)
         XCTAssertEqual(try matches(#"^\{ ?\{ ?check\( ?Fields\( ?list: ?list ?\) ?, ?against: ?\$0\.calendar\( ?withIdentifier: ?list\.calendarIdentifier ?\)\.map\( ?Fields\.init\( ?list:\) ?\) ?\) ?\} ?\}$"#,
                                    in: listCheck).count, 1, listCheck)
