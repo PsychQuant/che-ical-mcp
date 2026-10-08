@@ -203,10 +203,35 @@ final class UndoBatchWiringTests: XCTestCase {
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
         let apply = Substring(try Self.body("private func applySnapshot(_ snapshot: EventSnapshot", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })"), in: apply))
-        let undo = try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager)
-        let deleteArm = try Self.from("case .deleteReminder(let snapshot):", in: undo)
-        let nextArm = try XCTUnwrap(deleteArm.range(of: "case .updateReminder(").map { deleteArm[..<$0.lowerBound] })
-        XCTAssertNotNil(Self.offset(of: Self.call("for: .recreateDeleted"), in: nextArm))
+        // Since #280 the delete-undo, single and batch member, restores through
+        // `restoreDeletedReminder`; that is where the kind is passed.
+        let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("for: .recreateDeleted"), in: restore))
+    }
+
+    /// PR #282 round 5, finding 1, with #280 round 7: the undo batch arm runs every member through
+    /// `undoBatchMember`, which restores a deleted reminder through `restoreDeletedReminder` and
+    /// passes the names it returns as data (`UndoRestoredDifference`); every other member runs
+    /// `executeUndo`. The batch text is built from those names (`batchUndoneMessage(…, differing:)`,
+    /// which calls `NewObjectSave.batchNote`), and no member text is read back: the arm uses only
+    /// the count of the member texts.
+    func testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData() throws {
+        let batch = try Self.from("case .batch(let ops):", in: try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("restore: { try await self.undoBatchMember($0) },"), in: batch))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing)"), in: batch))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boutcome\.texts\b"#, in: String(batch)).count, 1, "only the count of the member texts is used")
+        XCTAssertEqual(Self.count("restoreDeletedReminder(", in: batch), 0, "reminders go through undoBatchMember")
+
+        let member = Substring(try Self.body("func undoBatchMember(_ operation: UndoOperation)", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("guard case .deleteReminder(let snapshot) = operation else {"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: try await executeUndo(operation), differing: nil)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("differing: UndoRestoredDifference(shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers))"), in: member))
+
+        let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))
+        XCTAssertNotNil(Self.offset(of: Self.call("NewObjectSave.batchNote(differing.map { (shownTitle: $0.shownTitle, storeDiffers: $0.storeDiffers) })"), in: text))
+        let partial = SourcePins.code(try SourcePins.source("EventKit/UndoBatchRestore.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "NewObjectSave.differingFieldsNote(difference.storeDiffers)", in: partial).count, 1)
     }
 
     /// Round 2, finding 20: the runner's `check` is #236's per-member pre-flight; an empty closure

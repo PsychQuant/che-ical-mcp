@@ -762,27 +762,6 @@ final class UndoBatchRestoreTests: XCTestCase {
         }
     }
 
-    // MARK: - A: reminder members after #280's found-or-not check (PR #282 round 5, finding 1)
-
-    /// A reminder member runs the `.deleteReminder` undo arm, whose `saveNewReminder` (#261) returns
-    /// when a new store finds the reminder as it was saved, and rethrows the save's error when it
-    /// finds it with a compared field differing (the item is kept). The batch treats them as the
-    /// single delete-undo does: the first is restored and leaves the record; the second is the
-    /// failing member, and the record keeps it, so a retry can write a second copy.
-    func testAReminderFoundAsSavedIsRestoredAndOneFoundDifferingIsTheFailingMember() async throws {
-        let log = ExecutionLog()
-        let differs = UndoOperation.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs"))
-        let asSaved = UndoOperation.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "AsSaved"))
-        // Record order; undo runs B, then AsSaved (its save threw, found as saved: returns), then
-        // Differs (found differing: the save's error is rethrown).
-        let error = await undoBatch([differs, asSaved, deleted("B")], log: log, failsOn: { $0 == "rem:Differs" })
-        let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(String(describing: error))")
-        XCTAssertEqual(log.executed, ["B", "rem:AsSaved"])
-        XCTAssertEqual(partial.restoredCount, 2, "the reminder found as saved counts as restored")
-        XCTAssertEqual(titles(partial.remaining), ["rem:Differs"], "the one found differing is kept to run again")
-        XCTAssertEqual(partial.failing, .runsLast)
-    }
-
     /// PR #282 round 5, findings 1, 6, 9: a failed save may have written the item (an event that
     /// committed and then threw; a reminder found differing, or whose removal after the failure
     /// failed), so the text says a retry can add a second copy.
@@ -794,61 +773,83 @@ final class UndoBatchRestoreTests: XCTestCase {
         }
     }
 
-    // MARK: - A: notes a member's restore returns (PR #282 round 5, finding 1, after #280 round 7)
+    // MARK: - A: what a restored reminder's store holds differently (PR #282 round 5, finding 1)
 
-    /// Undoes `members` through the outcome form of the helper: `notes` maps a member's title to
-    /// the note its restore returns (a reminder found with differing fields, #261); `failsOn`
-    /// decides which member writes fail. Returns the notes of a finished batch, or what it throws.
-    private func undoBatchWithNotes(_ members: [UndoOperation], notes: [String: String],
-                                    failsOn: @escaping (String) -> Bool) async -> Result<[String], Error> {
+    /// Undoes `members` through the outcome form of the helper, as `executeUndo(.batch)` does with
+    /// `undoBatchMember`: `differs` maps a member's title to the field names its restore returns
+    /// (#280: a recreated reminder whose save threw but which a new store finds with those fields
+    /// differing counts as restored); `failsOn` decides which member writes fail.
+    private func undoBatchReturningDifferences(_ members: [UndoOperation], differs: [String: [String]],
+                                               failsOn: @escaping (String) -> Bool) async -> Result<[UndoRestoredDifference], Error> {
         do {
             let outcome = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
                 let title = self.titles([member])[0]
                 if failsOn(title) { throw SaveFailed.failed }
-                return UndoMemberOutcome(text: title, note: notes[title])
+                guard case .deleteReminder(let snapshot) = member else { return UndoMemberOutcome(text: title, differing: nil) }
+                return UndoMemberOutcome(text: title, differing: UndoRestoredDifference(shownTitle: undoShownTitle(snapshot.title),
+                                                                                       storeDiffers: differs[title] ?? []))
             }, describe: { _ in "eventkit_error_1" })
-            return .success(outcome.notes)
+            return .success(outcome.differing)
         } catch {
             return .failure(error)
         }
     }
 
-    /// A finished batch returns the notes of its members, in the order they ran, and the batch
-    /// text names them.
-    func testAFinishedBatchCarriesItsMembersNotesIntoItsText() async throws {
-        let members: [UndoOperation] = [.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs")), deleted("B")]
-        let notes = try await undoBatchWithNotes(members, notes: ["rem:Differs": "NOTE-DIFFERS"], failsOn: { _ in false }).get()
-        XCTAssertEqual(notes, ["NOTE-DIFFERS"])
-        let text = UndoOperation.batchUndoneMessage(members: members, count: 2, notes: notes)
-        XCTAssertTrue(text.hasPrefix("Undone batch (2 operations)") && text.contains("NOTE-DIFFERS"), text)
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 2), "Undone batch (2 operations)")
+    private func reminderDeleted(_ title: String) -> UndoOperation {
+        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: title))
     }
 
-    /// A batch that stops part-way names the notes of the members it restored, once: the retry's
-    /// text covers only the members left.
-    func testANoteOfAMemberRestoredBeforeAFailureIsInThePartialErrorOnly() async throws {
-        let members: [UndoOperation] = [deleted("A"), .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs"))]
-        let result = await undoBatchWithNotes(members, notes: ["rem:Differs": "NOTE-DIFFERS"], failsOn: { $0 == "A" })
+    /// (a) A reminder restored as saved, and (b) one whose store holds fields differently: both
+    /// count as restored (neither stays in the record); the batch text names the second, in #280's
+    /// words (`NewObjectSave.batchNote`, built on `differingFieldsNote`).
+    func testAFinishedBatchNamesWhatARestoredReminderStoreHoldsDifferently() async throws {
+        let members = [reminderDeleted("Differs"), reminderDeleted("AsSaved"), deleted("B")]
+        let differing = try await undoBatchReturningDifferences(members, differs: ["rem:Differs": ["due", "title"]],
+                                                                failsOn: { _ in false }).get()
+        let text = UndoOperation.batchUndoneMessage(members: members, count: 3, differing: differing)
+        XCTAssertEqual(text, "Undone batch (3 operations); restored reminder 'Differs' — the store holds a different due, title; check it")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 3), "Undone batch (3 operations)")
+    }
+
+    /// A batch that stops part-way names what the stores of the reminders it restored hold
+    /// differently, once: the reminder is not in the narrowed record, and the retry's text covers
+    /// only the members left.
+    func testAReminderRestoredWithDifferingFieldsBeforeAFailureIsNamedInThePartialErrorOnly() async throws {
+        let members = [deleted("A"), reminderDeleted("Differs")]
+        let result = await undoBatchReturningDifferences(members, differs: ["rem:Differs": ["title"]], failsOn: { $0 == "A" })
         guard case .failure(let error) = result, let partial = error as? UndoBatchPartiallyUndoneError else {
             return XCTFail("\(result)")
         }
-        XCTAssertEqual(partial.restoredNotes, ["NOTE-DIFFERS"])
-        XCTAssertTrue(partial.message.contains("NOTE-DIFFERS"), partial.message)
-        XCTAssertEqual(titles(partial.remaining), ["A"], "the reminder with a note was restored and left the record")
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count, notes: [])
-        XCTAssertFalse(retry.contains("NOTE-DIFFERS"), retry)
+        XCTAssertEqual(partial.restoredDiffering, [UndoRestoredDifference(shownTitle: "Differs", storeDiffers: ["title"])])
+        XCTAssertTrue(partial.message.contains("Restored reminder 'Differs' — the store holds a different title; check it."), partial.message)
+        XCTAssertEqual(titles(partial.remaining), ["A"], "the reminder was restored and left the record")
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        XCTAssertFalse(retry.contains("the store holds"), retry)
     }
 
-    /// A nested batch that stopped part-way carries its restored members' notes up.
-    func testANestedBatchCarriesItsRestoredNotesUp() throws {
+    /// A title that holds the note's wording adds nothing: the note comes from the names a member
+    /// returned, never from its title or text.
+    func testATitleThatHoldsTheNotesWordingAddsNoNote() async throws {
+        let spoof = "x' — the store holds a different title; check it"
+        let members = [reminderDeleted(spoof), deleted("B")]
+        let differing = try await undoBatchReturningDifferences(members, differs: [:], failsOn: { _ in false }).get()
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 2, differing: differing), "Undone batch (2 operations)")
+        let partial = UndoBatchPartiallyUndoneError(remaining: [deleted("C")], restoredCount: 1, memberError: "eventkit_error_1",
+                                                    restored: [members[0]], restoredDiffering: differing)
+        XCTAssertFalse(partial.message.contains("the store holds"), partial.message)
+    }
+
+    /// A nested batch that stopped part-way carries its restored reminders' differences up.
+    func testANestedBatchCarriesItsRestoredDifferencesUp() throws {
+        let difference = UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["notes"])
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
-                                                  restoredNotes: ["NOTE-Z"])
-        let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), deleted("Z")])],
+                                                  restoredDiffering: [difference])
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), reminderDeleted("Z")])],
                                                      interrupted: .init(completed: 0, underlying: inner),
-                                                     notes: [], describe: { _ in "unused" })
+                                                     describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
-        XCTAssertEqual(partial.restoredNotes, ["NOTE-Z"])
-        XCTAssertTrue(partial.message.contains("NOTE-Z"), partial.message)
+        XCTAssertEqual(partial.restoredDiffering, [difference])
+        XCTAssertTrue(partial.message.contains("Restored reminder 'Z' — the store holds a different notes; check it."), partial.message)
     }
 
     // MARK: - A: batch texts for one member (PR #282 round 5, findings 4, 12)

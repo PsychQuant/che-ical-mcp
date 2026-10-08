@@ -99,7 +99,9 @@ final class ReminderUndoWiringTests: XCTestCase {
     /// fetched after the lists are read; nothing creates or writes a reminder before the call.
     func testTheUndoArmsResolveTheListBeforeWritingAnything() throws {
         let undo = try slice(try managerSource(), from: "func executeUndo(", to: "func executeRedo(")
-        let arms = [("case .deleteReminder(let snapshot):",
+        // #261: the delete arm (single and batch) recreates through `restoreDeletedReminder`.
+        XCTAssertTrue(undo.contains("case .deleteReminder(let snapshot):\n            return restoredReminderMessage(try await restoreDeletedReminder(snapshot))"), undo)
+        let arms = [("func restoreDeletedReminder(",
                      "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })"),
                     ("case .updateReminder(_, let oldSnapshot, _):",
                      "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })")]
