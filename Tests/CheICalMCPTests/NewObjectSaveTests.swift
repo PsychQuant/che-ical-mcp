@@ -93,12 +93,14 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(save as? Failure, .commit)
     }
 
-    /// What the caller says about differing fields: a create response gets `store_differs` (the
-    /// names) and a `note`; an undo message gets a clause after a dash; a batch undo message
-    /// repeats the members' clauses. Names only, never values. Nothing when nothing differs.
+    /// What the caller says about differing fields, all through one formatter
+    /// (`differingFieldsNote`): a create response gets `store_differs` (the names) and a `note`;
+    /// an undo message gets the note after a dash; a batch undo lists its restored members with
+    /// their notes, from the names each member returned. Names only, never values. Nothing when
+    /// nothing differs.
     func testTheDifferingFieldsAreNamedInTheResponseAndTheUndoMessage() throws {
-        XCTAssertNil(NewObjectSave.storeDiffersClause([]))
-        XCTAssertEqual(NewObjectSave.storeDiffersClause(["due", "title"]), "the store holds a different due, title; check it")
+        XCTAssertNil(NewObjectSave.differingFieldsNote([]))
+        XCTAssertEqual(NewObjectSave.differingFieldsNote(["due", "title"]), "the store holds a different due, title; check it")
         XCTAssertTrue(NewObjectSave.responseFields([]).isEmpty)
         let fields = NewObjectSave.responseFields(["due", "title"])
         XCTAssertEqual(fields["store_differs"] as? [String], ["due", "title"])
@@ -106,9 +108,19 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(fields.count, 2)
         XCTAssertEqual(NewObjectSave.undoSuffix([]), "")
         XCTAssertEqual(NewObjectSave.undoSuffix(["title"]), " — the store holds a different title; check it")
-        let members = ["Undone: restored reminder 'a'", "Undone: restored reminder 'b'" + NewObjectSave.undoSuffix(["due"])]
-        XCTAssertEqual(NewObjectSave.batchSuffix(members), "; Undone: restored reminder 'b' — the store holds a different due; check it")
-        XCTAssertEqual(NewObjectSave.batchSuffix(["Undone: restored reminder 'a'"]), "")
+        XCTAssertEqual(NewObjectSave.batchNote([(shownTitle: "a", storeDiffers: []), (shownTitle: "b", storeDiffers: ["due"])]),
+                       "; restored reminder 'b' — the store holds a different due; check it")
+        XCTAssertEqual(NewObjectSave.batchNote([(shownTitle: "a", storeDiffers: [])]), "")
+        XCTAssertEqual(NewObjectSave.batchNote([]), "")
+    }
+
+    /// The batch note is built from the names each member returned, never read back from member
+    /// text: a reminder whose title holds the note's own wording, restored as written, adds no note.
+    func testATitleThatHoldsTheNoteWordingAddsNoNote() {
+        let spoof = "x — the store holds a different title; check it"
+        XCTAssertEqual(NewObjectSave.batchNote([(shownTitle: spoof, storeDiffers: [])]), "")
+        XCTAssertEqual(NewObjectSave.batchNote([(shownTitle: spoof, storeDiffers: []), (shownTitle: "b", storeDiffers: ["title"])]),
+                       "; restored reminder 'b' — the store holds a different title; check it")
     }
 
     /// The comparison: nothing under the identifier is `absent`; the same values are `saved`; any
@@ -418,10 +430,15 @@ final class NewObjectSaveTests: XCTestCase {
         let create = try body(of: "func createReminder( title:", in: code)
         XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
-        let undoArm = try segment(of: code, from: "applyReminderSnapshot(snapshot, for: .recreateDeleted")
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return "" ?\+ ?NewObjectSave\.undoSuffix\( ?storeDiffers ?\) ?$"#, in: undoArm).count, 1, undoArm)
-        XCTAssertEqual(try matches(#"execute: ?\{ ?try await self\.executeUndo\( ?\$0 ?\) ?\} ?\) ?return "" ?\+ ?NewObjectSave\.batchSuffix\( ?results ?\)"#, in: code).count, 1,
-                       "a batch undo repeats its members' notes")
+        // Delete-undo, single and in a batch, goes through one helper that returns the names as
+        // data; the single arm turns them into its message, the batch arm collects them per member.
+        let undoArm = try body(of: "func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String])", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return \( ?snapshot\.title ?, ?storeDiffers ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
+        let message = try body(of: "func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?"" ?\+ ?NewObjectSave\.undoSuffix\( ?restored\.storeDiffers ?\) ?\}$"#, in: message).count, 1, message)
+        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let snapshot ?\) ?: ?return restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
+        XCTAssertEqual(try matches(#"var differing: ?\[ ?\( ?shownTitle: ?String ?, ?storeDiffers: ?\[String\] ?\) ?\] ?= ?\[ ?\] ?let results = try await UndoBatchRunner\.run\( ?Array\( ?ops\.reversed\( ?\) ?\) ?, ?check: ?\{ ?try await self\.verifyHistoryTarget\( ?of: ?\$0 ?, ?verb: ?\.undo ?\) ?\} ?, ?execute: ?\{ ?operation in guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return try await self\.executeUndo\( ?operation ?\) ?\} ?let restored = try await self\.restoreDeletedReminder\( ?snapshot ?\) ?differing\.append\( ?\( ?shownTitle: ?undoShownTitle\( ?restored\.title ?\) ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\) ?return self\.restoredReminderMessage\( ?restored ?\) ?\} ?\) ?return "" ?\+ ?NewObjectSave\.batchNote\( ?differing ?\)"#, in: code).count, 1,
+                       "a batch undo collects each restored member's names and builds its note from them")
         for handler in ["func handleCreateReminder(", "func handleCreateRemindersBatch(", "func handleCreateCalendar("] {
             let body = try body(of: handler, in: code)
             XCTAssertEqual(try matches(#"NewObjectSave\.responseFields\( ?result\.storeDiffers ?\)"#, in: body).count, 1, handler)
@@ -429,6 +446,18 @@ final class NewObjectSaveTests: XCTestCase {
         for site in [create, undoArm] {
             XCTAssertEqual(try matches(#"\bcatch\b|try[?!] ?saveNewReminder"#, in: site).count, 0, site)
         }
+        // One formatter writes the note's wording; everything else calls it. Its wording appears
+        // once in Sources (comments dropped, strings kept), so no code can look for it in text.
+        let notes = try body(of: "static func responseFields(", in: code) + (try body(of: "static func undoSuffix(", in: code))
+            + (try body(of: "static func batchNote(", in: code))
+        XCTAssertEqual(try matches(#"differingFieldsNote\("#, in: notes).count, 3, notes)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let withStrings = try files.map { ReminderUndoWiringTests.strippingComments(try String(contentsOf: $0, encoding: .utf8)) }.joined(separator: "\n")
+        XCTAssertEqual(withStrings.components(separatedBy: "the store holds a different").count - 1, 1, "the note's wording is written once, by differingFieldsNote")
+        XCTAssertFalse(code.contains("batchSuffix"))
     }
 
     /// Every construction of a calendar is a named local; a reminder list goes through

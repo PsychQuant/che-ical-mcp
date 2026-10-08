@@ -13,10 +13,12 @@ import EventKit
 ///   entry, `create_calendar` returns the list, delete-undo reports the restore and consumes its
 ///   record, and each marks the store for a refresh.
 /// - found, but some compared fields differ: the item counts as saved too, and `run` returns the
-///   names of those fields. The caller goes on as above and names them: `store_differs` and a
-///   `note` in a create's response (`responseFields`), a clause after the restore in delete-undo's
-///   message (`undoSuffix`), repeated in a batch undo's message (`batchSuffix`). Names only, never
-///   values. The difference may come from a partial write or from an edit made elsewhere between
+///   names of those fields. The caller goes on as above and names them, always through
+///   `differingFieldsNote`: `store_differs` and a `note` in a create's response
+///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`), and
+///   in a batch undo one entry per restored reminder with differing fields (`batchNote`, built
+///   from the names `EventKitManager.restoreDeletedReminder` returns, never from message text).
+///   Names only, never values. The difference may come from a partial write or from an edit made elsewhere between
 ///   the commit and the check (the only device case was the second: a rename through another
 ///   store); a partial write was not seen. Keeping the item, and its undo entry or the consumed
 ///   record, means a retry cannot make a second copy, and the caller has the item's identifier.
@@ -277,27 +279,30 @@ enum NewObjectSave {
         }
     }
 
-    /// The clause that tells the caller which compared fields the store holds differently, or nil
-    /// when none: "the store holds a different due, title; check it". Names only, never values.
-    static func storeDiffersClause(_ fields: [String]) -> String? {
+    /// The one formatter for the note that names the compared fields the store holds differently,
+    /// or nil when none: "the store holds a different due, title; check it". Names only, never
+    /// values. Every caller builds its wording on it (`responseFields`, `undoSuffix`, `batchNote`).
+    static func differingFieldsNote(_ fields: [String]) -> String? {
         fields.isEmpty ? nil : "the store holds a different \(fields.joined(separator: ", ")); check it"
     }
 
     /// What a create response adds: `store_differs` (the names) and a `note`. Empty when none.
     static func responseFields(_ fields: [String]) -> [String: Any] {
-        guard let clause = storeDiffersClause(fields) else { return [:] }
-        return ["store_differs": fields, "note": "Saved, but \(clause)."]
+        guard let note = differingFieldsNote(fields) else { return [:] }
+        return ["store_differs": fields, "note": "Saved, but \(note)."]
     }
 
-    /// What an undo message adds after the restored item: " — <clause>", or nothing.
+    /// What a delete-undo message adds after the restore: " — <note>", or nothing.
     static func undoSuffix(_ fields: [String]) -> String {
-        storeDiffersClause(fields).map { " — \($0)" } ?? ""
+        differingFieldsNote(fields).map { " — \($0)" } ?? ""
     }
 
-    /// What a batch undo message adds: the members' messages that carry an `undoSuffix`, each
-    /// after "; ". Nothing when none does.
-    static func batchSuffix(_ members: [String]) -> String {
-        members.filter { $0.contains(" — the store holds a different ") }.map { "; \($0)" }.joined()
+    /// What a batch undo message adds: for each restored member with differing fields,
+    /// "; restored reminder '<title>' — <note>". Built from the names each member returned
+    /// (`EventKitManager.restoreDeletedReminder`), never from member text, so a title that holds
+    /// the note's wording adds nothing. Titles come in already shown (`undoShownTitle`).
+    static func batchNote(_ members: [(shownTitle: String, storeDiffers: [String])]) -> String {
+        members.compactMap { member in differingFieldsNote(member.storeDiffers).map { "; restored reminder '\(member.shownTitle)' — \($0)" } }.joined()
     }
 
     /// The stderr line for an outcome (without the newline; the caller escapes it). The errors of
