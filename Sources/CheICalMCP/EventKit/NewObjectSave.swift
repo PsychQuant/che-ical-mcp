@@ -4,14 +4,26 @@ import EventKit
 /// of the store unless a store made after the failure finds it. Behind closures (the
 /// closure-seam variant, #182), so the order is tested without EventKit.
 ///
-/// Why the default is to discard: the caller has already been told the save failed, and taking
-/// the object out keeps the store consistent with that answer. Left in, it would be written by
-/// the next save of any tool with no undo record (#261), and a retry of the call would make a
-/// second copy. Only direct evidence that the save committed (a new store finds the object)
-/// skips the discard. No answer is not that evidence, so the object is taken out then too. On
+/// Found is success: when a new store finds the object after the save threw, the save committed,
+/// so the object is kept and `run` returns. Every caller then goes on as after a save:
+/// `create_reminder` returns the reminder and records its undo entry, `create_calendar` returns
+/// the list, delete-undo reports the restore and consumes its record, and each marks the store
+/// for a refresh.
+///
+/// Not found is a discard: the caller is told the save failed, and taking the object out keeps
+/// the store consistent with that answer. Left in, it would be written by the next save of any
+/// tool with no undo record (#261); a retry of delete-undo would also recreate it a second time
+/// (`create_reminder` and `create_calendar` first look for an item with the same title in the
+/// same list or of the same type, and return it).
+///
+/// No answer (the new store has no sources) is discarded too. This is the one exception to the
+/// #261 rule "no defensive discard without probe evidence", tracked in #289: nothing shows that
+/// such a save did not commit. Grounds: the caller has already been told the save failed; on
 /// device a new store had no sources only with about ten stores that have read their sources
-/// alive in one process. The server keeps one such store (`EventKitManager`; the store made at
-/// startup only reads the authorization status), plus the one this check makes and releases.
+/// alive in one process, while the server keeps one such store (`EventKitManager`; the store
+/// made at startup only reads the authorization status) plus the one this check makes and
+/// releases; and with a long-lived store alive every check answered, up to 100 in a row in one
+/// process, 280 over four runs.
 ///
 /// Checked on device, iCloud only (2026-10-07 and 08). The commit failures were induced: an event
 /// was staged with `save(_:span:commit: false)` into a calendar deleted through a second store,
@@ -34,7 +46,9 @@ import EventKit
 ///   left in place and kept by the next save. A store made while about ten others that have read
 ///   their sources are alive in the process has no sources and finds nothing: `freshStoreFinds`
 ///   then gives no answer, and the object is discarded (`unchecked`). The check's own stores are
-///   released: with a long-lived store alive, 240 checks in a row in one process all answered.
+///   released: with a long-lived store alive, every check answered, up to 100 in a row in one
+///   process, 280 over four runs, and 200 over two more runs with that store held alive
+///   explicitly through the loop.
 ///
 /// Refused by validation, with no induced failure: a reminder with no list (the save threw
 /// EKErrorDomain 1) or a list with no source (EKErrorDomain 14) was not found by a new store.
@@ -54,19 +68,25 @@ import EventKit
 ///   after `save` returned. A throw inside `save`, after the commit but while the object may still
 ///   hold an identifier that is not the saved one, was not seen. If the check misses such an
 ///   object (no answer, a read behind the commit, or a lookup by an identifier that was never the
-///   saved one), the discard deletes the saved object at the next write by any tool.
+///   saved one), the discard deletes the saved object at the next write by any tool. For
+///   `create_reminder`, a retry in between would find that reminder by its title and report it as
+///   existing, and the staged removal would still delete it (read from the code, not tried).
+/// - found is success on a bare identifier lookup: the new store's item is not compared with the
+///   object (title, list, alarms, recurrence), so an object only partly written would count as
+///   saved. The found branch is covered by closure tests only; no device run had a real throw
+///   inside `save`.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
 /// - stores other than iCloud.
 ///
-/// Every outcome is one line on stderr. The caller gets the save's error, except a delete-undo
-/// whose reminder a new store finds (`IfSaved.accept`), which is taken as restored.
+/// Every outcome is one line on stderr. The caller gets the save's error unless a new store finds
+/// the object.
 enum NewObjectSave {
     /// What `run` reports after a failed save, once, after the removal (if any) has run. A plain
     /// discard that succeeded after the new store did not find the object is not reported.
     enum Outcome {
         /// A store made after the failure found the object: the save committed, then threw. The
-        /// object is left in place.
+        /// object is kept and `run` returns, so the call succeeds.
         case committedThenThrew
         /// That store had no sources and could not answer; the object was removed anyway, and the
         /// removal ran without an error.
@@ -76,16 +96,6 @@ enum NewObjectSave {
         case nothingPending
         /// The removal threw anything else: the object may still be written by the next save.
         case discardFailed(save: Error, discard: Error)
-    }
-
-    /// What a found object (the save committed, then threw) means to the caller.
-    enum IfSaved {
-        /// The save's error is rethrown, as for any failure: `create_reminder`, `create_calendar`.
-        /// The object exists; the caller is told the save failed.
-        case rethrow
-        /// `run` returns: the object is in the store, so the call did what it was for. Delete-undo
-        /// uses this, so its record is consumed and a retry does not recreate a second copy.
-        case accept
     }
 
     /// Whether a failed insert of this type stayed pending on device: reminders and reminder
@@ -117,20 +127,19 @@ enum NewObjectSave {
             && discard.domain == EKErrorDomain && discard.code == EKError.Code.calendarReadOnly.rawValue
     }
 
-    /// Runs `save`. When it throws, asks `committed`. True reports `.committedThenThrew`, leaves
-    /// the object, and rethrows or returns as `ifSaved` says. False or nil runs `discard` and then
-    /// reports one outcome: `.unchecked` (nil, and the removal ran), `.nothingPending` or
-    /// `.discardFailed`; then rethrows the save's error.
+    /// Runs `save`. When it throws, asks `committed`. True reports `.committedThenThrew`, keeps
+    /// the object and returns: the save committed, so the caller goes on as after a save. False
+    /// or nil runs `discard` and then reports one outcome: `.unchecked` (nil, and the removal
+    /// ran), `.nothingPending` or `.discardFailed`; then rethrows the save's error.
     static func run(save: () throws -> Void, committed: () -> Bool?, discard: () throws -> Void,
-                    ifSaved: IfSaved, report: (Outcome) -> Void) throws {
+                    report: (Outcome) -> Void) throws {
         do {
             try save()
         } catch {
             let found = committed()
             if found == true {
                 report(.committedThenThrew)
-                if ifSaved == .accept { return }
-                throw error
+                return
             }
             do {
                 try discard()
@@ -150,7 +159,7 @@ enum NewObjectSave {
         func code(_ error: Error) -> String { "\((error as NSError).domain) \((error as NSError).code)" }
         switch outcome {
         case .committedThenThrew:
-            return "\(site): the save threw, but a new store finds the item, so it was saved; it is left in place"
+            return "\(site): the save threw, but a new store finds the item, so it was saved; it is kept and the call succeeds"
         case .unchecked:
             return "\(site): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing"
         case .nothingPending:

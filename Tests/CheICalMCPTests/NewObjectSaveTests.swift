@@ -26,13 +26,12 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// Runs the helper with closures that record each call; `report` records the outcome by name.
     private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: Bool?,
-                     discard: @escaping () throws -> Void = {}, ifSaved: NewObjectSave.IfSaved = .rethrow) -> (calls: [String], error: Error?) {
+                     discard: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?) {
         var calls: [String] = []
         do {
             try NewObjectSave.run(save: { calls.append("save"); try save() },
                                   committed: { calls.append("committed"); return committed },
                                   discard: { calls.append("discard"); try discard() },
-                                  ifSaved: ifSaved,
                                   report: { calls.append("report \(self.name($0))") })
             return (calls, nil)
         } catch {
@@ -54,30 +53,13 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(result.calls, ["save", "committed", "discard"])
     }
 
-    /// A new store finds the object: the save committed and then threw. It is left in place, and
-    /// a caller that creates (`.rethrow`) still gets the save's error.
-    func testAFailedSaveANewStoreFindsIsLeftInPlaceAndItsErrorRethrown() {
-        let result = run(committed: true, ifSaved: .rethrow)
-        XCTAssertEqual(result.error as? Failure, .commit)
-        XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
-    }
-
-    /// For a caller that restores (`.accept`, delete-undo), a found object means the call did
-    /// what it was for: it returns, so the undo record is consumed and a retry cannot make a
-    /// second copy.
-    func testAFoundObjectIsTakenAsSavedByACallerThatAcceptsIt() {
-        let result = run(committed: true, ifSaved: .accept)
+    /// A new store finds the object: the save committed and then threw. The object is kept and
+    /// `run` returns, so every caller takes its success path (the create's result and undo
+    /// record, the refresh mark; delete-undo consumes its record). Reported once, nothing removed.
+    func testAFailedSaveANewStoreFindsIsKeptAndTheCallSucceeds() {
+        let result = run(committed: true)
         XCTAssertNil(result.error)
         XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
-    }
-
-    /// `.accept` changes nothing when the new store does not find the object or cannot answer.
-    func testAcceptingAFoundObjectStillDiscardsAndRethrowsOtherwise() {
-        for committed in [false, nil] as [Bool?] {
-            let result = run(committed: committed, ifSaved: .accept)
-            XCTAssertEqual(result.error as? Failure, .commit, "\(String(describing: committed))")
-            XCTAssertTrue(result.calls.contains("discard"), "\(String(describing: committed))")
-        }
     }
 
     /// No answer (the new store had no sources) is no evidence, so the object is discarded, and
@@ -118,7 +100,7 @@ final class NewObjectSaveTests: XCTestCase {
         for saveError in saves {
             var reported: [NewObjectSave.Outcome] = []
             XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
-                                                       discard: { throw self.removalReadOnly }, ifSaved: .rethrow,
+                                                       discard: { throw self.removalReadOnly },
                                                        report: { reported.append($0) }))
             XCTAssertEqual(reported.count, 1, "\(saveError)")
             guard case .discardFailed(let save, let discard) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
@@ -133,7 +115,7 @@ final class NewObjectSaveTests: XCTestCase {
         for saveError in [refusedNoList, Failure.commit] as [Error] {
             var reported: [String] = []
             XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { false },
-                                                       discard: { throw Failure.discard }, ifSaved: .rethrow,
+                                                       discard: { throw Failure.discard },
                                                        report: {
                                                            guard case .discardFailed(_, let discard) = $0 else { return XCTFail("\($0)") }
                                                            reported.append("\(discard)")
@@ -157,21 +139,19 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertFalse(NewObjectSave.isNothingPending(save: refusedNoList, discard: Failure.discard))
     }
 
-    /// Each outcome has one line, which says what happened to the object. Only a failed discard
-    /// reads as a failure, and its line names both errors by domain and code.
+    /// Each outcome has one line, which says what happened to the object; the stderr format is
+    /// pinned word for word. Only a failed discard reads as a failure, and its line names both
+    /// errors by domain and code.
     func testEachOutcomeHasOneLineThatSaysWhatHappened() {
-        let saved = NewObjectSave.note(for: .committedThenThrew, handler: "h", identifier: "id")
-        XCTAssertTrue(saved.hasPrefix("h(id): ") && saved.contains("left in place"), saved)
-        let unchecked = NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id")
-        XCTAssertTrue(unchecked.hasPrefix("h(id): ") && unchecked.contains("removed"), unchecked)
-        let nothing = NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id")
-        XCTAssertTrue(nothing.hasPrefix("h(id): ") && nothing.contains("nothing to remove"), nothing)
-        for note in [saved, unchecked, nothing] { XCTAssertFalse(note.contains("failed") || note.contains("\n"), note) }
-        let failed = NewObjectSave.note(for: .discardFailed(save: NSError(domain: "EKCADErrorDomain", code: 1010), discard: removalReadOnly),
-                                        handler: "h", identifier: "id")
-        XCTAssertTrue(failed.hasPrefix("h.discard(id) failed: "), failed)
-        XCTAssertTrue(failed.contains("EKCADErrorDomain 1010") && failed.contains("\(EKErrorDomain) 6") && failed.contains("next save"), failed)
-        XCTAssertFalse(failed.contains("\n"), failed)
+        XCTAssertEqual(NewObjectSave.note(for: .committedThenThrew, handler: "h", identifier: "id"),
+                       "h(id): the save threw, but a new store finds the item, so it was saved; it is kept and the call succeeds")
+        XCTAssertEqual(NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id"),
+                       "h(id): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing")
+        XCTAssertEqual(NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id"),
+                       "h(id): the save was refused before the store took the item in; nothing to remove")
+        XCTAssertEqual(NewObjectSave.note(for: .discardFailed(save: NSError(domain: "EKCADErrorDomain", code: 1010), discard: removalReadOnly),
+                                          handler: "h", identifier: "id"),
+                       "h.discard(id) failed: the save threw EKCADErrorDomain 1010 and removing the item without committing threw \(EKErrorDomain) 6; the next save by any tool may write it")
     }
 
     /// Reminders and reminder lists kept a failed insert on device; events and event calendars
@@ -258,6 +238,22 @@ final class NewObjectSaveTests: XCTestCase {
         return String(text[start..<(ends.min() ?? text.endIndex)])
     }
 
+    /// The body of the function declared at `declaration`, from its opening brace to the one that
+    /// matches it, so a pin on it does not depend on what is declared after it. Braces in comments
+    /// and strings are gone after `stripped`.
+    private func body(of declaration: String, in text: String) throws -> String {
+        let after = try XCTUnwrap(text.range(of: declaration), "missing \(declaration)").upperBound
+        let open = try XCTUnwrap(text[after...].firstIndex(of: "{"), "no body after \(declaration)")
+        var depth = 0
+        for index in text[open...].indices {
+            if text[index] == "{" { depth += 1 }
+            if text[index] == "}" { depth -= 1 }
+            if depth == 0 { return String(text[open...index]) }
+        }
+        XCTFail("unbalanced braces after \(declaration)")
+        return ""
+    }
+
     private func segment(of text: String, from start: String) throws -> String {
         segment(of: text, at: try XCTUnwrap(text.range(of: start), "missing \(start)").lowerBound)
     }
@@ -300,17 +296,21 @@ final class NewObjectSaveTests: XCTestCase {
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
         XCTAssertEqual(try matches(#"NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
                                    + freshCheck("calendarItem", #"reminder\.calendarItemIdentifier"#)
-                                   + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?ifSaved: ?ifSaved ?, ?"#
-                                   + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\)"#,
-                                   in: wrapper).count, 1, wrapper)
-        // Only the delete-undo recreate takes a found reminder as saved; every other call rethrows.
-        let calls = try matches(#"saveNewReminder\( ?(?!_ )"#, in: code).count
-        let accepting = try matches(#"saveNewReminder\( ?\w+ ?, ?ifSaved: ?\.accept ?,"#, in: code).count
-        let rethrowing = try matches(#"saveNewReminder\( ?(?:\w+|"# + build + #") ?, ?ifSaved: ?\.rethrow ?,"#, in: code).count
-        XCTAssertEqual(accepting, 1)
-        XCTAssertEqual(calls, accepting + rethrowing, "every call passes .accept or .rethrow")
+                                   + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?"#
+                                   + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\) ?\}$"#,
+                                   in: try body(of: "func saveNewReminder(", in: code)).count, 1, wrapper)
+        // When `saveNewReminder` returns, after a save or after a save that threw but that a new
+        // store finds, each caller goes on to its success path, with nothing caught in between:
+        // create_reminder marks the store for a refresh, builds the result and records the undo
+        // entry; delete-undo marks the refresh and reports the restore (its record is consumed).
+        let create = try body(of: "func createReminder( title:", in: code)
+        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+                                   in: create).count, 1, create)
         let undoArm = try segment(of: code, from: "applyReminderSnapshot(snapshot, for: .recreateDeleted")
-        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?ifSaved: ?\.accept ?,"#, in: undoArm).count, 1, undoArm)
+        XCTAssertEqual(try matches(#"try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return "" ?$"#, in: undoArm).count, 1, undoArm)
+        for site in [create, undoArm] {
+            XCTAssertEqual(try matches(#"\bcatch\b|try[?!] ?saveNewReminder"#, in: site).count, 0, site)
+        }
     }
 
     /// Every construction of a calendar is a named local; a reminder list goes through
@@ -328,11 +328,15 @@ final class NewObjectSaveTests: XCTestCase {
             XCTAssertEqual(try matches(#"saveCalendar\( ?\#(name) ?,"#, in: body).count, 2, body)
             XCTAssertEqual(try matches(#"if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
                                        + freshCheck("calendar", #"\#(name)\.calendarIdentifier"#)
-                                       + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?ifSaved: ?\.rethrow ?, ?"#
+                                       + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?"#
                                        + report(#""""#, #"\#(name)\.calendarIdentifier"#)
-                                       + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#,
+                                       + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?markNeedsRefresh\( ?\) ?return CreateCalendarResult\( ?calendar: ?\#(name) ?, ?isDuplicate: ?false ?\) ?\}"#,
                                        in: body).count, 1, body)
         }
+        // A list a new store finds after its save threw is created: nothing is caught on the way
+        // to the result.
+        let create = try body(of: "func createCalendar(", in: code)
+        XCTAssertEqual(try matches(#"\bcatch\b|try[?!] ?NewObjectSave"#, in: create).count, 0, create)
     }
 
     /// The gate depends on one fact: the check reads a store made after the failure, never the
@@ -342,8 +346,9 @@ final class NewObjectSaveTests: XCTestCase {
     /// `EKEventStore()` in its file, and the two save sites are its only callers.
     func testTheCheckReadsANewStoreAndNothingElse() throws {
         let code = try code()
-        let body = try segment(of: code, from: "func freshStoreFinds(")
-        XCTAssertEqual(try matches(#"^func freshStoreFinds\( ?_ find: ?\( ?EKEventStore ?\) ?-> ?Bool ?\) ?-> ?Bool\? ?\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : find\( ?store ?\) ?\} ?\} ?(?:static)? ?$"#,
+        XCTAssertEqual(try matches(#"func freshStoreFinds\( ?_ find: ?\( ?EKEventStore ?\) ?-> ?Bool ?\) ?-> ?Bool\? ?\{"#, in: code).count, 1)
+        let body = try body(of: "func freshStoreFinds(", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : find\( ?store ?\) ?\} ?\}$"#,
                                    in: body).count, 1, body)
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CheICalMCP/EventKit/NewObjectSave.swift")
@@ -354,15 +359,19 @@ final class NewObjectSaveTests: XCTestCase {
     /// Every outcome reaches stderr as one escaped line: `logNewObjectOutcome` is pinned whole, so
     /// a report closure that swallows outcomes, or a log that drops one, fails here.
     func testEveryOutcomeIsWrittenAsOneEscapedLine() throws {
-        let body = try segment(of: try code(), from: "func logNewObjectOutcome(")
-        XCTAssertEqual(try matches(#"^func logNewObjectOutcome\( ?handler: ?String ?, ?identifier: ?String ?, ?_ outcome: ?NewObjectSave\.Outcome ?\) ?\{ ?let note = NewObjectSave\.note\( ?for: ?outcome ?, ?handler: ?handler ?, ?identifier: ?identifier ?\) ?FileHandle\.standardError\.write\( ?Data\( ?\( ?EventKitErrorSanitizer\.escapeForStderr\( ?note ?\) ?\+ ?"" ?\)\.utf8 ?\) ?\) ?\} ?$"#,
+        let code = try code()
+        XCTAssertEqual(try matches(#"func logNewObjectOutcome\( ?handler: ?String ?, ?identifier: ?String ?, ?_ outcome: ?NewObjectSave\.Outcome ?\) ?\{"#, in: code).count, 1)
+        let body = try body(of: "func logNewObjectOutcome(", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?let note = NewObjectSave\.note\( ?for: ?outcome ?, ?handler: ?handler ?, ?identifier: ?identifier ?\) ?FileHandle\.standardError\.write\( ?Data\( ?\( ?EventKitErrorSanitizer\.escapeForStderr\( ?note ?\) ?\+ ?"" ?\)\.utf8 ?\) ?\) ?\}$"#,
                                    in: body).count, 1, body)
     }
 
-    /// The stripper reads an interpolation that holds a quote (`"\(a ?? "x")"`) wrongly: the
-    /// quote inside ends the string early, so the rest of the line can read as code, or code as
-    /// string. It does not cross the line's end. So no such line may hold anything the pins
-    /// above read.
+    /// The stripper reads an interpolation that holds a quote (`"\(a ?? "x")"`, or one inside a
+    /// call, `"\(list.joined(separator: ", "))"`) wrongly: the quote inside ends the string
+    /// early, so the rest of the line can read as code, or code as string. It does not cross the
+    /// line's end. So no such line may hold anything the pins above read. The pattern looks one
+    /// level of parentheses deep into the interpolation; a deeper nesting before the quote is not
+    /// found.
     func testNoPinnedCodeSharesALineWithAnInterpolatedQuote() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CheICalMCP")
@@ -372,12 +381,16 @@ final class NewObjectSaveTests: XCTestCase {
         var seen = 0
         for file in files {
             for line in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
-            where line.range(of: #"\\\([^)]*""#, options: .regularExpression) != nil {
+            where line.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression) != nil {
                 seen += 1
                 XCTAssertFalse(pinned.contains { line.contains($0) }, "\(file.lastPathComponent): \(line)")
             }
         }
         XCTAssertGreaterThan(seen, 0, "the pattern finds the lines it guards")
+        for nested in [#""\(list.joined(separator: ", "))""#, #""\(a ?? "x")""#] {
+            XCTAssertNotNil(nested.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression), nested)
+        }
+        XCTAssertNil(#""\(handler)(\(identifier))""#.range(of: #"\\\((?:[^")]|\([^)]*\))*""#, options: .regularExpression))
     }
 
     /// A change staged without committing is committed by whatever saves next. The only ones
