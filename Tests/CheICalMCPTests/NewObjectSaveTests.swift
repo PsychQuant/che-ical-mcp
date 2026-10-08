@@ -443,7 +443,7 @@ final class NewObjectSaveTests: XCTestCase {
         // (`UndoRestoredDifference.sentences`); no member text is read
         // back (`UndoBatchWiringTests.testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData`).
         let member = try body(of: "func undoBatchMember(_ operation: UndoOperation)", in: code)
-        XCTAssertEqual(try matches(#"guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return UndoMemberOutcome\( ?text: ?try await executeUndo\( ?operation ?\) ?, ?differing: ?nil ?\) ?\} ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?restoredReminderMessage\( ?restored ?\) ?, ?differing: ?UndoRestoredDifference\( ?shownTitle: ?undoShownTitle\( ?restored\.title ?\) ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\)"#, in: member).count, 1,
+        XCTAssertEqual(try matches(#"guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return UndoMemberOutcome\( ?text: ?try await executeUndo\( ?operation ?\) ?, ?differing: ?\[ ?\] ?\) ?\} ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?shownTitle: ?undoShownTitle\( ?restored\.title ?\) ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
                        "a batch undo collects each restored member's names and builds its note from them")
         XCTAssertEqual(try matches(#"restore: ?\{ ?try await self\.undoBatchMember\( ?\$0 ?\) ?\}"#, in: code).count, 1)
         XCTAssertEqual(try matches(#"UndoRestoredDifference\.sentences\( ?differing ?\)"#, in: code).count, 1)

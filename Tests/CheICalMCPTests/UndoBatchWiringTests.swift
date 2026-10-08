@@ -73,8 +73,16 @@ final class UndoBatchWiringTests: XCTestCase {
                        "run a batch through UndoBatchExecution.run, which handles UndoBatchRunner.Interrupted")
     }
 
+    /// The undo of a batch is `undoBatch(_:)` (round 6, findings 2, 9: a nested batch member needs
+    /// its differences as data too); the `executeUndo` arm only returns its message.
+    private static func undoBatchBody() throws -> Substring {
+        Substring(try body("func undoBatch(_ ops: [UndoOperation]) async throws", in: manager))
+    }
+
     func testBothBatchArmsGoThroughTheHelper() throws {
-        let undo = try Self.from("case .batch(let ops):", in: try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager))
+        let arm = try Self.from("case .batch(let ops):", in: try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("return try await undoBatch(ops).message"), in: arm))
+        let undo = try Self.undoBatchBody()
         XCTAssertNotNil(Self.offset(of: Self.call("UndoBatchExecution.run(ops, verb: .undo,"), in: undo))
         let redo = try Self.from("case .batch(let ops):", in: try Self.body("func executeRedo(_ operation: UndoOperation)", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("UndoBatchExecution.run(ops, verb: .redo,"), in: redo))
@@ -150,7 +158,7 @@ final class UndoBatchWiringTests: XCTestCase {
     /// is discarded rather than kept for a retry that would refuse again (PR #278 round 2, finding
     /// 24); and both come before the runner writes anything.
     func testTheUndoBatchArmRefusesBeforeAnyWriteThePermanentRefusalFirst() throws {
-        let batch = try Self.from("case .batch(let ops):", in: try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager))
+        let batch = try Self.undoBatchBody()
         let permanent = try XCTUnwrap(Self.offset(of: Self.call("try verifyBatchMemberRestorable(.batch(ops), verb: .undo)"), in: batch))
         let destinations = try XCTUnwrap(Self.offset(of: Self.call("try await verifyRestoreDestinations(of: ops, verb: .undo)"), in: batch))
         let run = try XCTUnwrap(Self.offset(of: Self.call("UndoBatchExecution.run("), in: batch))
@@ -216,17 +224,21 @@ final class UndoBatchWiringTests: XCTestCase {
     /// which calls `NewObjectSave.batchNote`), and no member text is read back: the arm uses only
     /// the count of the member texts.
     func testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData() throws {
-        let batch = try Self.from("case .batch(let ops):", in: try Self.body("func executeUndo(_ operation: UndoOperation)", in: Self.manager))
+        let batch = try Self.undoBatchBody()
         XCTAssertNotNil(Self.offset(of: Self.call("restore: { try await self.undoBatchMember($0) },"), in: batch))
-        XCTAssertNotNil(Self.offset(of: Self.call("return UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing)"), in: batch))
+        XCTAssertNotNil(Self.offset(of: Self.call("return (UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing), outcome.differing)"), in: batch))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boutcome\.texts\b"#, in: String(batch)).count, 1, "only the count of the member texts is used")
         XCTAssertEqual(Self.count("restoreDeletedReminder(", in: batch), 0, "reminders go through undoBatchMember")
 
         let member = Substring(try Self.body("func undoBatchMember(_ operation: UndoOperation)", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("guard case .deleteReminder(let snapshot) = operation else {"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: try await executeUndo(operation), differing: nil)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])"), in: member))
+        // Round 6, findings 2, 9: a nested batch member carries its own members' differences up.
+        XCTAssertNotNil(Self.offset(of: Self.call("if case .batch(let inner) = operation {"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoBatch(inner)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("differing: UndoRestoredDifference(shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers))"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers)])"), in: member))
 
         let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))
         XCTAssertNotNil(Self.offset(of: Self.call("let named = UndoRestoredDifference.sentences(differing)"), in: text))
@@ -241,9 +253,9 @@ final class UndoBatchWiringTests: XCTestCase {
     /// Round 2, finding 20: the runner's `check` is #236's per-member pre-flight; an empty closure
     /// would leave the batch arm without it.
     func testTheBatchArmsCheckEachMemberWithThePerMemberPreFlight() throws {
-        for (name, verb) in [("func executeUndo(_ operation: UndoOperation)", "undo"), ("func executeRedo(_ operation: UndoOperation)", "redo")] {
-            let batch = try Self.from("case .batch(let ops):", in: try Self.body(name, in: Self.manager))
-            XCTAssertNotNil(Self.offset(of: Self.call("check: { try await self.verifyHistoryTarget(of: $0, verb: .\(verb)) },"), in: batch), name)
+        let redo = try Self.from("case .batch(let ops):", in: try Self.body("func executeRedo(_ operation: UndoOperation)", in: Self.manager))
+        for (batch, verb) in [(try Self.undoBatchBody(), "undo"), (redo, "redo")] {
+            XCTAssertNotNil(Self.offset(of: Self.call("check: { try await self.verifyHistoryTarget(of: $0, verb: .\(verb)) },"), in: batch), verb)
         }
     }
 

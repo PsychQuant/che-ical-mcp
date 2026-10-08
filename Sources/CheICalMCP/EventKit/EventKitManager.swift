@@ -2206,24 +2206,31 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return try await undoRecurringCompletion(operation, before: before)
 
         case .batch(let ops):
-            // #244 D3 first: a member that can never be restored refuses and discards the record,
-            // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
-            try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
-            // #248 B: the calendar or list each deleted item is recreated in, read once per batch.
-            try await verifyRestoreDestinations(of: ops, verb: .undo)
-            // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write
-            // keeps only the members not yet restored (`UndoBatchExecution`). #261: a recreated
-            // reminder's differing fields come back from `restoreDeletedReminder` as data
-            // (`undoBatchMember`) and are collected per member; no member's message text is read back.
-            let outcome = try await UndoBatchExecution.run(
-                ops, verb: .undo,
-                check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
-                restore: { try await self.undoBatchMember($0) },
-                describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
-            // #244: names what a restored occurrence did not carry over; #261: what a restored
-            // reminder's store holds differently (`batchUndoneMessage`).
-            return UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing)
+            return try await undoBatch(ops).message
         }
+    }
+
+    /// The undo of a batch record: its message, and what the stores of the reminders it recreated
+    /// hold differently, as data, so a batch nested in another carries them up
+    /// (`undoBatchMember`; PR #282 round 6, findings 2, 9).
+    func undoBatch(_ ops: [UndoOperation]) async throws -> (message: String, differing: [UndoRestoredDifference]) {
+        // #244 D3 first: a member that can never be restored refuses and discards the record,
+        // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
+        try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
+        // #248 B: the calendar or list each deleted item is recreated in, read once per batch.
+        try await verifyRestoreDestinations(of: ops, verb: .undo)
+        // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write
+        // keeps only the members not yet restored (`UndoBatchExecution`). #261: a recreated
+        // reminder's differing fields come back from `restoreDeletedReminder` as data
+        // (`undoBatchMember`) and are collected per member; no member's message text is read back.
+        let outcome = try await UndoBatchExecution.run(
+            ops, verb: .undo,
+            check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
+            restore: { try await self.undoBatchMember($0) },
+            describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
+        // #244: names what a restored occurrence did not carry over; #261: what a restored
+        // reminder's store holds differently (`batchUndoneMessage`).
+        return (UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing), outcome.differing)
     }
 
     /// #261: the undo of `delete_reminder`, for the single arm and for each batch member. Reads the
@@ -2248,15 +2255,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// One member of a batch undo (#248). A deleted reminder is recreated through
     /// `restoreDeletedReminder`, and the fields its store holds differently travel as data
     /// (`UndoRestoredDifference`, title shown through `undoShownTitle`), so the batch texts name
-    /// them (#261; PR #282 round 5, finding 1); every other member runs `executeUndo`.
+    /// them (#261; PR #282 round 5, finding 1). A nested batch passes up its own members'
+    /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). Every
+    /// other member runs `executeUndo`.
     func undoBatchMember(_ operation: UndoOperation) async throws -> UndoMemberOutcome {
+        if case .batch(let inner) = operation {
+            let undone = try await undoBatch(inner)
+            return UndoMemberOutcome(text: undone.message, differing: undone.differing)
+        }
         guard case .deleteReminder(let snapshot) = operation else {
-            return UndoMemberOutcome(text: try await executeUndo(operation), differing: nil)
+            return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])
         }
         let restored = try await restoreDeletedReminder(snapshot)
         return UndoMemberOutcome(text: restoredReminderMessage(restored),
-                                 differing: UndoRestoredDifference(shownTitle: undoShownTitle(restored.title),
-                                                                   storeDiffers: restored.storeDiffers))
+                                 differing: [UndoRestoredDifference(shownTitle: undoShownTitle(restored.title),
+                                                                    storeDiffers: restored.storeDiffers)])
     }
 
     /// Execute an operation again (for redo). Only completions are written again (#247).

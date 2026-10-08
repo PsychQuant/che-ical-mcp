@@ -377,7 +377,7 @@ enum UndoBatchExecution {
                     execute: (UndoOperation) async throws -> String,
                     describe: (Error) -> String) async throws -> [String] {
         try await run(members, verb: verb, check: check,
-                      restore: { UndoMemberOutcome(text: try await execute($0), differing: nil) },
+                      restore: { UndoMemberOutcome(text: try await execute($0), differing: []) },
                       describe: describe).texts
     }
 
@@ -394,7 +394,7 @@ enum UndoBatchExecution {
             let texts = try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members, check: check,
                                                       execute: { member in
                                                           let outcome = try await restore(member)
-                                                          if let difference = outcome.differing { differing.append(difference) }
+                                                          differing.append(contentsOf: outcome.differing)
                                                           return outcome.text
                                                       })
             return (texts, differing)
@@ -408,11 +408,12 @@ enum UndoBatchExecution {
     }
 }
 
-/// What one member's restore returned: its text, and what its store holds differently, which the
+/// What one member's restore returned: its text, and what the stores of the reminders it recreated
+/// hold differently (one for a reminder, any number for a nested batch, none otherwise), which the
 /// batch answer has to carry because the member texts are not shown (#261).
 struct UndoMemberOutcome: Sendable {
     let text: String
-    let differing: UndoRestoredDifference?
+    let differing: [UndoRestoredDifference]
 }
 
 /// A recreated reminder whose store holds compared fields differently (#261): its title, already

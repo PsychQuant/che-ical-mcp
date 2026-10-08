@@ -783,14 +783,16 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// (#280: a recreated reminder whose save threw but which a new store finds with those fields
     /// differing counts as restored); `failsOn` decides which member writes fail.
     private func undoBatchReturningDifferences(_ members: [UndoOperation], differs: [String: [String]],
+                                               nestedDiffering: [String: [UndoRestoredDifference]] = [:],
                                                failsOn: @escaping (String) -> Bool) async -> Result<[UndoRestoredDifference], Error> {
         do {
             let outcome = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
                 let title = self.titles([member])[0]
                 if failsOn(title) { throw SaveFailed.failed }
-                guard case .deleteReminder(let snapshot) = member else { return UndoMemberOutcome(text: title, differing: nil) }
-                return UndoMemberOutcome(text: title, differing: UndoRestoredDifference(shownTitle: undoShownTitle(snapshot.title),
-                                                                                       storeDiffers: differs[title] ?? []))
+                if let nested = nestedDiffering[title] { return UndoMemberOutcome(text: title, differing: nested) }
+                guard case .deleteReminder(let snapshot) = member else { return UndoMemberOutcome(text: title, differing: []) }
+                return UndoMemberOutcome(text: title, differing: [UndoRestoredDifference(shownTitle: undoShownTitle(snapshot.title),
+                                                                                        storeDiffers: differs[title] ?? [])])
             }, describe: { _ in "eventkit_error_1" })
             return .success(outcome.differing)
         } catch {
@@ -910,6 +912,22 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(orderedPartial.failing, .inRecordedOrder)
         XCTAssertEqual(orderedPartial.restoredDiffering, [difference])
         XCTAssertTrue(orderedPartial.message.contains(sentence), orderedPartial.message)
+    }
+
+    /// PR #282 round 6, findings 2, 9: a nested batch member that finishes carries all of its
+    /// restored reminders' differences up as data (`undoBatchMember` → `undoBatch(inner)`), as one
+    /// that stops part-way does.
+    func testAFinishedNestedBatchMemberCarriesItsDifferencesUp() async throws {
+        let inner: UndoOperation = .batch([reminderDeleted("Y"), reminderDeleted("Z")])
+        let nested = [UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["due"]),
+                      UndoRestoredDifference(shownTitle: "Y", storeDiffers: ["notes"])]
+        let members = [deleted("X"), inner]
+        let differing = try await undoBatchReturningDifferences(members, differs: [:], nestedDiffering: ["[rem:Y,rem:Z]": nested],
+                                                                failsOn: { _ in false }).get()
+        XCTAssertEqual(differing, nested)
+        let text = UndoOperation.batchUndoneMessage(members: members, count: 2, differing: differing)
+        XCTAssertTrue(text.contains("Restored reminder 'Z' — the store holds a different due; check it.")
+                      && text.contains("Restored reminder 'Y' — the store holds a different notes; check it."), text)
     }
 
     /// A nested batch that stopped part-way carries its restored reminders' differences up.

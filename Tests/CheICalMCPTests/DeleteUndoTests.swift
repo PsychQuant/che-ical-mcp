@@ -341,13 +341,18 @@ final class DeleteUndoTests: XCTestCase {
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to
     /// run, so it is pinned here).
     func testTheBatchUndoArmReportsItsMembers() throws {
-        let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
-        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .batch(let ops):", in: body).first)
-        // PR #282 (with #280 round 7): the count is of the member texts, and the differences the
-        // restored reminders returned travel along (`UndoBatchWiringTests`).
-        let message = SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.batchUndoneMessage\(members:\s*ops,\s*count:\s*outcome\.texts\.count,\s*differing:\s*outcome\.differing\)"#, in: body)
+        // PR #282: the arm returns `undoBatch(_:)`'s message (round 6, findings 2, 9); the count is of
+        // the member texts, and the differences the restored reminders returned travel along
+        // (`UndoBatchWiringTests`).
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let undo = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: source))
+        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .batch(let ops):", in: undo).first)
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoBatch\(ops\)\.message"#, in: undo)
+        XCTAssertEqual(call.count, 1)
+        if let call = call.first { XCTAssertGreaterThan(call.lowerBound, arm.lowerBound) }
+        let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation]) async throws", in: source))
+        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(members:\s*ops,\s*count:\s*outcome\.texts\.count,\s*differing:\s*outcome\.differing\)"#, in: body)
         XCTAssertEqual(message.count, 1)
-        if let message = message.first { XCTAssertGreaterThan(message.lowerBound, arm.lowerBound) }
     }
 
     // MARK: - Refusals (D2, D3)
