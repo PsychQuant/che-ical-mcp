@@ -166,9 +166,11 @@ extension UndoOperation {
     /// The text of an undone batch (verify round 2, finding 5; round 3, finding 3): the member texts
     /// are not shown, so what a member did not restore as it was is named here, once each. A pure
     /// function of the members it is given.
-    static func batchUndoneMessage(members: [UndoOperation], count: Int) -> String {
+    static func batchUndoneMessage(members: [UndoOperation], count: Int, notes: [String] = []) -> String {
         var message = "Undone batch (\(batchCount(count)))"
         if let note = batchLossNote(members: members) { message += ". " + note }
+        // The notes the members' restores returned (#261 via PR #282 round 5, finding 1).
+        if !notes.isEmpty { message += ". " + notes.joined(separator: " ") }
         return message
     }
 

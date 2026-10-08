@@ -231,16 +231,20 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// The members restored before the failure, nested ones included. The batch text of the retry
     /// covers only `remaining`, so what these did not carry over is named here (PR #278 round 3).
     let restored: [UndoOperation]
+    /// The notes the restores of those members returned (a reminder found with differing fields,
+    /// #261), named here once, as `restored`'s disclosures are (PR #282 round 5, finding 1).
+    let restoredNotes: [String]
     let memberError: String
     let failing: FailingMember
     let message: String
     var errorDescription: String? { message }
 
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
-         restored: [UndoOperation] = []) {
+         restored: [UndoOperation] = [], restoredNotes: [String] = []) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
+        self.restoredNotes = restoredNotes
         self.memberError = memberError
         self.failing = failing
         let restoredText = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
@@ -263,7 +267,8 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             let left = remaining.count == 1 ? "the item that failed" : "the \(remaining.count) items not yet restored"
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, so running undo again tries the item that failed first and does not restore the restored ones a second time."
         }
-        let loss = UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? ""
+        let loss = (UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? "")
+            + restoredNotes.map { " \($0)" }.joined()
         let giveUp: String
         switch failing {
         case .dropped where remaining.isEmpty:
@@ -306,7 +311,7 @@ extension UndoOperation {
     /// nested batch is recorded today). `describe` gives the member error for the message; it is
     /// called only when the record is narrowed or reordered.
     static func batchUndoFailure(members: [UndoOperation], interrupted: UndoBatchRunner.Interrupted,
-                                 describe: (Error) -> String) -> Error {
+                                 notes: [String] = [], describe: (Error) -> String) -> Error {
         let failedIndex = members.count - 1 - interrupted.completed
         guard members.indices.contains(failedIndex) else { return interrupted.underlying }
         let inner = interrupted.underlying as? UndoBatchPartiallyUndoneError
@@ -314,11 +319,13 @@ extension UndoOperation {
         let restored = interrupted.completed + (inner?.restoredCount ?? 0)
         // The members this call restored (the last `completed` in record order), nested ones too.
         let restoredMembers = Array(members[(failedIndex + 1)...]) + (inner?.restored ?? [])
+        // The notes those members' restores returned, nested ones too.
+        let restoredNotes = notes + (inner?.restoredNotes ?? [])
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
             return UndoBatchPartiallyUndoneError(remaining: unattempted, restoredCount: restored,
                                                  memberError: describe(interrupted.underlying), failing: .dropped,
-                                                 restored: restoredMembers)
+                                                 restored: restoredMembers, restoredNotes: restoredNotes)
         }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
         let runsLast = ([failing] + unattempted).allSatisfy(\.mayRunLastAfterAFailure)
@@ -326,9 +333,11 @@ extension UndoOperation {
         let memberError = inner?.memberError ?? describe(interrupted.underlying)
         return runsLast
             ? UndoBatchPartiallyUndoneError(remaining: [failing] + unattempted, restoredCount: restored,
-                                            memberError: memberError, failing: .runsLast, restored: restoredMembers)
+                                            memberError: memberError, failing: .runsLast, restored: restoredMembers,
+                                            restoredNotes: restoredNotes)
             : UndoBatchPartiallyUndoneError(remaining: unattempted + [failing], restoredCount: restored,
-                                            memberError: memberError, failing: .inRecordedOrder, restored: restoredMembers)
+                                            memberError: memberError, failing: .inRecordedOrder, restored: restoredMembers,
+                                            restoredNotes: restoredNotes)
     }
 
     /// Whether a batch undo may move this member to run last when its write fails (#248 A). True for
@@ -364,14 +373,41 @@ enum UndoBatchExecution {
                     check: (UndoOperation) async throws -> Void,
                     execute: (UndoOperation) async throws -> String,
                     describe: (Error) -> String) async throws -> [String] {
+        try await run(members, verb: verb, check: check,
+                      restore: { UndoMemberOutcome(text: try await execute($0), note: nil) },
+                      describe: describe).texts
+    }
+
+    /// The same, for members whose restore can return a note the batch answer has to carry (a
+    /// reminder found with differing fields, #261; PR #282 round 5, finding 1). The notes of the
+    /// members written are returned, in the order they ran; when a write fails, they go into the
+    /// partial error instead, named once.
+    static func run(_ members: [UndoOperation], verb: UndoHistoryVerb,
+                    check: (UndoOperation) async throws -> Void,
+                    restore: (UndoOperation) async throws -> UndoMemberOutcome,
+                    describe: (Error) -> String) async throws -> (texts: [String], notes: [String]) {
+        var notes: [String] = []
         do {
-            return try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members,
-                                                 check: check, execute: execute)
+            let texts = try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members, check: check,
+                                                      execute: { member in
+                                                          let outcome = try await restore(member)
+                                                          if let note = outcome.note { notes.append(note) }
+                                                          return outcome.text
+                                                      })
+            return (texts, notes)
         } catch let interrupted as UndoBatchRunner.Interrupted {
             switch verb {
-            case .undo: throw UndoOperation.batchUndoFailure(members: members, interrupted: interrupted, describe: describe)
+            case .undo: throw UndoOperation.batchUndoFailure(members: members, interrupted: interrupted, notes: notes,
+                                                             describe: describe)
             case .redo: throw interrupted.underlying
             }
         }
     }
+}
+
+/// What one member's restore returned: its text, and a note the batch answer has to carry
+/// because the member texts are not shown (#261: a reminder found with differing fields).
+struct UndoMemberOutcome: Sendable {
+    let text: String
+    let note: String?
 }

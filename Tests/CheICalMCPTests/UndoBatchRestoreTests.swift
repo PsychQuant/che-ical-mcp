@@ -794,6 +794,63 @@ final class UndoBatchRestoreTests: XCTestCase {
         }
     }
 
+    // MARK: - A: notes a member's restore returns (PR #282 round 5, finding 1, after #280 round 7)
+
+    /// Undoes `members` through the outcome form of the helper: `notes` maps a member's title to
+    /// the note its restore returns (a reminder found with differing fields, #261); `failsOn`
+    /// decides which member writes fail. Returns the notes of a finished batch, or what it throws.
+    private func undoBatchWithNotes(_ members: [UndoOperation], notes: [String: String],
+                                    failsOn: @escaping (String) -> Bool) async -> Result<[String], Error> {
+        do {
+            let outcome = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
+                let title = self.titles([member])[0]
+                if failsOn(title) { throw SaveFailed.failed }
+                return UndoMemberOutcome(text: title, note: notes[title])
+            }, describe: { _ in "eventkit_error_1" })
+            return .success(outcome.notes)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// A finished batch returns the notes of its members, in the order they ran, and the batch
+    /// text names them.
+    func testAFinishedBatchCarriesItsMembersNotesIntoItsText() async throws {
+        let members: [UndoOperation] = [.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs")), deleted("B")]
+        let notes = try await undoBatchWithNotes(members, notes: ["rem:Differs": "NOTE-DIFFERS"], failsOn: { _ in false }).get()
+        XCTAssertEqual(notes, ["NOTE-DIFFERS"])
+        let text = UndoOperation.batchUndoneMessage(members: members, count: 2, notes: notes)
+        XCTAssertTrue(text.hasPrefix("Undone batch (2 operations)") && text.contains("NOTE-DIFFERS"), text)
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 2), "Undone batch (2 operations)")
+    }
+
+    /// A batch that stops part-way names the notes of the members it restored, once: the retry's
+    /// text covers only the members left.
+    func testANoteOfAMemberRestoredBeforeAFailureIsInThePartialErrorOnly() async throws {
+        let members: [UndoOperation] = [deleted("A"), .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Differs"))]
+        let result = await undoBatchWithNotes(members, notes: ["rem:Differs": "NOTE-DIFFERS"], failsOn: { $0 == "A" })
+        guard case .failure(let error) = result, let partial = error as? UndoBatchPartiallyUndoneError else {
+            return XCTFail("\(result)")
+        }
+        XCTAssertEqual(partial.restoredNotes, ["NOTE-DIFFERS"])
+        XCTAssertTrue(partial.message.contains("NOTE-DIFFERS"), partial.message)
+        XCTAssertEqual(titles(partial.remaining), ["A"], "the reminder with a note was restored and left the record")
+        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count, notes: [])
+        XCTAssertFalse(retry.contains("NOTE-DIFFERS"), retry)
+    }
+
+    /// A nested batch that stopped part-way carries its restored members' notes up.
+    func testANestedBatchCarriesItsRestoredNotesUp() throws {
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
+                                                  restoredNotes: ["NOTE-Z"])
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), deleted("Z")])],
+                                                     interrupted: .init(completed: 0, underlying: inner),
+                                                     notes: [], describe: { _ in "unused" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(partial.restoredNotes, ["NOTE-Z"])
+        XCTAssertTrue(partial.message.contains("NOTE-Z"), partial.message)
+    }
+
     // MARK: - A: batch texts for one member (PR #282 round 5, findings 4, 12)
 
     /// Narrowing makes a batch of one usual, so its texts are in the singular.
