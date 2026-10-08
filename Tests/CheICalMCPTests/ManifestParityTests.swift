@@ -190,9 +190,9 @@ final class ManifestParityTests: XCTestCase {
             ("#242: giving up a delete_reminder undo loses the reminder",
              "giving up the undo of a delete_reminder loses the deleted reminder",
              "discarding a delete_reminder undo loses the deleted reminder"),
-            ("#244: a batch holding a never-restorable delete is refused whole",
+            ("#244: a batch holding a never-restorable delete is refused whole and its entry discarded",
              "a delete_events_batch that holds such a delete (refused before any of its events is restored)",
-             "a batch holding one that did not is refused whole"),
+             "a batch holding one that did not is refused before any write and its entry discarded"),
             ("#244: a deleted occurrence comes back as a one-off event",
              "Undo of a delete of one occurrence restores it as a one-off event",
              "a deleted occurrence comes back as a one-off event"),
@@ -202,20 +202,23 @@ final class ManifestParityTests: XCTestCase {
             ("#236, #244: the count of refusals that discard the record",
              "Five refusals discard the record instead",
              nil),
-            ("#248: a batch undo is refused before any write for a missing or read-only calendar or list",
+            ("#248: a batch undo is refused before any write, its entry kept, for a missing or read-only calendar or list",
              "is refused before any write, its record kept whole, when the calendar or list of any of its items is missing or read-only",
-             "a batch undo is refused before any write when an item's calendar or list is missing or read-only"),
+             "a batch undo is refused before any write, its entry kept, when an item's calendar or list is missing or read-only"),
             ("#248: the refusal counts the items",
              "the error counts the items this stops and those whose calendar or list is in place",
              nil),
             ("#248: giving up a batch undo drops every item",
              "giving up that undo with discard_id drops every item of the entry",
              "discarding it drops every item of the batch"),
-            ("#248: a batch undo that fails part-way keeps only the items not yet restored, except one no retry can restore",
-             "A batch undo that fails part-way keeps only the items not yet restored, except an item no retry can restore, which is dropped",
-             "a batch undo that fails part-way keeps only the items not yet restored, except an item no retry can restore"),
+            ("#248: a batch undo that fails part-way keeps only the items not yet restored",
+             "A batch undo that fails part-way keeps only the items not yet restored.",
+             "a batch undo that fails part-way keeps only the items not yet restored;"),
         ]
         let (declared, summary) = try descriptions(of: "undo")
+        // Round 5, finding 17: no batch member's write throws a permanent error today, so the
+        // client-facing text does not describe a member being dropped.
+        XCTAssertFalse(declared.contains("no retry can restore") || summary.contains("no retry can restore"), declared + summary)
         for clause in clauses {
             XCTAssertTrue(declared.contains(clause.declared), "defineTools() undo lost \(clause.what): \(declared)")
             if let pinned = clause.summary {
@@ -245,9 +248,9 @@ final class ManifestParityTests: XCTestCase {
         }
         // The manifest summaries say it too, shorter (PR #282 round 4, findings 4, 16).
         let summaries: [(tool: String, clause: String)] = [
-            ("delete_events_batch", "refused before any write when an event's calendar is missing or read-only, and discarding it drops every event"),
-            ("delete_reminders_batch", "refused before any write when a reminder's list is missing or read-only, and discarding it drops every reminder"),
-            ("cleanup_completed_reminders", "refused before any write when a reminder's list is missing or read-only, and discarding it drops every reminder"),
+            ("delete_events_batch", "the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event"),
+            ("delete_reminders_batch", "the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder"),
+            ("cleanup_completed_reminders", "the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder"),
         ]
         for (tool, clause) in summaries {
             let summary = try descriptions(of: tool).summary
