@@ -91,7 +91,11 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo fails on its first write (#248)
 - **WHEN** the first write of a batch undo fails and other members have not been attempted
-- **THEN** nothing is written; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error would drop that member and keep the others
+- **THEN** no member is confirmed restored and the later members are not attempted; the failing member may still have been written (an event whose save failed after the store took it) or left pending (a reminder whose removal after a failed save also failed), so the error asks to check before running undo again; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error would drop that member and keep the others
+
+#### Scenario: Batch undo restores a reminder the store holds differently (#248, #261)
+- **WHEN** a batch undo recreates a reminder whose save reported a failure, and a new store finds it with compared fields differing from what was saved
+- **THEN** the member counts as restored and is not recreated by a retry; the batch answer names that reminder with its own differing fields (the first five such reminders, then how many more), from the names the restore returns and never from its text; a batch that stops part-way names them in its error instead, once, and a nested batch passes its reminders' names up
 
 #### Scenario: Batch undo of one member left fails (#248)
 - **WHEN** a batch undo has one member left to run, nothing has been written, and its write fails
