@@ -229,9 +229,13 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("differing: UndoRestoredDifference(shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers))"), in: member))
 
         let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))
-        XCTAssertNotNil(Self.offset(of: Self.call("NewObjectSave.batchNote(differing.map { (shownTitle: $0.shownTitle, storeDiffers: $0.storeDiffers) })"), in: text))
-        let partial = SourcePins.code(try SourcePins.source("EventKit/UndoBatchRestore.swift"))
-        XCTAssertEqual(SourcePins.ranges(of: "NewObjectSave.differingFieldsNote(difference.storeDiffers)", in: partial).count, 1)
+        XCTAssertNotNil(Self.offset(of: Self.call("let named = UndoRestoredDifference.sentences(differing)"), in: text))
+        let restoreFile = try SourcePins.source("EventKit/UndoBatchRestore.swift")
+        XCTAssertEqual(SourcePins.ranges(of: "UndoRestoredDifference.sentences(restoredDiffering)", in: SourcePins.code(restoreFile)).count, 1,
+                       "a batch stopped part-way names the restored reminders' differences")
+        let sentences = Substring(try XCTUnwrap(SourcePins.body(of: "static func sentences(_ differences: [UndoRestoredDifference])", in: restoreFile)))
+        XCTAssertNotNil(Self.offset(of: Self.call("NewObjectSave.differingFieldsNote(difference.storeDiffers)"), in: sentences),
+                        "the words are #280's one formatter's")
     }
 
     /// Round 2, finding 20: the runner's `check` is #236's per-member pre-flight; an empty closure

@@ -439,13 +439,14 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let snapshot ?\) ?: ?return restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
         // PR #282 integrates the batch arm with #248's narrowing: each member runs through
         // `undoBatchMember`, which takes a reminder's names from `restoreDeletedReminder` as data,
-        // and the batch text builds its note from them with `batchNote`; no member text is read
+        // and the batch text builds its note from them with `differingFieldsNote`
+        // (`UndoRestoredDifference.sentences`); no member text is read
         // back (`UndoBatchWiringTests.testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData`).
         let member = try body(of: "func undoBatchMember(_ operation: UndoOperation)", in: code)
         XCTAssertEqual(try matches(#"guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return UndoMemberOutcome\( ?text: ?try await executeUndo\( ?operation ?\) ?, ?differing: ?nil ?\) ?\} ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?restoredReminderMessage\( ?restored ?\) ?, ?differing: ?UndoRestoredDifference\( ?shownTitle: ?undoShownTitle\( ?restored\.title ?\) ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\)"#, in: member).count, 1,
                        "a batch undo collects each restored member's names and builds its note from them")
         XCTAssertEqual(try matches(#"restore: ?\{ ?try await self\.undoBatchMember\( ?\$0 ?\) ?\}"#, in: code).count, 1)
-        XCTAssertEqual(try matches(#"NewObjectSave\.batchNote\( ?differing\.map"#, in: code).count, 1)
+        XCTAssertEqual(try matches(#"UndoRestoredDifference\.sentences\( ?differing ?\)"#, in: code).count, 1)
         for handler in ["func handleCreateReminder(", "func handleCreateRemindersBatch(", "func handleCreateCalendar("] {
             let body = try body(of: handler, in: code)
             XCTAssertEqual(try matches(#"NewObjectSave\.responseFields\( ?result\.storeDiffers ?\)"#, in: body).count, 1, handler)

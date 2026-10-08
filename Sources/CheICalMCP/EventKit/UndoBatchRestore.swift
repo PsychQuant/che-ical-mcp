@@ -269,9 +269,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, so running undo again tries the item that failed first and does not restore the restored ones a second time."
         }
         let loss = (UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? "")
-            + restoredDiffering.compactMap { difference in
-                NewObjectSave.differingFieldsNote(difference.storeDiffers).map { " Restored reminder '\(difference.shownTitle)' — \($0)." }
-            }.joined()
+            + UndoRestoredDifference.sentences(restoredDiffering)
         let giveUp: String
         switch failing {
         case .dropped where remaining.isEmpty:
@@ -420,4 +418,15 @@ struct UndoMemberOutcome: Sendable {
 struct UndoRestoredDifference: Sendable, Equatable {
     let shownTitle: String
     let storeDiffers: [String]
+
+    /// " Restored reminder '<title>' — <note>." for each difference that names fields, in the order
+    /// the members ran, or "" when none does: the words are `NewObjectSave.differingFieldsNote`'s,
+    /// the joining is this server's, so the batch text and a part-way error read alike (PR #282).
+    /// Each entry pairs one member's title with its own names; the title is already shown, its
+    /// ASCII quotes turned curly, so it cannot close the entry or open another.
+    static func sentences(_ differences: [UndoRestoredDifference]) -> String {
+        differences.compactMap { difference in
+            NewObjectSave.differingFieldsNote(difference.storeDiffers).map { " Restored reminder '\(difference.shownTitle)' — \($0)." }
+        }.joined()
+    }
 }

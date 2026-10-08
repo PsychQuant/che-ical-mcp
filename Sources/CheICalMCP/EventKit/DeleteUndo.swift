@@ -171,7 +171,8 @@ extension UndoOperation {
         if let note = batchLossNote(members: members) { message += ". " + note }
         // What the restored reminders' stores hold differently, from the names each member
         // returned, never from member text (#261; PR #282 round 5, finding 1).
-        return message + NewObjectSave.batchNote(differing.map { (shownTitle: $0.shownTitle, storeDiffers: $0.storeDiffers) })
+        let named = UndoRestoredDifference.sentences(differing)
+        return named.isEmpty ? message : message + "." + named
     }
 
     /// The text of a redone batch; no batch whose members write on redo is recorded today (#247).

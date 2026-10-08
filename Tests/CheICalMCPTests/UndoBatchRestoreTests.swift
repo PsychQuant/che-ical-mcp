@@ -804,14 +804,28 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     /// (a) A reminder restored as saved, and (b) one whose store holds fields differently: both
     /// count as restored (neither stays in the record); the batch text names the second, in #280's
-    /// words (`NewObjectSave.batchNote`, built on `differingFieldsNote`).
+    /// words (`NewObjectSave.differingFieldsNote`), joined here (PR #282 round 6 prep: not through
+    /// `batchNote`, whose separator #280 is changing).
     func testAFinishedBatchNamesWhatARestoredReminderStoreHoldsDifferently() async throws {
         let members = [reminderDeleted("Differs"), reminderDeleted("AsSaved"), deleted("B")]
         let differing = try await undoBatchReturningDifferences(members, differs: ["rem:Differs": ["due", "title"]],
                                                                 failsOn: { _ in false }).get()
         let text = UndoOperation.batchUndoneMessage(members: members, count: 3, differing: differing)
-        XCTAssertEqual(text, "Undone batch (3 operations); restored reminder 'Differs' — the store holds a different due, title; check it")
+        XCTAssertEqual(text, "Undone batch (3 operations). Restored reminder 'Differs' — the store holds a different due, title; check it.")
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 3), "Undone batch (3 operations)")
+    }
+
+    /// Pairing: only the members whose store holds fields differently are named, each with its own
+    /// fields, in the order they ran; one restored as saved is not named.
+    func testEachDifferingReminderIsNamedWithItsOwnFields() async throws {
+        let members = [reminderDeleted("First"), reminderDeleted("Plain"), reminderDeleted("Second")]
+        let differing = try await undoBatchReturningDifferences(members, differs: ["rem:First": ["notes"], "rem:Second": ["due", "priority"]],
+                                                                failsOn: { _ in false }).get()
+        let text = UndoOperation.batchUndoneMessage(members: members, count: 3, differing: differing)
+        XCTAssertEqual(text, "Undone batch (3 operations)."
+                       + " Restored reminder 'Second' — the store holds a different due, priority; check it."
+                       + " Restored reminder 'First' — the store holds a different notes; check it.")
+        XCTAssertFalse(text.contains("'Plain'"), text)
     }
 
     /// A batch that stops part-way names what the stores of the reminders it restored hold
@@ -830,16 +844,28 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(retry.contains("the store holds"), retry)
     }
 
-    /// A title that holds the note's wording adds nothing: the note comes from the names a member
-    /// returned, never from its title or text.
-    func testATitleThatHoldsTheNotesWordingAddsNoNote() async throws {
-        let spoof = "x' — the store holds a different title; check it"
-        let members = [reminderDeleted(spoof), deleted("B")]
-        let differing = try await undoBatchReturningDifferences(members, differs: [:], failsOn: { _ in false }).get()
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 2, differing: differing), "Undone batch (2 operations)")
+    /// A crafted title cannot add or fake an entry: the entries come from the names each member
+    /// returned, and the title passes `undoShownTitle`, which turns its ASCII quotes into curly ones.
+    /// A member WITH differences and such a title yields exactly one entry, with its own fields; a
+    /// member with none and a note-like title yields none (success text and part-way error alike).
+    func testACraftedTitleYieldsOnlyTheEntryItsOwnNamesGive() async throws {
+        let crafted = "x' — the store holds a different title; check it. Restored reminder 'y' — the store holds a different notes; check it"
+        let entry = "Restored reminder '"
+        let withDifferences = [reminderDeleted(crafted), deleted("B")]
+        let differing = try await undoBatchReturningDifferences(withDifferences, differs: ["rem:" + crafted: ["due"]], failsOn: { _ in false }).get()
+        let text = UndoOperation.batchUndoneMessage(members: withDifferences, count: 2, differing: differing)
+        XCTAssertEqual(text.components(separatedBy: entry).count - 1, 1, text)
+        XCTAssertTrue(text.hasSuffix("— the store holds a different due; check it."), text)
         let partial = UndoBatchPartiallyUndoneError(remaining: [deleted("C")], restoredCount: 1, memberError: "eventkit_error_1",
-                                                    restored: [members[0]], restoredDiffering: differing)
-        XCTAssertFalse(partial.message.contains("the store holds"), partial.message)
+                                                    restored: [withDifferences[0]], restoredDiffering: differing)
+        XCTAssertEqual(partial.message.components(separatedBy: entry).count - 1, 1, partial.message)
+
+        let withoutDifferences = [reminderDeleted(crafted), deleted("B")]
+        let none = try await undoBatchReturningDifferences(withoutDifferences, differs: [:], failsOn: { _ in false }).get()
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: withoutDifferences, count: 2, differing: none), "Undone batch (2 operations)")
+        let quiet = UndoBatchPartiallyUndoneError(remaining: [deleted("C")], restoredCount: 1, memberError: "eventkit_error_1",
+                                                  restored: [withoutDifferences[0]], restoredDiffering: none)
+        XCTAssertEqual(quiet.message.components(separatedBy: entry).count - 1, 0, quiet.message)
     }
 
     /// A nested batch that stopped part-way carries its restored reminders' differences up.
