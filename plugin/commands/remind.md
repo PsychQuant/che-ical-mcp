@@ -12,7 +12,7 @@ Create a reminder from the user's natural language input.
 
 ## Process
 
-1. **Parse input**: Extract task title, due date/time, priority
+1. **Parse input**: Extract task title, due date/time, priority. If the user gives a date but no time, pass a bare date (`2026-01-19`): that makes a date-only reminder, with no time (#267)
 2. **Get reminder lists**: Use `list_calendars` with type="reminder" if needed
 3. **Create reminder**: Use `create_reminder`
 
@@ -23,6 +23,9 @@ User: "Remind me to buy milk"
 
 User: "Call mom tomorrow at 5pm"
 → create_reminder(title="Call mom", due_date="2026-01-19T17:00:00+08:00", calendar_name="Reminders")
+
+User: "Pay rent on the 18th"
+→ create_reminder(title="Pay rent", due_date="2026-01-18", calendar_name="Reminders")  (date-only: no time)
 
 User: "Submit report by Friday - high priority"
 → create_reminder(title="Submit report", due_date="...", priority=1, calendar_name="Reminders")

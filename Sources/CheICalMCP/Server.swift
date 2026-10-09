@@ -504,13 +504,13 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_reminder",
-                description: "Create a new reminder. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
+                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "title": .object(["type": .string("string"), "description": .string("Reminder title")]),
                         "notes": .object(["type": .string("string"), "description": .string("Optional notes")]),
-                        "due_date": .object(["type": .string("string"), "description": .string("Optional due date in ISO8601 format with timezone (e.g., 2026-01-30T17:00:00+08:00)")]),
+                        "due_date": .object(["type": .string("string"), "description": .string("Optional due date. A bare date (2026-01-30) makes a date-only reminder, with no time; for a time, ISO8601 with timezone (e.g., 2026-01-30T17:00:00+08:00)")]),
                         "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (use list_calendars with type='reminder' to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
@@ -576,21 +576,21 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "reminder_id": .object(["type": .string("string"), "description": .string("The reminder identifier")]),
                         "title": .object(["type": .string("string"), "description": .string("New title")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
-                        "due_date": .object(["type": .string("string"), "description": .string("New due date")]),
+                        "due_date": .object(["type": .string("string"), "description": .string("New due date. A bare date (2026-01-30) makes the reminder date-only (see the tool description); for a time, ISO8601 with timezone (e.g., 2026-01-30T17:00:00+08:00)")]),
                         "clear_due_date": .object([
                             "type": .string("boolean"),
                             "description": .string("Set to true to remove due date from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "realign_to_due": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
@@ -977,7 +977,7 @@ class CheICalMCPServer {
             // Reminder Batch Operations
             Tool(
                 name: "create_reminders_batch",
-                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does.",
+                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -989,7 +989,7 @@ class CheICalMCPServer {
                                 "properties": .object([
                                     "title": .object(["type": .string("string")]),
                                     "notes": .object(["type": .string("string")]),
-                                    "due_date": .object(["type": .string("string"), "description": .string("Due date in ISO8601 format with timezone")]),
+                                    "due_date": .object(["type": .string("string"), "description": .string("Due date: a bare date (2026-01-30) for a date-only reminder, or ISO8601 with timezone for a time")]),
                                     "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
@@ -1730,7 +1730,7 @@ class CheICalMCPServer {
         let tags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
-        let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let priority = try InputValidation.requireIntIfPresent(arguments, key: "priority", default: 0)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
@@ -1741,7 +1741,7 @@ class CheICalMCPServer {
         let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
             title: title,
             notes: notes,
-            dueDate: dueDate,
+            due: due,
             priority: priority,
             calendarName: calendarName,
             calendarSource: calendarSource,
@@ -1750,7 +1750,9 @@ class CheICalMCPServer {
         ))
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier])
+            var skipped: [String: Any] = ["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
+            if let note = Self.dateOnlyDuplicateNote(due: due, result: result) { skipped["note"] = note }
+            return try actionResult(skipped)
         }
         var fields: [String: Any] = ["action": "created", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
         if !tags.isEmpty {
@@ -1771,9 +1773,9 @@ class CheICalMCPServer {
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
-        let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
-        if clearDueDate && dueDate != nil {
+        if clearDueDate && due != nil {
             throw ToolError.invalidParameter("Cannot specify both due_date and clear_due_date")
         }
         let realignToDue = try InputValidation.requireOptionalBool(arguments, key: "realign_to_due") ?? false
@@ -1822,7 +1824,7 @@ class CheICalMCPServer {
             identifier: reminderId,
             title: title,
             notes: finalNotes,
-            dueDate: dueDate,
+            due: due,
             priority: priority,
             calendarName: calendarName,
             calendarSource: calendarSource,
@@ -1836,7 +1838,23 @@ class CheICalMCPServer {
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
         // they agree with it, also for a call with only realign_to_due.
         if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
+        if case .day? = due, let removed = update.dateSync?.absoluteAlarmsRemoved, removed > 0 {
+            response["note"] = Self.dateOnlyAlarmRemovalNote(removed)
+        }
         return try actionResult(response)
+    }
+
+    /// #267 (PR #298 verify round 2): a date-only update that removed absolute-date alarms says so
+    /// in words, and how to get them back (the undo history lives in this process).
+    static func dateOnlyAlarmRemovalNote(_ removed: Int) -> String {
+        "Made date-only: removed \(removed) absolute-date alarm\(removed == 1 ? "" : "s"), because Reminders.app would go on showing an alarm's time. undo restores \(removed == 1 ? "it" : "them") while this server is running, if the reminder has not been changed since."
+    }
+
+    /// #267 (PR #298 verify round 2): a bare-date create skipped as a duplicate of a reminder with a
+    /// time (what a bare date was stored as before #267) says the existing one was left as it is.
+    static func dateOnlyDuplicateNote(due: ReminderDueInput?, result: EventKitManager.CreateReminderResult) -> String? {
+        guard case .day? = due, result.isDuplicate, result.duplicateHasTime else { return nil }
+        return "The existing reminder with this title has a time on that day and was left as it is. To make it date-only, call update_reminder with this bare date."
     }
 
     private func handleCompleteReminder(arguments: [String: Value]) async throws -> String {
@@ -1976,13 +1994,13 @@ class CheICalMCPServer {
                 let batchUserNotes = reminderDict["notes"]?.stringValue
                 try InputValidation.validateReminderTextInput(title: title, notes: batchUserNotes)
 
-                let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+                let batchDue = try reminderDict["due_date"]?.stringValue.map { try parseReminderDue($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
                 let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
                 let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
                     title: title,
                     notes: batchNotes,
-                    dueDate: batchDueDate,
+                    due: batchDue,
                     priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
@@ -1995,6 +2013,7 @@ class CheICalMCPServer {
                 ]
                 if result.isDuplicate {
                     entry["skipped"] = true
+                    if let note = Self.dateOnlyDuplicateNote(due: batchDue, result: result) { entry["note"] = note }
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)
@@ -3088,6 +3107,12 @@ class CheICalMCPServer {
         }
 
         throw ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
+    }
+
+    /// #267: a reminder `due_date`. A bare `YYYY-MM-DD` is a date-only reminder; anything else is
+    /// parsed by `parseFlexibleDate` as an instant, as before.
+    private func parseReminderDue(_ string: String) throws -> ReminderDueInput {
+        try ReminderDueInput.parse(string, timed: { try parseFlexibleDate($0) })
     }
 
     /// Get date range for quick time shortcuts

@@ -68,7 +68,7 @@ list_reminders          → See tasks by list or completion status
 | Task | Tool | Key Parameters |
 |------|------|----------------|
 | List tasks | `list_reminders` | calendar_name, completed (JSON boolean; omit/null = all; strings/numbers rejected) |
-| Create task | `create_reminder` | title, calendar_name (required), due_date |
+| Create task | `create_reminder` | title, calendar_name (required), due_date (bare `YYYY-MM-DD` = date-only, no time) |
 | Complete | `complete_reminder` | reminder_id, completed (JSON boolean, default true; strings/numbers rejected) |
 
 > Every boolean argument on every tool (`all_day`, `clear_*`, `include_completed`, `dry_run`, `delete_original`, …) is a strict JSON boolean (#207): strings and numbers are rejected; omit or `null` keeps the default.

@@ -31,7 +31,7 @@ enum ReminderUpdateWrite {
         if request.realignToDue && request.clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        if request.realignToDue && request.dueDate == nil && existingDue == nil {
+        if request.realignToDue && request.due == nil && existingDue == nil {
             throw ToolError.invalidParameter("realign_to_due needs a due date: the reminder has none, so pass due_date")
         }
     }
@@ -55,11 +55,15 @@ enum ReminderUpdateWrite {
         // #227: the start date and absolute-date alarms follow the due date; Reminders.app
         // displays the alarm's date, so leaving it behind keeps showing the old date.
         // #235: realignToDue puts them onto the due date instead, whatever it moved by.
+        // #267: a day makes the reminder date-only and removes the absolute alarms, so there is
+        // nothing left for realignToDue to put on it.
         var dateSync: ReminderDateSync.Report?
         if request.clearDueDate {
             dateSync = ReminderDateSync.setDue(reminder, to: nil)
-        } else if let due = request.dueDate {
+        } else if case .timed(let due)? = request.due {
             dateSync = ReminderDateSync.setDue(reminder, to: due, realignToDue: request.realignToDue)
+        } else if case .day(let day)? = request.due {
+            dateSync = ReminderDateSync.setDueDay(reminder, to: day)
         } else if request.realignToDue {
             dateSync = ReminderDateSync.realign(reminder)
         }

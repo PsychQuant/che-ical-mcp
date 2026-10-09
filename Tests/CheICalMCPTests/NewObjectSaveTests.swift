@@ -138,6 +138,20 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(batch.components(separatedBy: "Restored reminder '").count - 1, 1, batch)
     }
 
+    /// PR #298 verify round 3: a date-only reminder written through setDueDay compares equal to the
+    /// copy a store hands back (due without a time or zone, start at 00:00 of the day, as on device),
+    /// so a date-only create found after a save that threw counts as saved, not as differing.
+    func testADateOnlyReminderComparesEqualToTheStoredCopy() {
+        let store = EKEventStore()
+        let written = EKReminder(eventStore: store)
+        _ = ReminderDateSync.setDueDay(written, to: DateComponents(year: 2026, month: 10, day: 18))
+        let stored = EKReminder(eventStore: store)
+        stored.dueDateComponents = DateComponents(year: 2026, month: 10, day: 18)
+        stored.startDateComponents = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+        let found = NewObjectSave.check(NewObjectSave.Fields(reminder: written), against: NewObjectSave.Fields(reminder: stored))
+        guard case .saved = found else { return XCTFail("\(found)") }
+    }
+
     /// The names a `store_differs` can hold are exactly the keys `Fields` compares, which the tool
     /// descriptions list.
     func testTheFieldNamesAreTheComparedKeys() {
@@ -373,12 +387,22 @@ final class NewObjectSaveTests: XCTestCase {
         }
     }
 
-    /// The code from `start` to the next method or switch case. A `case .` inside a creating
-    /// method (e.g. `if case .x`) would cut the segment short and fail the pin, not pass it.
+    /// The code from `start` to the next function or the next switch arm. A segment cut short
+    /// fails the pin; it never passes it. A `case .` right after the word `if`, `guard`, `while` or
+    /// `for`, or after a comma in a condition list, is a pattern match in the same scope, not an
+    /// arm (#267: createReminder's `if case .day(let day)? = due` cut the segment before its save).
+    /// The word must stand alone: an identifier that only ends in one of them does not count
+    /// (PR #298 verify rounds 1 and 2).
+    private static let patternMatchContext = try! NSRegularExpression(pattern: #"(?:(?:^|[^A-Za-z0-9_])(?:if|guard|while|for)|,)$"#)
+
     private func segment(of text: String, at start: String.Index) -> String {
         let rest = text[text.index(after: start)...]
-        let ends = [" func ", " case ."].compactMap { rest.range(of: $0)?.lowerBound }
-        return String(text[start..<(ends.min() ?? text.endIndex)])
+        let function = rest.range(of: " func ")?.lowerBound
+        let arm = rest.ranges(of: " case .").map(\.lowerBound).first { index in
+            let before = String(rest[..<index].suffix(8))
+            return Self.patternMatchContext.firstMatch(in: before, range: NSRange(before.startIndex..., in: before)) == nil
+        }
+        return String(text[start..<([function, arm].compactMap { $0 }.min() ?? text.endIndex)])
     }
 
     /// The body of the function declared at `declaration`, from its opening brace to the one that

@@ -1172,4 +1172,104 @@ final class ReminderDateSyncTests: XCTestCase {
             XCTAssertEqual(reminder.dueDateComponents?.timeZone, due.timeZone)
         }
     }
+
+    // MARK: - Date-only due (#267)
+
+    private func day(_ y: Int, _ m: Int, _ d: Int) -> DateComponents {
+        DateComponents(year: y, month: m, day: d)
+    }
+
+    private func ymd(_ c: DateComponents?) -> [Int?] {
+        [c?.year, c?.month, c?.day]
+    }
+
+    // A timed reminder made date-only: due and start become the day with no time, the absolute
+    // alarm is removed (on device it kept the display on its old date and time), and relative and
+    // location alarms stay.
+    func testADayOnATimedReminderWritesADateOnlyDueAndStartAndRemovesAbsoluteAlarms() {
+        let oldDue = date(2026, 10, 18, 17, in: taipei)
+        let reminder = makeReminder()
+        reminder.startDateComponents = components(oldDue, in: taipei)
+        reminder.dueDateComponents = components(oldDue, in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: oldDue))
+        reminder.addAlarm(EKAlarm(relativeOffset: -600))
+        let place = EKAlarm()
+        place.structuredLocation = EKStructuredLocation(title: "Office")
+        reminder.addAlarm(place)
+
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 19))
+
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1, aligned: true))
+        XCTAssertEqual(report.writtenDue, day(2026, 10, 19))
+        XCTAssertEqual(ymd(reminder.dueDateComponents), [2026, 10, 19])
+        XCTAssertNil(reminder.dueDateComponents?.hour)
+        XCTAssertNil(reminder.dueDateComponents?.timeZone)
+        XCTAssertEqual(ymd(reminder.startDateComponents), [2026, 10, 19])
+        XCTAssertNil(reminder.startDateComponents?.hour)
+        XCTAssertEqual(absoluteDates(reminder), [])
+        XCTAssertEqual((reminder.alarms ?? []).map(\.relativeOffset).filter { $0 != 0 }, [-600])
+        XCTAssertEqual((reminder.alarms ?? []).compactMap(\.structuredLocation?.title), ["Office"])
+    }
+
+    func testADayOnAnUndatedReminderSetsTheStart() {
+        let reminder = makeReminder()
+
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        XCTAssertEqual(report, .init(startDate: .set, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0, aligned: true))
+        XCTAssertEqual(ymd(reminder.dueDateComponents), [2026, 10, 18])
+        XCTAssertNil(reminder.dueDateComponents?.hour)
+    }
+
+    // The same day again: nothing moves, and the start reads unchanged.
+    func testTheSameDayOnADateOnlyReminderLeavesItUnchanged() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = day(2026, 10, 18)
+        reminder.startDateComponents = day(2026, 10, 18)
+
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        XCTAssertEqual(report, .init(startDate: .unchanged, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0, aligned: true))
+    }
+
+    // Every absolute alarm goes, not only the one at the due: the app displays the earliest.
+    func testADayRemovesEveryAbsoluteAlarm() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = components(date(2026, 10, 18, 17, in: taipei), in: taipei)
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 18, 9, in: taipei)))
+        reminder.addAlarm(EKAlarm(absoluteDate: date(2026, 10, 18, 17, in: taipei)))
+
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        XCTAssertEqual(report.absoluteAlarmsRemoved, 2)
+        XCTAssertEqual(absoluteDates(reminder), [])
+    }
+
+    // Verify round 1 (PR #298): a date-only write whose due reads back with a time is not aligned,
+    // whatever the start and alarms say. Only iCloud was checked on device; another store could
+    // hand the day back timed.
+    func testADayThatReadsBackWithATimeIsNotAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {}, reload: {
+            var timed = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+            timed.timeZone = self.taipei
+            reminder.startDateComponents = nil
+            reminder.dueDateComponents = timed
+            return true
+        }, rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, false)
+    }
+
+    func testADayThatReadsBackDateOnlyIsAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {}, reload: { true },
+                                                      rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, true)
+    }
 }

@@ -47,7 +47,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
         XCTAssertNoThrow(try ReminderUpdateWrite.checkRealign(
             ReminderUpdateRequest(identifier: "r", realignToDue: true), existingDue: DateComponents(year: 2026, month: 10, day: 8)))
         XCTAssertNoThrow(try ReminderUpdateWrite.checkRealign(
-            ReminderUpdateRequest(identifier: "r", dueDate: date(10, 8, 10), realignToDue: true), existingDue: nil))
+            ReminderUpdateRequest(identifier: "r", due: .timed(date(10, 8, 10)), realignToDue: true), existingDue: nil))
         XCTAssertNoThrow(try ReminderUpdateWrite.checkRealign(
             ReminderUpdateRequest(identifier: "r"), existingDue: nil))
     }
@@ -67,7 +67,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
     func testTheSameDueWithoutRealignToDueMovesNothing() throws {
         let reminder = divergedReminder()
 
-        let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", dueDate: date(10, 8, 10)), to: reminder,
+        let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", due: .timed(date(10, 8, 10))), to: reminder,
                                                    calendar: nil, save: {}, reload: { true }, rollback: {})
 
         XCTAssertEqual(report?.aligned, false)
@@ -195,5 +195,60 @@ final class ReminderUpdateWriteTests: XCTestCase {
         }
         XCTAssertThrowsError(try ReminderUpdateWrite.freshReminder(identifier: "missing", lookup: { _ in nil },
                                                                    refresh: { _ in XCTFail("nothing to refresh"); return true }))
+    }
+
+    // MARK: - date-only due (#267)
+
+    private func day(_ m: Int, _ d: Int) -> DateComponents {
+        DateComponents(year: 2026, month: m, day: d)
+    }
+
+    /// As Reminders.app makes a timed reminder: a start and an absolute alarm at the due.
+    private func timedReminder() -> EKReminder {
+        let reminder = EKReminder(eventStore: EKEventStore())
+        reminder.dueDateComponents = components(date(10, 18, 17))
+        reminder.startDateComponents = components(date(10, 18, 17))
+        reminder.addAlarm(EKAlarm(absoluteDate: date(10, 18, 17)))
+        return reminder
+    }
+
+    // A bare date makes the reminder date-only: no time, no absolute alarm, one save (no #237
+    // fallback, which is for timed dues), judged on the reminder read back.
+    func testADayMakesTheReminderDateOnlyAndSavesOnce() throws {
+        let reminder = timedReminder()
+        var saves = 0
+        var reloads = 0
+
+        let report = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", due: .day(day(10, 19))), to: reminder,
+                                                   calendar: nil, save: { saves += 1 }, reload: { reloads += 1; return true },
+                                                   rollback: {})
+
+        XCTAssertEqual(report, .init(startDate: .shifted, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1, aligned: true))
+        XCTAssertEqual(reminder.dueDateComponents?.day, 19)
+        XCTAssertNil(reminder.dueDateComponents?.hour)
+        XCTAssertEqual(absoluteDates(reminder), [])
+        XCTAssertEqual(saves, 1)
+        XCTAssertEqual(reloads, 1)
+    }
+
+    // realign_to_due has nothing to add to a bare date: the absolute alarms are removed either way.
+    func testADayWithRealignToDueGivesTheSameResult() throws {
+        let plain = timedReminder()
+        let realigned = timedReminder()
+
+        let plainReport = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", due: .day(day(10, 19))), to: plain,
+                                                        calendar: nil, save: {}, reload: { true }, rollback: {})
+        let realignedReport = try ReminderUpdateWrite.apply(
+            ReminderUpdateRequest(identifier: "r", due: .day(day(10, 19)), realignToDue: true), to: realigned,
+            calendar: nil, save: {}, reload: { true }, rollback: {})
+
+        XCTAssertEqual(realignedReport, plainReport)
+        XCTAssertNil(realigned.dueDateComponents?.hour)
+        XCTAssertEqual(absoluteDates(realigned), [])
+    }
+
+    func testRealignWithADayAndNoExistingDueIsAccepted() {
+        XCTAssertNoThrow(try ReminderUpdateWrite.checkRealign(
+            ReminderUpdateRequest(identifier: "r", due: .day(day(10, 19)), realignToDue: true), existingDue: nil))
     }
 }
