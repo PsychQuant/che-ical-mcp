@@ -253,7 +253,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoBatch(inner)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(shownTitle: undoShownTitle(restored.title), storeDiffers: restored.storeDiffers)])"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])"), in: member))
 
         let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))
         XCTAssertNotNil(Self.offset(of: Self.call("let named = UndoRestoredDifference.sentences(differing)"), in: text))

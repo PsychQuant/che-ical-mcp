@@ -2256,7 +2256,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// One member of a batch undo (#248). A deleted reminder is recreated through
     /// `restoreDeletedReminder`, and the fields its store holds differently travel as data
-    /// (`UndoRestoredDifference`, title shown through `undoShownTitle`), so the batch texts name
+    /// (`UndoRestoredDifference`, which shows the title itself), so the batch texts name
     /// them (#261; PR #282 round 5, finding 1). A nested batch passes up its own members'
     /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). Every
     /// other member runs `executeUndo`.
@@ -2270,8 +2270,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         let restored = try await restoreDeletedReminder(snapshot)
         return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
-                                 differing: [UndoRestoredDifference(shownTitle: undoShownTitle(restored.title),
-                                                                    storeDiffers: restored.storeDiffers)])
+                                 differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
     }
 
     /// Execute an operation again (for redo). Only completions are written again (#247).

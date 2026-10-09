@@ -110,11 +110,11 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(NewObjectSave.undoSuffix(["title"]), " — the store holds a different title; check it")
         // The batch undo's entries (PR #282, `UndoRestoredDifference.sentences`): one per member
         // with differing fields, in #280's words.
-        XCTAssertEqual(UndoRestoredDifference.sentences([UndoRestoredDifference(shownTitle: "a", storeDiffers: []),
-                                                         UndoRestoredDifference(shownTitle: "b", storeDiffers: ["due"]),
-                                                         UndoRestoredDifference(shownTitle: "c", storeDiffers: ["title", "url"])]),
+        XCTAssertEqual(UndoRestoredDifference.sentences([UndoRestoredDifference(title: "a", storeDiffers: []),
+                                                         UndoRestoredDifference(title: "b", storeDiffers: ["due"]),
+                                                         UndoRestoredDifference(title: "c", storeDiffers: ["title", "url"])]),
                        " Restored reminder 'b' — the store holds a different due; check it. Restored reminder 'c' — the store holds a different title, url; check it.")
-        XCTAssertEqual(UndoRestoredDifference.sentences([UndoRestoredDifference(shownTitle: "a", storeDiffers: [])]), "")
+        XCTAssertEqual(UndoRestoredDifference.sentences([UndoRestoredDifference(title: "a", storeDiffers: [])]), "")
         XCTAssertEqual(UndoRestoredDifference.sentences([]), "")
     }
 
@@ -132,7 +132,7 @@ final class NewObjectSaveTests: XCTestCase {
         let noted = EventKitManager.restoredReminderMessage((title: forged, storeDiffers: ["due"]))
         XCTAssertEqual(noted.filter { $0 == "'" }.count, 2, noted)
         XCTAssertTrue(noted.hasSuffix("' — the store holds a different due; check it"), noted)
-        let batch = UndoRestoredDifference.sentences([UndoRestoredDifference(shownTitle: undoShownTitle(forged), storeDiffers: ["title"])])
+        let batch = UndoRestoredDifference.sentences([UndoRestoredDifference(title: forged, storeDiffers: ["title"])])
         XCTAssertFalse(batch.contains("\n"), "undoShownTitle drops the line break: \(batch)")
         XCTAssertEqual(batch.filter { $0 == "'" }.count, 2, batch)
         XCTAssertEqual(batch.components(separatedBy: "Restored reminder '").count - 1, 1, batch)
@@ -466,7 +466,7 @@ final class NewObjectSaveTests: XCTestCase {
         // (`UndoRestoredDifference.sentences`); no member text is read
         // back (`UndoBatchWiringTests.testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData`).
         let member = try body(of: "func undoBatchMember(_ operation: UndoOperation)", in: code)
-        XCTAssertEqual(try matches(#"guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return UndoMemberOutcome\( ?text: ?try await executeUndo\( ?operation ?\) ?, ?differing: ?\[ ?\] ?\) ?\} ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?shownTitle: ?undoShownTitle\( ?restored\.title ?\) ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
+        XCTAssertEqual(try matches(#"guard case \.deleteReminder\( ?let snapshot ?\) = operation else \{ ?return UndoMemberOutcome\( ?text: ?try await executeUndo\( ?operation ?\) ?, ?differing: ?\[ ?\] ?\) ?\} ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?title: ?restored\.title ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
                        "a batch undo collects each restored member's names and builds its note from them")
         XCTAssertEqual(try matches(#"restore: ?\{ ?try await self\.undoBatchMember\( ?\$0 ?\) ?\}"#, in: code).count, 1)
         XCTAssertEqual(try matches(#"UndoRestoredDifference\.sentences\( ?differing ?\)"#, in: code).count, 1)

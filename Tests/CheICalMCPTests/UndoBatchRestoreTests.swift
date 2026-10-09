@@ -791,7 +791,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                 if failsOn(title) { throw SaveFailed.failed }
                 if let nested = nestedDiffering[title] { return UndoMemberOutcome(text: title, differing: nested) }
                 guard case .deleteReminder(let snapshot) = member else { return UndoMemberOutcome(text: title, differing: []) }
-                return UndoMemberOutcome(text: title, differing: [UndoRestoredDifference(shownTitle: undoShownTitle(snapshot.title),
+                return UndoMemberOutcome(text: title, differing: [UndoRestoredDifference(title: snapshot.title,
                                                                                         storeDiffers: differs[title] ?? [])])
             }, describe: { _ in "eventkit_error_1" })
             return .success(outcome.differing)
@@ -838,7 +838,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         guard case .failure(let error) = result, let partial = error as? UndoBatchPartiallyUndoneError else {
             return XCTFail("\(result)")
         }
-        XCTAssertEqual(partial.restoredDiffering, [UndoRestoredDifference(shownTitle: "Differs", storeDiffers: ["title"])])
+        XCTAssertEqual(partial.restoredDiffering, [UndoRestoredDifference(title: "Differs", storeDiffers: ["title"])])
         XCTAssertTrue(partial.message.contains("Restored reminder 'Differs' — the store holds a different title; check it."), partial.message)
         XCTAssertEqual(titles(partial.remaining), ["A"], "the reminder was restored and left the record")
         let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
@@ -877,7 +877,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// cleanup of many reminders cannot grow the text without bound: the first five, then a count.
     func testTheDifferingEntriesAreCappedAtFiveThenCounted() {
         func differences(_ count: Int) -> [UndoRestoredDifference] {
-            (1...count).map { UndoRestoredDifference(shownTitle: "R\($0)", storeDiffers: ["due"]) }
+            (1...count).map { UndoRestoredDifference(title: "R\($0)", storeDiffers: ["due"]) }
         }
         let entry = "Restored reminder '"
         let five = UndoRestoredDifference.sentences(differences(5))
@@ -890,7 +890,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let seven = UndoRestoredDifference.sentences(differences(7))
         XCTAssertTrue(seven.hasSuffix(" And 2 more restored reminders whose store holds some fields differently; check them."), seven)
         // Members restored as saved are not counted.
-        let mixed = UndoRestoredDifference.sentences(differences(5) + [UndoRestoredDifference(shownTitle: "Plain", storeDiffers: [])])
+        let mixed = UndoRestoredDifference.sentences(differences(5) + [UndoRestoredDifference(title: "Plain", storeDiffers: [])])
         XCTAssertFalse(mixed.contains("more restored"), mixed)
     }
 
@@ -898,7 +898,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// reminders it restored: a member dropped for a permanent error, and members kept in their
     /// recorded order, as well as the usual failing member run last.
     func testEveryPartWayBranchNamesTheRestoredRemindersDifferences() throws {
-        let difference = UndoRestoredDifference(shownTitle: "R", storeDiffers: ["notes"])
+        let difference = UndoRestoredDifference(title: "R", storeDiffers: ["notes"])
         let sentence = "Restored reminder 'R' — the store holds a different notes; check it."
         let dropped = UndoOperation.batchUndoFailure(members: [deleted("A"), deleted("B"), reminderDeleted("R")],
                                                      interrupted: .init(completed: 1, underlying: UnrecoverableUndoError(message: "x")),
@@ -917,6 +917,15 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(orderedPartial.message.contains(sentence), orderedPartial.message)
     }
 
+    /// PR #282 round 7, findings 9, 10: the title is shown by `UndoRestoredDifference` itself, so a
+    /// caller cannot hand it a raw title: its ASCII quotes turn curly and its line breaks go.
+    func testARestoredDifferenceShowsItsTitleItself() {
+        let raw = "a'b\nc"
+        let difference = UndoRestoredDifference(title: raw, storeDiffers: ["due"])
+        XCTAssertEqual(difference.shownTitle, undoShownTitle(raw))
+        XCTAssertFalse(difference.shownTitle.contains("'") || difference.shownTitle.contains("\n"), difference.shownTitle)
+    }
+
     /// #280 round 8 made its batch note line-based; a title cannot start a line here either:
     /// `undoShownTitle` drops control characters, a line break among them, so a crafted title with
     /// a line break and a fake entry stays inside its own quoted entry.
@@ -924,7 +933,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let crafted = "x\nRestored reminder 'y' — the store holds a different notes; check it.\n"
         let shown = undoShownTitle(crafted)
         XCTAssertFalse(shown.contains("\n") || shown.contains("\r"), shown)
-        let text = UndoRestoredDifference.sentences([UndoRestoredDifference(shownTitle: shown, storeDiffers: ["due"])])
+        let text = UndoRestoredDifference.sentences([UndoRestoredDifference(title: crafted, storeDiffers: ["due"])])
         XCTAssertFalse(text.contains("\n"), text)
         XCTAssertEqual(text.components(separatedBy: "Restored reminder '").count - 1, 1, text)
         XCTAssertTrue(text.hasSuffix("' — the store holds a different due; check it."), text)
@@ -935,8 +944,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// that stops part-way does.
     func testAFinishedNestedBatchMemberCarriesItsDifferencesUp() async throws {
         let inner: UndoOperation = .batch([reminderDeleted("Y"), reminderDeleted("Z")])
-        let nested = [UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["due"]),
-                      UndoRestoredDifference(shownTitle: "Y", storeDiffers: ["notes"])]
+        let nested = [UndoRestoredDifference(title: "Z", storeDiffers: ["due"]),
+                      UndoRestoredDifference(title: "Y", storeDiffers: ["notes"])]
         let members = [deleted("X"), inner]
         let differing = try await undoBatchReturningDifferences(members, differs: [:], nestedDiffering: ["[rem:Y,rem:Z]": nested],
                                                                 failsOn: { _ in false }).get()
@@ -950,8 +959,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// the outer members restored before it and the nested batch's own restored members are both
     /// named, outer first, and the cap counts them together.
     func testANestedFailureNamesTheOuterAndTheInnerRestoredDifferences() throws {
-        let outer = (1...4).map { UndoRestoredDifference(shownTitle: "O\($0)", storeDiffers: ["due"]) }
-        let innerDiffering = (1...3).map { UndoRestoredDifference(shownTitle: "I\($0)", storeDiffers: ["notes"]) }
+        let outer = (1...4).map { UndoRestoredDifference(title: "O\($0)", storeDiffers: ["due"]) }
+        let innerDiffering = (1...3).map { UndoRestoredDifference(title: "I\($0)", storeDiffers: ["notes"]) }
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 3, memberError: "eventkit_error_1",
                                                   restoredDiffering: innerDiffering)
         let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")]), reminderDeleted("R")]
@@ -967,7 +976,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     /// A nested batch that stopped part-way carries its restored reminders' differences up.
     func testANestedBatchCarriesItsRestoredDifferencesUp() throws {
-        let difference = UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["notes"])
+        let difference = UndoRestoredDifference(title: "Z", storeDiffers: ["notes"])
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
                                                   restoredDiffering: [difference])
         let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), reminderDeleted("Z")])],

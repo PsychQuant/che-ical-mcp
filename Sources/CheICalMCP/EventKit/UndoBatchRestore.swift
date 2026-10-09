@@ -418,11 +418,19 @@ struct UndoMemberOutcome: Sendable {
     let differing: [UndoRestoredDifference]
 }
 
-/// A recreated reminder whose store holds compared fields differently (#261): its title, already
-/// shown (`undoShownTitle`), and the names (`NewObjectSave.differingFieldsNote` words them).
+/// A recreated reminder whose store holds compared fields differently (#261): its title, shown
+/// (`undoShownTitle`), and the names (`NewObjectSave.differingFieldsNote` words them).
 struct UndoRestoredDifference: Sendable, Equatable {
     let shownTitle: String
     let storeDiffers: [String]
+
+    /// Takes the recorded title and shows it here, so no caller can hand `sentences` a raw one
+    /// whose ASCII quote or line break could close or split an entry (PR #282 round 7, findings 9,
+    /// 10).
+    init(title: String, storeDiffers: [String]) {
+        shownTitle = undoShownTitle(title)
+        self.storeDiffers = storeDiffers
+    }
 
     /// " Restored reminder '<title>' — <note>." for each difference that names fields, in the order
     /// the members ran, or "" when none does: the words are `NewObjectSave.differingFieldsNote`'s,
