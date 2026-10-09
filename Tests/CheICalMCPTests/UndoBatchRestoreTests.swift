@@ -399,6 +399,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(titles(partial.remaining), ["A"], "B ran first and can never be restored; A never ran")
         XCTAssertEqual(partial.restoredCount, 0)
         XCTAssertTrue(partial.message.contains("dropped from this history entry"), partial.message)
+        XCTAssertTrue(partial.message.contains("no item confirmed restored") && !partial.message.contains("wrote nothing"), partial.message)
     }
 
     func testAPermanentFailureAfterAWriteDropsOnlyThatMember() throws {
@@ -633,7 +634,9 @@ final class UndoBatchRestoreTests: XCTestCase {
 
         let nothing = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: 0,
                                                     memberError: "eventkit_error_1")
-        XCTAssertTrue(nothing.message.contains("wrote nothing") && nothing.message.contains("tries the other item first"),
+        // Round 7, finding 5: the failing member may have been written, so the text does not say
+        // "wrote nothing"; it says no item is confirmed restored.
+        XCTAssertTrue(nothing.message.contains("no item confirmed restored") && nothing.message.contains("tries the other item first"),
                       nothing.message)
     }
 
@@ -886,9 +889,9 @@ final class UndoBatchRestoreTests: XCTestCase {
         let six = UndoRestoredDifference.sentences(differences(6))
         XCTAssertEqual(six.components(separatedBy: entry).count - 1, 5, six)
         XCTAssertFalse(six.contains("'R6'"), six)
-        XCTAssertTrue(six.hasSuffix(" And 1 more restored reminder whose store holds some fields differently; check it."), six)
+        XCTAssertTrue(six.hasSuffix(" And 1 more restored reminder whose store holds some fields differently, not named here; check the reminders this batch restored."), six)
         let seven = UndoRestoredDifference.sentences(differences(7))
-        XCTAssertTrue(seven.hasSuffix(" And 2 more restored reminders whose store holds some fields differently; check them."), seven)
+        XCTAssertTrue(seven.hasSuffix(" And 2 more restored reminders whose store holds some fields differently, not named here; check the reminders this batch restored."), seven)
         // Members restored as saved are not counted.
         let mixed = UndoRestoredDifference.sentences(differences(5) + [UndoRestoredDifference(title: "Plain", storeDiffers: [])])
         XCTAssertFalse(mixed.contains("more restored"), mixed)

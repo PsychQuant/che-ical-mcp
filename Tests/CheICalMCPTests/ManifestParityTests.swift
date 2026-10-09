@@ -223,11 +223,11 @@ final class ManifestParityTests: XCTestCase {
              "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules alone",
              "a series deleted whole comes back from its rules alone"),
             ("#261: a delete_reminder undo names the fields the store holds differently, in a batch too",
-             "the message names those fields and asks to check the reminder (a batch undo names each such reminder)",
+             "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
-            ("#248 (#261): a batch undo names the restored reminders whose store differs, finished or part-way",
-             "A batch undo names each restored reminder whose store holds fields differently, whether it finishes or stops part-way.",
-             "a batch undo names the restored reminders whose store holds fields differently, also when it stops part-way;"),
+            ("#248 (#261): a batch undo names the first five restored reminders whose store differs, then counts, finished or part-way",
+             "A batch undo, whether it finishes or stops part-way, names the first five restored reminders whose store holds fields differently, with their fields, then says how many more.",
+             "a batch undo names the first five restored reminders whose store holds fields differently, then how many more, also when it stops part-way;"),
             ("#236, #244: the count of refusals that discard the record",
              "Five refusals discard the record instead",
              nil),
@@ -245,6 +245,9 @@ final class ManifestParityTests: XCTestCase {
              "a batch undo that fails part-way keeps only the items not yet restored;"),
         ]
         let (declared, summary) = try descriptions(of: "undo")
+        // Round 7, findings 4, 8, 12, 13: after the five-entry cap no text may say a batch undo names
+        // "each" such reminder.
+        XCTAssertFalse(declared.contains("names each") || summary.contains("names each"), declared + summary)
         // Round 5, finding 17: no batch member's write throws a permanent error today, so the
         // client-facing text does not describe a member being dropped.
         XCTAssertFalse(declared.contains("no retry can restore") || summary.contains("no retry can restore"), declared + summary)

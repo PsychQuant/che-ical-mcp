@@ -257,11 +257,11 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then one item cannot be restored by any retry; its own error, which names it, follows. Nothing else was left to restore, so this history entry was discarded and earlier operations remain undoable."
         case .dropped:
             let kept = remaining.count == 1 ? "the 1 item never attempted" : "the \(remaining.count) items never attempted"
-            let start = restoredCount == 0 ? "Undo of this batch wrote nothing:" : "Undo of this batch stopped part-way: \(restoredText) restored, then"
+            let start = restoredCount == 0 ? "Undo of this batch stopped with no item confirmed restored:" : "Undo of this batch stopped part-way: \(restoredText) restored, then"
             what = "\(start) one item cannot be restored by any retry and was dropped from this history entry; its own error, which names it, follows. The entry was kept with only \(kept), under the same id, so running undo again restores those and not the others a second time."
         case .runsLast where restoredCount == 0:
             let others = remaining.count - 1
-            what = "Undo of this batch wrote nothing: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
+            what = "Undo of this batch stopped with no item confirmed restored: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
         case .runsLast where remaining.count == 1:
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the last one failed. This history entry was kept with only the item that failed, under the same id, so running undo again tries that item and does not restore the restored ones a second time, unless its calendar or list is now missing or read-only: then the next undo refuses it before it writes anything."
         case .runsLast:
@@ -446,8 +446,8 @@ struct UndoRestoredDifference: Sendable, Equatable {
             NewObjectSave.differingFieldsNote(difference.storeDiffers).map { " Restored reminder '\(difference.shownTitle)' — \($0)." }
         }
         let more = entries.count - entriesShown
-        let rest = more == 1 ? " And 1 more restored reminder whose store holds some fields differently; check it."
-            : more > 1 ? " And \(more) more restored reminders whose store holds some fields differently; check them." : ""
+        let rest = more == 1 ? " And 1 more restored reminder whose store holds some fields differently, not named here; check the reminders this batch restored."
+            : more > 1 ? " And \(more) more restored reminders whose store holds some fields differently, not named here; check the reminders this batch restored." : ""
         return entries.prefix(entriesShown).joined() + rest
     }
 
