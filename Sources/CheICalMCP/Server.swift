@@ -418,7 +418,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_event",
-                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence.",
+                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence. Undo of a deleted occurrence (span 'this') restores it as a one-off event, because an occurrence cannot be put back into its series; an absolute-date alarm of the series becomes an alarm at its start. Undo of span 'future' recreates the series only when the delete started at the series' first occurrence and removed all of it; otherwise (it started at a later occurrence, the last one included, or event_id named an edited occurrence) that undo is refused and its history entry discarded, writing nothing. Undo of a whole-series delete (that case, or span 'all') recreates the series from its rules alone, and its text says so: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time (seen on iCloud only, with delete_event; the lost edit and the duplicate not yet checked with span 'all').",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -441,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). The undo of an update_reminder or delete_reminder is also refused, and its record kept, when the reminder list it restores into is not found under its recorded identifier; giving up the undo of a delete_reminder loses the deleted reminder. Four refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); and two for recurring reminder completions whose identifier now resolves to another occurrence. When the undo of a delete_reminder recreates the reminder and the store then holds some of its fields differently (a save that reported an error but was written), the message names those fields and asks to check the reminder (a batch undo adds a line for each such reminder). Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). The undo of an update_reminder or delete_reminder is also refused, and its record kept, when the reminder list it restores into is not found under its recorded identifier; giving up the undo of a delete_reminder loses the deleted reminder. The undo of a delete_events_batch, delete_reminders_batch or cleanup_completed_reminders is refused before any write, its record kept whole, when the calendar or list of any of its items is missing or read-only (the error counts the items this stops and those whose calendar or list is in place); giving up that undo with discard_id drops every item of the entry. A batch undo that fails part-way keeps only the items not yet restored. A batch undo, whether it finishes or stops part-way, names the first five restored reminders whose store holds fields differently, with their fields, then says how many more. When the undo of a delete_reminder recreates the reminder and the store then holds some of its fields differently (a save that reported an error but was written), the message names those fields and asks to check the reminder. Five refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); a delete_event span future that did not start at the series' first occurrence and remove it all, or a delete_events_batch that holds such a delete (refused before any of its events is restored); and two for recurring reminder completions whose identifier now resolves to another occurrence. Undo of a delete of one occurrence restores it as a one-off event, not into its series; undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules alone, which the undo text says: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time (seen on iCloud only, with delete_event; the lost edit and the duplicate not yet checked with span 'all'). Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -452,7 +452,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
+                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo history unchanged, and answers success: false with the tool that repeats the operation; that entry is then removed from the redo history, and the next redo applies to whatever is then on top of it. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -905,7 +905,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules alone, so an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time (seen on iCloud only, with delete_event; the lost edit and the duplicate not yet checked with span 'all'). A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1009,7 +1009,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminders_batch",
-                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts.",
+                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1042,7 +1042,7 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThis does not record undo — use delete_reminder for individual items you may want to restore. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
+                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1515,6 +1515,17 @@ class CheICalMCPServer {
         let message: String
         do {
             message = try await undoExecutionSource.executeUndo(record.operation)
+        } catch let partial as UndoBatchPartiallyUndoneError {
+            // #248 A: some members of a batch were restored before one failed. Put back only the
+            // members not yet restored, under the same id, so a retry does not recreate the
+            // restored ones a second time.
+            // With nothing left (the last member dropped), the record is discarded instead.
+            if partial.remaining.isEmpty {
+                await undoManager.discardFailedUndo(record)
+            } else {
+                await undoManager.restoreFailedUndo(record, remaining: .batch(partial.remaining))
+            }
+            throw partial
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:
@@ -1533,9 +1544,28 @@ class CheICalMCPServer {
         return try actionResult(["action": "undo", "success": true, "message": message])
     }
 
+    /// #247: appended to the instruction of a redo entry that writes nothing, which `beginRedo` has
+    /// just dropped, so a client does not call redo again expecting the same entry.
+    static let droppedRedoNote = "This entry was removed from the redo history and cannot be redone. The next redo applies to whatever is now on top of the redo history, if anything: an older undone operation, which may itself be one that redo only answers like this; check redo_available before calling redo again."
+
     private func handleRedo() async throws -> String {
-        guard let record = try await undoManager.beginRedo() else {
-            return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo"])
+        let record: UndoRecord
+        switch try await undoManager.beginRedo() {
+        case .empty(let undoCount):
+            return try actionResult(["action": "redo", "success": false, "message": "Nothing to redo",
+                                     "undo_available": undoCount, "redo_available": 0])
+        case .dropped(let top, let undoCount, let redoCount):
+            // #247: nothing is executed and the undo stack did not move, so the next undo cannot
+            // repeat the undo of this record (a deleted item recreated twice). The record left the
+            // redo stack (maintainer decision, 2026-10-07), so its instruction is answered once and
+            // the next redo applies to whatever is now on top of the redo stack (PR #282 round 2,
+            // findings 7/11/15: that may be another record that is only answered).
+            let instruction = top.operation.redoInstruction ?? "Nothing was written."
+            return try actionResult(["action": "redo", "success": false,
+                                     "message": instruction + " " + Self.droppedRedoNote,
+                                     "undo_available": undoCount, "redo_available": redoCount])
+        case .started(let started):
+            record = started
         }
         // #191 — same catch-scope discipline as handleUndo (execution only).
         let message: String

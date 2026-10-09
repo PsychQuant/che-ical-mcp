@@ -16,6 +16,8 @@ import Foundation
 ///   - `EventKitError` (EventKit/EventKitManager.swift)
 ///   - `UnrecoverableUndoError` (EventKit/UndoManager.swift)
 ///   - `UndoTargetChangedError` and `UndoTargetMissingError` (EventKit/UndoGuardErrors.swift, #236)
+///   - `UndoRestoreDestinationMissingError` and `UndoBatchPartiallyUndoneError`
+///     (EventKit/UndoBatchRestore.swift, #248)
 /// plus the package's own `CLIRunner.CLIError` and `ResponseFormattingError`. Adding a conformer
 /// MUST update this list and `testTrustedErrorMessageConformerListIsCanonical` in
 /// `Tests/CheICalMCPTests/EventKitErrorSanitizerTests.swift`; every conformance widens the

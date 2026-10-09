@@ -30,8 +30,13 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
     }
     func testDiscardPreservesExistingRedoAndRedoBusyLock() async throws {
         let manager = CalendarUndoManager()
-        await manager.record(.createEvent(id: "a", title: "A", created: UndoSnapshotFixtures.event(title: "A")))
-        await manager.record(.createEvent(id: "b", title: "B", created: UndoSnapshotFixtures.event(title: "B")))
+        // Completion records: only their redo writes, so only they start a redo (#247).
+        func completion(_ title: String) -> UndoOperation {
+            .completeReminder(id: title, wasCompleted: false, requestedCompleted: true, completionDate: nil,
+                              title: title, redoCompletionDate: nil, wasRecurring: false)
+        }
+        await manager.record(completion("A"))
+        await manager.record(completion("B"))
         let started = try await manager.beginUndo()
         let record = try XCTUnwrap(started)
         await manager.finishHistoryOperation(record)
@@ -42,8 +47,7 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
         let after = await manager.historySnapshot()
         XCTAssertEqual(after.redoCount, 1)
         XCTAssertEqual(after.undoCount, 0)
-        let redo = try await manager.beginRedo()
-        let redone = try XCTUnwrap(redo)
+        guard case .started(let redone) = try await manager.beginRedo() else { return XCTFail("expected a started redo") }
         do { _ = try await manager.discardUndo(expectedID: redone.id); XCTFail("redo busy") } catch {}
         await manager.finishHistoryOperation(redone)
         _ = try await manager.discardUndo(expectedID: redone.id)

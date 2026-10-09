@@ -31,7 +31,7 @@ undo with discard_id SHALL remove only the current top undo record with that id.
 
 ---
 ### Requirement: Stale and busy protection
-The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the four discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, the update of a recurring event, and the update or move of a one-off event that repeats at undo time); no other refusal discards its record.
+The manager SHALL reject removal from an empty stack, removal with a nonmatching id, and removal during an active undo or redo. Failure SHALL leave both stacks unchanged. Normal not-found errors SHALL preserve the history record for retry. An undo refused because the item no longer holds the state the recorded operation left SHALL write nothing and SHALL preserve the history record (#236), except in the five discard scenarios below (#204 identity lost, the successor shape of a recurring completion without an occurrence snapshot, the update of a recurring event, the update or move of a one-off event that repeats at undo time, and a span "future" delete in one of the three cases of the scenario "Delete of an occurrence and the following ones"); no other refusal discards its record.
 
 #### Scenario: Item changed after the operation
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
@@ -69,6 +69,38 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo meets the record of an `update_event`, or of a `move_events_batch` move that was not a series move, on a one-off event, and the event now repeats or is a detached occurrence (a later update or another app made it so)
 - **THEN** nothing is written, the error says the event repeats now (or is an edited occurrence) and how to revert the change if it should be reverted (a move: move it back), and the record is discarded; a move of an item that was already an edited occurrence is refused the same way
 
+#### Scenario: Delete of an occurrence and the following ones (#244)
+- **WHEN** undo meets the record of a `delete_event` with span "future" in exactly one of these three cases, and in no other: (1) `event_id` named a detached occurrence, whose span "future" delete also removes the following occurrences of its series; (2) on a series, the delete did not start at the series' first occurrence (it started at a later one, the last one, or the first one left after earlier deletes); (3) on a series, the delete started at the series' first occurrence and the series' identifier still resolved after it; or the record of a `delete_events_batch` that holds such a delete
+- **THEN** nothing is looked up or written (for a batch, no member is undone, the refusal coming before the first member runs), the error says to restore the occurrences in Calendar if they should come back, and the record is discarded, so older records stay reachable; `undo_history` lists the single record as `Deleted occurrences of recurring event: <title> (undo not available)`
+
+#### Scenario: Delete of one occurrence (#244)
+- **WHEN** undo meets the record of a `delete_event` with span "this" on a recurring event (or a detached occurrence), or such a member of a `delete_events_batch`
+- **THEN** it recreates that occurrence as a one-off event at its start and end, never a second series; an absolute-date alarm of the series becomes an alarm at the occurrence's start, and the undo text names `absolute_alarms` (for a batch member, the batch's undo text names it once); `undo_history` lists the record as `Deleted occurrence of event: <title> (undo restores it as a one-off event)`
+
+#### Scenario: Delete of a whole series (#244)
+- **WHEN** undo meets the record of a `delete_event` (or a `delete_events_batch` member) with span "future" that started at the series' first occurrence, after which the series' identifier no longer resolved, or with span "all"
+- **THEN** it recreates the series from the recorded snapshot, rules included; occurrences deleted or edited on their own before the delete are not part of the snapshot, so they come back as plain occurrences of the series (an edited one without its edit), and the undo text says the series was restored from its rules, for every series restored from its rules whether or not it had such occurrences (a batch's undo text says it once); `undo_history` lists a single record as `Deleted event: <title> (undo recreates the series from its rules: occurrences deleted on their own earlier come back, edited ones without their edits)`, and a batch record that holds such a member as `Batch (<N> operations; undo recreates <K> series from its rules: occurrences deleted on their own earlier come back, edited ones without their edits)` (`their rules` when K is more than one, `1 operation` when N is one), K counting such members at any depth, unless the batch also holds, at any depth, a member whose undo is refused (the scenario above), when it is listed as `Batch (<N> operations; undo not available: a member deleted an occurrence and the following ones of a recurring event)`; undoing an earlier record that restores one of those occurrences as a one-off then adds it a second time, and that undo's text does not warn of it (#285)
+
+#### Scenario: Batch member cannot be restored (#248)
+- **WHEN** undo of a batch record finds, before its first write, that a member it would recreate (a deleted event or reminder) has no calendar or list to be recreated in, looked up as the restore looks it up (by recorded identifier; a same-named calendar or list in another account does not count), or one that does not allow changes
+- **THEN** a refresh of the store is requested and the calendars and lists are read once more (the refresh runs in the background, so a later retry may see what this read does not); if one is still missing, or is there but does not allow changes, nothing of the batch is written, the error counts the items this check stops, says what kind of calendar or list stops them, naming the items but no calendar, list or account, says how many have their calendar or list in place and that discard_id drops every item of the entry, and the record stays on top, whole, with the same id; a batch that also holds a delete of an occurrence and the following ones (#244) is refused by that instead, and its record is discarded. A partial restore is #287
+
+#### Scenario: Batch undo fails part-way (#248)
+- **WHEN** a batch undo fails on a member after earlier members were restored
+- **THEN** the record is put back holding only the members not yet restored, under the same id and timestamp, with the failing member placed to run last, so the next undo restores the members never attempted before it retries the failing one (each member restores one new item and reads no other member's result, a deleted occurrence too); if the failing member's calendar or list is by then missing or read-only, the next undo is refused whole by the pre-check instead; a member whose error is permanent would be dropped and the members never attempted kept, and with none left the record discarded (no batch member's write throws such an error today); the error says how many were restored and how many remain and names what the members it restored did not restore as they were (an occurrence's absolute-date alarm, a series recreated from its rules, the fields a new store holds differently for a reminder whose save reported a failure but was found, #261), which the retry's text does not repeat
+
+#### Scenario: Batch undo fails on its first write (#248)
+- **WHEN** the first write of a batch undo fails and other members have not been attempted
+- **THEN** no member is confirmed restored and the later members are not attempted; the failing member may still have been written (an event whose save failed after the store took it) or left pending (a reminder whose removal after a failed save also failed), so the error asks to check before running undo again; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error would drop that member and keep the others
+
+#### Scenario: Batch undo restores a reminder the store holds differently (#248, #261)
+- **WHEN** a batch undo recreates a reminder whose save reported a failure, and a new store finds it with compared fields differing from what was saved
+- **THEN** the member counts as restored and is not recreated by a retry; the batch answer names that reminder with its own differing fields (the first five such reminders, then how many more), from the names the restore returns and never from its text; a batch that stops part-way names them in its error instead, once; a nested batch would pass its reminders' names up (no tool records one today)
+
+#### Scenario: Batch undo of one member left fails (#248)
+- **WHEN** a batch undo has one member left to run, no other member is restored by that undo, and that member's write fails
+- **THEN** the member error stands and the record stays as it was, under the same id, as for a single record; as on a first write, the failing member is not confirmed restored but may still have been written or left pending, and that error does not ask to check first; a permanent member error discards the record
+
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it
 - **THEN** nothing is written, the record is kept, and the error offers only giving up the undo with discard_id, not changing the recurrence back; any other change of the rule is an ordinary refusal that can be changed back
@@ -76,6 +108,10 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 #### Scenario: Redo refused
 - **WHEN** redo of a completion finds the reminder changed after the undo
 - **THEN** nothing is written and the record stays on the redo stack
+
+#### Scenario: Redo of a record whose redo writes nothing (#247)
+- **WHEN** the top of the redo stack is a record whose redo writes nothing: a create, delete, update or move, or a batch with any such member (only completion records are written again)
+- **THEN** nothing is executed or written, the undo stack does not change, no undo or redo is left in progress, and redo answers `success: false` with an instruction that names the tool that repeats the operation; the record is then removed from the redo stack, so the instruction is returned once and the next redo applies to whatever record is then on top; the next undo does not undo that record a second time
 
 #### Scenario: Repeated discard
 - **WHEN** the same id is submitted after its record was removed

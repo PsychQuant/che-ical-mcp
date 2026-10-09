@@ -4,9 +4,10 @@ import MCP
 import XCTest
 @testable import CheICalMCP
 
-/// #236, PR #259 round 6 findings 14, 23: the message-only redo arms echo the title like the undo
-/// errors. Driven through the `redo` handler and the real `EventKitManager` arms, which return
-/// their instruction without touching the store (the store here is not authorized).
+/// #236, PR #259 round 6 findings 14, 23: the redo instructions echo the title like the undo
+/// errors. Driven through the `redo` handler, which since #247 answers these records with
+/// `UndoOperation.redoInstruction` without calling the executor (the real `EventKitManager`
+/// here, whose store is not authorized).
 final class UndoRedoTextHandlerTests: XCTestCase {
     private final class DeniedProbe: AuthorizationStatusSource {
         func authorizationStatus(for: EKEntityType) -> EKAuthorizationStatus { .denied }
@@ -42,5 +43,17 @@ final class UndoRedoTextHandlerTests: XCTestCase {
             XCTAssertTrue(text.contains("Standup 'x'") || text.contains("Standup \\'x\\'"), "\(op.description): \(text)")
             XCTAssertFalse(text.unicodeScalars.contains { [0x202E, 0x200B].contains($0.value) }, text)
         }
+    }
+
+    /// #247: the executor's own batch arm, which `handleRedo` no longer reaches for these records,
+    /// answers the instruction too instead of "Redone batch (N operations)" for a no-op.
+    func testExecuteRedoOfABatchOfDeletesAnswersTheInstruction() async throws {
+        let event = UndoSnapshotFixtures.event(title: "Standup")
+        let batch = UndoOperation.batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)])
+        let manager = EventKitManager.forTesting(probe: DeniedProbe())
+
+        let text = try await manager.executeRedo(batch)
+
+        XCTAssertEqual(text, batch.redoInstruction)
     }
 }

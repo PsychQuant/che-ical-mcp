@@ -225,6 +225,12 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let missingErr: any Error = UndoTargetMissingError(verb: .undo, kind: .reminder, title: "x", hasIdentifier: true)
         XCTAssertTrue(missingErr is TrustedErrorMessage, "UndoTargetMissingError must conform (#236: same terms as UndoTargetChangedError)")
 
+        let destinationErr: any Error = UndoRestoreDestinationMissingError(findings: [], total: 0)
+        XCTAssertTrue(destinationErr is TrustedErrorMessage, "UndoRestoreDestinationMissingError must conform (#248: fixed item and container words; titles pass undoShownTitle)")
+
+        let partialErr: any Error = UndoBatchPartiallyUndoneError(remaining: [], restoredCount: 1, memberError: "eventkit_error_1")
+        XCTAssertTrue(partialErr is TrustedErrorMessage, "UndoBatchPartiallyUndoneError must conform (#248: counts plus a sanitized code or a trusted member message)")
+
         // Negative: well-known Foundation types must NOT conform — their
         // localizedDescription sources Apple-framework strings that may
         // interpolate user-controlled content (#21 / #27 threat class).
