@@ -946,6 +946,25 @@ final class UndoBatchRestoreTests: XCTestCase {
                       && text.contains("Restored reminder 'Y' — the store holds a different notes; check it."), text)
     }
 
+    /// PR #282 round 7, finding 2: when the failing member is a nested batch that stopped part-way,
+    /// the outer members restored before it and the nested batch's own restored members are both
+    /// named, outer first, and the cap counts them together.
+    func testANestedFailureNamesTheOuterAndTheInnerRestoredDifferences() throws {
+        let outer = (1...4).map { UndoRestoredDifference(shownTitle: "O\($0)", storeDiffers: ["due"]) }
+        let innerDiffering = (1...3).map { UndoRestoredDifference(shownTitle: "I\($0)", storeDiffers: ["notes"]) }
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 3, memberError: "eventkit_error_1",
+                                                  restoredDiffering: innerDiffering)
+        let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")]), reminderDeleted("R")]
+        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 1, underlying: inner),
+                                                     differing: outer, describe: { _ in "unused" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(partial.restoredDiffering, outer + innerDiffering, "outer first, then the nested batch's")
+        XCTAssertTrue(partial.message.contains("Restored reminder 'O1'"), partial.message)
+        XCTAssertTrue(partial.message.contains("Restored reminder 'I1'"), partial.message)
+        XCTAssertFalse(partial.message.contains("'I2'"), "the sixth and seventh are counted, not named: \(partial.message)")
+        XCTAssertTrue(partial.message.contains("And 2 more restored reminders"), partial.message)
+    }
+
     /// A nested batch that stopped part-way carries its restored reminders' differences up.
     func testANestedBatchCarriesItsRestoredDifferencesUp() throws {
         let difference = UndoRestoredDifference(shownTitle: "Z", storeDiffers: ["notes"])
