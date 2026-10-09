@@ -103,6 +103,32 @@ enum ReminderDateSync {
                       aligned: isAligned(reminder, requestedTime: true), writtenDue: components)
     }
 
+    /// #267: the date-only entry point (`create_reminder` and `update_reminder` with a bare
+    /// `YYYY-MM-DD`). Writes the day as start and due, without a time, and removes every
+    /// absolute-date alarm; relative and location alarms are not touched.
+    ///
+    /// On device (2026-10-09, iCloud, saved and read back from a new store):
+    /// - a timed, zoned reminder written this way was stored date-only and floating, with the
+    ///   start at 00:00 of the day, and the Reminders store marked it all-day
+    ///   (`ZALLDAY` and `ZDISPLAYDATEISALLDAY` 1); the order of the start and due writes made no
+    ///   difference;
+    /// - with its absolute-date alarm kept, the due was all-day but the app went on displaying the
+    ///   alarm's old date and time (`ZDISPLAYDATEISALLDAY` 0), so the alarms go, and the report
+    ///   counts them;
+    /// - a zone given to date-only components was dropped as they were written, so `day` carries
+    ///   none.
+    /// `realign_to_due` has nothing to add here: there are no absolute alarms left to put on the day.
+    static func setDueDay(_ reminder: EKReminder, to day: DateComponents) -> Report {
+        let startBefore = reminder.startDateComponents
+        let absolute = (reminder.alarms ?? []).filter { $0.absoluteDate != nil }
+        absolute.forEach(reminder.removeAlarm)
+        reminder.startDateComponents = day
+        reminder.dueDateComponents = day
+        return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
+                      absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: absolute.count,
+                      aligned: isAligned(reminder), writtenDue: day)
+    }
+
     /// #235: `realign_to_due` without `due_date`. Puts the start date and absolute alarms onto
     /// the current due date, which keeps its value. A timed due is written the way `due_date`
     /// writes one (verify round 1): on a floating item it takes the host zone, keeping its wall
