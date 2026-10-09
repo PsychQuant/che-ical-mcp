@@ -183,6 +183,33 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertNil(reminder.startDateComponents?.hour)
     }
 
+    // MARK: - Undo of a date-only update (#267)
+
+    /// PR #298 verify round 1: a date-only update removes the absolute alarm and makes start and
+    /// due date-only (`setDueDay`); undo is the only way back. Applying the snapshot recorded before
+    /// the update brings back the timed, zoned due and start and the absolute alarm, beside the
+    /// relative alarm the update kept. In memory only; the device probe ran the same write order on
+    /// a saved reminder.
+    func testUndoOfADateOnlyUpdateRestoresTheTimedDueStartAndAlarm() {
+        let reminder = makeReminder()
+        let due = components(2026, 10, 18, 17)
+        reminder.startDateComponents = due
+        reminder.dueDateComponents = due
+        reminder.addAlarm(EKAlarm(absoluteDate: instant(due)))
+        reminder.addAlarm(EKAlarm(relativeOffset: -600))
+        let before = alarms(reminder)
+        let snapshot = ReminderSnapshot(from: reminder)
+
+        _ = ReminderDateSync.setDueDay(reminder, to: DateComponents(year: 2026, month: 10, day: 19))
+        XCTAssertNil(reminder.dueDateComponents?.hour, "precondition: the update made the due date-only")
+
+        snapshot.apply(to: reminder, now: now)
+
+        XCTAssertEqual(dateValue(reminder.dueDateComponents), due)
+        XCTAssertEqual(dateValue(reminder.startDateComponents), due)
+        XCTAssertEqual(alarms(reminder), before)
+    }
+
     // MARK: - Recurrence and URL (#228 item 3, url)
 
     func testSnapshotCapturesRecurrenceRules() {

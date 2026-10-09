@@ -13,9 +13,14 @@ private actor WriteFake: ReminderWriteSource {
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         updated.append(request)
         let touchedDue = request.due != nil || request.clearDueDate || request.realignToDue
-        let sync = request.clearDueDate
-            ? ReminderDateSync.Report(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1)
-            : ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true)
+        let sync: ReminderDateSync.Report
+        if request.clearDueDate {
+            sync = ReminderDateSync.Report(startDate: .cleared, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 1)
+        } else if case .day? = request.due {
+            sync = ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 2, aligned: true)
+        } else {
+            sync = ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true)
+        }
         return ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(id: request.identifier, title: request.title ?? "Saved", notes: request.notes),
             dateSync: touchedDue ? sync : nil)
@@ -189,5 +194,18 @@ final class ReminderWriteHandlerTests: XCTestCase {
         }
         let created = await fake.created
         XCTAssertTrue(created.isEmpty)
+    }
+
+    // PR #298 verify round 1: a date-only update answers with the date_sync of the day write: the
+    // removed absolute alarms are counted, nothing is reported as shifted.
+    func testADateOnlyUpdateReportsTheRemovedAlarms() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "due_date": .string("2026-10-20")]))
+        let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
+        XCTAssertEqual(sync["absolute_alarms_removed"] as? Int, 2)
+        XCTAssertEqual(sync["absolute_alarms_shifted"] as? Int, 0)
+        XCTAssertEqual(sync["start_date"] as? String, "shifted")
+        XCTAssertEqual(sync["aligned"] as? Bool, true)
     }
 }

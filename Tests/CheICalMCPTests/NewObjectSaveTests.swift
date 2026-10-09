@@ -373,17 +373,18 @@ final class NewObjectSaveTests: XCTestCase {
         }
     }
 
-    /// The code from `start` to the next method or switch case. A `case .` inside a creating
-    /// method (e.g. `if case .x`) would cut the segment short and fail the pin, not pass it.
-    /// From `start` to the next function or the next switch arm. A `case .` after `if`, `guard`,
-    /// `while` or `for` is a pattern match inside the same scope, not an arm (#267: createReminder's
-    /// `if case .day(let day)? = due` ended the segment before its save).
+    /// The code from `start` to the next function or the next switch arm. A segment cut short
+    /// fails the pin; it never passes it. A `case .` right after the word `if`, `guard`, `while` or
+    /// `for` is a pattern match in the same scope, not an arm (#267: createReminder's
+    /// `if case .day(let day)? = due` cut the segment before its save). The word must stand alone:
+    /// an identifier that only ends in one of them does not count (PR #298 verify round 1).
     private func segment(of text: String, at start: String.Index) -> String {
         let rest = text[text.index(after: start)...]
         let function = rest.range(of: " func ")?.lowerBound
+        let patternMatch = try! NSRegularExpression(pattern: #"(?:^|[^A-Za-z0-9_])(?:if|guard|while|for)$"#)
         let arm = rest.ranges(of: " case .").map(\.lowerBound).first { index in
-            let before = rest[..<index]
-            return !["if", "guard", "while", "for"].contains { before.hasSuffix($0) }
+            let before = String(rest[..<index].suffix(8))
+            return patternMatch.firstMatch(in: before, range: NSRange(before.startIndex..., in: before)) == nil
         }
         return String(text[start..<([function, arm].compactMap { $0 }.min() ?? text.endIndex)])
     }
