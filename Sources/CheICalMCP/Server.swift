@@ -504,7 +504,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_reminder",
-                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
+                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -576,7 +576,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept, and date_sync counts the removed alarms. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1750,7 +1750,9 @@ class CheICalMCPServer {
         ))
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier])
+            var skipped: [String: Any] = ["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
+            if let note = Self.dateOnlyDuplicateNote(due: due, result: result) { skipped["note"] = note }
+            return try actionResult(skipped)
         }
         var fields: [String: Any] = ["action": "created", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
         if !tags.isEmpty {
@@ -1836,7 +1838,23 @@ class CheICalMCPServer {
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
         // they agree with it, also for a call with only realign_to_due.
         if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
+        if case .day? = due, let removed = update.dateSync?.absoluteAlarmsRemoved, removed > 0 {
+            response["note"] = Self.dateOnlyAlarmRemovalNote(removed)
+        }
         return try actionResult(response)
+    }
+
+    /// #267 (PR #298 verify round 2): a date-only update that removed absolute-date alarms says so
+    /// in words, and how to get them back (the undo history lives in this process).
+    static func dateOnlyAlarmRemovalNote(_ removed: Int) -> String {
+        "Made date-only: removed \(removed) absolute-date alarm\(removed == 1 ? "" : "s"), because Reminders.app would go on showing an alarm's time. undo restores them while this server is running."
+    }
+
+    /// #267 (PR #298 verify round 2): a bare-date create skipped as a duplicate of a reminder with a
+    /// time (what a bare date was stored as before #267) says the existing one was left as it is.
+    static func dateOnlyDuplicateNote(due: ReminderDueInput?, result: EventKitManager.CreateReminderResult) -> String? {
+        guard case .day? = due, result.isDuplicate, result.duplicateHasTime else { return nil }
+        return "The existing reminder with this title has a time on that day and was left as it is. To make it date-only, call update_reminder with this bare date."
     }
 
     private func handleCompleteReminder(arguments: [String: Value]) async throws -> String {
@@ -1995,6 +2013,7 @@ class CheICalMCPServer {
                 ]
                 if result.isDuplicate {
                     entry["skipped"] = true
+                    if let note = Self.dateOnlyDuplicateNote(due: batchDue, result: result) { entry["note"] = note }
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)

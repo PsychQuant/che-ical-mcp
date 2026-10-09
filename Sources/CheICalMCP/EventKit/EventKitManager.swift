@@ -1672,6 +1672,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         /// #261: compared fields a new store holds differently after a save that threw but
         /// committed (`NewObjectSave.run`); empty otherwise.
         let storeDiffers: [String]
+        /// #267 (PR #298 verify round 2): the duplicate found has a due with a time. A bare-date
+        /// create matches a reminder stored at 00:00 of that day and leaves it as it is.
+        var duplicateHasTime = false
     }
 
     /// Find an existing incomplete reminder that matches by title on the same list, and by due
@@ -1717,7 +1720,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Idempotency: check for existing reminder with same title (+due date) on same list
         if let existing = await findDuplicateReminder(title: title, due: due, calendar: calendar) {
-            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true, storeDiffers: [])
+            return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true, storeDiffers: [],
+                                        duplicateHasTime: existing.dueDateComponents?.hour != nil)
         }
 
         let reminder = EKReminder(eventStore: eventStore)

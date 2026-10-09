@@ -121,6 +121,32 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertFalse(ReminderDueInput.matches(.timed(midnight.addingTimeInterval(9 * 3600)), existing: day(2026, 10, 18)))
     }
 
+    // PR #298 verify round 2: the comparison is done in the Gregorian calendar EventKit's
+    // components are in, not in the calendar chosen in region settings, and a calendar attached to
+    // the stored components is respected.
+    func testAStoredDueKeepsTheCalendarItCarries() {
+        let taipei = TimeZone(identifier: "Asia/Taipei")!
+        var stored = DateComponents(year: 2569, month: 10, day: 18, hour: 0, minute: 0)
+        stored.calendar = Calendar(identifier: .buddhist)
+        stored.timeZone = taipei
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored, hostZone: taipei))
+    }
+
+    // A day is 00:00 of that day in the host zone.
+    func testADayIsMidnightInTheHostZone() {
+        let newYork = TimeZone(identifier: "America/New_York")!
+        var stored = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+        stored.timeZone = newYork
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored, hostZone: newYork))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored, hostZone: TimeZone(identifier: "Asia/Taipei")!))
+    }
+
+    func testTheComparisonDoesNotUseTheHostCalendar() throws {
+        let code = SourcePins.code(try SourcePins.source("ReminderDueInput.swift"))
+        XCTAssertFalse(code.contains("Calendar.current"), "the host calendar may not be Gregorian")
+        XCTAssertFalse(code.contains("safeDateFromComponents"), "it reads components with the host calendar")
+    }
+
     func testNoDueMatchesOnlyNoDue() {
         XCTAssertTrue(ReminderDueInput.matches(nil, existing: nil))
         XCTAssertFalse(ReminderDueInput.matches(nil, existing: day(2026, 10, 18)))

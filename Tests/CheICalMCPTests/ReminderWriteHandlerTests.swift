@@ -7,8 +7,10 @@ private actor WriteFake: ReminderWriteSource {
     var updated: [ReminderUpdateRequest] = []
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult {
         created.append(request)
-        return .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: request.notes), isDuplicate: request.title == "duplicate",
-                     storeDiffers: request.title == "differs" ? ["due", "title"] : [])
+        return .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: request.notes),
+                     isDuplicate: request.title == "duplicate" || request.title == "duplicate-timed",
+                     storeDiffers: request.title == "differs" ? ["due", "title"] : [],
+                     duplicateHasTime: request.title == "duplicate-timed")
     }
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         updated.append(request)
@@ -207,5 +209,46 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(sync["absolute_alarms_shifted"] as? Int, 0)
         XCTAssertEqual(sync["start_date"] as? String, "shifted")
         XCTAssertEqual(sync["aligned"] as? Bool, true)
+        // PR #298 verify round 2: the removal is said in words too, with how to get the alarms back.
+        XCTAssertEqual(result["note"] as? String, "Made date-only: removed 2 absolute-date alarms, because Reminders.app would go on showing an alarm's time. undo restores them while this server is running.")
+    }
+
+    func testOnlyADateOnlyUpdateThatRemovedAlarmsCarriesANote() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        for arguments: [String: Value] in [["due_date": .string("2026-10-20T09:00:00+08:00")], ["clear_due_date": .bool(true)], ["title": .string("Renamed")]] {
+            let result = try object(await server.executeToolCall(name: "update_reminder", arguments: arguments.merging(["reminder_id": .string("r")]) { $1 }))
+            XCTAssertNil(result["note"], "\(arguments)")
+        }
+    }
+
+    // PR #298 verify round 2: a bare-date create that meets an existing reminder with a time (what
+    // a bare date was stored as before #267) is still skipped as a duplicate, and says how to make
+    // the existing one date-only.
+    func testABareDateDuplicateOfATimedReminderSaysHowToMakeItDateOnly() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let note = "The existing reminder with this title has a time on that day and was left as it is. To make it date-only, call update_reminder with this bare date."
+        let single = try object(await server.executeToolCall(name: "create_reminder", arguments: [
+            "title": .string("duplicate-timed"), "due_date": .string("2026-10-18")]))
+        XCTAssertEqual(single["action"] as? String, "skipped")
+        XCTAssertEqual(single["note"] as? String, note)
+        let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: [
+            "reminders": .array([.object(["title": .string("duplicate-timed"), "due_date": .string("2026-10-18")])])]))
+        let rows = try XCTUnwrap(batch["results"] as? [[String: Any]])
+        XCTAssertEqual(rows.first?["note"] as? String, note)
+    }
+
+    func testOtherDuplicatesCarryNoNote() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        for (title, due) in [("duplicate-timed", "2026-10-18T00:00:00+08:00"), ("duplicate", "2026-10-18")] {
+            let result = try object(await server.executeToolCall(name: "create_reminder", arguments: [
+                "title": .string(title), "due_date": .string(due)]))
+            XCTAssertEqual(result["action"] as? String, "skipped")
+            XCTAssertNil(result["note"], title)
+        }
+    }
+
+    func testCreateReminderReportsWhetherTheDuplicateHasATime() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertTrue(SourceScan.collapsingWhitespace(body).contains("isDuplicate: true, storeDiffers: [], duplicateHasTime: existing.dueDateComponents?.hour != nil)"), body)
     }
 }
