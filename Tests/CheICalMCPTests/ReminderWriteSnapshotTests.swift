@@ -15,7 +15,7 @@ final class ReminderWriteSnapshotTests: XCTestCase {
         reminder.title = "Before"
         reminder.notes = "body\n#tag"
         let value = ReminderWriteSnapshot(from: reminder)
-        let result = EventKitManager.CreateReminderResult(reminder: value, isDuplicate: true)
+        let result = EventKitManager.CreateReminderResult(reminder: value, isDuplicate: true, storeDiffers: [])
         reminder.title = "After"
         reminder.notes = nil
         XCTAssertEqual(result.reminder.title, "Before")

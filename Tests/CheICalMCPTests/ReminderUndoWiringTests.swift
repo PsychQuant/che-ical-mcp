@@ -99,12 +99,19 @@ final class ReminderUndoWiringTests: XCTestCase {
     /// fetched after the lists are read; nothing creates or writes a reminder before the call.
     func testTheUndoArmsResolveTheListBeforeWritingAnything() throws {
         let undo = try slice(try managerSource(), from: "func executeUndo(", to: "func executeRedo(")
-        let arms = [("case .deleteReminder(let snapshot):",
-                     "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })"),
+        // #261: the delete arm (single and batch) recreates through `restoreDeletedReminder`.
+        XCTAssertTrue(undo.contains("case .deleteReminder(let snapshot):\n            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))"), undo)
+        // Each slice ends where its arm or function ends: the next case, or the closing brace of
+        // `restoreDeletedReminder`.
+        let arms = [("func restoreDeletedReminder(",
+                     "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })",
+                     "\n    }\n"),
                     ("case .updateReminder(_, let oldSnapshot, _):",
-                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })")]
-        for (start, call) in arms {
-            let arm = try slice(undo, from: start, to: "\n        case .")
+                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })",
+                     "\n        case .")]
+        for (start, call, end) in arms {
+            let arm = try slice(undo, from: start, to: end)
+            XCTAssertFalse(arm.contains("func restoredReminderMessage"), arm)
             let callRange = try XCTUnwrap(arm.range(of: call), arm)
             let before = arm[..<callRange.lowerBound]
             XCTAssertFalse(before.contains("reminder."), arm)

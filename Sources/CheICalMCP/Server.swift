@@ -136,7 +136,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_calendar",
-                description: "Create a new calendar or reminder list.",
+                description: "Create a new calendar or reminder list. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title` and `account`, and note says to check the list and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -441,7 +441,7 @@ class CheICalMCPServer {
             // Undo/Redo Tools
             Tool(
                 name: "undo",
-                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). The undo of an update_reminder or delete_reminder is also refused, and its record kept, when the reminder list it restores into is not found under its recorded identifier; giving up the undo of a delete_reminder loses the deleted reminder. Four refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); and two for recurring reminder completions whose identifier now resolves to another occurrence. Only works for operations in the current server session.",
+                description: "Undo the most recent calendar or reminder operation. Returns what was undone. Refuses without writing anything when the event or reminder was changed after that operation in a way the undo would overwrite or delete, or, for a recurring event created here, when occurrences were edited on their own or could not be checked; the error names the changed fields and says what can be done. The record stays in undo_history: undo again once a changed field is changed back, or pass its id as discard_id if the user agrees to give up that undo (the only choice for occurrences edited on their own, unchecked occurrences, or a series whose rule was shortened). The undo of an update_reminder or delete_reminder is also refused, and its record kept, when the reminder list it restores into is not found under its recorded identifier; giving up the undo of a delete_reminder loses the deleted reminder. Four refusals discard the record instead, writing nothing: an update_event that touched a recurring event (one occurrence, span future or all, or rules added or removed), which undo never restores; an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted); and two for recurring reminder completions whose identifier now resolves to another occurrence. When the undo of a delete_reminder recreates the reminder and the store then holds some of its fields differently (a save that reported an error but was written), the message names those fields and asks to check the reminder (a batch undo adds a line for each such reminder). Only works for operations in the current server session.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -504,7 +504,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_reminder",
-                description: "Create a new reminder.",
+                description: "Create a new reminder. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -977,7 +977,7 @@ class CheICalMCPServer {
             // Reminder Batch Operations
             Tool(
                 name: "create_reminders_batch",
-                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder.",
+                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1232,7 +1232,8 @@ class CheICalMCPServer {
         if result.isDuplicate {
             return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
         }
-        return try actionResult(["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
+        let fields: [String: Any] = ["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier]
+        return try actionResult(fields.merging(NewObjectSave.responseFields(result.storeDiffers)) { $1 })
     }
 
     private func handleDeleteCalendar(arguments: [String: Value]) async throws -> String {
@@ -1725,6 +1726,7 @@ class CheICalMCPServer {
         if !tags.isEmpty {
             fields["tags"] = tags
         }
+        fields.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
         return try actionResult(fields)
     }
 
@@ -1964,6 +1966,7 @@ class CheICalMCPServer {
                 if result.isDuplicate {
                     entry["skipped"] = true
                 }
+                entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)
             } catch {
                 results.append([

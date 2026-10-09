@@ -21,8 +21,18 @@ enum EventCopyOperation {
     /// could not tell an alarm refusal from any other failure): it fails as before, and when it
     /// carries any of those alarms the error names them as a possible cause. `logFailure`
     /// writes the underlying error to stderr and returns its sanitized code for the message.
-    /// Without such alarms the error surfaces unchanged. A copy whose save failed may stay
-    /// pending in the shared store, where a later save can write it (#261, pre-existing).
+    /// Without such alarms the error surfaces unchanged. A copy whose save failed was not
+    /// written by a later save on device (#261, iCloud, 2026-10-07, probe S3): a copy into a
+    /// live calendar whose `save(_:span:commit: true)` failed, because an event staged into a
+    /// calendar deleted elsewhere made the commit fail, was not seen from another process after
+    /// an unrelated save (which succeeded) or after a bare `commit()`, although the copy still
+    /// reported unsaved changes (`hasChanges`). When the copy was staged and the failure came
+    /// from an explicit `commit()` instead (S2, a call this server does not make), the staged
+    /// copy stayed: the next save failed too, and that failed save dropped it (a bare `commit()`
+    /// after it succeeded and wrote nothing). This covers the failure classes tried, not every
+    /// possible failure. The copy gets no discard, unlike a new reminder (`NewObjectSave`):
+    /// removing a recurring event without committing after its failed save made the next save
+    /// fail and lose what that save wrote.
     static func saveCopy<Value>(carrying alarms: [AlarmSnapshot], logFailure: (Error) -> String,
                                 save: () throws -> Value) throws -> Value {
         do {
