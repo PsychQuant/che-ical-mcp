@@ -288,7 +288,7 @@ All date parameters now accept 4 formats:
 |--------|---------|----------------|
 | Full ISO8601 | `"2026-02-06T14:00:00+08:00"` | Exact date and time (offset preserved) |
 | Without timezone | `"2026-02-06T14:00:00"` | Uses event `timezone` if provided, otherwise system timezone |
-| Date only | `"2026-02-06"` | Midnight in event `timezone` or system timezone |
+| Date only | `"2026-02-06"` | Midnight in event `timezone` or system timezone; for a reminder `due_date`, a date-only reminder with no time (#267, see "Date-only reminders") |
 | Time only | `"14:00"` | Today at that time |
 
 ### Per-Event Timezone (v1.5.0)
