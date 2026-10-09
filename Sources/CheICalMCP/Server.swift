@@ -1847,7 +1847,7 @@ class CheICalMCPServer {
     /// #267 (PR #298 verify round 2): a date-only update that removed absolute-date alarms says so
     /// in words, and how to get them back (the undo history lives in this process).
     static func dateOnlyAlarmRemovalNote(_ removed: Int) -> String {
-        "Made date-only: removed \(removed) absolute-date alarm\(removed == 1 ? "" : "s"), because Reminders.app would go on showing an alarm's time. undo restores them while this server is running."
+        "Made date-only: removed \(removed) absolute-date alarm\(removed == 1 ? "" : "s"), because Reminders.app would go on showing an alarm's time. undo restores \(removed == 1 ? "it" : "them") while this server is running."
     }
 
     /// #267 (PR #298 verify round 2): a bare-date create skipped as a duplicate of a reminder with a

@@ -213,6 +213,10 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(result["note"] as? String, "Made date-only: removed 2 absolute-date alarms, because Reminders.app would go on showing an alarm's time. undo restores them while this server is running.")
     }
 
+    func testTheAlarmRemovalNoteMatchesTheCount() {
+        XCTAssertEqual(CheICalMCPServer.dateOnlyAlarmRemovalNote(1), "Made date-only: removed 1 absolute-date alarm, because Reminders.app would go on showing an alarm's time. undo restores it while this server is running.")
+    }
+
     func testOnlyADateOnlyUpdateThatRemovedAlarmsCarriesANote() async throws {
         let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
         for arguments: [String: Value] in [["due_date": .string("2026-10-20T09:00:00+08:00")], ["clear_due_date": .bool(true)], ["title": .string("Renamed")]] {
