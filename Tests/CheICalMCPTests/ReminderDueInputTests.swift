@@ -2,7 +2,7 @@ import XCTest
 @testable import CheICalMCP
 
 /// #267: a reminder `due_date` given as a bare `YYYY-MM-DD` is a date-only due (a day, no time);
-/// anything else is parsed as a timed due, as before. The duplicate check compares like with like.
+/// anything else is parsed as a timed due, as before. The duplicate check keeps its earlier rule.
 final class ReminderDueInputTests: XCTestCase {
     private struct Rejected: Error, Equatable {}
     private let instant = Date(timeIntervalSince1970: 1_792_224_000)
@@ -51,7 +51,11 @@ final class ReminderDueInputTests: XCTestCase {
         }
     }
 
-    // MARK: - Duplicate check, like with like
+    // MARK: - Duplicate check: unchanged by #267
+
+    // The duplicate check keeps the rule it had before #267 (verify round 1, PR #298): a day
+    // compares as 00:00 of that day in the host zone, so a retry after upgrading still finds the
+    // reminder an earlier version stored at 00:00 from the same bare date.
 
     func testADayMatchesADateOnlyDueOnTheSameDay() {
         XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: day(2026, 10, 18)))
@@ -66,12 +70,24 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored))
     }
 
-    func testADayDoesNotMatchATimedDueAtMidnight() {
-        var midnight = day(2026, 10, 18)
+    // What a bare date was stored as before #267: 00:00 of the day, timed, in the host zone.
+    private func storedAtMidnightBeforeThisChange(_ y: Int, _ m: Int, _ d: Int) -> DateComponents {
+        var midnight = day(y, m, d)
         midnight.hour = 0
         midnight.minute = 0
         midnight.timeZone = .current
-        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: midnight))
+        return midnight
+    }
+
+    func testADayMatchesAReminderStoredAtMidnightBeforeThisChange() {
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: storedAtMidnightBeforeThisChange(2026, 10, 18)))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: storedAtMidnightBeforeThisChange(2026, 10, 19)))
+    }
+
+    func testADayDoesNotMatchATimedDueLaterThatDay() {
+        var nine = storedAtMidnightBeforeThisChange(2026, 10, 18)
+        nine.hour = 9
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: nine))
     }
 
     func testATimedDueMatchesWithinAMinute() throws {
@@ -81,9 +97,12 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertFalse(ReminderDueInput.matches(.timed(instant.addingTimeInterval(120)), existing: stored))
     }
 
-    func testATimedDueDoesNotMatchADateOnlyDue() {
+    // As before: a timed request at 00:00 matches a date-only reminder on that day; one later that
+    // day does not.
+    func testATimedDueComparesWithADateOnlyDueAtMidnight() {
         let midnight = try! XCTUnwrap(Calendar.current.date(from: day(2026, 10, 18)))
-        XCTAssertFalse(ReminderDueInput.matches(.timed(midnight), existing: day(2026, 10, 18)))
+        XCTAssertTrue(ReminderDueInput.matches(.timed(midnight), existing: day(2026, 10, 18)))
+        XCTAssertFalse(ReminderDueInput.matches(.timed(midnight.addingTimeInterval(9 * 3600)), existing: day(2026, 10, 18)))
     }
 
     func testNoDueMatchesOnlyNoDue() {
@@ -105,7 +124,7 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertTrue(flat.contains("findDuplicateReminder(title: title, due: due, calendar: calendar)"), flat)
     }
 
-    func testTheDuplicateCheckComparesLikeWithLike() throws {
+    func testTheDuplicateCheckGoesThroughMatches() throws {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)

@@ -1675,7 +1675,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Find an existing incomplete reminder that matches by title on the same list, and by due
-    /// date like with like (#267, `ReminderDueInput.matches`).
+    /// date within a minute, a day counting as 00:00 of that day (`ReminderDueInput.matches`).
     private func findDuplicateReminder(
         title: String,
         due: ReminderDueInput?,

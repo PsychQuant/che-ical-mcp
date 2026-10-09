@@ -20,21 +20,37 @@ enum ReminderDueInput: Sendable, Equatable {
         return .day(day)
     }
 
-    /// The duplicate check of `create_reminder` compares like with like: a day matches a stored
-    /// date-only due on the same day, a timed due matches a stored timed due within a minute (as
-    /// before), no due matches no due. A day and a timed due never match, whatever the times.
+    /// The duplicate check of `create_reminder`, unchanged by #267 (verify round 1, PR #298): two
+    /// dues match when their instants are less than a minute apart, and a day counts as 00:00 of
+    /// that day in the host zone, as a bare date was stored before #267. A retry after upgrading
+    /// therefore still finds a reminder an earlier version stored at 00:00 from the same bare date,
+    /// instead of making a second, date-only copy. A stored date-only due is read the same way,
+    /// whatever zone EventKit attaches to it. No due matches no due.
     static func matches(_ request: ReminderDueInput?, existing: DateComponents?) -> Bool {
         switch (request, existing) {
         case (nil, nil):
             return true
-        case (.day(let day)?, let stored?) where stored.hour == nil:
-            return day.year == stored.year && day.month == stored.month && day.day == stored.day
-        case (.timed(let date)?, let stored?) where stored.hour != nil:
-            guard let storedDate = safeDateFromComponents(stored) else { return false }
-            return abs(storedDate.timeIntervalSince(date)) < 60
+        case (let request?, let stored?):
+            guard let requested = instant(of: request), let storedDate = instant(of: stored) else { return false }
+            return abs(storedDate.timeIntervalSince(requested)) < 60
         default:
             return false
         }
+    }
+
+    private static func instant(of input: ReminderDueInput) -> Date? {
+        switch input {
+        case .timed(let date): return date
+        case .day(let day): return hostMidnight(day)
+        }
+    }
+
+    private static func instant(of stored: DateComponents) -> Date? {
+        stored.hour == nil ? hostMidnight(stored) : safeDateFromComponents(stored)
+    }
+
+    private static func hostMidnight(_ day: DateComponents) -> Date? {
+        Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
     }
 
     private static func bareDay(_ text: String) -> DateComponents? {
