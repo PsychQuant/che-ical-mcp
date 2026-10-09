@@ -375,10 +375,17 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// The code from `start` to the next method or switch case. A `case .` inside a creating
     /// method (e.g. `if case .x`) would cut the segment short and fail the pin, not pass it.
+    /// From `start` to the next function or the next switch arm. A `case .` after `if`, `guard`,
+    /// `while` or `for` is a pattern match inside the same scope, not an arm (#267: createReminder's
+    /// `if case .day(let day)? = due` ended the segment before its save).
     private func segment(of text: String, at start: String.Index) -> String {
         let rest = text[text.index(after: start)...]
-        let ends = [" func ", " case ."].compactMap { rest.range(of: $0)?.lowerBound }
-        return String(text[start..<(ends.min() ?? text.endIndex)])
+        let function = rest.range(of: " func ")?.lowerBound
+        let arm = rest.ranges(of: " case .").map(\.lowerBound).first { index in
+            let before = rest[..<index]
+            return !["if", "guard", "while", "for"].contains { before.hasSuffix($0) }
+        }
+        return String(text[start..<([function, arm].compactMap { $0 }.min() ?? text.endIndex)])
     }
 
     /// The body of the function declared at `declaration`, from its opening brace to the one that
