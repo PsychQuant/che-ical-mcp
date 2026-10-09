@@ -95,11 +95,11 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo restores a reminder the store holds differently (#248, #261)
 - **WHEN** a batch undo recreates a reminder whose save reported a failure, and a new store finds it with compared fields differing from what was saved
-- **THEN** the member counts as restored and is not recreated by a retry; the batch answer names that reminder with its own differing fields (the first five such reminders, then how many more), from the names the restore returns and never from its text; a batch that stops part-way names them in its error instead, once, and a nested batch passes its reminders' names up
+- **THEN** the member counts as restored and is not recreated by a retry; the batch answer names that reminder with its own differing fields (the first five such reminders, then how many more), from the names the restore returns and never from its text; a batch that stops part-way names them in its error instead, once; a nested batch would pass its reminders' names up (no tool records one today)
 
 #### Scenario: Batch undo of one member left fails (#248)
-- **WHEN** a batch undo has one member left to run, nothing has been written, and its write fails
-- **THEN** the member error stands and the record stays as it was, under the same id, as for a single record; a permanent member error discards the record
+- **WHEN** a batch undo has one member left to run, no other member is restored by that undo, and that member's write fails
+- **THEN** the member error stands and the record stays as it was, under the same id, as for a single record; as on a first write, the failing member is not confirmed restored but may still have been written or left pending, and that error does not ask to check first; a permanent member error discards the record
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it

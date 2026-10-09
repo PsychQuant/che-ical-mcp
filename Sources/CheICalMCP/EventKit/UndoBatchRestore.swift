@@ -150,9 +150,10 @@ extension UndoOperation {
 /// finding 12).
 ///
 /// The message is author-controlled text: the item and container words come from this file; the
-/// only store-derived text is the deleted items' own titles, which pass `undoShownTitle`; no
-/// calendar or list title and no account name is included (#37 F1, round 5, finding 8). That is
-/// the condition under which this type conforms to `TrustedErrorMessage`.
+/// only store-derived text is the titles of the batch's deleted items, which a shared calendar's
+/// sharer may have set, shown through `undoShownTitle` and capped; no calendar or list title and
+/// no account name is included (#37 F1, round 5, finding 8). That is the condition under which
+/// this type conforms to `TrustedErrorMessage`.
 struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
     let message: String
     var errorDescription: String? { message }
@@ -303,9 +304,9 @@ extension UndoOperation {
     ///   kept first, so it runs last next time and the members never attempted get their turn even
     ///   when it keeps failing. When one may not (no batch records such a kind today), the recorded
     ///   order is kept and the failing member runs first again.
-    /// - When nothing was written and the record would not change (no other member waits, or the
+    /// - When no member was restored and the record would not change (no other member waits, or the
     ///   order is kept), the member error stands and the record is put back whole, as for a single
-    ///   record.
+    ///   record; the failing member may still have been written, which that error does not say.
     ///
     /// Every partial error carries the members this call restored, so what they did not carry over
     /// is named once (PR #278 round 3).

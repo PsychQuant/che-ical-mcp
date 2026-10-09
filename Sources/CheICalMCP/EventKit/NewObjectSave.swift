@@ -17,9 +17,9 @@ import EventKit
 ///   `differingFieldsNote`: `store_differs` and a `note` in a create's response
 ///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`, the
 ///   title shown through `undoShownTitle` so it cannot pass for the note), and in a batch undo one
-///   entry per restored reminder with differing fields (`UndoRestoredDifference.sentences`, built
-///   from the names `EventKitManager.restoreDeletedReminder` returns, never from message text; PR
-///   #282 joins the entries itself). Names only, never
+///   entry per restored reminder with differing fields, the first five and then a count
+///   (`UndoRestoredDifference.sentences`, which joins the entries itself, built from the names
+///   `EventKitManager.restoreDeletedReminder` returns, never from message text). Names only, never
 ///   values. The difference may come from a partial write or from an edit made elsewhere between
 ///   the commit and the check (the only device case was the second: a rename through another
 ///   store); a partial write was not seen. The caller has the item's identifier and, for a
@@ -135,11 +135,12 @@ import EventKit
 ///   normalizes (host case, a trailing slash, percent-encoding); priority values other than 0 and
 ///   5; another calendar system; text the store normalizes; sources other than iCloud.
 /// - behaviour of the batch undo arm: its pins show its shape (each delete member through
-///   `restoreDeletedReminder`, the names collected with `undoShownTitle` titles,
-///   `UndoRestoredDifference.sentences` from them), not a run; pairing each member with its names
-///   is tested on #282's side. The
-///   `create_calendar` response's `store_differs` is pinned in source only (no seam fakes its
-///   store), and a `create_reminders_batch` response's totals do not count rows that carry a note.
+///   `restoreDeletedReminder`, its names collected into an `UndoRestoredDifference`, which shows
+///   the title through `undoShownTitle` itself, and `UndoRestoredDifference.sentences` from them),
+///   not a run; pairing each member with its names is tested in `UndoBatchRestoreTests` with stub
+///   restores. The `create_calendar` response's `store_differs` is pinned in source only (no seam
+///   fakes its store), and a `create_reminders_batch` response's totals do not count rows that
+///   carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
 /// - stores other than iCloud.
