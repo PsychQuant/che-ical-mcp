@@ -1674,11 +1674,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let storeDiffers: [String]
     }
 
-    /// Find an existing incomplete reminder that matches by title on the same list.
-    /// Optionally also matches due date if provided.
+    /// Find an existing incomplete reminder that matches by title on the same list, and by due
+    /// date like with like (#267, `ReminderDueInput.matches`).
     private func findDuplicateReminder(
         title: String,
-        dueDate: Date?,
+        due: ReminderDueInput?,
         calendar: EKCalendar
     ) async -> EKReminder? {
         let predicate = eventStore.predicateForIncompleteReminders(
@@ -1692,28 +1692,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
         return reminders.first { reminder in
-            guard reminder.title == title else { return false }
-            // If both have due dates, compare them (within 1-minute window)
-            if let existingDue = reminder.dueDateComponents,
-               let due = dueDate {
-                let existingDate = safeDateFromComponents(existingDue)
-                if let existingDate = existingDate {
-                    return abs(existingDate.timeIntervalSince(due)) < 60
-                }
-            }
-            // If neither has a due date, it's a match by title alone
-            if reminder.dueDateComponents == nil && dueDate == nil {
-                return true
-            }
-            // One has due date, the other doesn't — not a duplicate
-            return false
+            reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)
         }
     }
 
     func createReminder(
         title: String,
         notes: String? = nil,
-        dueDate: Date? = nil,
+        due: ReminderDueInput? = nil,
         priority: Int = 0,
         calendarName: String? = nil,
         calendarSource: String? = nil,
@@ -1730,7 +1716,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try findCalendar(name: name, source: calendarSource, entityType: .reminder)
 
         // Idempotency: check for existing reminder with same title (+due date) on same list
-        if let existing = await findDuplicateReminder(title: title, dueDate: dueDate, calendar: calendar) {
+        if let existing = await findDuplicateReminder(title: title, due: due, calendar: calendar) {
             return CreateReminderResult(reminder: ReminderWriteSnapshot(from: existing), isDuplicate: true, storeDiffers: [])
         }
 
@@ -1740,7 +1726,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         reminder.priority = priority
         reminder.calendar = calendar
 
-        if let due = dueDate {
+        if case .day(let day)? = due {
+            // #267: a date-only reminder. No alarms exist yet, so only the start and due are written.
+            _ = ReminderDateSync.setDueDay(reminder, to: day)
+        } else if case .timed(let due)? = due {
             // #134: populate dueDateComponents.timeZone so iCloud Web / macOS
             // Today-view render the time at the host's wall clock instead of
             // re-interpreting floating components as UTC. EKReminder's
@@ -1817,7 +1806,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         identifier: String,
         title: String? = nil,
         notes: String? = nil,
-        dueDate: Date? = nil,
+        due: ReminderDueInput? = nil,
         priority: Int? = nil,
         calendarName: String? = nil,
         calendarSource: String? = nil,
@@ -1836,7 +1825,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             identifier: identifier, lookup: { store.calendarItem(withIdentifier: $0) as? EKReminder },
             refresh: { $0.refresh() })
         let request = ReminderUpdateRequest(
-            identifier: identifier, title: title, notes: notes, dueDate: dueDate, priority: priority,
+            identifier: identifier, title: title, notes: notes, due: due, priority: priority,
             calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue)
         // PR #256 verify round 1: everything that can refuse the call runs before the first write,

@@ -92,4 +92,24 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: nil))
         XCTAssertFalse(ReminderDueInput.matches(.timed(instant), existing: nil))
     }
+
+    // MARK: - create_reminder wiring (source pins: the store path needs a real EKEventStore)
+
+    // A day is written through setDueDay, an instant through the #134 timed write, and the
+    // duplicate check is handed the input as given.
+    func testCreateReminderWritesADayThroughSetDueDay() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: source))
+        let flat = SourceScan.collapsingWhitespace(body)
+        XCTAssertTrue(flat.contains("if case .day(let day)? = due { _ = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
+        XCTAssertTrue(flat.contains("findDuplicateReminder(title: title, due: due, calendar: calendar)"), flat)
+    }
+
+    func testTheDuplicateCheckComparesLikeWithLike() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateReminder(", in: source))
+        let flat = SourceScan.collapsingWhitespace(body)
+        XCTAssertTrue(flat.contains("reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)"), flat)
+        XCTAssertFalse(flat.contains("timeIntervalSince"), "the minute window lives in ReminderDueInput.matches only")
+    }
 }

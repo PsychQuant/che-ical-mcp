@@ -1730,7 +1730,7 @@ class CheICalMCPServer {
         let tags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
-        let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let priority = try InputValidation.requireIntIfPresent(arguments, key: "priority", default: 0)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
@@ -1741,7 +1741,7 @@ class CheICalMCPServer {
         let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
             title: title,
             notes: notes,
-            dueDate: dueDate,
+            due: due,
             priority: priority,
             calendarName: calendarName,
             calendarSource: calendarSource,
@@ -1771,9 +1771,9 @@ class CheICalMCPServer {
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
-        let dueDate: Date? = try arguments["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+        let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
-        if clearDueDate && dueDate != nil {
+        if clearDueDate && due != nil {
             throw ToolError.invalidParameter("Cannot specify both due_date and clear_due_date")
         }
         let realignToDue = try InputValidation.requireOptionalBool(arguments, key: "realign_to_due") ?? false
@@ -1822,7 +1822,7 @@ class CheICalMCPServer {
             identifier: reminderId,
             title: title,
             notes: finalNotes,
-            dueDate: dueDate,
+            due: due,
             priority: priority,
             calendarName: calendarName,
             calendarSource: calendarSource,
@@ -1976,13 +1976,13 @@ class CheICalMCPServer {
                 let batchUserNotes = reminderDict["notes"]?.stringValue
                 try InputValidation.validateReminderTextInput(title: title, notes: batchUserNotes)
 
-                let batchDueDate: Date? = try reminderDict["due_date"]?.stringValue.map { try parseFlexibleDate($0) }
+                let batchDue = try reminderDict["due_date"]?.stringValue.map { try parseReminderDue($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
                 let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
                 let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
                     title: title,
                     notes: batchNotes,
-                    dueDate: batchDueDate,
+                    due: batchDue,
                     priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue
@@ -3088,6 +3088,12 @@ class CheICalMCPServer {
         }
 
         throw ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
+    }
+
+    /// #267: a reminder `due_date`. A bare `YYYY-MM-DD` is a date-only reminder; anything else is
+    /// parsed by `parseFlexibleDate` as an instant, as before.
+    private func parseReminderDue(_ string: String) throws -> ReminderDueInput {
+        try ReminderDueInput.parse(string, timed: { try parseFlexibleDate($0) })
     }
 
     /// Get date range for quick time shortcuts
