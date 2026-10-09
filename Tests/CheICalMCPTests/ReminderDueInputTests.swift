@@ -51,6 +51,22 @@ final class ReminderDueInputTests: XCTestCase {
         }
     }
 
+    // A day needs no instant (verify round 1, PR #298): a valid calendar day is a day even where
+    // the timed parser would refuse it, for instance a host zone whose midnight is skipped by a
+    // daylight-saving change. Only a day that does not exist goes to the timed parser.
+    func testAValidDayDoesNotNeedTheTimedParser() throws {
+        let due = try ReminderDueInput.parse("2026-10-18", timed: { _ in throw Rejected() })
+        XCTAssertEqual(due, .day(day(2026, 10, 18)))
+    }
+
+    func testADayThatDoesNotExistGoesToTheTimedParser() {
+        for text in ["2026-02-30", "2026-13-01", "2026-00-10", "2026-04-31"] {
+            var seen: [String] = []
+            XCTAssertThrowsError(try ReminderDueInput.parse(text, timed: { seen.append($0); throw Rejected() }), text)
+            XCTAssertEqual(seen, [text], text)
+        }
+    }
+
     // MARK: - Duplicate check: unchanged by #267
 
     // The duplicate check keeps the rule it had before #267 (verify round 1, PR #298): a day

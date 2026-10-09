@@ -11,13 +11,14 @@ enum ReminderDueInput: Sendable, Equatable {
     case timed(Date)
     case day(DateComponents)
 
-    /// Exactly `YYYY-MM-DD` is a day; every other string is handed to `timed`, the server's
-    /// timed date parser, as before. A bare date is handed to `timed` too and must be accepted
-    /// there first, so a day that does not exist (`2026-02-30`) fails as it always has.
+    /// Exactly `YYYY-MM-DD` naming a day of the Gregorian calendar is a day; every other string is
+    /// handed to `timed`, the server's timed date parser, as before. A day needs no instant
+    /// (verify round 1, PR #298), so a valid one does not depend on the host zone having a
+    /// midnight that day. A bare date that names no day (`2026-02-30`) goes to `timed` and fails
+    /// there as it always has.
     static func parse(_ text: String, timed: (String) throws -> Date) throws -> ReminderDueInput {
-        let date = try timed(text)
-        guard let day = bareDay(text) else { return .timed(date) }
-        return .day(day)
+        if let day = bareDay(text), isCalendarDay(day) { return .day(day) }
+        return .timed(try timed(text))
     }
 
     /// The duplicate check of `create_reminder`, unchanged by #267 (verify round 1, PR #298): two
@@ -51,6 +52,14 @@ enum ReminderDueInput: Sendable, Equatable {
 
     private static func hostMidnight(_ day: DateComponents) -> Date? {
         Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
+    }
+
+    private static func isCalendarDay(_ day: DateComponents) -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        guard let date = calendar.date(from: day) else { return false }
+        let back = calendar.dateComponents([.year, .month, .day], from: date)
+        return back.year == day.year && back.month == day.month && back.day == day.day
     }
 
     private static func bareDay(_ text: String) -> DateComponents? {

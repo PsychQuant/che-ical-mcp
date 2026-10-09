@@ -1244,4 +1244,32 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(report.absoluteAlarmsRemoved, 2)
         XCTAssertEqual(absoluteDates(reminder), [])
     }
+
+    // Verify round 1 (PR #298): a date-only write whose due reads back with a time is not aligned,
+    // whatever the start and alarms say. Only iCloud was checked on device; another store could
+    // hand the day back timed.
+    func testADayThatReadsBackWithATimeIsNotAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {}, reload: {
+            var timed = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+            timed.timeZone = self.taipei
+            reminder.startDateComponents = nil
+            reminder.dueDateComponents = timed
+            return true
+        }, rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, false)
+    }
+
+    func testADayThatReadsBackDateOnlyIsAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {}, reload: { true },
+                                                      rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, true)
+    }
 }

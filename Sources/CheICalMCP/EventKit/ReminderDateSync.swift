@@ -264,7 +264,8 @@ enum ReminderDateSync {
     /// due update and never report `aligned: true`. The iCloud and Exchange lists checked on device
     /// (2026-10-05) keep the zone, and those updates saved once.
     /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
-    ///   other fields describe the write and are kept.
+    ///   other fields describe the write and are kept. A date-only write (#267) whose due reads back
+    ///   with a time is not aligned.
     ///
     /// What this cannot see is anything EventKit does not return. The duplicate alarm rows that
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
@@ -294,6 +295,12 @@ enum ReminderDateSync {
                 confirmed.aligned = false
                 return confirmed
             }
+        }
+        // #267 verify round 1 (PR #298): a date-only write whose due came back with a time is not
+        // what was asked for, whatever the start and alarms say. Only iCloud was checked on device.
+        if !requestedTime && reminder.dueDateComponents?.hour != nil {
+            confirmed.aligned = false
+            return confirmed
         }
         confirmed.aligned = isAligned(reminder, requestedTime: requestedTime)
         return confirmed
