@@ -15,6 +15,7 @@ private actor CopyFake: EventCopySource {
             return EventCopyValue(eventIdentifier: moved.result.eventIdentifier, title: moved.title, move: moved.result)
         }
         if identifier == "save-fail" { throw Failure.failed }
+        if identifier == "reminder-id" { throw EventKitError.eventNotFound(identifier: identifier) }
         if identifier == "refused-alarms" { throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]) }
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
@@ -32,6 +33,7 @@ private actor CopyFake: EventCopySource {
         moveCalls.append(MoveCall(identifier: identifier, occurrenceDate: occurrenceDate, span: span))
         switch identifier {
         case "save-fail", "delete-fail": throw Failure.failed
+        case "reminder-id": throw EventKitError.eventNotFound(identifier: identifier)
         case "refused": throw EventKitError.moveRefused(reason: "fixed refusal reason")
         case "refused-alarms": throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms", "email_alarms"])
         case "cross-account":
@@ -121,6 +123,31 @@ final class EventCopyHandlerTests: XCTestCase {
         guard case let .text(text, _, _)? = result.content.first else { return XCTFail("no text content") }
         let expected = try XCTUnwrap(EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]).errorDescription)
         XCTAssertTrue(text.contains(expected), text)
+    }
+
+    /// #260: since `EventLookup` the manager answers a reminder's id with not found instead of
+    /// aborting. The fake answers the same way, so this pins how copy_event reports it (the
+    /// envelope), not the guard itself (`EventLookupTests`).
+    func testCopyEventGivenAnIdThatIsNotAnEventReportsNotFound() async throws {
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let result = await server.handleToolCallForTesting(name: "copy_event", arguments: [
+            "event_id": .string("reminder-id"), "target_calendar": .string("Work")])
+        XCTAssertEqual(result.isError, true)
+        guard case let .text(text, _, _)? = result.content.first else { return XCTFail("no text content") }
+        XCTAssertTrue(text.contains("Event not found: reminder-id"), text)
+    }
+
+    /// #260: in move_events_batch the not-found row fails on its own and the rows after it still
+    /// run (envelope only, as above); before the fix the process aborted there with earlier rows
+    /// already moved.
+    func testMoveBatchReportsANotFoundRowAndMovesTheRest() async throws {
+        let history = CalendarUndoManager()
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: history))
+        let rows = try await move(server, ["event_ids": .array([.string("reminder-id"), .string("good")])])
+        XCTAssertEqual(rows.map { $0["success"] as? Bool }, [false, true])
+        XCTAssertEqual(rows[0]["error"] as? String, "Event not found: reminder-id")
+        let recorded = await history.history()
+        XCTAssertEqual(recorded.count, 1)
     }
 
     func testSpanAndIndexAlignedOccurrenceDatesReachTheSource() async throws {
