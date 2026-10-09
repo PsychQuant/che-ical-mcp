@@ -122,6 +122,10 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(reminders)).count, 3)
         XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [ReminderSnapshot] = []"), in: reminders))
         XCTAssertEqual(Self.count("undoSnapshots.append(snapshot)", in: reminders), 1)
+        // Round 7: the append comes after the remove, so a reminder whose remove threw is not recorded.
+        let remove = Self.offset(of: Self.call("try eventStore.remove(reminder, commit: true)"), in: reminders)
+        let append = Self.offset(of: Self.call("undoSnapshots.append(snapshot)"), in: reminders)
+        XCTAssertLessThan(try XCTUnwrap(remove), try XCTUnwrap(append))
 
         // Every `.batch(...)` built in Sources (a `case .batch(` match is not one): the two event
         // builders, the reminder builder, and three that rebuild an existing record's members (the
