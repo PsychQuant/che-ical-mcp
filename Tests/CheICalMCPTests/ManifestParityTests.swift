@@ -182,6 +182,23 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
+    /// removes absolute-date alarms; both places a client reads about the three writers say so.
+    func testReminderWritersDescribeTheBareDateForm() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        func declared(_ name: String) -> String { CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? "" }
+        func summary(_ name: String) -> String { entries.first { $0["name"] as? String == name }?["description"] as? String ?? "" }
+        for name in ["create_reminder", "create_reminders_batch", "update_reminder"] {
+            for (place, text) in [("defineTools()", declared(name)), ("mcpb/manifest.json", summary(name))] {
+                XCTAssertTrue(text.contains("YYYY-MM-DD") && text.contains("date-only"), "\(place) \(name): \(text)")
+            }
+        }
+        XCTAssertTrue(declared("update_reminder").contains("absolute-date alarms are removed"), declared("update_reminder"))
+        XCTAssertTrue(summary("update_reminder").contains("removes absolute-date alarms"), summary("update_reminder"))
+    }
+
     /// #247 (maintainer decision, 2026-10-07): a redo entry that writes nothing is answered once and
     /// then removed from the redo history, so both places a client reads about `redo` say so, and
     /// neither still says the entry stays.

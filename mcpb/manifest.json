@@ -73,11 +73,11 @@
     },
     {
       "name": "create_reminder",
-      "description": "Create a new reminder with optional due date, recurrence, location trigger, and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently)"
+      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently)"
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date; changing due_date also moves the start date and absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree) (annotated destructive: updates can replace or clear existing values)"
+      "description": "Update an existing reminder (including tags, clear_due_date; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "complete_reminder",
@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags support; a result may carry store_differs and note, as create_reminder does)"
+      "description": "Create multiple reminders at once (with tags support; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does)"
     },
     {
       "name": "delete_reminders_batch",
