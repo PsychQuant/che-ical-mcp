@@ -107,7 +107,9 @@ final class ReminderDueInputTests: XCTestCase {
     }
 
     func testATimedDueMatchesWithinAMinute() throws {
-        var stored = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: instant)
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        var stored = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: instant)
         stored.timeZone = .current
         XCTAssertTrue(ReminderDueInput.matches(.timed(instant.addingTimeInterval(30)), existing: stored))
         XCTAssertFalse(ReminderDueInput.matches(.timed(instant.addingTimeInterval(120)), existing: stored))
@@ -116,7 +118,9 @@ final class ReminderDueInputTests: XCTestCase {
     // As before: a timed request at 00:00 matches a date-only reminder on that day; one later that
     // day does not.
     func testATimedDueComparesWithADateOnlyDueAtMidnight() {
-        let midnight = try! XCTUnwrap(Calendar.current.date(from: day(2026, 10, 18)))
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        let midnight = try! XCTUnwrap(gregorian.date(from: day(2026, 10, 18)))
         XCTAssertTrue(ReminderDueInput.matches(.timed(midnight), existing: day(2026, 10, 18)))
         XCTAssertFalse(ReminderDueInput.matches(.timed(midnight.addingTimeInterval(9 * 3600)), existing: day(2026, 10, 18)))
     }

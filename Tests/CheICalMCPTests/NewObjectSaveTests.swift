@@ -140,6 +140,20 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// The names a `store_differs` can hold are exactly the keys `Fields` compares, which the tool
     /// descriptions list.
+    /// PR #298 verify round 3: a date-only reminder written through setDueDay compares equal to the
+    /// copy a store hands back (due without a time or zone, start at 00:00 of the day, as on device),
+    /// so a date-only create found after a save that threw counts as saved, not as differing.
+    func testADateOnlyReminderComparesEqualToTheStoredCopy() {
+        let store = EKEventStore()
+        let written = EKReminder(eventStore: store)
+        _ = ReminderDateSync.setDueDay(written, to: DateComponents(year: 2026, month: 10, day: 18))
+        let stored = EKReminder(eventStore: store)
+        stored.dueDateComponents = DateComponents(year: 2026, month: 10, day: 18)
+        stored.startDateComponents = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+        let found = NewObjectSave.check(NewObjectSave.Fields(reminder: written), against: NewObjectSave.Fields(reminder: stored))
+        guard case .saved = found else { return XCTFail("\(found)") }
+    }
+
     func testTheFieldNamesAreTheComparedKeys() {
         let store = EKEventStore()
         XCTAssertEqual(Set(NewObjectSave.Fields(reminder: EKReminder(eventStore: store)).values.keys), Set(NewObjectSave.reminderFieldNames))

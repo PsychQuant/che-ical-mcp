@@ -210,11 +210,11 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(sync["start_date"] as? String, "shifted")
         XCTAssertEqual(sync["aligned"] as? Bool, true)
         // PR #298 verify round 2: the removal is said in words too, with how to get the alarms back.
-        XCTAssertEqual(result["note"] as? String, "Made date-only: removed 2 absolute-date alarms, because Reminders.app would go on showing an alarm's time. undo restores them while this server is running.")
+        XCTAssertEqual(result["note"] as? String, "Made date-only: removed 2 absolute-date alarms, because Reminders.app would go on showing an alarm's time. undo restores them while this server is running, if the reminder has not been changed since.")
     }
 
     func testTheAlarmRemovalNoteMatchesTheCount() {
-        XCTAssertEqual(CheICalMCPServer.dateOnlyAlarmRemovalNote(1), "Made date-only: removed 1 absolute-date alarm, because Reminders.app would go on showing an alarm's time. undo restores it while this server is running.")
+        XCTAssertEqual(CheICalMCPServer.dateOnlyAlarmRemovalNote(1), "Made date-only: removed 1 absolute-date alarm, because Reminders.app would go on showing an alarm's time. undo restores it while this server is running, if the reminder has not been changed since.")
     }
 
     func testOnlyADateOnlyUpdateThatRemovedAlarmsCarriesANote() async throws {
