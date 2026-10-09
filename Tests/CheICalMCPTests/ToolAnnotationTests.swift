@@ -44,4 +44,13 @@ final class ToolAnnotationTests: XCTestCase {
     func testDeleteReminderStaysAnnotatedDestructive() throws {
         XCTAssertEqual(try tool(named: "delete_reminder").annotations.destructiveHint, true)
     }
+
+    /// #242 (PR #277 verify round 2): an agent reads the tool description before its first call,
+    /// so the reminder-list refusal, and what giving up a delete-undo loses, are stated there and
+    /// not only in the error.
+    func testUndoDescriptionStatesTheMissingListRefusalAndWhatDiscardingLoses() throws {
+        let description = try tool(named: "undo").description ?? ""
+        XCTAssertTrue(description.contains("reminder list"), description)
+        XCTAssertTrue(description.contains("loses the deleted reminder"), description)
+    }
 }
