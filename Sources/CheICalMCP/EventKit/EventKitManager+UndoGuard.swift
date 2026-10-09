@@ -11,7 +11,7 @@ extension EventKitManager {
     /// not necessarily the object the write saved. Falls back to the saved object when the
     /// identifier does not resolve yet; the undo then fails as not found, which keeps the record.
     func postWriteSnapshot(eventID: String, saved: EKEvent) -> EventSnapshot {
-        if !eventID.isEmpty, let event = eventStore.event(withIdentifier: eventID), event.refresh() {
+        if let event = storedEvent(id: eventID), event.refresh() {
             return EventSnapshot(from: event)
         }
         return EventSnapshot(from: saved)
@@ -29,10 +29,11 @@ extension EventKitManager {
     /// The event under `id`, refreshed, or nil when it is not there. `refresh()` because a
     /// long-lived store can return stale fields after an edit made elsewhere until the object is
     /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is
-    /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads.
+    /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads. A
+    /// reminder's id is not found (#260, `storedEvent(id:)`).
     func freshEvent(id: String) -> EKEvent? {
         refreshIfNeeded()
-        guard !id.isEmpty, let event = eventStore.event(withIdentifier: id), event.refresh() else { return nil }
+        guard let event = storedEvent(id: id), event.refresh() else { return nil }
         return event
     }
 
@@ -70,7 +71,7 @@ extension EventKitManager {
                 expected, verb: verb,
                 lookup: { () -> EKEvent? in
                     refreshIfNeeded()
-                    return expected.itemID.isEmpty ? nil : eventStore.event(withIdentifier: expected.itemID)
+                    return storedEvent(id: expected.itemID)
                 },
                 refresh: { $0.refresh() },
                 conflicts: { event in

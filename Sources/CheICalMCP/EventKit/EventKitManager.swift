@@ -957,9 +957,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try eventStore.save(event, span: span)
         markNeedsRefresh()
-        // #246: a calendar change across accounts changes the identifier, so the record keeps the
-        // one the event has now; #236: and the state the update left.
-        let savedID = event.eventIdentifier ?? identifier
         // #236: an update that touched a recurring event is recorded only as a marker; its undo is
         // refused (RecurringUpdateKind). The rules after the update come from the request: a
         // detached occurrence reads back with none although its series still repeats. A detached
@@ -968,18 +965,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             hadRules: hadRules,
             hasRulesAfter: clearRecurrence ? false : (recurrenceRule != nil || hadRules),
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span)
-        if let recurringKind {
-            await CalendarUndoManager.shared.record(.updateRecurringEvent(id: savedID, title: oldSnapshot.title, kind: recurringKind))
-        } else {
-            await CalendarUndoManager.shared.record(.updateEvent(id: savedID, oldSnapshot: oldSnapshot,
-                                                                 saved: postWriteSnapshot(eventID: savedID, saved: event)))
-        }
+        // #246: a calendar change across accounts changes the identifier, so the record keeps the
+        // one the event has now (read here, after the save); #236: and the state the update left.
+        await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
+            requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
+            recurringKind: recurringKind, postState: { postWriteSnapshot(eventID: $0, saved: event) }))
         return event
     }
 
     /// Get the timezone of an event by identifier (nil if not found or no timezone set).
+    /// `delete_event` calls this before any other lookup, so it too goes through the reminder
+    /// check (#260): a reminder's id gives nil here and not found from the delete.
     func getEventTimezone(identifier: String) -> TimeZone? {
-        return eventStore.event(withIdentifier: identifier)?.timeZone
+        return storedEvent(id: identifier)?.timeZone
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
@@ -1108,7 +1106,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Get a single event by identifier
     func getEvent(identifier: String) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let event = eventStore.event(withIdentifier: identifier) else {
+        guard let event = storedEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         return event
