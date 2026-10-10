@@ -1638,7 +1638,7 @@ class CheICalMCPServer {
                 }
             }
         ]
-        if let startDate = safeDateFromComponents(reminder.startDateComponents) {
+        if let startDate = ReminderDueReading.displayInstant(reminder.startDateComponents, zone: .current) {
             fields["start_date"] = dateFormatter.string(from: startDate)
             fields["start_date_local"] = localDateFormatter.string(from: startDate)
         }
@@ -1693,7 +1693,7 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
+            if let dueDate = ReminderDueReading.displayInstant(reminder.dueDateComponents, zone: page.zone) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
                 dict["is_overdue"] = !reminder.isCompleted
@@ -1959,7 +1959,7 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
+            if let dueDate = ReminderDueReading.displayInstant(reminder.dueDateComponents, zone: .current) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
             }

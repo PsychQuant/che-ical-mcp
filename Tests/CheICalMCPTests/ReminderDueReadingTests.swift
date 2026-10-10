@@ -50,6 +50,25 @@ final class ReminderDueReadingTests: XCTestCase {
         XCTAssertEqual(ReminderDueReading.isOverdue(due, now: now, zone: Self.taipei), true)
     }
 
+    /// PR #307 verify round 1 (Codex, MEDIUM): the `due_date` strings read a date-only due at the
+    /// same instant `is_overdue` and the sort use, 00:00 of the day in the host zone, so a zone the
+    /// components carry does not move the printed time either.
+    func testADateOnlyDueDisplaysAtHostMidnightWhateverZoneItCarries() {
+        var due = Self.dateOnlyDue
+        due.timeZone = Self.losAngeles
+        XCTAssertEqual(ReminderDueReading.displayInstant(due, zone: Self.taipei),
+                       Self.local(2026, 10, 9, 0, in: Self.taipei))
+        XCTAssertEqual(ReminderDueReading.displayInstant(Self.dateOnlyDue, zone: Self.taipei),
+                       Self.local(2026, 10, 9, 0, in: Self.taipei))
+    }
+
+    func testATimedDueDisplaysAtItsInstant() {
+        let due = DateComponents(timeZone: Self.losAngeles, year: 2026, month: 10, day: 9, hour: 9, minute: 30)
+        XCTAssertEqual(ReminderDueReading.displayInstant(due, zone: Self.taipei),
+                       Self.local(2026, 10, 9, 9, 30, in: Self.losAngeles))
+        XCTAssertNil(ReminderDueReading.displayInstant(nil, zone: Self.taipei))
+    }
+
     func testATimedDueIsOverdueFromItsInstant() {
         let due = DateComponents(timeZone: Self.taipei, year: 2026, month: 10, day: 9, hour: 9, minute: 30)
         let instant = Self.local(2026, 10, 9, 9, 30, in: Self.taipei)

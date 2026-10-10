@@ -22,6 +22,17 @@ enum ReminderDueReading {
         return (day.y, day.m, day.d) < (ty, tm, td)
     }
 
+    /// The instant the `due_date` / `due_date_local` strings print, and the instant the sort uses:
+    /// a timed due at its own instant, a date-only due at 00:00 of its day in `zone` (the host
+    /// zone), Gregorian. A zone the date-only components carry is ignored here too, so the printed
+    /// time, the sort and `is_overdue` read the same day (PR #307 verify round 1). Also used for a
+    /// date-only `start_date`.
+    static func displayInstant(_ due: DateComponents?, zone: TimeZone) -> Date? {
+        guard let due else { return nil }
+        guard let day = dateOnlyDay(due) else { return safeDateFromComponents(due) }
+        return Calendar.gregorian(in: zone).date(from: DateComponents(year: day.y, month: day.m, day: day.d))
+    }
+
     /// The `due_date` sort: a date-only due sits at the start of its day (host zone, Gregorian),
     /// before every timed due of that day, and before a timed due at that very instant (00:00),
     /// so the order of that tie does not depend on the sort. A due sorts before no due.
@@ -33,12 +44,8 @@ enum ReminderDueReading {
     }
 
     private static func sortKey(_ due: DateComponents?, zone: TimeZone) -> (instant: Date, dateOnly: Bool)? {
-        guard let due else { return nil }
-        if let day = dateOnlyDay(due) {
-            let start = Calendar.gregorian(in: zone).date(from: DateComponents(year: day.y, month: day.m, day: day.d))
-            return start.map { ($0, true) }
-        }
-        return safeDateFromComponents(due).map { ($0, false) }
+        guard let due, let instant = displayInstant(due, zone: zone) else { return nil }
+        return (instant, dateOnlyDay(due) != nil)
     }
 
     /// The Gregorian year/month/day of a date-only due, or nil for a timed one.
