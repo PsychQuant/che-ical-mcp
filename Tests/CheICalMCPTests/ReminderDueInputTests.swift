@@ -176,8 +176,9 @@ final class ReminderDueInputTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
         XCTAssertTrue(flat.contains("reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)"), flat)
-        // #301: the choice among matches does not depend on the store's fetch order.
-        XCTAssertTrue(flat.contains("Self.preferringTimed("), flat)
+        // #301: the choice among matches does not depend on the store's fetch order; it prefers
+        // a match of the request's own kind (PR #307 verify round 2).
+        XCTAssertTrue(flat.contains("Self.preferringSameKind("), flat)
         XCTAssertFalse(flat.contains("timeIntervalSince"), "the minute window lives in ReminderDueInput.matches only")
     }
 
@@ -229,20 +230,46 @@ final class ReminderDueInputTests: XCTestCase {
         return r
     }
 
-    func testATimedMatchIsPreferredWhateverTheOrder() throws {
+    /// PR #307 verify round 2 (devils-advocate): a bare date that matches both a date-only
+    /// reminder and a 00:00 timed one reports the date-only one, the exact duplicate, so the
+    /// skip carries no "has a time" note; whatever the fetch order.
+    func testABareDatePrefersTheDateOnlyMatchWhateverTheOrder() throws {
         let dateOnly = reminder(day(2026, 10, 18))
         var midnight = day(2026, 10, 18)
         midnight.hour = 0
         midnight.minute = 0
         let timed = reminder(midnight)
-        XCTAssertTrue(EventKitManager.preferringTimed([dateOnly, timed]) === timed)
-        XCTAssertTrue(EventKitManager.preferringTimed([timed, dateOnly]) === timed)
+        let request = ReminderDueInput.day(day(2026, 10, 18))
+        XCTAssertTrue(EventKitManager.preferringSameKind([dateOnly, timed], as: request) === dateOnly)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed, dateOnly], as: request) === dateOnly)
     }
 
-    func testWithoutATimedMatchTheFirstIsTaken() {
+    /// A timed request that matches both kinds reports the timed one, whatever the order.
+    func testATimedRequestPrefersTheTimedMatchWhateverTheOrder() throws {
+        let dateOnly = reminder(day(2026, 10, 18))
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        let request = ReminderDueInput.timed(Date(timeIntervalSince1970: 1_792_252_800))
+        XCTAssertTrue(EventKitManager.preferringSameKind([dateOnly, timed], as: request) === timed)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed, dateOnly], as: request) === timed)
+    }
+
+    /// A bare date that matches only a 00:00 timed reminder reports it (the note then fires).
+    func testABareDateWithOnlyATimedMatchReportsIt() {
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed], as: .day(day(2026, 10, 18))) === timed)
+    }
+
+    func testWithoutAMatchOfTheSameKindTheFirstIsTaken() {
         let first = reminder(day(2026, 10, 18))
         let second = reminder(day(2026, 10, 18))
-        XCTAssertTrue(EventKitManager.preferringTimed([first, second]) === first)
-        XCTAssertNil(EventKitManager.preferringTimed([]))
+        XCTAssertTrue(EventKitManager.preferringSameKind([first, second], as: .day(day(2026, 10, 18))) === first)
+        XCTAssertTrue(EventKitManager.preferringSameKind([first, second], as: nil) === first)
+        XCTAssertNil(EventKitManager.preferringSameKind([], as: .day(day(2026, 10, 18))))
     }
 }
