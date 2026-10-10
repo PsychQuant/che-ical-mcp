@@ -1272,4 +1272,102 @@ final class ReminderDateSyncTests: XCTestCase {
 
         XCTAssertEqual(confirmed.aligned, true)
     }
+
+    // MARK: - #299: the timed due is built in the Gregorian calendar
+
+    // One builder for both writers (`createReminder`, `setDue`): Gregorian year, the given zone
+    // (#134), and no calendar attached, because EventKit throws on components that carry a
+    // non-Gregorian one.
+    func testTimedDueComponentsAreGregorianZonedAndCarryNoCalendar() {
+        let instant = date(2026, 10, 10, 9, 30, in: taipei)
+        let components = ReminderDateSync.timedDueComponents(for: instant, zone: taipei)
+        XCTAssertEqual([components.year, components.month, components.day, components.hour, components.minute],
+                       [2026, 10, 10, 9, 30])
+        XCTAssertNil(components.second)
+        XCTAssertNil(components.calendar)
+        XCTAssertEqual(components.timeZone, taipei)
+    }
+
+    func testTimedDueComponentsReadBackAsTheSameInstant() {
+        let instant = date(2026, 10, 10, 9, 30, in: newYork)
+        XCTAssertEqual(safeDateFromComponents(ReminderDateSync.timedDueComponents(for: instant, zone: newYork)), instant)
+    }
+
+    func testDateSyncDoesNotUseTheHostCalendar() throws {
+        let code = SourcePins.code(try SourcePins.source("EventKit/ReminderDateSync.swift"))
+        XCTAssertFalse(code.contains("Calendar.current"), "the host calendar may not be Gregorian")
+    }
+
+    func testBothTimedWritersUseTheSharedBuilder() throws {
+        let sync = try SourcePins.source("EventKit/ReminderDateSync.swift")
+        let setDue = try XCTUnwrap(SourcePins.body(of: "static func setDue(", in: sync))
+        XCTAssertTrue(setDue.contains("timedDueComponents(for: newDue)"), setDue)
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        let create = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: manager))
+        XCTAssertTrue(create.contains("ReminderDateSync.timedDueComponents(for: due)"), create)
+        XCTAssertFalse(create.contains("Calendar.current"), create)
+    }
+
+    // MARK: - #301: a written due that is gone on read-back is not aligned
+
+    // A date-only write whose due reads back as nil left `aligned` out (`isAligned` returns nil
+    // without a due). Something was written and nothing came back: not aligned.
+    func testADayWhoseDueIsGoneOnReadBackIsNotAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDueDay(reminder, to: day(2026, 10, 18))
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { XCTFail("no fallback for a day") }, reload: {
+            reminder.dueDateComponents = nil
+            return true
+        }, rollback: {}, log: { _ in })
+
+        XCTAssertEqual(confirmed.aligned, false)
+        XCTAssertEqual(confirmed.dictionary["aligned"] as? Bool, false)
+    }
+
+    // A timed due that is gone on both reads: the #237 fallback runs and saves once, and the second
+    // read-back still has no due.
+    func testATimedDueGoneOnBothReadBacksIsNotAligned() {
+        let reminder = makeReminder()
+        let report = ReminderDateSync.setDue(reminder, to: date(2026, 10, 18, 9, in: taipei))
+        var saves = 0
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: { saves += 1 }, reload: {
+            reminder.dueDateComponents = nil
+            return true
+        }, rollback: {}, log: { _ in })
+
+        XCTAssertEqual(saves, 1)
+        XCTAssertEqual(confirmed.aligned, false)
+    }
+
+    // A due the update cleared is still judged as before: no due written, no `aligned`.
+    func testAClearedDueStillHasNoAligned() {
+        let reminder = makeReminder()
+        reminder.dueDateComponents = taipeiComponents(day: 10, hour: 9)
+        let report = ReminderDateSync.setDue(reminder, to: nil)
+
+        let confirmed = ReminderDateSync.confirmSaved(reminder, report: report, save: {}, reload: { true },
+                                                      rollback: {}, log: { _ in })
+
+        XCTAssertNil(confirmed.aligned)
+    }
+
+    // MARK: - #301 item 4: undo of a date-only reminder, in memory
+
+    // Delete-undo of a date-only reminder writes the recorded start (as read back: 00:00 floating,
+    // with an hour) and the recorded date-only due. In memory the due stays date-only and both stay
+    // on the day. On device, what the store keeps after the save decides; that check is #264's.
+    func testRestoringADateOnlyDueBesideTheStoredMidnightStartKeepsTheDay() {
+        let reminder = makeReminder()
+        let storedStart = DateComponents(year: 2026, month: 10, day: 18, hour: 0, minute: 0)
+
+        ReminderDateSync.restore(reminder, start: storedStart, due: day(2026, 10, 18))
+
+        let due = reminder.dueDateComponents
+        XCTAssertNil(due?.hour, "the due must stay date-only: \(String(describing: due))")
+        XCTAssertEqual([due?.year, due?.month, due?.day], [2026, 10, 18])
+        let start = reminder.startDateComponents
+        XCTAssertEqual([start?.year, start?.month, start?.day], [2026, 10, 18])
+    }
 }

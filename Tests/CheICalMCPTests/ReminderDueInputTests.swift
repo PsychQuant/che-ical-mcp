@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -166,7 +167,7 @@ final class ReminderDueInputTests: XCTestCase {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
-        XCTAssertTrue(flat.contains("if case .day(let day)? = due { _ = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
+        XCTAssertTrue(flat.contains("if case .day(let day)? = due { dayReport = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
         XCTAssertTrue(flat.contains("findDuplicateReminder(title: title, due: due, calendar: calendar)"), flat)
     }
 
@@ -175,6 +176,100 @@ final class ReminderDueInputTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
         XCTAssertTrue(flat.contains("reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)"), flat)
+        // #301: the choice among matches does not depend on the store's fetch order; it prefers
+        // a match of the request's own kind (PR #307 verify round 2).
+        XCTAssertTrue(flat.contains("Self.preferringSameKind("), flat)
         XCTAssertFalse(flat.contains("timeIntervalSince"), "the minute window lives in ReminderDueInput.matches only")
+    }
+
+    // MARK: - #299: days compare as days
+
+    // Pacific/Apia skipped 2011-12-30: it has no midnight, and Foundation hands back the next
+    // day's, so as instants the two days are the same. As days they are not.
+    private let apia = TimeZone(identifier: "Pacific/Apia")!
+
+    func testTwoDaysOnASkippedDayAreDifferentDays() {
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: day(2011, 12, 31), hostZone: apia))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 31)), existing: day(2011, 12, 30), hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: day(2011, 12, 30), hostZone: apia))
+    }
+
+    // A day without a midnight in the host zone does not match a reminder stored at 00:00 of the
+    // next day; the day that has one still matches as before.
+    func testASkippedDayDoesNotMatchTheNextDaysMidnight() {
+        var nextMidnight = DateComponents(year: 2011, month: 12, day: 31, hour: 0, minute: 0)
+        nextMidnight.timeZone = apia
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: nextMidnight, hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2011, 12, 31)), existing: nextMidnight, hostZone: apia))
+    }
+
+    // The same rule from the other side: a timed request at 00:00 of 2011-12-31 is not a stored
+    // date-only 2011-12-30.
+    func testATimedMidnightDoesNotMatchAStoredSkippedDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = apia
+        let midnight = try XCTUnwrap(calendar.date(from: day(2011, 12, 31)))
+        XCTAssertFalse(ReminderDueInput.matches(.timed(midnight), existing: day(2011, 12, 30), hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.timed(midnight), existing: day(2011, 12, 31), hostZone: apia))
+    }
+
+    // A stored date-only due that carries another calendar is the same day counted in Gregorian.
+    func testAStoredDayInAnotherCalendarIsTheSameGregorianDay() {
+        var stored = DateComponents(year: 2569, month: 10, day: 18)
+        stored.calendar = Calendar(identifier: .buddhist)
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 19)), existing: stored))
+    }
+
+    // MARK: - #301: which duplicate is reported does not depend on fetch order
+
+    private func reminder(_ due: DateComponents) -> EKReminder {
+        let r = EKReminder(eventStore: EKEventStore())
+        r.title = "R"
+        r.dueDateComponents = due
+        return r
+    }
+
+    /// PR #307 verify round 2 (devils-advocate): a bare date that matches both a date-only
+    /// reminder and a 00:00 timed one reports the date-only one, the exact duplicate, so the
+    /// skip carries no "has a time" note; whatever the fetch order.
+    func testABareDatePrefersTheDateOnlyMatchWhateverTheOrder() throws {
+        let dateOnly = reminder(day(2026, 10, 18))
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        let request = ReminderDueInput.day(day(2026, 10, 18))
+        XCTAssertTrue(EventKitManager.preferringSameKind([dateOnly, timed], as: request) === dateOnly)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed, dateOnly], as: request) === dateOnly)
+    }
+
+    /// A timed request that matches both kinds reports the timed one, whatever the order.
+    func testATimedRequestPrefersTheTimedMatchWhateverTheOrder() throws {
+        let dateOnly = reminder(day(2026, 10, 18))
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        let request = ReminderDueInput.timed(Date(timeIntervalSince1970: 1_792_252_800))
+        XCTAssertTrue(EventKitManager.preferringSameKind([dateOnly, timed], as: request) === timed)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed, dateOnly], as: request) === timed)
+    }
+
+    /// A bare date that matches only a 00:00 timed reminder reports it (the note then fires).
+    func testABareDateWithOnlyATimedMatchReportsIt() {
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        XCTAssertTrue(EventKitManager.preferringSameKind([timed], as: .day(day(2026, 10, 18))) === timed)
+    }
+
+    func testWithoutAMatchOfTheSameKindTheFirstIsTaken() {
+        let first = reminder(day(2026, 10, 18))
+        let second = reminder(day(2026, 10, 18))
+        XCTAssertTrue(EventKitManager.preferringSameKind([first, second], as: .day(day(2026, 10, 18))) === first)
+        XCTAssertTrue(EventKitManager.preferringSameKind([first, second], as: nil) === first)
+        XCTAssertNil(EventKitManager.preferringSameKind([], as: .day(day(2026, 10, 18))))
     }
 }

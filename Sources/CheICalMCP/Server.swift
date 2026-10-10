@@ -19,9 +19,15 @@ func safeDateFromComponents(_ components: DateComponents?) -> Date? {
     clean.second = dc.second
     clean.timeZone = dc.timeZone
 
-    // If we have enough day-based fields, use them
+    // If we have enough day-based fields, use them. #299: in the calendar the components carry,
+    // else in the Gregorian calendar EventKit's components are in, never the host's region
+    // calendar; the same rule as `ReminderDueInput`, `ReminderDueValue.chronologicalDate` and
+    // `UndoPostStateFields`. A zone the components carry wins over the host zone.
     if dc.year != nil && dc.month != nil && dc.day != nil {
-        return Calendar.current.date(from: clean)
+        var calendar = Calendar(identifier: dc.calendar?.identifier ?? .gregorian)
+        calendar.timeZone = .current
+        clean.era = dc.era
+        return calendar.date(from: clean)
     }
 
     // Fallback: if no day-based fields, use the original .date
@@ -477,7 +483,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). A date-only due (due.time null) is a day: is_overdue becomes true only once that day has ended in the host time zone, its due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -485,12 +491,12 @@ class CheICalMCPServer {
                         "filter": .object([
                             "type": .string("string"),
                             "enum": .array([.string("all"), .string("incomplete"), .string("completed"), .string("overdue")]),
-                            "description": .string("Filter reminders: 'all' (default), 'incomplete', 'completed', 'overdue' (incomplete with past due date). Takes priority over 'completed' parameter.")
+                            "description": .string("Filter reminders: 'all' (default), 'incomplete', 'completed', 'overdue' (incomplete with past due date; a date-only due only once its day has ended in the host time zone). Takes priority over 'completed' parameter.")
                         ]),
                         "sort": .object([
                             "type": .string("string"),
                             "enum": .array([.string("due_date"), .string("creation_date"), .string("priority"), .string("title")]),
-                            "description": .string("Sort by: 'due_date' (default, nulls last), 'creation_date', 'priority' (high→low), 'title' (alphabetical)")
+                            "description": .string("Sort by: 'due_date' (default, nulls last; a date-only due sorts at the start of its day, before the timed dues of that day), 'creation_date', 'priority' (high→low), 'title' (alphabetical)")
                         ]),
                         "limit": .object([
                             "type": .string("integer"),
@@ -504,7 +510,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_reminder",
-                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
+                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. A bare-date create returns date_sync, as update_reminder does, with aligned judged on the saved reminder (false when the due reads back with a time or missing, or the reminder cannot be re-read). The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -656,7 +662,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). For a date-only due (due.time null), due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -977,7 +983,7 @@ class CheICalMCPServer {
             // Reminder Batch Operations
             Tool(
                 name: "create_reminders_batch",
-                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder.",
+                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder, and that row's result carries date_sync, as create_reminder's does.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1613,9 +1619,13 @@ class CheICalMCPServer {
 
     /// #231: start date and time-based alarms for list_reminders / search_reminders.
     /// `start` has the `due` shape; `start_date` / `start_date_local` mirror `due_date` / `due_date_local`.
-    private func reminderScheduleFields(_ reminder: ReminderReadSnapshot) -> [String: Any] {
+    /// #297: under a date-only due, a 00:00 floating start reads as a day in `start`
+    /// (`ReminderDueReading.startAsRead`); the strings keep their shape (host-zone midnight).
+    private func reminderScheduleFields(_ reminder: ReminderReadSnapshot, zone: TimeZone = .current) -> [String: Any] {
         var fields: [String: Any] = [
-            "start": ReminderDueValue(components: reminder.startDateComponents)?.dictionary ?? NSNull(),
+            // #297: under a date-only due, the 00:00 floating start the store hands back is a day.
+            "start": ReminderDueValue(components: ReminderDueReading.startAsRead(reminder.startDateComponents,
+                                                                                 due: reminder.dueDateComponents))?.dictionary ?? NSNull(),
             // Sorted and filtered here too, so the order holds however the snapshot was built.
             "alarms": ReminderReadSnapshot.Alarm.listed(reminder.alarms).map { [self] alarm -> [String: Any] in
                 switch alarm {
@@ -1628,7 +1638,7 @@ class CheICalMCPServer {
                 }
             }
         ]
-        if let startDate = safeDateFromComponents(reminder.startDateComponents) {
+        if let startDate = ReminderDueReading.displayInstant(reminder.startDateComponents, zone: zone) {
             fields["start_date"] = dateFormatter.string(from: startDate)
             fields["start_date_local"] = localDateFormatter.string(from: startDate)
         }
@@ -1683,10 +1693,11 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
+            if let dueDate = ReminderDueReading.displayInstant(reminder.dueDateComponents, zone: page.zone) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
-                dict["is_overdue"] = !reminder.isCompleted && dueDate < now
+                dict["is_overdue"] = !reminder.isCompleted
+                    && ReminderDueReading.isOverdue(reminder.dueDateComponents, now: now, zone: page.zone) == true
             }
             if let completionDate = reminder.completionDate {
                 dict["completion_date"] = dateFormatter.string(from: completionDate)
@@ -1697,7 +1708,7 @@ class CheICalMCPServer {
                 dict["creation_date_local"] = localDateFormatter.string(from: creationDate)
             }
             if let trigger = reminder.locationTrigger { dict["location_trigger"] = trigger.dictionary }
-            dict.merge(reminderScheduleFields(reminder)) { _, new in new }
+            dict.merge(reminderScheduleFields(reminder, zone: page.zone)) { _, new in new }
             dict.merge(reminder.recurrenceMetadata) { _, new in new }
             return dict
         }
@@ -1758,6 +1769,8 @@ class CheICalMCPServer {
         if !tags.isEmpty {
             fields["tags"] = tags
         }
+        // #301: a date-only create says whether the saved reminder reads back as asked.
+        if let dateSync = result.dateSync { fields["date_sync"] = dateSync.dictionary }
         fields.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
         return try actionResult(fields)
     }
@@ -1946,7 +1959,7 @@ class CheICalMCPServer {
             ]
             if let notes = cleanNotes { dict["notes"] = notes }
             if !tags.isEmpty { dict["tags"] = tags }
-            if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
+            if let dueDate = ReminderDueReading.displayInstant(reminder.dueDateComponents, zone: .current) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
             }
@@ -2014,6 +2027,8 @@ class CheICalMCPServer {
                 if result.isDuplicate {
                     entry["skipped"] = true
                     if let note = Self.dateOnlyDuplicateNote(due: batchDue, result: result) { entry["note"] = note }
+                } else if let dateSync = result.dateSync {
+                    entry["date_sync"] = dateSync.dictionary   // #301
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)
@@ -3049,64 +3064,12 @@ class CheICalMCPServer {
         }
     }
 
-    /// Parse flexible date formats, supporting:
-    /// 1. Full ISO8601: "2026-02-06T14:00:00+08:00"
-    /// 2. ISO8601 without timezone: "2026-02-06T14:00:00" (assumes system timezone)
-    /// 3. Date only: "2026-02-06" (00:00:00 system timezone)
-    /// 4. Time only: "14:00" or "14:00:00" (today at that time)
-    /// Parse a flexible date string. When `defaultTimezone` is provided and the
-    /// string has no explicit offset, interpret the time in that timezone instead
-    /// of the system timezone. Strings with explicit offsets (+XX:XX or Z) are
-    /// always parsed correctly regardless of this parameter.
+    /// Parse a flexible date string (`FlexibleDate.parse`: ISO8601 with an offset, a date-time
+    /// without one, a bare date, or a time today). When `defaultTimezone` is provided and the
+    /// string has no explicit offset, the time is read in that timezone instead of the system
+    /// timezone. #299: read as a Gregorian date, whatever the host's region calendar.
     private func parseFlexibleDate(_ string: String, defaultTimezone: TimeZone? = nil) throws -> Date {
-        // 1. Full ISO8601 (with timezone) — offset is explicit, no ambiguity
-        if let date = dateFormatter.date(from: string) {
-            return date
-        }
-
-        let tz = defaultTimezone ?? TimeZone.current
-
-        // 2. ISO8601 without timezone (e.g., "2026-02-06T14:00:00")
-        if string.contains("T") && !string.contains("+") && !string.contains("Z") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            formatter.timeZone = tz
-            if let date = formatter.date(from: string) {
-                return date
-            }
-        }
-
-        // 3. Date only (e.g., "2026-02-06")
-        if string.count == 10 && string.contains("-") && !string.contains("T") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = tz
-            if let date = formatter.date(from: string) {
-                return date
-            }
-        }
-
-        // 4. Time only (e.g., "14:00" or "14:00:00")
-        if !string.contains("-") && string.contains(":") {
-            let components = string.split(separator: ":")
-            if components.count >= 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]) {
-                let second = components.count >= 3 ? Int(components[2]) ?? 0 : 0
-                var cal = Calendar.current
-                cal.timeZone = tz
-                let now = Date()
-                var dc = cal.dateComponents([.year, .month, .day], from: now)
-                dc.hour = hour
-                dc.minute = minute
-                dc.second = second
-                if let date = cal.date(from: dc) {
-                    return date
-                }
-            }
-        }
-
-        throw ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
+        try FlexibleDate.parse(string, defaultTimezone: defaultTimezone, iso: dateFormatter)
     }
 
     /// #267: a reminder `due_date`. A bare `YYYY-MM-DD` is a date-only reminder; anything else is

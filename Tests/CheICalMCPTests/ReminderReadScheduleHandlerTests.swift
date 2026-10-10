@@ -63,12 +63,14 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
     }
 
     /// A date-only start renders as a date-only due does: no time, no instant, and
-    /// the legacy strings fall on host-local midnight.
+    /// the legacy strings fall on host-local midnight. #297: the start is built the way the store
+    /// hands it back (on device, iCloud, 2026-10-09): 00:00, floating, with an hour.
     func testDateOnlyStartMirrorsADateOnlyDue() async throws {
         let components = DateComponents(year: 2026, month: 10, day: 9)
+        let storedStart = DateComponents(year: 2026, month: 10, day: 9, hour: 0, minute: 0)
         let snapshot = ReminderReadSnapshot(id: "date-only", title: "R", dueDateComponents: components,
-                                            startDateComponents: components)
-        let midnight = try XCTUnwrap(Calendar.current.date(from: components))
+                                            startDateComponents: storedStart)
+        let midnight = try XCTUnwrap(Calendar.gregorian(in: .current).date(from: components))
         for (tool, args) in tools {
             let value = try await item(tool, args, snapshot)
             let start = try XCTUnwrap(value["start"] as? [String: Any], tool)
@@ -81,6 +83,28 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
             XCTAssertEqual(value["start_date_local"] as? String, "2026-10-09T00:00:00", tool)
             XCTAssertEqual(value["start_date"] as? String, value["due_date"] as? String, tool)
             XCTAssertEqual(value["start_date_local"] as? String, value["due_date_local"] as? String, tool)
+        }
+    }
+
+    /// PR #307 verify round 1 (Codex, MEDIUM): a date-only due or start that carries a zone still
+    /// prints 00:00 of its day in the host zone, as the tool descriptions say and as `is_overdue`
+    /// and the sort read it. The carried zone is chosen to differ from the host zone on the fixture
+    /// date, so the test cannot pass vacuously on a host that shares its offset then.
+    func testADateOnlyDueCarryingAZonePrintsHostMidnight() async throws {
+        let candidates = ["America/Los_Angeles", "Asia/Taipei"].compactMap(TimeZone.init(identifier:))
+        let fixture = try XCTUnwrap(Calendar.gregorian(in: .current).date(from: DateComponents(year: 2026, month: 10, day: 9)))
+        let carried = try XCTUnwrap(candidates.first { $0.secondsFromGMT(for: fixture) != TimeZone.current.secondsFromGMT(for: fixture) })
+        let zoned = DateComponents(timeZone: carried, year: 2026, month: 10, day: 9)
+        let snapshot = ReminderReadSnapshot(id: "zoned", title: "R", dueDateComponents: zoned,
+                                            startDateComponents: zoned)
+        let midnight = try XCTUnwrap(Calendar.gregorian(in: .current)
+            .date(from: DateComponents(year: 2026, month: 10, day: 9)))
+        for (tool, args) in tools {
+            let value = try await item(tool, args, snapshot)
+            XCTAssertEqual(value["due_date"] as? String, ISO8601DateFormatter().string(from: midnight), tool)
+            XCTAssertEqual(value["due_date_local"] as? String, "2026-10-09T00:00:00", tool)
+            XCTAssertEqual(value["start_date"] as? String, value["due_date"] as? String, tool)
+            XCTAssertEqual(value["start_date_local"] as? String, "2026-10-09T00:00:00", tool)
         }
     }
 
@@ -197,5 +221,67 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
             XCTAssertEqual((value["location_trigger"] as? [String: Any])?["title"] as? String, "Office", tool)
             XCTAssertEqual((value["alarms"] as? [Any])?.count, 0, tool)
         }
+    }
+
+    // MARK: - #297: a date-only due is a day
+
+    /// Under a timed due, a 00:00 floating start cannot be told from one set to midnight, so it
+    /// keeps its time.
+    func testAMidnightStartUnderATimedDueKeepsItsTime() async throws {
+        let due = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9, hour: 9, minute: 30)
+        let start = DateComponents(year: 2026, month: 10, day: 9, hour: 0, minute: 0)
+        let snapshot = ReminderReadSnapshot(id: "timed", title: "R", dueDateComponents: due, startDateComponents: start)
+        for (tool, args) in tools {
+            let value = try await item(tool, args, snapshot)
+            XCTAssertEqual((value["start"] as? [String: Any])?["time"] as? String, "00:00:00", tool)
+        }
+    }
+
+    /// Only a midnight start reads as a day; a start at another time keeps it.
+    func testAStartAtAnotherTimeUnderADateOnlyDueKeepsItsTime() async throws {
+        let due = DateComponents(year: 2026, month: 10, day: 9)
+        for start in [DateComponents(year: 2026, month: 10, day: 9, hour: 9, minute: 0),
+                      DateComponents(year: 2026, month: 10, day: 9, hour: 0, minute: 30),
+                      DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9, hour: 0, minute: 0)] {
+            let snapshot = ReminderReadSnapshot(id: "start", title: "R", dueDateComponents: due, startDateComponents: start)
+            for (tool, args) in tools {
+                let value = try await item(tool, args, snapshot)
+                XCTAssertTrue((value["start"] as? [String: Any])?["time"] is String, "\(start) \(tool)")
+            }
+        }
+    }
+
+    /// `is_overdue` for a date-only due: not on its day, yes once it has ended in the host zone;
+    /// `filter: "overdue"` agrees.
+    func testADateOnlyDueIsOverdueOnlyAfterItsDay() async throws {
+        let calendar = Calendar.gregorian(in: .current)
+        func day(_ offset: Int) -> DateComponents {
+            calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: offset, to: Date())!)
+        }
+        for (offset, overdue) in [(0, false), (1, false), (-1, true), (-3, true)] {
+            let before = day(offset)
+            let snapshot = ReminderReadSnapshot(id: "day", title: "R", dueDateComponents: before)
+            let server = try await CheICalMCPServer(reminderReadSource: ReminderScheduleFake([snapshot]))
+            let allRaw = try await server.executeToolCall(name: "list_reminders", arguments: [:])
+            let filteredRaw = try await server.executeToolCall(name: "list_reminders", arguments: ["filter": .string("overdue")])
+            let all = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(allRaw.utf8)) as? [String: Any])
+            let filtered = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(filteredRaw.utf8)) as? [String: Any])
+            // A run that crosses midnight cannot say which day it judged; skip it.
+            guard day(offset) == before else { continue }
+            let listed = try XCTUnwrap((all["reminders"] as? [[String: Any]])?.first)
+            XCTAssertEqual(listed["is_overdue"] as? Bool, overdue, "offset \(offset)")
+            XCTAssertEqual(filtered["reminder_count"] as? Int, overdue ? 1 : 0, "offset \(offset)")
+        }
+    }
+
+    func testIsOverdueAndTheFilterShareOneRule() throws {
+        let server = try SourcePins.source("Server.swift")
+        let list = try XCTUnwrap(SourcePins.body(of: "private func handleListReminders(", in: server))
+        XCTAssertTrue(list.contains("ReminderDueReading.isOverdue("), list)
+        XCTAssertFalse(list.contains("dueDate < now"), list)
+        let page = try XCTUnwrap(SourcePins.body(of: "func page<T: ReminderSelectable>(", in: try SourcePins.source("ReminderPage.swift")))
+        XCTAssertTrue(page.contains("ReminderDueReading.isOverdue("), page)
+        XCTAssertTrue(page.contains("ReminderDueReading.sortsBefore("), page)
+        XCTAssertFalse(page.contains("safeDateFromComponents"), page)
     }
 }

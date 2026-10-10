@@ -80,10 +80,7 @@ enum ReminderDateSync {
             return report
         }
         let startBefore = reminder.startDateComponents
-        // #134: always store an explicit time zone so iCloud Web / Today view don't
-        // re-interpret floating components as UTC.
-        var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: newDue)
-        components.timeZone = TimeZone.current
+        let components = timedDueComponents(for: newDue)
         // Start and alarms move FIRST, the due date is written LAST: EventKit couples start and
         // due (in memory, writing a date-only start turns the due date date-only), so writing
         // the start after the due date could drop the time the caller asked for.
@@ -101,6 +98,18 @@ enum ReminderDateSync {
         return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
                       absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0,
                       aligned: isAligned(reminder, requestedTime: true), writtenDue: components)
+    }
+
+    /// #299: the components a timed due is written with, by `create_reminder` and `setDue` alike,
+    /// so the two writers cannot drift apart. Year/month/day/hour/minute of `date` in the
+    /// Gregorian calendar EventKit's components are in (not the host's region calendar), with
+    /// `zone` attached: #134, an explicit zone so iCloud Web and the Today view do not read
+    /// floating components as UTC. No calendar is attached: EventKit throws when components that
+    /// carry a non-Gregorian one are written (#299, 2026-10-09).
+    static func timedDueComponents(for date: Date, zone: TimeZone = .current) -> DateComponents {
+        var components = Calendar.gregorian(in: zone).dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        components.timeZone = zone
+        return components
     }
 
     /// #267: the date-only entry point (`create_reminder` and `update_reminder` with a bare
@@ -266,6 +275,13 @@ enum ReminderDateSync {
     /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
     ///   other fields describe the write and are kept. A date-only write (#267) whose due reads back
     ///   with a time is not aligned.
+    /// - #301: a written due that reads back as nil (after the first read, or for a timed due after
+    ///   the fallback's second read) is not aligned. Without this, `isAligned` returned nil for
+    ///   it and the response left `aligned` out, as if the update had cleared the due. The timed
+    ///   first read still runs the fallback, which treats a missing due as one that lost its time.
+    /// - `create_reminder` (#301) calls this too for a date-only create, with a no-op `save` and
+    ///   `rollback` (a date-only write never runs the fallback). A create whose save threw but
+    ///   committed may not re-read; it then reports `aligned: false` ("not confirmed").
     ///
     /// What this cannot see is anything EventKit does not return. The duplicate alarm rows that
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
@@ -282,6 +298,12 @@ enum ReminderDateSync {
             confirmed.aligned = false
             return confirmed
         }
+        // #301: a due was written and none came back. That is not "the update leaves no due date"
+        // (that case returned above): not aligned. Checked again after the fallback below.
+        if reminder.dueDateComponents == nil && !requestedTime {
+            confirmed.aligned = false
+            return confirmed
+        }
         if requestedTime && dueLostTimeOrZone(reminder.dueDateComponents) {
             log("update_reminder: the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
@@ -291,7 +313,7 @@ enum ReminderDateSync {
                 rollback()
                 log("update_reminder: saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
             }
-            guard reload() else {
+            guard reload(), reminder.dueDateComponents != nil else {
                 confirmed.aligned = false
                 return confirmed
             }
@@ -525,9 +547,7 @@ enum ReminderDateSync {
     }
 
     private static func calendar(_ zone: TimeZone) -> Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = zone
-        return cal
+        Calendar.gregorian(in: zone)
     }
 
     private static func calendarDays(from a: Date, to b: Date, in zone: TimeZone) -> Int {
