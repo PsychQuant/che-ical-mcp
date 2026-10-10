@@ -983,7 +983,7 @@ class CheICalMCPServer {
             // Reminder Batch Operations
             Tool(
                 name: "create_reminders_batch",
-                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder.",
+                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder, and that row's result carries date_sync, as create_reminder's does.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1621,7 +1621,7 @@ class CheICalMCPServer {
     /// `start` has the `due` shape; `start_date` / `start_date_local` mirror `due_date` / `due_date_local`.
     /// #297: under a date-only due, a 00:00 floating start reads as a day in `start`
     /// (`ReminderDueReading.startAsRead`); the strings keep their shape (host-zone midnight).
-    private func reminderScheduleFields(_ reminder: ReminderReadSnapshot) -> [String: Any] {
+    private func reminderScheduleFields(_ reminder: ReminderReadSnapshot, zone: TimeZone = .current) -> [String: Any] {
         var fields: [String: Any] = [
             // #297: under a date-only due, the 00:00 floating start the store hands back is a day.
             "start": ReminderDueValue(components: ReminderDueReading.startAsRead(reminder.startDateComponents,
@@ -1638,7 +1638,7 @@ class CheICalMCPServer {
                 }
             }
         ]
-        if let startDate = ReminderDueReading.displayInstant(reminder.startDateComponents, zone: .current) {
+        if let startDate = ReminderDueReading.displayInstant(reminder.startDateComponents, zone: zone) {
             fields["start_date"] = dateFormatter.string(from: startDate)
             fields["start_date_local"] = localDateFormatter.string(from: startDate)
         }
@@ -1708,7 +1708,7 @@ class CheICalMCPServer {
                 dict["creation_date_local"] = localDateFormatter.string(from: creationDate)
             }
             if let trigger = reminder.locationTrigger { dict["location_trigger"] = trigger.dictionary }
-            dict.merge(reminderScheduleFields(reminder)) { _, new in new }
+            dict.merge(reminderScheduleFields(reminder, zone: page.zone)) { _, new in new }
             dict.merge(reminder.recurrenceMetadata) { _, new in new }
             return dict
         }

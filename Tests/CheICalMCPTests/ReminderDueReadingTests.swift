@@ -62,6 +62,22 @@ final class ReminderDueReadingTests: XCTestCase {
                        Self.local(2026, 10, 9, 0, in: Self.taipei))
     }
 
+    /// PR #307 verify round 2 (Codex): a day the host zone skipped (Pacific/Apia has no
+    /// 2011-12-30) has no midnight of its own. Foundation gives the next instant that exists,
+    /// 2011-12-31 00:00, so `due_date_local` prints 12-31 while `due.date` says 12-30. The day has
+    /// no length there: it is overdue from that same instant, and it sorts at that instant, before
+    /// a timed due later on 12-31. Pinned so the three readings stay one instant.
+    func testADaySkippedByTheHostZoneIsOneInstantForDisplaySortAndOverdue() throws {
+        let apia = try XCTUnwrap(TimeZone(identifier: "Pacific/Apia"))
+        let skipped = DateComponents(year: 2011, month: 12, day: 30)
+        let shown = try XCTUnwrap(ReminderDueReading.displayInstant(skipped, zone: apia))
+        XCTAssertEqual(shown, Self.local(2011, 12, 31, 0, in: apia))
+        XCTAssertEqual(ReminderDueReading.isOverdue(skipped, now: shown.addingTimeInterval(-1), zone: apia), false)
+        XCTAssertEqual(ReminderDueReading.isOverdue(skipped, now: shown, zone: apia), true)
+        let laterThatDay = DateComponents(timeZone: apia, year: 2011, month: 12, day: 31, hour: 8)
+        XCTAssertTrue(ReminderDueReading.sortsBefore(skipped, laterThatDay, zone: apia))
+    }
+
     func testATimedDueDisplaysAtItsInstant() {
         let due = DateComponents(timeZone: Self.losAngeles, year: 2026, month: 10, day: 9, hour: 9, minute: 30)
         XCTAssertEqual(ReminderDueReading.displayInstant(due, zone: Self.taipei),

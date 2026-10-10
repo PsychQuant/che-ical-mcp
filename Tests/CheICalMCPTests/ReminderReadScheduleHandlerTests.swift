@@ -88,10 +88,12 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
 
     /// PR #307 verify round 1 (Codex, MEDIUM): a date-only due or start that carries a zone still
     /// prints 00:00 of its day in the host zone, as the tool descriptions say and as `is_overdue`
-    /// and the sort read it. Los Angeles differs from the host zone in both suite runs (host, UTC).
+    /// and the sort read it. The carried zone is chosen to differ from the host zone, so the test
+    /// cannot pass vacuously on a host that happens to be in it.
     func testADateOnlyDueCarryingAZonePrintsHostMidnight() async throws {
-        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
-        let zoned = DateComponents(timeZone: losAngeles, year: 2026, month: 10, day: 9)
+        let candidates = ["America/Los_Angeles", "Asia/Taipei"].compactMap(TimeZone.init(identifier:))
+        let carried = try XCTUnwrap(candidates.first { $0.secondsFromGMT() != TimeZone.current.secondsFromGMT() })
+        let zoned = DateComponents(timeZone: carried, year: 2026, month: 10, day: 9)
         let snapshot = ReminderReadSnapshot(id: "zoned", title: "R", dueDateComponents: zoned,
                                             startDateComponents: zoned)
         let midnight = try XCTUnwrap(Calendar.gregorian(in: .current)
