@@ -379,6 +379,44 @@ final class UndoRefusalTests: XCTestCase {
         }), "coordinates added to a place the series has without them are not an edit")
     }
 
+    // MARK: - The slot comes from the identifier's RID, not only occurrenceDate (#311)
+
+    /// 2027-07-12 10:00 +08:00 as the `RID` an iCloud occurrence carries (seconds since 2001-01-01 UTC),
+    /// read off a device on 2026-10-10.
+    private let ridSlot = Date(timeIntervalSinceReferenceDate: 837_050_400)
+
+    func testTheSlotIsReadFromTheRIDOfAnEditedOccurrence() {
+        let moved = ridSlot.addingTimeInterval(1800)
+        XCTAssertEqual(UndoPostState.originalSlot(eventIdentifier: "A:B/RID=837050400", externalIdentifier: nil, occurrenceDate: moved), ridSlot,
+                       "occurrenceDate equal to the new start must not hide the move (#311)")
+        XCTAssertEqual(UndoPostState.originalSlot(eventIdentifier: nil, externalIdentifier: "UID/RID=837050400", occurrenceDate: moved), ridSlot,
+                       "the external identifier carries it too")
+        XCTAssertEqual(UndoPostState.originalSlot(eventIdentifier: "A:B", externalIdentifier: "UID/RID=837050400", occurrenceDate: moved), ridSlot,
+                       "either identifier is enough")
+    }
+
+    func testTheSlotFallsBackToOccurrenceDateWithoutARID() {
+        XCTAssertEqual(UndoPostState.originalSlot(eventIdentifier: "A:B", externalIdentifier: "UID", occurrenceDate: ridSlot), ridSlot)
+        XCTAssertNil(UndoPostState.originalSlot(eventIdentifier: nil, externalIdentifier: nil, occurrenceDate: nil))
+        for malformed in ["A:B/RID=", "A:B/RID=12x", "A:B/RID=-5", "A:B/RID= 7", "A:B/RIDX=7"] {
+            XCTAssertEqual(UndoPostState.originalSlot(eventIdentifier: malformed, externalIdentifier: nil, occurrenceDate: ridSlot), ridSlot, malformed)
+        }
+    }
+
+    /// The failure of #311, end to end through the comparison: a detached occurrence 30 minutes off
+    /// its slot whose `occurrenceDate` was reported as the new start. Without the RID it passed as
+    /// unedited; with it the occurrence is an edit and the create-undo refuses.
+    func testAMovedOccurrenceWhoseOccurrenceDateEqualsItsNewStartStillCounts() {
+        let series = occurrence()
+        let newStart = start.addingTimeInterval(1800)
+        let slot = UndoPostState.originalSlot(eventIdentifier: "A:B/RID=\(Int(start.timeIntervalSinceReferenceDate))", externalIdentifier: nil, occurrenceDate: newStart)
+        let moved = occurrence(slot: .some(slot)) { $0.startDate = newStart; $0.endDate = newStart.addingTimeInterval(3600) }
+        XCTAssertTrue(UndoPostState.differsFromSeries(moved, series: series))
+
+        let reported = occurrence(slot: .some(newStart)) { $0.startDate = newStart; $0.endDate = newStart.addingTimeInterval(3600) }
+        XCTAssertFalse(UndoPostState.differsFromSeries(reported, series: series), "what occurrenceDate alone gave: the blind spot")
+    }
+
     /// Round 5 findings 16, 26, 28: time zones compare by their offset at the occurrence's start,
     /// so two spellings of one zone are the same and a real change of zone still counts.
     func testTimeZonesCompareByOffsetAtTheOccurrence() {
