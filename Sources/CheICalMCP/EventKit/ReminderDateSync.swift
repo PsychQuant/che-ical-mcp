@@ -80,10 +80,7 @@ enum ReminderDateSync {
             return report
         }
         let startBefore = reminder.startDateComponents
-        // #134: always store an explicit time zone so iCloud Web / Today view don't
-        // re-interpret floating components as UTC.
-        var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: newDue)
-        components.timeZone = TimeZone.current
+        let components = timedDueComponents(for: newDue)
         // Start and alarms move FIRST, the due date is written LAST: EventKit couples start and
         // due (in memory, writing a date-only start turns the due date date-only), so writing
         // the start after the due date could drop the time the caller asked for.
@@ -101,6 +98,18 @@ enum ReminderDateSync {
         return Report(startDate: startChange(from: startBefore, to: reminder.startDateComponents),
                       absoluteAlarmsShifted: moved, absoluteAlarmsRemoved: 0,
                       aligned: isAligned(reminder, requestedTime: true), writtenDue: components)
+    }
+
+    /// #299: the components a timed due is written with, by `create_reminder` and `setDue` alike,
+    /// so the two writers cannot drift apart. Year/month/day/hour/minute of `date` in the
+    /// Gregorian calendar EventKit's components are in (not the host's region calendar), with
+    /// `zone` attached: #134, an explicit zone so iCloud Web and the Today view do not read
+    /// floating components as UTC. No calendar is attached: EventKit throws when components that
+    /// carry a non-Gregorian one are written (#299, 2026-10-09).
+    static func timedDueComponents(for date: Date, zone: TimeZone = .current) -> DateComponents {
+        var components = Calendar.gregorian(in: zone).dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        components.timeZone = zone
+        return components
     }
 
     /// #267: the date-only entry point (`create_reminder` and `update_reminder` with a bare
@@ -525,9 +534,7 @@ enum ReminderDateSync {
     }
 
     private static func calendar(_ zone: TimeZone) -> Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = zone
-        return cal
+        Calendar.gregorian(in: zone)
     }
 
     private static func calendarDays(from a: Date, to b: Date, in zone: TimeZone) -> Int {

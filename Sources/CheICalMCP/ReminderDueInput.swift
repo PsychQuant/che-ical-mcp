@@ -21,12 +21,20 @@ enum ReminderDueInput: Sendable, Equatable {
         return .timed(try timed(text))
     }
 
-    /// The duplicate check of `create_reminder`, unchanged by #267 (verify round 1, PR #298): two
-    /// dues match when their instants are less than a minute apart, and a day counts as 00:00 of
-    /// that day in the host zone, as a bare date was stored before #267. A retry after upgrading
-    /// therefore still finds a reminder an earlier version stored at 00:00 from the same bare date,
-    /// instead of making a second, date-only copy. A stored date-only due is read the same way,
-    /// whatever zone EventKit attaches to it. No due matches no due.
+    /// The duplicate check of `create_reminder`, unchanged by #267 (verify round 1, PR #298) for
+    /// times: two dues match when their instants are less than a minute apart, and a day counts as
+    /// 00:00 of that day in the host zone, as a bare date was stored before #267. A retry after
+    /// upgrading therefore still finds a reminder an earlier version stored at 00:00 from the same
+    /// bare date, instead of making a second, date-only copy. No due matches no due.
+    ///
+    /// #299, days compare as days:
+    /// - a day and a stored date-only due match when they are the same year/month/day (a stored
+    ///   due carrying another calendar is counted in Gregorian first), whatever zone EventKit
+    ///   attaches to it;
+    /// - a day and a timed value compare through the day's host-zone midnight only when that
+    ///   midnight converts back to the same day. A day the host zone skipped (Pacific/Apia,
+    ///   2011-12-30) has none, and Foundation would hand back the next day's, so it matches no
+    ///   timed value.
     ///
     /// Instants are built in the Gregorian calendar EventKit's components are in, or in the
     /// calendar attached to the stored components, never in the calendar chosen in region settings
@@ -36,6 +44,9 @@ enum ReminderDueInput: Sendable, Equatable {
         switch (request, existing) {
         case (nil, nil):
             return true
+        case (.day(let day)?, let stored?) where stored.hour == nil:
+            guard let storedDay = gregorianDay(of: stored) else { return false }
+            return day.year == storedDay.year && day.month == storedDay.month && day.day == storedDay.day
         case (let request?, let stored?):
             guard let requested = instant(of: request, hostZone: hostZone),
                   let storedDate = instant(of: stored, hostZone: hostZone) else { return false }
@@ -52,7 +63,8 @@ enum ReminderDueInput: Sendable, Equatable {
         }
     }
 
-    /// A date-only value is 00:00 of its day in the host zone; a timed one is read in its own zone.
+    /// A date-only value is 00:00 of its day in the host zone, or nil when the zone has no such
+    /// midnight (#299); a timed one is read in its own zone.
     private static func instant(of stored: DateComponents, hostZone: TimeZone) -> Date? {
         var calendar = stored.calendar ?? Calendar(identifier: .gregorian)
         let dateOnly = stored.hour == nil
@@ -63,12 +75,30 @@ enum ReminderDueInput: Sendable, Equatable {
             fields.minute = stored.minute
             fields.second = stored.second
         }
-        return calendar.date(from: fields)
+        guard let date = calendar.date(from: fields) else { return nil }
+        if dateOnly {
+            let back = calendar.dateComponents([.year, .month, .day], from: date)
+            guard back.year == stored.year, back.month == stored.month, back.day == stored.day else { return nil }
+        }
+        return date
+    }
+
+    /// The Gregorian year/month/day of a stored date-only due. A due carrying another calendar is
+    /// converted at noon UTC, where every calendar Foundation offers is on the same day.
+    private static func gregorianDay(of stored: DateComponents) -> DateComponents? {
+        guard let other = stored.calendar, other.identifier != .gregorian else {
+            return DateComponents(year: stored.year, month: stored.month, day: stored.day)
+        }
+        let utc = TimeZone(identifier: "UTC")!
+        var calendar = other
+        calendar.timeZone = utc
+        guard let noon = calendar.date(from: DateComponents(era: stored.era, year: stored.year, month: stored.month,
+                                                            day: stored.day, hour: 12)) else { return nil }
+        return Calendar.gregorian(in: utc).dateComponents([.year, .month, .day], from: noon)
     }
 
     private static func isCalendarDay(_ day: DateComponents) -> Bool {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let calendar = Calendar.gregorian(in: TimeZone(identifier: "UTC")!)
         guard let date = calendar.date(from: day) else { return false }
         let back = calendar.dateComponents([.year, .month, .day], from: date)
         return back.year == day.year && back.month == day.month && back.day == day.day

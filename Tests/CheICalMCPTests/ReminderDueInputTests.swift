@@ -177,4 +177,43 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertTrue(flat.contains("reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)"), flat)
         XCTAssertFalse(flat.contains("timeIntervalSince"), "the minute window lives in ReminderDueInput.matches only")
     }
+
+    // MARK: - #299: days compare as days
+
+    // Pacific/Apia skipped 2011-12-30: it has no midnight, and Foundation hands back the next
+    // day's, so as instants the two days are the same. As days they are not.
+    private let apia = TimeZone(identifier: "Pacific/Apia")!
+
+    func testTwoDaysOnASkippedDayAreDifferentDays() {
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: day(2011, 12, 31), hostZone: apia))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 31)), existing: day(2011, 12, 30), hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: day(2011, 12, 30), hostZone: apia))
+    }
+
+    // A day without a midnight in the host zone does not match a reminder stored at 00:00 of the
+    // next day; the day that has one still matches as before.
+    func testASkippedDayDoesNotMatchTheNextDaysMidnight() {
+        var nextMidnight = DateComponents(year: 2011, month: 12, day: 31, hour: 0, minute: 0)
+        nextMidnight.timeZone = apia
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2011, 12, 30)), existing: nextMidnight, hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2011, 12, 31)), existing: nextMidnight, hostZone: apia))
+    }
+
+    // The same rule from the other side: a timed request at 00:00 of 2011-12-31 is not a stored
+    // date-only 2011-12-30.
+    func testATimedMidnightDoesNotMatchAStoredSkippedDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = apia
+        let midnight = try XCTUnwrap(calendar.date(from: day(2011, 12, 31)))
+        XCTAssertFalse(ReminderDueInput.matches(.timed(midnight), existing: day(2011, 12, 30), hostZone: apia))
+        XCTAssertTrue(ReminderDueInput.matches(.timed(midnight), existing: day(2011, 12, 31), hostZone: apia))
+    }
+
+    // A stored date-only due that carries another calendar is the same day counted in Gregorian.
+    func testAStoredDayInAnotherCalendarIsTheSameGregorianDay() {
+        var stored = DateComponents(year: 2569, month: 10, day: 18)
+        stored.calendar = Calendar(identifier: .buddhist)
+        XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored))
+        XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 19)), existing: stored))
+    }
 }

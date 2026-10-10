@@ -1741,12 +1741,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // timeZone == nil ("floating"); native EventKit on Mac/iPhone
             // resolves floating as local but iCloud Web does not — the spec
             // contract is "always store with explicit timezone".
-            var dueComponents = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute],
-                from: due
-            )
-            dueComponents.timeZone = TimeZone.current
-            reminder.dueDateComponents = dueComponents
+            // #299: built by the same function as `update_reminder`'s timed due, in the
+            // Gregorian calendar, not the host's region calendar.
+            reminder.dueDateComponents = ReminderDateSync.timedDueComponents(for: due)
         }
 
         // Add alarms

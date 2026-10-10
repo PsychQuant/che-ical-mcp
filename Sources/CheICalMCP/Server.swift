@@ -19,9 +19,15 @@ func safeDateFromComponents(_ components: DateComponents?) -> Date? {
     clean.second = dc.second
     clean.timeZone = dc.timeZone
 
-    // If we have enough day-based fields, use them
+    // If we have enough day-based fields, use them. #299: in the calendar the components carry,
+    // else in the Gregorian calendar EventKit's components are in, never the host's region
+    // calendar; the same rule as `ReminderDueInput`, `ReminderDueValue.chronologicalDate` and
+    // `UndoPostStateFields`. A zone the components carry wins over the host zone.
     if dc.year != nil && dc.month != nil && dc.day != nil {
-        return Calendar.current.date(from: clean)
+        var calendar = Calendar(identifier: dc.calendar?.identifier ?? .gregorian)
+        calendar.timeZone = .current
+        clean.era = dc.era
+        return calendar.date(from: clean)
     }
 
     // Fallback: if no day-based fields, use the original .date
@@ -3049,64 +3055,12 @@ class CheICalMCPServer {
         }
     }
 
-    /// Parse flexible date formats, supporting:
-    /// 1. Full ISO8601: "2026-02-06T14:00:00+08:00"
-    /// 2. ISO8601 without timezone: "2026-02-06T14:00:00" (assumes system timezone)
-    /// 3. Date only: "2026-02-06" (00:00:00 system timezone)
-    /// 4. Time only: "14:00" or "14:00:00" (today at that time)
-    /// Parse a flexible date string. When `defaultTimezone` is provided and the
-    /// string has no explicit offset, interpret the time in that timezone instead
-    /// of the system timezone. Strings with explicit offsets (+XX:XX or Z) are
-    /// always parsed correctly regardless of this parameter.
+    /// Parse a flexible date string (`FlexibleDate.parse`: ISO8601 with an offset, a date-time
+    /// without one, a bare date, or a time today). When `defaultTimezone` is provided and the
+    /// string has no explicit offset, the time is read in that timezone instead of the system
+    /// timezone. #299: read as a Gregorian date, whatever the host's region calendar.
     private func parseFlexibleDate(_ string: String, defaultTimezone: TimeZone? = nil) throws -> Date {
-        // 1. Full ISO8601 (with timezone) — offset is explicit, no ambiguity
-        if let date = dateFormatter.date(from: string) {
-            return date
-        }
-
-        let tz = defaultTimezone ?? TimeZone.current
-
-        // 2. ISO8601 without timezone (e.g., "2026-02-06T14:00:00")
-        if string.contains("T") && !string.contains("+") && !string.contains("Z") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            formatter.timeZone = tz
-            if let date = formatter.date(from: string) {
-                return date
-            }
-        }
-
-        // 3. Date only (e.g., "2026-02-06")
-        if string.count == 10 && string.contains("-") && !string.contains("T") {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            formatter.timeZone = tz
-            if let date = formatter.date(from: string) {
-                return date
-            }
-        }
-
-        // 4. Time only (e.g., "14:00" or "14:00:00")
-        if !string.contains("-") && string.contains(":") {
-            let components = string.split(separator: ":")
-            if components.count >= 2,
-               let hour = Int(components[0]),
-               let minute = Int(components[1]) {
-                let second = components.count >= 3 ? Int(components[2]) ?? 0 : 0
-                var cal = Calendar.current
-                cal.timeZone = tz
-                let now = Date()
-                var dc = cal.dateComponents([.year, .month, .day], from: now)
-                dc.hour = hour
-                dc.minute = minute
-                dc.second = second
-                if let date = cal.date(from: dc) {
-                    return date
-                }
-            }
-        }
-
-        throw ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
+        try FlexibleDate.parse(string, defaultTimezone: defaultTimezone, iso: dateFormatter)
     }
 
     /// #267: a reminder `due_date`. A bare `YYYY-MM-DD` is a date-only reminder; anything else is

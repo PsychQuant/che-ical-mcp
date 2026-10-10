@@ -16,7 +16,7 @@ final class SafeDateFromComponentsTests: XCTestCase {
         let result = safeDateFromComponents(dc)
         XCTAssertNotNil(result)
 
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         let comps = cal.dateComponents([.year, .month, .day], from: result!)
         XCTAssertEqual(comps.year, 2026)
         XCTAssertEqual(comps.month, 4)
@@ -35,7 +35,7 @@ final class SafeDateFromComponentsTests: XCTestCase {
         let result = safeDateFromComponents(dc)
         XCTAssertNotNil(result)
 
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: result!)
         XCTAssertEqual(comps.year, 2026)
         XCTAssertEqual(comps.month, 4)
@@ -62,7 +62,7 @@ final class SafeDateFromComponentsTests: XCTestCase {
         let result = safeDateFromComponents(dc)
         XCTAssertNotNil(result)
 
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         let comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: result!)
         // Must use day-based fields, NOT week-based
         XCTAssertEqual(comps.year, 2026)
@@ -85,7 +85,7 @@ final class SafeDateFromComponentsTests: XCTestCase {
         let result = safeDateFromComponents(dc)
         XCTAssertNotNil(result)
 
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         let comps = cal.dateComponents([.year, .month, .day], from: result!)
         XCTAssertEqual(comps.day, 5, "Date should be April 5, not shifted by weekday")
     }
@@ -117,7 +117,7 @@ final class SafeDateFromComponentsTests: XCTestCase {
         XCTAssertNotNil(result)
 
         // Verify the date resolves correctly in the specified timezone
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         var calWithTZ = cal
         calWithTZ.timeZone = TimeZone(identifier: "America/Toronto")!
         let comps = calWithTZ.dateComponents([.year, .month, .day, .hour], from: result!)
@@ -139,8 +139,48 @@ final class SafeDateFromComponentsTests: XCTestCase {
         let result = safeDateFromComponents(dc)
         XCTAssertNotNil(result)
 
-        let cal = Calendar.current
+        let cal = Calendar.gregorian(in: .current)   // #299: EventKit components are Gregorian
         let comps = cal.dateComponents([.second], from: result!)
         XCTAssertEqual(comps.second, 45)
+    }
+
+    // MARK: - #299: the Gregorian calendar, not the host's
+
+    private func gregorian(_ zone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        return calendar
+    }
+
+    // EventKit's components are Gregorian: 2026 reads as the Gregorian 2026, in the zone they carry.
+    func testGregorianComponentsReadAsTheGregorianInstant() throws {
+        let taipei = TimeZone(identifier: "Asia/Taipei")!
+        let dc = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 10, hour: 9, minute: 30)
+        let expected = try XCTUnwrap(gregorian(taipei).date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 9, minute: 30)))
+        XCTAssertEqual(safeDateFromComponents(dc), expected)
+    }
+
+    // A calendar attached to the components is the one their year is counted in, as
+    // `ReminderDueInput`, `ReminderDueValue.chronologicalDate` and `UndoPostStateFields` read it.
+    func testAnAttachedCalendarIsTheOneTheYearIsCountedIn() throws {
+        let taipei = TimeZone(identifier: "Asia/Taipei")!
+        var dc = DateComponents(timeZone: taipei, year: 2569, month: 10, day: 10, hour: 9, minute: 30)
+        dc.calendar = Calendar(identifier: .buddhist)
+        let expected = try XCTUnwrap(gregorian(taipei).date(from: DateComponents(year: 2026, month: 10, day: 10, hour: 9, minute: 30)))
+        XCTAssertEqual(safeDateFromComponents(dc), expected)
+    }
+
+    // A date-only value is 00:00 of its day in the host zone, as before.
+    func testDateOnlyComponentsAreMidnightInTheHostZone() throws {
+        let expected = try XCTUnwrap(gregorian(.current).date(from: DateComponents(year: 2026, month: 4, day: 5)))
+        XCTAssertEqual(safeDateFromComponents(DateComponents(year: 2026, month: 4, day: 5)), expected)
+    }
+
+    // The host calendar can be Buddhist, ROC, Japanese or Islamic, and cannot be switched inside
+    // the test process, so the reader is pinned not to consult it.
+    func testTheReaderDoesNotUseTheHostCalendar() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func safeDateFromComponents(", in: try SourcePins.source("Server.swift")))
+        XCTAssertFalse(body.contains("Calendar.current"), body)
+        XCTAssertFalse(body.contains("Calendar.autoupdatingCurrent"), body)
     }
 }
