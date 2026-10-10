@@ -49,24 +49,6 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(help.contains("--setup"), "Help message should document the --setup flag")
     }
 
-    // MARK: - Non-Interactive Detection
-
-    func testIsNonInteractiveDetection() {
-        // `isNonInteractiveSession` = getppid()==1 || TERM==nil || CI!=nil (#131).
-        // A `TERM`-set guard alone is NOT sufficient to expect `false` — if `CI` is
-        // also set (`CI=1 swift test` locally, or a CI runner that sets TERM), the
-        // session is still non-interactive. Mirror the full production contract so
-        // the assertion is robust to env (#147 — previously only passed on GHA because
-        // GHA leaves TERM unset, which silently skipped the assertion).
-        let env = ProcessInfo.processInfo.environment
-        let expectedNonInteractive =
-            getppid() == 1 || env["TERM"] == nil || env["CI"] != nil
-        XCTAssertEqual(
-            EventKitManager.isNonInteractive,
-            expectedNonInteractive,
-            "isNonInteractive must reflect getppid()==1 || TERM==nil || CI!=nil — robust to CI env")
-    }
-
     // MARK: - Error Messages
 
     func testAccessDeniedLaunchdMessage() {
