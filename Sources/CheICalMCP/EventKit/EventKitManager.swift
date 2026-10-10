@@ -1683,8 +1683,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// #301: the duplicate reported among the matches. A list can hold both a date-only and a
     /// 00:00 timed reminder with the same title that match a bare date; which one the store
-    /// fetches first must not decide which is reported, or whether the skip's note fires. A match
-    /// of the request's own kind wins (a date-only one for a bare date, a timed one for a time),
+    /// fetches first must not decide which kind is reported, or whether the skip's note fires (among
+    /// several matches of one kind, the first fetched is still reported). A match of the request's own kind wins (a date-only one for a bare date, a timed one for a time),
     /// else the first: a bare date that has an exact date-only duplicate reports that one with
     /// no note, and gets the note only when the reminder that matched has a time (PR #307
     /// verify round 2).
