@@ -43,7 +43,7 @@ read-after-write confound）。三表面特性表、wrapper failure-cache 坑與
 
 | Filename pattern | Layer | What it tests |
 |------------------|-------|---------------|
-| `<Subject>Tests.swift` | Pure unit | Free functions / value types / pure helpers. No `FakeEventKitManager` and no `EventKitManager` *instances* (static-utility access like `EventKitManager.isNonInteractive` in `SetupCommandTests` is fine — it's a type-level probe, not handler integration). Examples: `BatchDeleteFilterTests`, `ReminderCleanupTests`, `EventKitErrorSanitizerTests`, `ParticipantFormattingTests`, `SetupCommandTests`. |
+| `<Subject>Tests.swift` | Pure unit | Free functions / value types / pure helpers. No `FakeEventKitManager` and no `EventKitManager` *instances* (static-utility access like `EventKitManager.setupCommandHint(binaryPath:)` / `resolvedSetupCommandHint()` in `SetupCommandTests` is fine — it's a type-level probe, not handler integration). Examples: `BatchDeleteFilterTests`, `ReminderCleanupTests`, `EventKitErrorSanitizerTests`, `ParticipantFormattingTests`, `SetupCommandTests`. |
 | `<Subject>HandlerTests.swift` | Handler integration | `handle*` methods from `CheICalMCPServer` driven through `FakeEventKitManager`-equivalent doubles. Tests the handler's full sanitize → dispatch → response shape, not the EventKit manager itself. **Canonical example: [`CleanupHandlerTests.swift`](Tests/CheICalMCPTests/CleanupHandlerTests.swift)** — copy its structure when adding a new handler test. |
 | `<Subject>DispatchTests.swift` | Outer-catch / dispatch | `handleToolCallForTesting` outer-catch and the dispatch JSON envelope. Probes what surfaces when a handler throws an unexpected error type. Examples: `OuterCatchDispatchTests`, `DispatchRoundTripTests`. |
 
