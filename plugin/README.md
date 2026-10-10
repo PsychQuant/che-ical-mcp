@@ -121,7 +121,7 @@ Or just ask naturally:
 - `find_duplicate_events` — surface duplicates for cleanup
 
 ### Reminders (10)
-- `list_reminders` / `search_reminders` / `list_reminder_tags` — list/search items carry `has_recurrence`, `recurrence_rules` and a `due` object (#194)
+- `list_reminders` / `search_reminders` / `list_reminder_tags` — list/search items carry `has_recurrence`, `recurrence_rules` and a `due` object (#194); a date-only due is overdue only once its day has ended in the host time zone, and its `due_date` strings read as 00:00 of that day (#297, behavior change)
 - `create_reminder` / `update_reminder` / `complete_reminder` / `delete_reminder` — `complete_reminder` returns `operation` (write outcome), `observed` and `next_occurrence`; read `operation.status`, not legacy `is_completed` (#194); `update_reminder` moves the start date and absolute-date alarms with `due_date` and reports them in `date_sync` (#227); `realign_to_due` puts them onto the due date instead and `date_sync.aligned` says whether they agree with it (#235); a bare `YYYY-MM-DD` `due_date` makes the reminder date-only instead: no time on the due or the start, and absolute-date alarms removed (#267); a bare-date `create_reminder` / `create_reminders_batch` row returns `date_sync` with `aligned` judged on the saved reminder, and a written due that reads back missing gives `aligned: false` (#301)
 - `create_reminders_batch` / `delete_reminders_batch` — batch ops; one `undo` recreates the reminders a `delete_reminders_batch` call deleted (#243)
 - `cleanup_completed_reminders` — single-call cleanup of all completed reminders (`dry_run=true` default; new in v1.7.2); one `undo` recreates what it deleted (#243)
