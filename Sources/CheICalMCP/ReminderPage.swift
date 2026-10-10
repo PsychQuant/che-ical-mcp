@@ -19,6 +19,8 @@ struct ReminderPage: Sendable {
     let totalFetched: Int
     let totalAfterFilter: Int
     let referenceDate: Date
+    /// #297: the zone a date-only due's day is read in (`ReminderDueReading`).
+    var zone: TimeZone = .current
 }
 
 struct ReminderPageQuery: Sendable {
@@ -27,11 +29,14 @@ struct ReminderPageQuery: Sendable {
     var tag: String? = nil
     var limit: Int? = nil
     var now: Date? = nil
+    /// #297: the host zone, injectable for tests.
+    var zone: TimeZone? = nil
 
     func page<T: ReminderSelectable>(_ input: [T], snapshot: (T) -> ReminderReadSnapshot) -> ReminderPage {
         let referenceDate = now ?? Date()
+        let zone = zone ?? .current
         var selected = input.filter { value in
-            if overdueOnly && (value.isCompleted || !(safeDateFromComponents(value.dueDateComponents).map { $0 < referenceDate } ?? false)) {
+            if overdueOnly && (value.isCompleted || !(ReminderDueReading.isOverdue(value.dueDateComponents, now: referenceDate, zone: zone) ?? false)) {
                 return false
             }
             if let tag {
@@ -49,17 +54,12 @@ struct ReminderPageQuery: Sendable {
                 case "priority": return (a.priority == 0 ? Int.max : a.priority) < (b.priority == 0 ? Int.max : b.priority)
                 case "title": return (a.selectionTitle ?? "").localizedCaseInsensitiveCompare(b.selectionTitle ?? "") == .orderedAscending
                 case "creation_date": return (a.creationDate ?? .distantPast) < (b.creationDate ?? .distantPast)
-                default:
-                    let first = safeDateFromComponents(a.dueDateComponents)
-                    let second = safeDateFromComponents(b.dueDateComponents)
-                    guard let first else { return false }
-                    guard let second else { return true }
-                    return first < second
+                default: return ReminderDueReading.sortsBefore(a.dueDateComponents, b.dueDateComponents, zone: zone)
                 }
             }
         }
         let page = limit.map { Array(selected.prefix(max(0, $0))) } ?? selected
-        return ReminderPage(reminders: page.map(snapshot), totalFetched: input.count, totalAfterFilter: count, referenceDate: referenceDate)
+        return ReminderPage(reminders: page.map(snapshot), totalFetched: input.count, totalAfterFilter: count, referenceDate: referenceDate, zone: zone)
     }
 }
 

@@ -85,7 +85,7 @@ enum ReminderDueInput: Sendable, Equatable {
 
     /// The Gregorian year/month/day of a stored date-only due. A due carrying another calendar is
     /// converted at noon UTC, where every calendar Foundation offers is on the same day.
-    private static func gregorianDay(of stored: DateComponents) -> DateComponents? {
+    static func gregorianDay(of stored: DateComponents) -> DateComponents? {
         guard let other = stored.calendar, other.identifier != .gregorian else {
             return DateComponents(year: stored.year, month: stored.month, day: stored.day)
         }

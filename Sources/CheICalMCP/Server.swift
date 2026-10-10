@@ -483,7 +483,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). A date-only due (due.time null) is a day: is_overdue becomes true only once that day has ended in the host time zone, its due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -491,12 +491,12 @@ class CheICalMCPServer {
                         "filter": .object([
                             "type": .string("string"),
                             "enum": .array([.string("all"), .string("incomplete"), .string("completed"), .string("overdue")]),
-                            "description": .string("Filter reminders: 'all' (default), 'incomplete', 'completed', 'overdue' (incomplete with past due date). Takes priority over 'completed' parameter.")
+                            "description": .string("Filter reminders: 'all' (default), 'incomplete', 'completed', 'overdue' (incomplete with past due date; a date-only due only once its day has ended in the host time zone). Takes priority over 'completed' parameter.")
                         ]),
                         "sort": .object([
                             "type": .string("string"),
                             "enum": .array([.string("due_date"), .string("creation_date"), .string("priority"), .string("title")]),
-                            "description": .string("Sort by: 'due_date' (default, nulls last), 'creation_date', 'priority' (high→low), 'title' (alphabetical)")
+                            "description": .string("Sort by: 'due_date' (default, nulls last; a date-only due sorts at the start of its day, before the timed dues of that day), 'creation_date', 'priority' (high→low), 'title' (alphabetical)")
                         ]),
                         "limit": .object([
                             "type": .string("integer"),
@@ -662,7 +662,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger).",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). For a date-only due (due.time null), due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1619,9 +1619,13 @@ class CheICalMCPServer {
 
     /// #231: start date and time-based alarms for list_reminders / search_reminders.
     /// `start` has the `due` shape; `start_date` / `start_date_local` mirror `due_date` / `due_date_local`.
+    /// #297: under a date-only due, a 00:00 floating start reads as a day in `start`
+    /// (`ReminderDueReading.startAsRead`); the strings keep their shape (host-zone midnight).
     private func reminderScheduleFields(_ reminder: ReminderReadSnapshot) -> [String: Any] {
         var fields: [String: Any] = [
-            "start": ReminderDueValue(components: reminder.startDateComponents)?.dictionary ?? NSNull(),
+            // #297: under a date-only due, the 00:00 floating start the store hands back is a day.
+            "start": ReminderDueValue(components: ReminderDueReading.startAsRead(reminder.startDateComponents,
+                                                                                 due: reminder.dueDateComponents))?.dictionary ?? NSNull(),
             // Sorted and filtered here too, so the order holds however the snapshot was built.
             "alarms": ReminderReadSnapshot.Alarm.listed(reminder.alarms).map { [self] alarm -> [String: Any] in
                 switch alarm {
@@ -1692,7 +1696,8 @@ class CheICalMCPServer {
             if let dueDate = safeDateFromComponents(reminder.dueDateComponents) {
                 dict["due_date"] = dateFormatter.string(from: dueDate)
                 dict["due_date_local"] = localDateFormatter.string(from: dueDate)
-                dict["is_overdue"] = !reminder.isCompleted && dueDate < now
+                dict["is_overdue"] = !reminder.isCompleted
+                    && ReminderDueReading.isOverdue(reminder.dueDateComponents, now: now, zone: page.zone) == true
             }
             if let completionDate = reminder.completionDate {
                 dict["completion_date"] = dateFormatter.string(from: completionDate)
