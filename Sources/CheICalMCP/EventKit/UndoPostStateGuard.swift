@@ -149,6 +149,28 @@ enum UndoPostState {
             || sameOrSuffixed(occurrence.externalIdentifier, series.externalIdentifier)
     }
 
+    /// The start the series' rule gave an occurrence, before any edit of its time (#311).
+    ///
+    /// `EKEvent.occurrenceDate` is not reliable for that in a long-lived store: on device
+    /// (2026-10-10) a detached occurrence moved by 30 minutes reported `occurrenceDate` equal to
+    /// its new start, so "moved off its slot" never fired and the create-undo deleted the series.
+    /// A fresh store reads the original value. The identifier carries it on its own: an edited
+    /// occurrence reads back as `<series id>/RID=<seconds since 2001-01-01 UTC>` (iCloud;
+    /// `RID=837050400` was 2027-07-12 10:00 +08:00, the slot before the move), on the event
+    /// identifier or the external one. That value wins when either identifier has it, otherwise
+    /// `occurrenceDate`. Only the reference-date reading of the suffix is known; a store that
+    /// writes another unit gives a slot far from the start, which counts as moved, the side that
+    /// refuses.
+    static func originalSlot(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?) -> Date? {
+        for identifier in [eventIdentifier, externalIdentifier] {
+            guard let identifier, let range = identifier.range(of: "/RID=", options: .backwards) else { continue }
+            let digits = identifier[range.upperBound...]
+            guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }), let seconds = TimeInterval(digits) else { continue }
+            return Date(timeIntervalSinceReferenceDate: seconds)
+        }
+        return occurrenceDate
+    }
+
     /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
     /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {
@@ -228,7 +250,10 @@ enum UndoPostState {
 
 extension UndoPostState.OccurrenceFace {
     init(_ event: EKEvent) {
-        self.init(slot: event.occurrenceDate, event: EventSnapshot(from: event, includeRecurrence: false))
+        self.init(slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
+                                                   externalIdentifier: event.calendarItemExternalIdentifier,
+                                                   occurrenceDate: event.occurrenceDate),
+                  event: EventSnapshot(from: event, includeRecurrence: false))
     }
 }
 
