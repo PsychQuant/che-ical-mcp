@@ -473,9 +473,10 @@ final class NewObjectSaveTests: XCTestCase {
         // create_reminder marks the store for a refresh, builds the result and records the undo
         // entry; delete-undo marks the refresh and reports the restore (its record is consumed).
         // The names of fields the store holds differently travel with the success: into the
-        // create's result, and onto the undo message.
+        // create's result, and onto the undo message. #301: a date-only create is read back in
+        // between (`confirmSaved`, which does not throw), and its report rides with the result.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?var dateSync: ?ReminderDateSync\.Report\? ?if let dayReport ?\{ ?dateSync = ReminderDateSync\.confirmSaved\( ?reminder ?, ?report: ?dayReport ?, ?save: ?\{ ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?\} ?\) ?\} ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.

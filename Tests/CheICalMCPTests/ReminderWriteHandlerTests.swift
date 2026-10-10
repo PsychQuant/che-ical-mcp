@@ -7,10 +7,19 @@ private actor WriteFake: ReminderWriteSource {
     var updated: [ReminderUpdateRequest] = []
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult {
         created.append(request)
+        let isDuplicate = request.title == "duplicate" || request.title == "duplicate-timed"
+        // #301: a created date-only reminder carries the read-back report; "unconfirmed" reads back
+        // not aligned.
+        var dateSync: ReminderDateSync.Report?
+        if case .day? = request.due, !isDuplicate {
+            dateSync = ReminderDateSync.Report(startDate: .set, absoluteAlarmsShifted: 0, absoluteAlarmsRemoved: 0,
+                                               aligned: request.title != "unconfirmed")
+        }
         return .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: request.notes),
-                     isDuplicate: request.title == "duplicate" || request.title == "duplicate-timed",
+                     isDuplicate: isDuplicate,
                      storeDiffers: request.title == "differs" ? ["due", "title"] : [],
-                     duplicateHasTime: request.title == "duplicate-timed")
+                     duplicateHasTime: request.title == "duplicate-timed",
+                     dateSync: dateSync)
     }
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         updated.append(request)
@@ -254,5 +263,53 @@ final class ReminderWriteHandlerTests: XCTestCase {
     func testCreateReminderReportsWhetherTheDuplicateHasATime() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         XCTAssertTrue(SourceScan.collapsingWhitespace(body).contains("isDuplicate: true, storeDiffers: [], duplicateHasTime: existing.dueDateComponents?.hour != nil)"), body)
+    }
+
+    // MARK: - #301: a date-only create says whether the saved reminder reads back as asked
+
+    func testADateOnlyCreateReportsDateSync() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        for (title, aligned) in [("new", true), ("unconfirmed", false)] {
+            let single = try object(await server.executeToolCall(name: "create_reminder", arguments: [
+                "title": .string(title), "due_date": .string("2026-10-18")]))
+            XCTAssertEqual(single["action"] as? String, "created")
+            let sync = try XCTUnwrap(single["date_sync"] as? [String: Any], title)
+            XCTAssertEqual(sync["aligned"] as? Bool, aligned, title)
+            XCTAssertEqual(sync["start_date"] as? String, "set", title)
+        }
+        let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: [
+            "reminders": .array([.object(["title": .string("new"), "due_date": .string("2026-10-18")]),
+                                 .object(["title": .string("unconfirmed"), "due_date": .string("2026-10-18")]),
+                                 .object(["title": .string("new"), "due_date": .string("2026-10-18T09:00:00+08:00")]),
+                                 .object(["title": .string("duplicate"), "due_date": .string("2026-10-18")])])]))
+        let rows = try XCTUnwrap(batch["results"] as? [[String: Any]])
+        XCTAssertEqual((rows[0]["date_sync"] as? [String: Any])?["aligned"] as? Bool, true)
+        XCTAssertEqual((rows[1]["date_sync"] as? [String: Any])?["aligned"] as? Bool, false)
+        XCTAssertNil(rows[2]["date_sync"], "a timed create carries none")
+        XCTAssertNil(rows[3]["date_sync"], "a skipped row carries none")
+    }
+
+    func testATimedOrDuplicateCreateCarriesNoDateSync() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        for (title, due) in [("new", "2026-10-18T09:00:00+08:00"), ("duplicate", "2026-10-18"), ("new", nil)] as [(String, String?)] {
+            var args: [String: Value] = ["title": .string(title)]
+            if let due { args["due_date"] = .string(due) }
+            let result = try object(await server.executeToolCall(name: "create_reminder", arguments: args))
+            XCTAssertNil(result["date_sync"], "\(title) \(due ?? "no due")")
+        }
+    }
+
+    // The day's report is judged on the saved reminder, not thrown away (source pin: the store path
+    // needs a real EKEventStore).
+    func testCreateReminderJudgesTheDayOnTheSavedReminder() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        let flat = SourceScan.collapsingWhitespace(body)
+        XCTAssertFalse(flat.contains("_ = ReminderDateSync.setDueDay"), flat)
+        XCTAssertTrue(flat.contains("dayReport = ReminderDateSync.setDueDay(reminder, to: day)"), flat)
+        XCTAssertTrue(flat.contains("ReminderDateSync.confirmSaved(reminder, report: dayReport, save: {}, reload: { reminder.refresh() }, rollback: {})"), flat)
+        XCTAssertTrue(flat.contains("dateSync: dateSync"), flat)
+        let save = try XCTUnwrap(flat.range(of: "saveNewReminder("))
+        let confirm = try XCTUnwrap(flat.range(of: "ReminderDateSync.confirmSaved("))
+        XCTAssertLessThan(save.lowerBound, confirm.lowerBound, "judged after the save")
     }
 }

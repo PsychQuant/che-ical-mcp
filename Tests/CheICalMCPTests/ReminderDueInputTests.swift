@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -166,7 +167,7 @@ final class ReminderDueInputTests: XCTestCase {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
-        XCTAssertTrue(flat.contains("if case .day(let day)? = due { _ = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
+        XCTAssertTrue(flat.contains("if case .day(let day)? = due { dayReport = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
         XCTAssertTrue(flat.contains("findDuplicateReminder(title: title, due: due, calendar: calendar)"), flat)
     }
 
@@ -175,6 +176,8 @@ final class ReminderDueInputTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
         XCTAssertTrue(flat.contains("reminder.title == title && ReminderDueInput.matches(due, existing: reminder.dueDateComponents)"), flat)
+        // #301: the choice among matches does not depend on the store's fetch order.
+        XCTAssertTrue(flat.contains("Self.preferringTimed("), flat)
         XCTAssertFalse(flat.contains("timeIntervalSince"), "the minute window lives in ReminderDueInput.matches only")
     }
 
@@ -215,5 +218,31 @@ final class ReminderDueInputTests: XCTestCase {
         stored.calendar = Calendar(identifier: .buddhist)
         XCTAssertTrue(ReminderDueInput.matches(.day(day(2026, 10, 18)), existing: stored))
         XCTAssertFalse(ReminderDueInput.matches(.day(day(2026, 10, 19)), existing: stored))
+    }
+
+    // MARK: - #301: which duplicate is reported does not depend on fetch order
+
+    private func reminder(_ due: DateComponents) -> EKReminder {
+        let r = EKReminder(eventStore: EKEventStore())
+        r.title = "R"
+        r.dueDateComponents = due
+        return r
+    }
+
+    func testATimedMatchIsPreferredWhateverTheOrder() throws {
+        let dateOnly = reminder(day(2026, 10, 18))
+        var midnight = day(2026, 10, 18)
+        midnight.hour = 0
+        midnight.minute = 0
+        let timed = reminder(midnight)
+        XCTAssertTrue(EventKitManager.preferringTimed([dateOnly, timed]) === timed)
+        XCTAssertTrue(EventKitManager.preferringTimed([timed, dateOnly]) === timed)
+    }
+
+    func testWithoutATimedMatchTheFirstIsTaken() {
+        let first = reminder(day(2026, 10, 18))
+        let second = reminder(day(2026, 10, 18))
+        XCTAssertTrue(EventKitManager.preferringTimed([first, second]) === first)
+        XCTAssertNil(EventKitManager.preferringTimed([]))
     }
 }

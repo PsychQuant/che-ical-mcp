@@ -510,7 +510,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "create_reminder",
-                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
+                description: "Create a new reminder. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder: a date with no time, as Reminders.app makes one; with a time it is a timed reminder in the host time zone. A bare-date create returns date_sync, as update_reminder does, with aligned judged on the saved reminder (false when the due reads back with a time or missing, or the reminder cannot be re-read). The duplicate check counts a bare date as 00:00 of that day, so a reminder with the same title at 00:00 of that day (how earlier versions stored a bare date) makes the call answer skipped, and its note says to use update_reminder with the bare date to make that one date-only. If the save reports an error but the reminder turns out to be saved, the call succeeds; when the store then holds some of its fields differently, the response's store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and note says to check the reminder and that creating it again with the same parameters may make a second copy.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1769,6 +1769,8 @@ class CheICalMCPServer {
         if !tags.isEmpty {
             fields["tags"] = tags
         }
+        // #301: a date-only create says whether the saved reminder reads back as asked.
+        if let dateSync = result.dateSync { fields["date_sync"] = dateSync.dictionary }
         fields.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
         return try actionResult(fields)
     }
@@ -2025,6 +2027,8 @@ class CheICalMCPServer {
                 if result.isDuplicate {
                     entry["skipped"] = true
                     if let note = Self.dateOnlyDuplicateNote(due: batchDue, result: result) { entry["note"] = note }
+                } else if let dateSync = result.dateSync {
+                    entry["date_sync"] = dateSync.dictionary   // #301
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)

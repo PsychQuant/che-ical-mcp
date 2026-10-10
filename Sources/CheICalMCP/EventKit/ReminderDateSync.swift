@@ -275,6 +275,13 @@ enum ReminderDateSync {
     /// - `aligned` is computed on what was read back, at the precision the caller asked for. The
     ///   other fields describe the write and are kept. A date-only write (#267) whose due reads back
     ///   with a time is not aligned.
+    /// - #301: a written due that reads back as nil (after the first read, or for a timed due after
+    ///   the fallback's second read) is not aligned. Without this, `isAligned` returned nil for
+    ///   it and the response left `aligned` out, as if the update had cleared the due. The timed
+    ///   first read still runs the fallback, which treats a missing due as one that lost its time.
+    /// - `create_reminder` (#301) calls this too for a date-only create, with a no-op `save` and
+    ///   `rollback` (a date-only write never runs the fallback). A create whose save threw but
+    ///   committed may not re-read; it then reports `aligned: false` ("not confirmed").
     ///
     /// What this cannot see is anything EventKit does not return. The duplicate alarm rows that
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
@@ -291,6 +298,12 @@ enum ReminderDateSync {
             confirmed.aligned = false
             return confirmed
         }
+        // #301: a due was written and none came back. That is not "the update leaves no due date"
+        // (that case returned above): not aligned. Checked again after the fallback below.
+        if reminder.dueDateComponents == nil && !requestedTime {
+            confirmed.aligned = false
+            return confirmed
+        }
         if requestedTime && dueLostTimeOrZone(reminder.dueDateComponents) {
             log("update_reminder: the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
@@ -300,7 +313,7 @@ enum ReminderDateSync {
                 rollback()
                 log("update_reminder: saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
             }
-            guard reload() else {
+            guard reload(), reminder.dueDateComponents != nil else {
                 confirmed.aligned = false
                 return confirmed
             }
