@@ -469,7 +469,7 @@ macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**�
 
 ## 技術細節
 
-- **目前版本**：v1.19.0
+- **目前版本**：v1.20.0
 - **框架**：[MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **行事曆 API**：EventKit（原生 macOS 框架）
 - **傳輸**：stdio
@@ -482,6 +482,7 @@ macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**�
 
 | 版本 | 變更 |
 |------|------|
+| v1.20.0 | **純日期提醒事項、不覆蓋他人改動的 undo、讀取附 start date 與鬧鐘**（#231/#235/#236/#243/#247/#262/#267/#297/#299/#301/#311）：`YYYY-MM-DD` 的 `due_date` 會建立純日期提醒，純日期提醒要到當天結束才算逾期；`create_reminder` / `update_reminder` 回報 `date_sync`（含 `aligned`），`update_reminder` 新增 `realign_to_due`；`list_reminders` / `search_reminders` 回傳 `start` 與 `alarms`；提醒事項日期不論地區設定一律用西曆讀寫；`undo` / `redo` 遇到操作之後在別處改過的內容會拒絕覆蓋，動過循環事件的 `update_event` 不再 undo，場次被單獨編輯過（含改時間）的建立系列不會被刪；undo 保留位置／email／絕對時間鬧鐘、循環規則、URL、忙閒狀態與清單；批次刪除會記錄 undo。**BREAKING（行為）**：純日期 `due_date`、逾期規則、undo / redo 的拒絕、`redo` 除完成以外不寫入。 |
 | v1.19.0 | **原地搬移事件、提醒事項日期同步、經驗證的 self-update**（#223/#225/#226/#227）：`move_events_batch` 改成直接換事件的日曆，不再複製再刪除，循環規則、與會者等所有欄位都保留（只有跨帳號時 ID 才改變；循環事件用 `span` / `occurrence_dates`；每筆回報 `method` / `id_changed` / `not_carried_over`；複製再刪除只作為有條件的後備）；`update_reminder` 改到期日時，start date 與絕對時間鬧鐘一起移動（Reminders.app 顯示的是鬧鐘日期），回應附 `date_sync`，`clear_due_date` 一併清掉，undo 可還原；`--self-update` 只安裝 Developer ID 簽章並經公證的 binary，共用骨架改用 `che-mcp-kit-swift` 0.2.x。**BREAKING（行為）**：循環事件沒給 `occurrence_date` 會被拒絕；`copy_event` 不再搬移循環事件；`event_ids` 中的非字串項目會被拒絕。 |
 | v1.18.0 | **提醒事項 undo/redo 完整性、明確的 `discard_id`、全面嚴格 boolean**（#196/#197/#198/#199/#202/#203/#206/#207/#208/#209/#211/#212/#214/#215/#216）：undo 寫回記錄下來的 `completion_date`，redo 還原存下的時間點，不再重新推斷狀態；重複完成保留原本的時間點；`undo(discard_id)` 依 `undo_history` 的穩定 ID 明確移除卡住的頂端紀錄（已刪除的提醒事項或已失效的事件不再卡住 stack）；事件搬移記錄來源 occurrence，undo 會還原到原本的日曆；`event_recurrence_rules` / `reminder_recurrence_rules` 區分兩種格式（保留舊別名）；每個工具的 annotation 都有明確且經測試的政策，`complete_reminder`、update 與可選搬移的工具改為 `destructiveHint: true`。**BREAKING**：所有 boolean 工具參數都必須是嚴格的 JSON boolean（字串或數字會以 `<key> must be a boolean` 拒絕）。內部：提醒事項 list/search 在 actor 內先篩選、排序、限量再做 snapshot，`list_reminder_tags` 改走 snapshot seam，標籤掃描改為線性（無指數回溯），提醒事項寫入結果改為不可變的 Sendable，完成與循環歷史的方法移到專屬的 actor extension。 |
 | v1.17.0 | **重複提醒讀取＋明確的完成結果＋身分 guard 的 undo＋嚴格 boolean `completed`**（#194/#204/#205）：list/search 新增 `has_recurrence`、完整 `recurrence_rules`（含 `frequency_raw_value`）與 `due` 物件；`complete_reminder` 以 `operation`（寫入結果）、`observed`（存檔後物件）與 `next_occurrence`（save 後同步觀測一次；iCloud 真機：同 ID 就地推進、完成的那筆另存新 ID）分開回報，訊息用提醒自己的時區。重複提醒完成的 undo/redo 帶身分 guard：ID 不再指向原 occurrence 時明確拒絕並**丟棄** entry（不卡 stack），找不到則保留 entry（#191）。**破壞性變更**：三個 reminder 工具的 `completed` 必須是 JSON boolean（字串／數字在任何讀寫前拒絕；省略／`null` 維持原意；`--cli` 的 JSON `null` 視同省略）。PR #195 三輪 6-AI verify、#200／#201 各自 verify、兩次真機 stdio 探測。582 tests。 |
