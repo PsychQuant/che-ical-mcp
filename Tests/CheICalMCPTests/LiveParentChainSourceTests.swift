@@ -8,6 +8,13 @@ final class LiveParentChainSourceTests: XCTestCase {
 
     private var fixtures: [URL] = []
 
+    /// The tests that read what `ps` printed do not exercise the timeout, so they must not depend
+    /// on the 500 ms production budget: writing a fresh script and starting `/bin/sh` on a busy
+    /// host has been seen to take longer, and the test then failed with "ps timed out" (#257).
+    /// The 500 ms default stays covered by production code; `testTimeout_...` below targets the
+    /// timeout path itself with a short budget, where a slow host can only make it more certain.
+    private let generousTimeoutMilliseconds = 10_000
+
     override func tearDown() {
         for url in fixtures { try? FileManager.default.removeItem(at: url) }
         fixtures = []
@@ -27,7 +34,7 @@ final class LiveParentChainSourceTests: XCTestCase {
     func testNonUTF8Output_reportsFailureReasonInsteadOfEmptyChain() throws {
         // printf emits an invalid UTF-8 byte sequence (lone 0xFF continuation bytes).
         let script = try makeScript(#"printf '  500   400 /bin/\377\377zsh\n'"#)
-        let result = LiveParentChainSource(psPath: script).captureChain(from: 500)
+        let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: generousTimeoutMilliseconds).captureChain(from: 500)
         XCTAssertTrue(result.hops.isEmpty)
         XCTAssertEqual(result.failureReason, "ps output not UTF-8",
                        "silent empty-table success would misreport a decode failure as a clean run")
@@ -35,7 +42,7 @@ final class LiveParentChainSourceTests: XCTestCase {
 
     func testNonZeroExit_reportsStatusAndStderrFirstLine() throws {
         let script = try makeScript("echo 'ps: illegal option' >&2; exit 64")
-        let result = LiveParentChainSource(psPath: script).captureChain(from: 500)
+        let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: generousTimeoutMilliseconds).captureChain(from: 500)
         XCTAssertTrue(result.hops.isEmpty)
         let reason = try XCTUnwrap(result.failureReason)
         XCTAssertTrue(reason.contains("64"), "exit status must be visible — got: \(reason)")
@@ -49,8 +56,20 @@ final class LiveParentChainSourceTests: XCTestCase {
             printf '  400     1 /sbin/launchd-ish\\n'
             printf '    1     0 /sbin/launchd\\n'
             """)
-        let result = LiveParentChainSource(psPath: script).captureChain(from: 500)
+        let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: generousTimeoutMilliseconds).captureChain(from: 500)
         XCTAssertNil(result.failureReason)
         XCTAssertEqual(result.hops.map(\.pid), [500, 400, 1])
+    }
+
+    func testTimeout_reportsTimedOutAndEndsTheChild() throws {
+        // `exec` makes the script's process the sleeper itself, so the runner's SIGTERM ends it
+        // and no orphan outlives the test.
+        let script = try makeScript("exec sleep 30")
+        let started = Date()
+        let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: 200).captureChain(from: 500)
+        XCTAssertTrue(result.hops.isEmpty)
+        XCTAssertEqual(result.failureReason, "ps timed out after 200ms")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10,
+                          "the runner must end the child at the budget, not wait for it to finish")
     }
 }
