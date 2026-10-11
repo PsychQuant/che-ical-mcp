@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`make verify-release-ready` compares against the latest release tag, not the newest tag of any name** (#310): the target took `git tag --sort=-creatordate | head -1`, and the repository carries `idd-N-baseline` / `idd-N-verified` tags from the issue workflow, so a build of v1.19.0 read as "ahead of latest tag=idd-301-verified". Because `v…` sorts after `idd…` in the `sort -V` comparison, every AppVersion read as ahead, so a real downgrade (AppVersion older than the last release) was reported as "ahead" too. The latest tag is now the newest `v<digit>*` tag by version (`git tag --list 'v[0-9]*' --sort=-version:refname`); with no such tag the target says there is no release tag yet. `scripts/tests/verify-release-ready-test.sh` builds throwaway repositories (release tags plus a newer `idd-*` tag, a version-versus-date case, only `idd-*` tags, no tags) and runs the real target; CI runs it.
+
 ## [1.20.0] - 2026-10-10
 
 ### Added

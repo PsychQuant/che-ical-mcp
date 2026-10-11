@@ -9,6 +9,10 @@ FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && e
 .PHONY: build release release-signed verify-release-ready verify-developer-id install install-signed clean test
 
 # Detect drift between AppVersion.current and the latest release tag.
+# "Release tag" means v<digit>*, newest by version: the issue workflow also
+# creates idd-N-baseline / idd-N-verified tags, and picking the newest tag of any
+# name read those as the latest release (#310; it also turned a downgrade into
+# an "ahead" message).
 # Soft pre-flight: warns on drift, never aborts on the drift case (a maintainer
 # doing genuine pre-release work needs AppVersion ahead of the latest tag).
 # Hard-fails ONLY when Version.swift can't be parsed at all — no other behavior
@@ -22,14 +26,14 @@ FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && e
 #   diverged (e.g. v1.7.1 vs 2.0.0-rc.1) → unstructured drift; manual review
 verify-release-ready:
 	@SOURCE_VERSION=$$(grep -E 'static let current = "' Sources/CheICalMCP/Version.swift | sed -E 's/.*"([^"]+)".*/\1/'); \
-	LATEST_TAG=$$(git tag --sort=-creatordate | head -1); \
+	LATEST_TAG=$$(git tag --list 'v[0-9]*' --sort=-version:refname | head -1); \
 	if [ -z "$$SOURCE_VERSION" ]; then \
 	    echo "✗ Could not parse AppVersion.current from Version.swift" >&2; \
 	    echo "  This target must be run from the repo root." >&2; \
 	    exit 1; \
 	fi; \
 	if [ -z "$$LATEST_TAG" ]; then \
-	    echo "ℹ No git tags yet — version drift check skipped (first release?)"; \
+	    echo "ℹ No release tags (v*) yet — version drift check skipped (first release?)"; \
 	elif [ "v$${SOURCE_VERSION}" = "$$LATEST_TAG" ]; then \
 	    echo "ℹ AppVersion.current ($$SOURCE_VERSION) matches latest tag ($$LATEST_TAG) — no version bump needed for next release"; \
 	elif [ "$$(printf '%s\n%s\n' "v$${SOURCE_VERSION}" "$$LATEST_TAG" | sort -V | tail -1)" = "v$${SOURCE_VERSION}" ]; then \
