@@ -68,6 +68,11 @@ jobs:
         # run is skipped, with a note, when the runner cannot execute it.
         run: bash scripts/tests/check-staged-product-test.sh
 
+      - name: verify-release-ready tag selection tests
+        # #310: the latest release tag is the newest v<digit>* tag by version; idd-N-*
+        # tags and creation dates must not decide it. Throwaway git repositories, no build.
+        run: bash scripts/tests/verify-release-ready-test.sh
+
       - name: swift build
         run: swift build
 
