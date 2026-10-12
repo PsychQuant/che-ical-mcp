@@ -62,6 +62,8 @@
 
 ### 部分失敗：全有或全無，補償失敗要報告而不是吞掉
 
+**實作註記（apply，2026-10-12）**：編排拆成純的 `SeriesExceptionsRestorer`（closure 縫：`remove`、`createOneOff`、`removeOneOff`、`rollbackSeries`；沿用 #182 `ExclusionExecutor` 的 closure-seam 變體，CLAUDE.md 允許用於「manager 內部可抽出的純協調邏輯」），EventKit 讀寫在薄的 `EventKitManager+SeriesExceptions.swift`；因此沒有另開 `<Domain>Source` 協定。
+
 步驟 4 的兩段式與補償沿用 `ExclusionExecutor`（先解析全部、再移除；失敗時刪掉重建的系列）。步驟 5 若某個一次性事件建立失敗，同樣補償刪除重建的系列與已建的一次性事件，丟出**可重試**的錯誤（`handleUndo` 對它把紀錄放回去，重試不會留下半個結果）。補償本身失敗時，丟 `UnrecoverableUndoError`（紀錄丟棄，因為重試會再建一個系列），訊息說出系列已存在、部分例外已套用，請在 Calendar 檢查；絕不回報成功。批次內的成員失敗沿用 #248：成員自己的寫入已補償，因此算「未還原」，其餘成員的處置不變。
 
 ### 重複防護：時段已被系列場次佔用就不寫入

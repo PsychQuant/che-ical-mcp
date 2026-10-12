@@ -157,6 +157,9 @@ extension UndoOperation {
     /// runs, and "from its rules alone" could be read as nothing coming back.
     static let seriesRulesListingNote = "occurrences deleted on their own earlier come back, edited ones without their edits"
 
+    /// #285: the same for a series whose exceptions were recorded.
+    static let seriesExceptionsListingNote = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events"
+
     /// How many series this record's undo recreates from their rules, nested batches included, for
     /// the `undo_history` line of a batch (verify round 5, findings 1/2). Counted from the same
     /// exhaustive classification as the batch undo text, which treats a refused member as
@@ -164,6 +167,11 @@ extension UndoOperation {
     /// writes nothing (round 6, findings 1/2/4).
     var seriesRecreatedFromRules: Int {
         undoDisclosures.filter { $0 == .seriesRules }.count
+    }
+
+    /// #285: how many series this record's undo recreates with their exceptions, nested batches included.
+    var seriesRecreatedWithExceptions: Int {
+        undoDisclosures.filter { $0 == .seriesExceptions }.count
     }
 
     /// The text of a recreated event. Store-derived title through `undoVisibleTitle`.
@@ -220,10 +228,15 @@ extension UndoOperation {
             notes.append("Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
         }
         if disclosures.contains(.seriesRules) { notes.append(seriesRulesRestoreNote) }
+        if disclosures.contains(.seriesExceptions) { notes.append(seriesExceptionsBatchNote) }
         return notes.isEmpty ? nil : notes.joined(separator: ". ")
     }
 
-    private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules }
+    /// #285: a batch undo names the exceptions restore once, without counts (the member texts are
+    /// not shown, and counts per member are not carried up).
+    static let seriesExceptionsBatchNote = "Series were restored from their rules with their exceptions inside the checked window: occurrences deleted on their own earlier stayed deleted, occurrences edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
+
+    private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules, seriesExceptions }
 
     /// Exhaustive, so a new record kind has to be classified here (verify round 3, finding 2).
     private var undoDisclosures: [UndoDisclosure] {
@@ -231,7 +244,8 @@ extension UndoOperation {
         case .deleteOccurrence(_, let notCarriedOver):
             return notCarriedOver.contains("absolute_alarms") ? [.absoluteAlarms] : []
         case .deleteEvent(let snapshot):
-            return snapshot.restoresFromRules ? [.seriesRules] : []
+            guard snapshot.restoresFromRules else { return [] }
+            return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
             return members.flatMap(\.undoDisclosures)
         case .createEvent, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,

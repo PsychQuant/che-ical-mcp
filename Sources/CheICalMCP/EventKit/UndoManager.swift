@@ -357,7 +357,12 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
-            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))" : ""
+            var restore = ""
+            if snapshot.restoresFromRules {
+                restore = snapshot.exceptions == nil
+                    ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
+                    : " (undo recreates the series and its exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote))"
+            }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
@@ -389,8 +394,16 @@ enum UndoOperation {
                 return "Batch (\(operations); undo not available: a member deleted an occurrence and the following ones of a recurring event)"
             }
             let series = seriesRecreatedFromRules
-            guard series > 0 else { return "Batch (\(operations))" }
-            return "Batch (\(operations); undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
+            let withExceptions = seriesRecreatedWithExceptions
+            guard series + withExceptions > 0 else { return "Batch (\(operations))" }
+            var parts: [String] = []
+            if series > 0 {
+                parts.append("undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote)")
+            }
+            if withExceptions > 0 {
+                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote)")
+            }
+            return "Batch (\(operations); \(parts.joined(separator: "; ")))"
         }
     }
 }
