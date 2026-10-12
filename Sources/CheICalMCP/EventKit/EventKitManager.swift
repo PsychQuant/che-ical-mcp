@@ -1015,7 +1015,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let occurrence = findOccurrence(identifier: identifier, on: date, in: masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
-            snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence)
+            snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
+                                              seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
             try eventStore.remove(occurrence, span: span)
         } else if hadRules {
             throw EventKitError.invalidTimeRange(
@@ -1045,7 +1046,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // If it's a non-recurring event, just delete it normally.
         // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
         // rebuilds the whole series), consistent with single deleteEvent.
+        // #285: a series' exceptions are listed before the removal takes them away.
         let snapshot = EventSnapshot(from: event)
+            .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
         if event.hasRecurrenceRules {
             try eventStore.remove(event, span: .futureEvents)
         } else {
@@ -1075,6 +1078,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     continue
                 }
                 let snapshot = EventSnapshot(from: event)
+                    .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
                 if event.hasRecurrenceRules {
                     try eventStore.remove(event, span: .futureEvents)
                 } else {
@@ -1267,7 +1271,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
-                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence)
+                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
+                                                      seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
                     try eventStore.remove(occurrence, span: span)
                 } else if hadRules {
                     failures.append((item.identifier, "For recurring events, occurrence_date is required"))
@@ -2148,11 +2153,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
-            return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: event.eventIdentifier ?? "unknown")
+            // #285: a series whose exceptions were recorded gets them back (all or nothing).
+            var outcome: SeriesExceptionsRestorer.Outcome?
+            if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
+                outcome = try restoreSeriesExceptions(exceptions, of: event)
+            }
+            return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: event.eventIdentifier ?? "unknown",
+                                                      exceptionsOutcome: outcome)
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
             // #244: the snapshot holds no rules, so the occurrence comes back as a one-off event at
             // its slot, beside what is left of the series (EventKit cannot put it back in).
+            // #285: not when the series already holds the slot (it was recreated from its rules
+            // by an undo of the whole-series delete, which brings every slot back).
+            if try seriesHoldsSlot(of: snapshot) {
+                return UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title)
+            }
             let event = EKEvent(eventStore: eventStore)
             try applySnapshot(snapshot, to: event)
             try eventStore.save(event, span: .thisEvent)
@@ -2330,6 +2346,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
     /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
     /// reminders).
+    /// #285: a new, saved one-off event from `snapshot` (an occurrence edited on its own, restored
+    /// beside the series recreated from its rules). Same write as the occurrence undo arm.
+    func saveOneOff(from snapshot: EventSnapshot) throws -> EKEvent {
+        let event = EKEvent(eventStore: eventStore)
+        try applySnapshot(snapshot, to: event)
+        try eventStore.save(event, span: .thisEvent)
+        return event
+    }
+
     private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
         let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
         snapshot.apply(to: event, calendar: originalCalendar)
@@ -2461,6 +2486,10 @@ enum EventKitError: LocalizedError {
     /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
+    /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
+    /// rolled back: the recreated series and anything created for its exceptions were deleted
+    /// again, so nothing of the restore remains and the undo can be retried.
+    case seriesExceptionsRestoreFailed(reason: String)
     /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
     /// refuse. Raised for any failure of such a save, so the message names the alarms as a
     /// possible cause only and gives no instruction (round 3: a caller that followed one would
@@ -2558,6 +2587,8 @@ enum EventKitError: LocalizedError {
         case .allDayTimezoneConflict:
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
         case .moveRefused(let reason):
+            return reason
+        case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."

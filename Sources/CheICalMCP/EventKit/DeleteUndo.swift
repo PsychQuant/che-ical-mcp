@@ -65,12 +65,16 @@ struct DeletedEventSnapshots {
     /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool
 
-    init(series: EKEvent, removed: EKEvent) {
+    /// `seriesExceptions` (#285) lists the series' exceptions; it runs, before anything is removed,
+    /// only for a delete that can turn out to remove the whole series: span other than "this",
+    /// started at the series' first occurrence, on a series with rules.
+    init(series: EKEvent, removed: EKEvent, span: EKSpan = .thisEvent, seriesExceptions: (() -> SeriesExceptions?)? = nil) {
         hadRules = series.hasRecurrenceRules
         isDetached = series.isDetached
         fromFirstOccurrence = UndoPostState.sameInstant(removed.occurrenceDate ?? removed.startDate,
                                                         series.occurrenceDate ?? series.startDate)
-        self.series = EventSnapshot(from: series)
+        let exceptions = (hadRules && span != .thisEvent && fromFirstOccurrence) ? seriesExceptions?() : nil
+        self.series = EventSnapshot(from: series).withExceptions(exceptions)
         // Verify round 1, finding 6: an occurrence of a series reads the series' absolute alarm
         // dates, which a later occurrence has passed; the #253 split rule puts them at its start.
         // That is the move path's rule since 2a40986 (#253 round 2, D2-b), not the series-start
@@ -133,6 +137,12 @@ extension UndoOperation {
         return message
     }
 
+    /// #285: the undo of an occurrence delete found its slot already held by the recreated series
+    /// and wrote nothing. Success: the occurrence is back, and a second copy would be wrong.
+    static func occurrenceAlreadyRestoredMessage(title: String) -> String {
+        "Undone: the deleted occurrence of '\(undoVisibleTitle(title))' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)"
+    }
+
     /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
     /// snapshot (a whole-series delete: span "future" from the first occurrence, or span "all"),
     /// which hold no occurrence deleted or edited on its own before the delete. The undo text says
@@ -157,10 +167,22 @@ extension UndoOperation {
     }
 
     /// The text of a recreated event. Store-derived title through `undoVisibleTitle`.
-    static func eventRestoredMessage(snapshot: EventSnapshot, newID: String) -> String {
+    static func eventRestoredMessage(snapshot: EventSnapshot, newID: String,
+                                     exceptionsOutcome: SeriesExceptionsRestorer.Outcome? = nil) -> String {
         var message = "Undone: restored event '\(undoVisibleTitle(snapshot.title))' (new ID: \(newID))"
-        if snapshot.restoresFromRules { message += ". " + seriesRulesRestoreNote }
+        guard snapshot.restoresFromRules else { return message }
+        if let outcome = exceptionsOutcome {
+            message += ". " + seriesExceptionsRestoredNote(outcome)
+        } else {
+            message += ". " + seriesRulesRestoreNote
+        }
         return message
+    }
+
+    /// #285: what a restore that put the series' exceptions back says, with counts. The window
+    /// limit is stated because an exception outside it was never listed.
+    static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome) -> String {
+        "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
     }
 
     /// The text of an undone batch (verify round 2, finding 5; round 3, finding 3): the member texts

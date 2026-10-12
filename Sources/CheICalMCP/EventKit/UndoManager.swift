@@ -103,6 +103,16 @@ struct EventSnapshot {
     /// #245: a delete-undo recreated a free event busy (the calendar default). `.notSupported` when
     /// the event's calendar has none; written back only where the calendar supports it.
     let availability: EKEventAvailability
+    /// #285: the exceptions of a series whose whole-series delete this snapshot records; nil for
+    /// every other record and when they could not be listed. Set through `withExceptions`.
+    private(set) var exceptions: SeriesExceptions? = nil
+
+    /// A copy of this snapshot carrying `exceptions`; this one is unchanged.
+    func withExceptions(_ exceptions: SeriesExceptions?) -> EventSnapshot {
+        var copy = self
+        copy.exceptions = exceptions
+        return copy
+    }
 
     /// `alarms` replaces the event's own: the undo record of a copy-out holds the alarms the
     /// copy was given (`EventKitManager.copyOutAlarms`). `availability` replaces the event's own

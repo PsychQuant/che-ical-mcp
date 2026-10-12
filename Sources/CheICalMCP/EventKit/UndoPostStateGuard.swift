@@ -129,6 +129,14 @@ enum UndoPostState {
         return DateInterval(start: from, end: max(to, from))
     }
 
+    /// The scan window of `event`'s series: from the series' first start to the end of its rules.
+    /// Any open-ended (or count-based) rule leaves the series open (`seriesScanWindow`).
+    static func seriesScanWindow(of event: EKEvent) -> DateInterval {
+        let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
+        let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
+        return seriesScanWindow(firstStart: event.startDate, ruleEnd: ruleEnd)
+    }
+
     /// The identifiers that tie an occurrence to its series.
     struct OccurrenceIDs: Equatable {
         let eventIdentifier: String?
@@ -232,10 +240,7 @@ enum UndoPostState {
         guard let id = event.eventIdentifier, !id.isEmpty, let calendar = event.calendar else { return nil }
         let series = OccurrenceIDs(eventIdentifier: id, externalIdentifier: event.calendarItemExternalIdentifier)
         let seriesFace = OccurrenceFace(event)
-        let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
-        // Any open-ended (or count-based) rule leaves the series open.
-        let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
-        let window = seriesScanWindow(firstStart: event.startDate, ruleEnd: ruleEnd)
+        let window = seriesScanWindow(of: event)
         let predicate = store.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
         var count = 0
         store.enumerateEvents(matching: predicate) { occurrence, _ in
