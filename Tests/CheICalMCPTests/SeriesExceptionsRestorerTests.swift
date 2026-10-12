@@ -42,7 +42,7 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
 
     private func run(_ exceptions: SeriesExceptions, generated: [Date]? = nil, log: Log = Log(),
                      failRemoveAt: Date? = nil, failCreateTitle: String? = nil, failRollback: Bool = false,
-                     failOneOffCleanup: Bool = false) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
+                     failOneOffCleanup: Bool = false, writeThenThrow: Bool = false) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
         let outcome = try SeriesExceptionsRestorer.restore(
             exceptions: exceptions,
             generated: (generated ?? slots.map(at)).map { (slot: $0, occurrence: $0) },
@@ -51,7 +51,10 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
                 log.removed.append(date); log.events.append("remove")
             },
             createOneOff: { detached in
-                if detached.snapshot.title == failCreateTitle { throw Boom() }
+                if detached.snapshot.title == failCreateTitle {
+                    if writeThenThrow { throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: detached.snapshot.title) }
+                    throw Boom()
+                }
                 log.created.append(detached.snapshot.title); log.events.append("create")
                 return detached.snapshot.title
             },
@@ -133,5 +136,41 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
                 return XCTFail("expected rollbackFailed, got \(error)")
             }
         }
+    }
+    // MARK: - PR #318 verify B2: the series' first occurrence is never removed
+
+    func testAFirstOccurrenceDeletedOnItsOwnIsKeptFromTheRuleAndSaid() throws {
+        let exceptions = SeriesExceptions(window: window, keptSlots: [at(slots[1]), at(slots[2]), at(slots[3])], detached: [])
+        let (outcome, log) = try run(exceptions)
+        XCTAssertEqual(log.removed, [])                 // slot 1 stays: it anchors the series
+        XCTAssertTrue(outcome.firstOccurrenceKeptFromRule)
+    }
+
+    func testAFirstOccurrenceEditedOnItsOwnStaysInTheSeriesAndGetsNoOneOff() throws {
+        let exceptions = SeriesExceptions(window: window, keptSlots: [at(slots[1]), at(slots[2]), at(slots[3])],
+                                          detached: [detached("First (edited)", slot: slots[0])])
+        let (outcome, log) = try run(exceptions)
+        XCTAssertEqual(log.removed, [])
+        XCTAssertEqual(log.created, [])                 // a one-off beside the kept first slot would duplicate it
+        XCTAssertEqual(outcome.oneOffs, 0)
+        XCTAssertTrue(outcome.firstOccurrenceKeptFromRule)
+    }
+
+    func testAnUntouchedFirstOccurrenceRaisesNoFlag() throws {
+        let (outcome, _) = try run(spikeExceptions)
+        XCTAssertFalse(outcome.firstOccurrenceKeptFromRule)
+    }
+
+    // MARK: - PR #318 verify B3: a save that wrote and then threw
+
+    func testAOneOffThatWasWrittenAndThenThrewIsRemovedWithTheRest() {
+        let two = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
+                                   detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
+        let log = Log()
+        XCTAssertThrowsError(try run(two, log: log, failCreateTitle: "B", writeThenThrow: true)) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[2])))
+        }
+        XCTAssertEqual(log.removedOneOffs, ["A", "B"])  // B was possibly written: it is cleaned up too
+        XCTAssertEqual(log.rolledBack, 1)
     }
 }

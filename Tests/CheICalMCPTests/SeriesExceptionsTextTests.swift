@@ -79,4 +79,18 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertEqual(UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup"),
                        "Undone: the deleted occurrence of 'Standup' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)")
     }
+    func testUndoTextSaysWhenTheFirstOccurrenceWasKeptFromTheRule() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
+        let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW",
+                                                         exceptionsOutcome: .init(stayedDeleted: 0, oneOffs: 0, firstOccurrenceKeptFromRule: true))
+        XCTAssertTrue(message.contains("first occurrence"), message)
+        XCTAssertTrue(message.contains("not restored as an exception"), message)
+    }
+
+    func testUndoTextStatesAnEditedOccurrenceMovedBeyondTheListedRangeIsNotRestored() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
+        let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW",
+                                                         exceptionsOutcome: .init(stayedDeleted: 1, oneOffs: 0))
+        XCTAssertTrue(message.contains("moved far outside"), message)
+    }
 }

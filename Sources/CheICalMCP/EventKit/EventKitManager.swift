@@ -2346,10 +2346,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
     /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
     /// reminders).
-    /// #285: a new, saved one-off event from `snapshot` (an occurrence edited on its own, restored
-    /// beside the series recreated from its rules). Same write as the occurrence undo arm.
-    func saveOneOff(from snapshot: EventSnapshot) throws -> EKEvent {
-        let event = EKEvent(eventStore: eventStore)
+    /// #285: saves `event` (new) as a one-off from `snapshot` (an occurrence edited on its own, restored
+    /// beside the series recreated from its rules). Takes the event so a caller can clean it up if the
+    /// save throws after the store took the write.
+    func saveOneOff(_ event: EKEvent, from snapshot: EventSnapshot) throws -> EKEvent {
         try applySnapshot(snapshot, to: event)
         try eventStore.save(event, span: .thisEvent)
         return event

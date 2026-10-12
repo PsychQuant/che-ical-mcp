@@ -150,7 +150,7 @@ extension UndoOperation {
     /// findings 8/9/12; the text no longer says that about itself, round 5, findings 4/6/11). It
     /// does not point at "this delete", which a batch text cannot, and says an edited occurrence
     /// loses its edit, in the words of the tool descriptions.
-    static let seriesRulesRestoreNote = "Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+    static let seriesRulesRestoreNote = "Restored from the series rules alone, because its exceptions were not checked when it was deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot"
 
     /// What the `undo_history` line of a record that recreates a series from its rules adds
     /// (verify round 4, findings 11/15; round 5, findings 1/2/7): the line is read before the undo
@@ -190,7 +190,11 @@ extension UndoOperation {
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
     /// limit is stated because an exception outside it was never listed.
     static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome) -> String {
-        "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
+        var note = "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved far outside its slot's window is neither restored nor listed"
+        if outcome.firstOccurrenceKeptFromRule {
+            note += ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
+        }
+        return note
     }
 
     /// The text of an undone batch (verify round 2, finding 5; round 3, finding 3): the member texts

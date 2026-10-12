@@ -35,8 +35,23 @@ enum SeriesExceptionsPlanner {
         let snapshot: EventSnapshot
     }
 
+    /// The range to LIST occurrences over: the window widened by a year each side, as far as the
+    /// four-year query limit (1460 days) of an EventKit predicate allows. An occurrence edited on
+    /// its own is matched by its current (edited) time, not by its rule slot, so listing only the
+    /// window loses one that was moved out of it (PR #318 verify B1). One moved further than this
+    /// range is still not seen; the undo text says so.
+    static func listingRange(for window: DateInterval) -> DateInterval {
+        let day: TimeInterval = 86_400
+        let spare = max(0, 1460 * day - window.duration)
+        let margin = min(366 * day, spare / 2)
+        return DateInterval(start: window.start.addingTimeInterval(-margin), end: window.end.addingTimeInterval(margin))
+    }
+
     /// Splits what was listed into the slots that stay and the occurrences edited on their own.
-    /// Occurrences of other series (same calendar, same window) are ignored.
+    /// Occurrences of other series (same calendar, same range) are ignored. Everything is judged
+    /// by RULE SLOT against `window`, never by where an occurrence currently sits: a slot outside
+    /// the window is left to the rule (an edited occurrence there is not restored as a one-off, or
+    /// the rule's own occurrence outside the window would be duplicated).
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
                         window: DateInterval) -> SeriesExceptions {
         var kept: [Date] = []
@@ -46,9 +61,10 @@ enum SeriesExceptionsPlanner {
                 let slot = UndoPostState.originalSlot(eventIdentifier: occurrence.ids.eventIdentifier,
                                                       externalIdentifier: occurrence.ids.externalIdentifier,
                                                       occurrenceDate: occurrence.occurrenceDate) ?? occurrence.startDate
-                detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot))
+                if window.contains(slot) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
             } else {
-                kept.append(occurrence.occurrenceDate ?? occurrence.startDate)
+                let slot = occurrence.occurrenceDate ?? occurrence.startDate
+                if window.contains(slot) { kept.append(slot) }
             }
         }
         return SeriesExceptions(window: window, keptSlots: kept.sorted(),
@@ -84,6 +100,12 @@ enum SeriesExceptionsRestoreError: Error, Equatable {
     case rollbackFailed(exclusionsApplied: Int)
 }
 
+/// A one-off save that threw after the store may have taken the write: the closure hands the
+/// event back so the restore can clean it up (PR #318 verify B3).
+struct SeriesExceptionsOneOffWriteFailed<OneOff>: Error {
+    let possiblyWritten: OneOff
+}
+
 /// The restore after undo recreated a series from its rules: remove the surplus slots, then
 /// recreate the occurrences edited on their own as one-off events, all or nothing. EventKit is
 /// behind closures (the `ExclusionExecutor` seam of #182), so the sequence is tested without it.
@@ -93,6 +115,10 @@ enum SeriesExceptionsRestorer {
         let stayedDeleted: Int
         /// Occurrences edited on their own that came back as one-off events.
         let oneOffs: Int
+        /// The series' first occurrence was an exception (edited or deleted on its own) but the
+        /// restored series keeps it from the rule: removing it would remove the series' anchor
+        /// (#182 forbids excluding it; on iCloud the id stops resolving, #284).
+        var firstOccurrenceKeptFromRule: Bool = false
     }
 
     /// `generated` lists the recreated series' occurrences inside `exceptions.window`, as
@@ -105,7 +131,15 @@ enum SeriesExceptionsRestorer {
         removeOneOff: (OneOff) throws -> Void,
         rollbackSeries: () throws -> Void
     ) throws -> Outcome {
-        let surplus = SeriesExceptionsPlanner.surplusSlots(generated: generated.map(\.slot), exceptions: exceptions)
+        // The earliest generated slot is the series' first occurrence: never removed.
+        let anchor = generated.map(\.slot).min()
+        func isAnchor(_ slot: Date) -> Bool { anchor.map { UndoPostState.sameInstant($0, slot) } ?? false }
+        let allSurplus = SeriesExceptionsPlanner.surplusSlots(generated: generated.map(\.slot), exceptions: exceptions)
+        let surplus = allSurplus.filter { !isAnchor($0) }
+        let oneOffsToCreate = exceptions.detached.filter { !isAnchor($0.slot) }
+        let firstKept = allSurplus.contains(where: isAnchor)
+            || exceptions.detached.contains { isAnchor($0.slot) }
+
         var exclusionsApplied = 0
         do {
             exclusionsApplied = try ExclusionExecutor.run(
@@ -122,10 +156,12 @@ enum SeriesExceptionsRestorer {
         }
 
         var created: [OneOff] = []
-        for detached in exceptions.detached {
+        for detached in oneOffsToCreate {
             do {
                 created.append(try createOneOff(detached))
             } catch {
+                // A save that threw may still have written: clean that one up as well.
+                if let failed = error as? SeriesExceptionsOneOffWriteFailed<OneOff> { created.append(failed.possiblyWritten) }
                 var cleanedUp = true
                 for oneOff in created {
                     do { try removeOneOff(oneOff) } catch { cleanedUp = false }
@@ -139,7 +175,7 @@ enum SeriesExceptionsRestorer {
         let stayedDeleted = surplus.filter { slot in
             !exceptions.detached.contains { UndoPostState.sameInstant($0.slot, slot) }
         }.count
-        return Outcome(stayedDeleted: stayedDeleted, oneOffs: created.count)
+        return Outcome(stayedDeleted: stayedDeleted, oneOffs: created.count, firstOccurrenceKeptFromRule: firstKept)
     }
 }
 

@@ -57,7 +57,7 @@ final class SeriesExceptionsTests: XCTestCase {
 
     func testCaptureKeepsUndetachedSlotsAndSeparatesDetachedOnes() {
         // Four slots; the 3rd was deleted on its own (absent), the 2nd edited on its own.
-        let edited = observed(ids: .init(eventIdentifier: "SERIES/RID=838000000", externalIdentifier: "UID/RID=838000000"),
+        let edited = observed(ids: .init(eventIdentifier: "SERIES/RID=860637600", externalIdentifier: "UID/RID=860637600"),
                               detached: true, start: slot2, occurrenceDate: slot2, title: "Standup (moved room)")
         let result = SeriesExceptionsPlanner.capture(
             [observed(detached: false, start: slot1, occurrenceDate: slot1),
@@ -157,5 +157,50 @@ final class SeriesExceptionsTests: XCTestCase {
     func testSubSecondDriftOfAKeptSlotIsStillTheSameSlot() {
         let exceptions = SeriesExceptions(window: window, keptSlots: [at(slot1).addingTimeInterval(0.4)], detached: [])
         XCTAssertEqual(SeriesExceptionsPlanner.surplusSlots(generated: [at(slot1)], exceptions: exceptions), [])
+    }
+    // MARK: - listing range and window classification (PR #318 verify B1)
+
+    func testListingRangeWidensANarrowWindowByAYearEachSide() {
+        let narrow = DateInterval(start: at("2028-04-02T10:00:00+08:00"), end: at("2028-04-25T10:00:00+08:00"))
+        let range = SeriesExceptionsPlanner.listingRange(for: narrow)
+        XCTAssertEqual(range.start, narrow.start.addingTimeInterval(-366 * 86_400))
+        XCTAssertEqual(range.end, narrow.end.addingTimeInterval(366 * 86_400))
+    }
+
+    func testListingRangeNeverExceedsTheFourYearQueryLimit() {
+        let full = DateInterval(start: at("2028-04-02T10:00:00+08:00"), duration: 1460 * 86_400)
+        XCTAssertEqual(SeriesExceptionsPlanner.listingRange(for: full), full)
+        let long = DateInterval(start: at("2028-04-02T10:00:00+08:00"), duration: 1000 * 86_400)
+        XCTAssertLessThanOrEqual(SeriesExceptionsPlanner.listingRange(for: long).duration, 1460 * 86_400)
+        XCTAssertTrue(SeriesExceptionsPlanner.listingRange(for: long).contains(long.start))
+        XCTAssertTrue(SeriesExceptionsPlanner.listingRange(for: long).contains(long.end))
+    }
+
+    func testAnOccurrenceMovedOutOfTheWindowIsStillCapturedByItsSlot() {
+        // Its slot (04-17) is inside the window; it was moved to 05-20, past the window end. The
+        // widened listing sees it, and its RID slot puts it in the window.
+        let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=830000000", externalIdentifier: nil),
+                             detached: true, start: "2028-05-20T10:00:00+08:00", occurrenceDate: "2028-05-20T10:00:00+08:00", title: "Moved")
+        let slotInWindow = Date(timeIntervalSinceReferenceDate: 830_000_000)
+        let w = DateInterval(start: slotInWindow.addingTimeInterval(-86_400 * 10), end: slotInWindow.addingTimeInterval(86_400 * 10))
+        let result = SeriesExceptionsPlanner.capture([moved], of: series, window: w)
+        XCTAssertEqual(result.detached.map(\.slot), [slotInWindow])
+    }
+
+    func testAnOccurrenceWhoseSlotIsOutsideTheWindowIsLeftToTheRule() {
+        // Slot outside the window, moved into it: restoring it as a one-off would duplicate the
+        // occurrence the rule regenerates outside the window.
+        let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=830000000", externalIdentifier: nil),
+                             detached: true, start: slot2, occurrenceDate: slot2, title: "Moved in")
+        let result = SeriesExceptionsPlanner.capture([moved], of: series, window: window)
+        XCTAssertTrue(result.detached.isEmpty)
+        XCTAssertEqual(result.keptSlots, [])
+    }
+
+    func testUndetachedOccurrencesOutsideTheWindowAreNotKeptSlots() {
+        let result = SeriesExceptionsPlanner.capture(
+            [observed(detached: false, start: "2028-09-01T10:00:00+08:00", occurrenceDate: "2028-09-01T10:00:00+08:00"),
+             observed(detached: false, start: slot1, occurrenceDate: slot1)], of: series, window: window)
+        XCTAssertEqual(result.keptSlots, [at(slot1)])
     }
 }

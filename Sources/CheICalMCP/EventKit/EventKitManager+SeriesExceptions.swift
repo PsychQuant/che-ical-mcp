@@ -14,7 +14,10 @@ extension EventKitManager {
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: series.calendarItemExternalIdentifier)
         let window = UndoPostState.seriesScanWindow(of: series)
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
-        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: window.start, end: window.end,
+        // Listed over a wider range than the window: an occurrence edited on its own is matched by
+        // its current time, so one moved out of the window is only found there (PR #318 verify B1).
+        let range = SeriesExceptionsPlanner.listingRange(for: window)
+        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
                                                                            calendars: [calendar])) { occurrence, _ in
             observed.append(Self.observed(occurrence))
         }
@@ -52,8 +55,17 @@ extension EventKitManager {
             return try SeriesExceptionsRestorer.restore(
                 exceptions: exceptions, generated: generated,
                 remove: { try self.eventStore.remove($0, span: .thisEvent) },
-                createOneOff: { try self.saveOneOff(from: $0.snapshot) },
-                removeOneOff: { try self.eventStore.remove($0, span: .thisEvent) },
+                createOneOff: { detached in
+                    let oneOff = EKEvent(eventStore: self.eventStore)
+                    do { return try self.saveOneOff(oneOff, from: detached.snapshot) } catch {
+                        throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: oneOff)
+                    }
+                },
+                removeOneOff: { oneOff in
+                    // A save that threw may or may not have written: remove only what the store holds.
+                    guard let id = oneOff.eventIdentifier, self.storedEvent(id: id) != nil else { return }
+                    try self.eventStore.remove(oneOff, span: .thisEvent)
+                },
                 rollbackSeries: { try self.eventStore.remove(restored, span: .futureEvents) })
         } catch let error as SeriesExceptionsRestoreError {
             markNeedsRefresh()

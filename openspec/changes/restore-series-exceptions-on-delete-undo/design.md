@@ -74,6 +74,18 @@
 
 重寫 `seriesRulesRestoreNote`、`seriesRulesListingNote` 與 `undo`、`delete_event`、`delete_events_batch` 的描述：區分三種結果（有例外且已還原／沒有例外／無法檢查），並說明視窗外與刪除之後才產生的例外看不到。移除「span 'all' 尚未檢查」的字樣，那已在診斷驗證（行為與 span future 一致）。
 
+### 列舉範圍比判斷視窗寬，且一律依規則時段判斷（PR #318 verify B1）
+
+單獨編輯過的場次以「目前（編輯後）的時間」被 EventKit 的時間範圍查詢比對，所以只列舉視窗會漏掉被移出視窗的場次；undo 時它的規則時段（`/RID=`）在視窗內、又不在 `keptSlots`，就被當成多餘而移除，場次憑空消失。改為：列舉範圍 = 視窗兩側各加一年（受四年查詢上限約束，`listingRange`），之後 `capture` 一律以規則時段判斷是否在視窗內：視窗內的 detached 場次還原為一次性事件（建在編輯後的開始時間），視窗外的留給規則。移動超過列舉範圍者仍看不到，undo 文字如實說明。
+
+### 系列第一場永不移除（PR #318 verify B2）
+
+重建系列的第一場是系列的錨點（#182 在建立時禁止排除它；iCloud 上移除後系列 ID 不再解析，#284）。`SeriesExceptionsRestorer` 不移除最早的時段，也不為落在該時段的 detached 場次建一次性事件（會與保留的第一場重複）；第一場若曾被單獨編輯或刪除，改由規則保留並在 undo 文字說明。
+
+### 一次性事件 save 丟錯後的清理（PR #318 verify B3）
+
+`save` 丟錯不代表沒寫入。建立一次性事件的 closure 以 `SeriesExceptionsOneOffWriteFailed` 把事件交回，還原流程把它與已建者一併清理（只移除 store 實際持有的）。無法確認清理成功時走 `rollbackFailed`，不宣稱完整回復。
+
 ## Implementation Contract
 
 **可觀察的行為**
