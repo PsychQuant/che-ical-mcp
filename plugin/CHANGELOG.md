@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Undo of a whole-series delete restores the series' exceptions inside the scan window (#285)**: an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event; exceptions outside the window still come back from the rules, and the undo text says which. Binary change; the plugin shell is unchanged.
+- **Undo of a whole-series delete restores the series' exceptions inside the scan window (#285)**: an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event; the series' first occurrence is always kept from the rule, and exceptions outside the window still come back from the rules; the undo text says which. Binary change; the plugin shell is unchanged.
 
 ## [1.20.0] - 2026-10-10
 
