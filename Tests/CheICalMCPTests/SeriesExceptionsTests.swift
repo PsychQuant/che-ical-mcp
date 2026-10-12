@@ -38,6 +38,14 @@ final class SeriesExceptionsTests: XCTestCase {
         DateInterval(start: at("2028-04-02T10:00:00+08:00"), end: at("2028-04-25T10:00:00+08:00"))
     }
 
+    private func captured(_ observed: [SeriesExceptionsPlanner.ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
+                          window: DateInterval) -> SeriesExceptions {
+        guard let result = SeriesExceptionsPlanner.capture(observed, of: series, window: window) else {
+            XCTFail("capture returned nil"); return SeriesExceptions(window: window, keptSlots: [], detached: [])
+        }
+        return result
+    }
+
     // MARK: - snapshot default
 
     func testSnapshotCarriesNoExceptionsByDefault() {
@@ -59,7 +67,7 @@ final class SeriesExceptionsTests: XCTestCase {
         // Four slots; the 3rd was deleted on its own (absent), the 2nd edited on its own.
         let edited = observed(ids: .init(eventIdentifier: "SERIES/RID=860637600", externalIdentifier: "UID/RID=860637600"),
                               detached: true, start: slot2, occurrenceDate: slot2, title: "Standup (moved room)")
-        let result = SeriesExceptionsPlanner.capture(
+        let result = captured(
             [observed(detached: false, start: slot1, occurrenceDate: slot1),
              edited,
              observed(detached: false, start: slot4, occurrenceDate: slot4)],
@@ -75,7 +83,7 @@ final class SeriesExceptionsTests: XCTestCase {
         // (the literal UndoPostState.originalSlot's own doc records from the device).
         let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=837050400", externalIdentifier: nil),
                              detached: true, start: "2027-07-12T10:30:00+08:00", occurrenceDate: "2027-07-12T10:30:00+08:00")
-        let result = SeriesExceptionsPlanner.capture([moved], of: series,
+        let result = captured([moved], of: series,
                                                      window: DateInterval(start: at("2027-07-01T00:00:00+08:00"), end: at("2027-08-01T00:00:00+08:00")))
         XCTAssertEqual(result.detached[0].slot, at("2027-07-12T10:00:00+08:00"))
     }
@@ -83,13 +91,13 @@ final class SeriesExceptionsTests: XCTestCase {
     func testCaptureFallsBackToOccurrenceDateWithoutARID() {
         let edited = observed(ids: .init(eventIdentifier: "SERIES/other", externalIdentifier: nil),
                               detached: true, start: slot2, occurrenceDate: slot2)
-        let result = SeriesExceptionsPlanner.capture([edited], of: series, window: window)
+        let result = captured([edited], of: series, window: window)
         XCTAssertEqual(result.detached[0].slot, at(slot2))
     }
 
     func testCaptureIgnoresOccurrencesOfOtherSeries() {
         let other = UndoPostState.OccurrenceIDs(eventIdentifier: "OTHER", externalIdentifier: "OTHERUID")
-        let result = SeriesExceptionsPlanner.capture(
+        let result = captured(
             [observed(ids: other, detached: false, start: slot1, occurrenceDate: slot1),
              observed(detached: false, start: slot4, occurrenceDate: slot4)],
             of: series, window: window)
@@ -97,10 +105,12 @@ final class SeriesExceptionsTests: XCTestCase {
         XCTAssertTrue(result.detached.isEmpty)
     }
 
-    func testCaptureOfNothingIsEmptyNotAbsent() {
-        let result = SeriesExceptionsPlanner.capture([], of: series, window: window)
-        XCTAssertEqual(result.keptSlots, [])
-        XCTAssertTrue(result.detached.isEmpty)
+    func testCaptureOfNothingIsAbsentSoUndoFallsBackToTheRulesInsteadOfRemovingEverything() {
+        // PR #318 verify round 2, B: an empty listing is not "the series had no exceptions".
+        XCTAssertNil(SeriesExceptionsPlanner.capture([], of: series, window: window))
+        let other = UndoPostState.OccurrenceIDs(eventIdentifier: "OTHER", externalIdentifier: "OTHERUID")
+        XCTAssertNil(SeriesExceptionsPlanner.capture([observed(ids: other, detached: false, start: slot1, occurrenceDate: slot1)],
+                                                     of: series, window: window))
     }
 
     // MARK: - surplus
@@ -160,20 +170,24 @@ final class SeriesExceptionsTests: XCTestCase {
     }
     // MARK: - listing range and window classification (PR #318 verify B1)
 
-    func testListingRangeWidensANarrowWindowByAYearEachSide() {
+    func testListingRangesAreTheWindowAndAYearOnEachSideAsSeparateQueries() {
         let narrow = DateInterval(start: at("2028-04-02T10:00:00+08:00"), end: at("2028-04-25T10:00:00+08:00"))
-        let range = SeriesExceptionsPlanner.listingRange(for: narrow)
-        XCTAssertEqual(range.start, narrow.start.addingTimeInterval(-366 * 86_400))
-        XCTAssertEqual(range.end, narrow.end.addingTimeInterval(366 * 86_400))
+        let ranges = SeriesExceptionsPlanner.listingRanges(for: narrow)
+        XCTAssertEqual(ranges.count, 3)
+        XCTAssertEqual(ranges[0], narrow)
+        XCTAssertEqual(ranges[1], DateInterval(start: narrow.start.addingTimeInterval(-366 * 86_400), end: narrow.start))
+        XCTAssertEqual(ranges[2], DateInterval(start: narrow.end, end: narrow.end.addingTimeInterval(366 * 86_400)))
     }
 
-    func testListingRangeNeverExceedsTheFourYearQueryLimit() {
+    func testAFullLengthWindowStillGetsItsMarginsBecauseTheFourYearLimitIsPerQuery() {
+        // PR #318 verify round 2, A: open-ended and count-based rules give a 1460-day window, which
+        // left no margin when the limit was applied to the whole listing.
         let full = DateInterval(start: at("2028-04-02T10:00:00+08:00"), duration: 1460 * 86_400)
-        XCTAssertEqual(SeriesExceptionsPlanner.listingRange(for: full), full)
-        let long = DateInterval(start: at("2028-04-02T10:00:00+08:00"), duration: 1000 * 86_400)
-        XCTAssertLessThanOrEqual(SeriesExceptionsPlanner.listingRange(for: long).duration, 1460 * 86_400)
-        XCTAssertTrue(SeriesExceptionsPlanner.listingRange(for: long).contains(long.start))
-        XCTAssertTrue(SeriesExceptionsPlanner.listingRange(for: long).contains(long.end))
+        let ranges = SeriesExceptionsPlanner.listingRanges(for: full)
+        XCTAssertEqual(ranges.count, 3)
+        XCTAssertTrue(ranges.allSatisfy { $0.duration <= 1460 * 86_400 })
+        XCTAssertEqual(ranges.map(\.start).min(), full.start.addingTimeInterval(-366 * 86_400))
+        XCTAssertEqual(ranges.map(\.end).max(), full.end.addingTimeInterval(366 * 86_400))
     }
 
     func testAnOccurrenceMovedOutOfTheWindowIsStillCapturedByItsSlot() {
@@ -183,7 +197,7 @@ final class SeriesExceptionsTests: XCTestCase {
                              detached: true, start: "2028-05-20T10:00:00+08:00", occurrenceDate: "2028-05-20T10:00:00+08:00", title: "Moved")
         let slotInWindow = Date(timeIntervalSinceReferenceDate: 830_000_000)
         let w = DateInterval(start: slotInWindow.addingTimeInterval(-86_400 * 10), end: slotInWindow.addingTimeInterval(86_400 * 10))
-        let result = SeriesExceptionsPlanner.capture([moved], of: series, window: w)
+        let result = captured([moved], of: series, window: w)
         XCTAssertEqual(result.detached.map(\.slot), [slotInWindow])
     }
 
@@ -192,13 +206,13 @@ final class SeriesExceptionsTests: XCTestCase {
         // occurrence the rule regenerates outside the window.
         let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=830000000", externalIdentifier: nil),
                              detached: true, start: slot2, occurrenceDate: slot2, title: "Moved in")
-        let result = SeriesExceptionsPlanner.capture([moved], of: series, window: window)
+        let result = captured([moved], of: series, window: window)
         XCTAssertTrue(result.detached.isEmpty)
         XCTAssertEqual(result.keptSlots, [])
     }
 
     func testUndetachedOccurrencesOutsideTheWindowAreNotKeptSlots() {
-        let result = SeriesExceptionsPlanner.capture(
+        let result = captured(
             [observed(detached: false, start: "2028-09-01T10:00:00+08:00", occurrenceDate: "2028-09-01T10:00:00+08:00"),
              observed(detached: false, start: slot1, occurrenceDate: slot1)], of: series, window: window)
         XCTAssertEqual(result.keptSlots, [at(slot1)])

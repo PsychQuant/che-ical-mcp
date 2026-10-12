@@ -91,6 +91,22 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
         let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW",
                                                          exceptionsOutcome: .init(stayedDeleted: 1, oneOffs: 0))
-        XCTAssertTrue(message.contains("moved far outside"), message)
+        XCTAssertTrue(message.contains("more than a year"), message)
+    }
+    func testUndoTextSaysWhenTheRecordedExceptionsDidNotMatchTheRecreatedSeries() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
+        let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW",
+                                                         exceptionsOutcome: .init(stayedDeleted: 0, oneOffs: 0, notApplied: true))
+        XCTAssertTrue(message.contains("did not match"), message)
+        XCTAssertTrue(message.contains("none was applied"), message)
+        XCTAssertFalse(message.contains("stayed deleted"), message)
+    }
+
+    func testBatchNoteDoesNotPromiseWhatItCannotKnow() {
+        // A batch undo text is built before the members' outcomes are known (PR #318 verify round 2).
+        let note = UndoOperation.seriesExceptionsBatchNote
+        XCTAssertTrue(note.contains("first occurrence"), note)
+        XCTAssertTrue(note.contains("more than a year"), note)
+        XCTAssertTrue(note.contains("did not match"), note)
     }
 }

@@ -351,8 +351,8 @@ extension UndoOperation {
     /// `UndoBatchWiringTests.testBatchRecordsAreBuiltOnlyFromDeletes`): a whole event, an occurrence
     /// or a reminder restore writes one new item and reads no other member's result, and the #244
     /// marker never runs (its refusal comes first). A whole-series delete and a delete of one of its
-    /// occurrences in one batch bring that occurrence back twice whichever runs first (#285), so
-    /// their order does not change the outcome either. False for the kinds no batch records: two
+    /// occurrences cannot be members of one batch (a batch is built from distinct deletes of
+    /// distinct events), so their order is not in question here. False for the kinds no batch records: two
     /// of them can write to one item, where the order matters. Exhaustive, so a new record kind
     /// has to be classified to compile (#196 convention).
     var mayRunLastAfterAFailure: Bool {

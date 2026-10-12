@@ -42,9 +42,10 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
 
     private func run(_ exceptions: SeriesExceptions, generated: [Date]? = nil, log: Log = Log(),
                      failRemoveAt: Date? = nil, failCreateTitle: String? = nil, failRollback: Bool = false,
-                     failOneOffCleanup: Bool = false, writeThenThrow: Bool = false) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
+                     failOneOffCleanup: Bool = false, writeThenThrow: Bool = false,
+                     seriesStart: Date? = nil) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
         let outcome = try SeriesExceptionsRestorer.restore(
-            exceptions: exceptions,
+            exceptions: exceptions, seriesStart: seriesStart ?? at(slots[0]),
             generated: (generated ?? slots.map(at)).map { (slot: $0, occurrence: $0) },
             remove: { date in
                 if let failRemoveAt, UndoPostState.sameInstant(date, failRemoveAt) { throw Boom() }
@@ -128,15 +129,64 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         }
     }
 
-    func testAFailedOneOffCleanupIsReportedAsARollbackFailure() {
+    func testAFailedConfirmedOneOffCleanupWithTheSeriesRolledBackIsNotReportedAsTheSeriesExisting() {
+        // PR #318 verify round 2, C: the series is gone; only a one-off could not be removed.
         let two = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
                                    detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
-        XCTAssertThrowsError(try run(two, failCreateTitle: "B", failOneOffCleanup: true)) { error in
+        let log = Log()
+        XCTAssertThrowsError(try run(two, log: log, failCreateTitle: "B", failOneOffCleanup: true)) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .strayOneOffs(at(slots[2])))
+        }
+        XCTAssertEqual(log.rolledBack, 1)
+    }
+
+    func testAFailedRollbackAfterAOneOffFailureIsStillReportedAsTheSeriesExisting() {
+        let two = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
+                                   detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
+        XCTAssertThrowsError(try run(two, failCreateTitle: "B", failRollback: true)) { error in
             guard case .rollbackFailed? = error as? SeriesExceptionsRestoreError else {
                 return XCTFail("expected rollbackFailed, got \(error)")
             }
         }
     }
+
+    func testAFailedCleanupOfAWriteThenThrowOneOffIsOnlyAMaybeBecauseItMayNeverHaveBeenWritten() {
+        let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
+        let log = Log()
+        XCTAssertThrowsError(try run(one, log: log, failCreateTitle: "B", failOneOffCleanup: true, writeThenThrow: true)) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffMaybeLeft(at(slots[1])))
+        }
+        XCTAssertEqual(log.rolledBack, 1)   // the series IS rolled back; only the unwritten-or-written event is uncertain
+    }
+
+    // MARK: - PR #318 verify round 2, B: the listing must match the recreated series
+
+    func testAnEmptyGeneratedListFallsBackToTheRulesAndDoesNothing() throws {
+        let (outcome, log) = try run(spikeExceptions, generated: [])
+        XCTAssertEqual(log.events, [])
+        XCTAssertTrue(outcome.notApplied)
+    }
+
+    func testAKeptSlotMissingFromTheRecreatedSeriesFallsBackToTheRulesAndDoesNothing() throws {
+        // A systematic offset (time zone, DST, floating day): none of the recorded slots match.
+        let offset = slots.map { at($0).addingTimeInterval(3_600) }
+        let (outcome, log) = try run(spikeExceptions, generated: offset, seriesStart: at(slots[0]).addingTimeInterval(3_600))
+        XCTAssertEqual(log.events, [])
+        XCTAssertTrue(outcome.notApplied)
+    }
+
+    func testTheRecreatedSeriesMustContainItsOwnFirstSlot() throws {
+        let (outcome, log) = try run(spikeExceptions, generated: Array(slots.dropFirst()).map(at))
+        XCTAssertEqual(log.events, [])
+        XCTAssertTrue(outcome.notApplied)
+    }
+
+    func testAMatchingListingStillAppliesTheExceptions() throws {
+        let (outcome, log) = try run(spikeExceptions)
+        XCTAssertFalse(outcome.notApplied)
+        XCTAssertEqual(log.removed.count, 2)
+    }
+
     // MARK: - PR #318 verify B2: the series' first occurrence is never removed
 
     func testAFirstOccurrenceDeletedOnItsOwnIsKeptFromTheRuleAndSaid() throws {

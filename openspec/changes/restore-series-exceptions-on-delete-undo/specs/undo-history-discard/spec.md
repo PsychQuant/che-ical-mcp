@@ -65,11 +65,19 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Edited occurrence moved across the window edge (#285)
 - **WHEN** an occurrence edited on its own has its rule slot inside the checked window but was moved outside it, or the reverse
-- **THEN** the exceptions are listed over a range wider than the window (a year each side, within the four-year query limit) and judged by rule slot: one whose slot is inside the window is restored as a one-off event wherever it was moved, one whose slot is outside is left to the rule; one moved beyond the listed range is not seen, which the undo text says
+- **THEN** the exceptions are listed over the window and a year on each side of it, as separate queries (the four-year query limit is per query, so the margins do not depend on the window's length), and judged by rule slot: one whose slot is inside the window is restored as a one-off event wherever it was moved within that range, one whose slot is outside is left to the rule; one moved more than a year past the window is not seen, its slot is removed as a slot deleted on its own, and the undo text says so
 
 #### Scenario: Restoring the exceptions fails part-way (#285)
 - **WHEN** removing a surplus occurrence, or recreating an edited occurrence as a one-off event, fails after the series was recreated
 - **THEN** the recreated series and every one-off event created so far, including one whose save threw after the store may have taken it, are deleted again, nothing of the restore is left behind, the error says the restore failed and nothing was written, and the record is put back for a retry; if that compensating delete itself fails, the error says that the series was recreated with some exceptions applied and to check Calendar, the record is discarded because a retry would create a second series, and the undo is never reported as successful
+
+#### Scenario: Recorded exceptions do not match the recreated series (#285)
+- **WHEN** undo has recreated a series with recorded exceptions and the recorded slots do not describe it: no occurrence of the recreated series is listed, a recorded slot is not generated, or the series' own first slot is not generated
+- **THEN** nothing is removed and no one-off event is created, the series stands as its rules made it, and the undo text says the recorded exceptions did not match and none was applied; an empty listing at delete time is not recorded as "no exceptions" but as not listed
+
+#### Scenario: Cleanup fails after restoring the exceptions fails (#285)
+- **WHEN** restoring the exceptions fails and the recreated series is deleted again, but a one-off event created before the failure cannot be removed
+- **THEN** the error says the series was deleted again and that an occurrence remains in the calendar (to check before a retry, which would add it again); it does not say the series exists. A one-off whose save threw and that cannot be removed is reported as possibly remaining, because it may never have been written
 
 #### Scenario: Occurrence delete whose slot the series already holds (#285)
 - **WHEN** undo meets the record of a `delete_event` with span "this" (or such a member of a `delete_events_batch`) and the calendar of the snapshot already holds a recurring event with the same title and the same start as the occurrence's slot, as when the series was restored from its rules before this record

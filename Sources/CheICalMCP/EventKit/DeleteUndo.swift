@@ -6,9 +6,10 @@ import Foundation
 /// delete of one occurrence came back as a second series beside the surviving one (on device: 3
 /// occurrences, delete one, 2, undo, 5). The record now says what was removed:
 ///
-/// - the whole event: recreated, rules included, as before. For a series that is its rules only:
-///   occurrences deleted or edited on their own earlier are not recorded, so an earlier-deleted one
-///   comes back and an edited one comes back unedited (on device 2026-10-08; #285);
+/// - the whole event: recreated, rules included. For a series, its exceptions inside the scan window
+///   are recorded too and restored (#285): an occurrence deleted on its own earlier stays deleted,
+///   one edited on its own comes back as a one-off event. A series whose exceptions could not be
+///   listed, or whose record did not match the recreated series, comes back from its rules alone;
 /// - one occurrence: recreated as a one-off event at its slot (maintainer decision D1, the #208
 ///   copy-out precedent). EventKit has no public way to put an occurrence back into its series;
 /// - an occurrence and the following ones, unless that removed the whole series: a marker whose
@@ -126,9 +127,9 @@ extension UndoOperation {
 
     /// The text of a restored occurrence. Store-derived title through `undoVisibleTitle`, as the
     /// other "Undone:" texts; `notCarriedOver` names fields in the move path's terms. When the
-    /// series was deleted whole and recreated from its rules after this delete, this restore is the
-    /// write that adds the second copy (#285); the warning is in the series' own undo text, one
-    /// response earlier (verify round 4, finding 10), since nothing here knows what ran in between.
+    /// series was deleted whole and recreated from its rules alone, the series already holds the slot
+    /// and `seriesHoldsSlot` skips the write (#285); where the series' exceptions were restored the
+    /// slot is free and this writes the one-off, which is the right result.
     static func occurrenceRestoredMessage(title: String, newID: String, notCarriedOver: [String]) -> String {
         var message = "Undone: restored the deleted occurrence of '\(undoVisibleTitle(title))' as a one-off event (new ID: \(newID))"
         if notCarriedOver.contains("absolute_alarms") {
@@ -190,7 +191,10 @@ extension UndoOperation {
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
     /// limit is stated because an exception outside it was never listed.
     static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome) -> String {
-        var note = "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved far outside its slot's window is neither restored nor listed"
+        if outcome.notApplied {
+            return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+        }
+        var note = "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
         if outcome.firstOccurrenceKeptFromRule {
             note += ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
         }
@@ -238,7 +242,7 @@ extension UndoOperation {
 
     /// #285: a batch undo names the exceptions restore once, without counts (the member texts are
     /// not shown, and counts per member are not carried up).
-    static let seriesExceptionsBatchNote = "Series were restored from their rules with their exceptions inside the checked window: occurrences deleted on their own earlier stayed deleted, occurrences edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
+    static let seriesExceptionsBatchNote = "Series were restored from their rules with their exceptions inside the checked window: occurrences deleted on their own earlier stayed deleted, occurrences edited on their own came back as separate one-off events that no longer belong to their series. Per series this text cannot say, but undo of a single event does: a first occurrence that was edited or deleted on its own is kept from the rule; an occurrence edited on its own and moved more than a year outside the checked window is not restored and its slot counts as deleted; and where the recorded exceptions did not match the recreated series none was applied. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
 
     private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules, seriesExceptions }
 

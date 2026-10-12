@@ -14,12 +14,16 @@ extension EventKitManager {
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: series.calendarItemExternalIdentifier)
         let window = UndoPostState.seriesScanWindow(of: series)
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
-        // Listed over a wider range than the window: an occurrence edited on its own is matched by
-        // its current time, so one moved out of the window is only found there (PR #318 verify B1).
-        let range = SeriesExceptionsPlanner.listingRange(for: window)
-        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
-                                                                           calendars: [calendar])) { occurrence, _ in
-            observed.append(Self.observed(occurrence))
+        // Listed over the window and a year on each side, as separate queries: an occurrence edited
+        // on its own is matched by its current time, so one moved out of the window is only found
+        // there (PR #318 verify B1; round 2, A: the four-year limit is per query).
+        var seen = Set<String>()
+        for range in SeriesExceptionsPlanner.listingRanges(for: window) {
+            eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
+                                                                               calendars: [calendar])) { occurrence, _ in
+                let key = "\(occurrence.eventIdentifier ?? "")|\(occurrence.startDate.timeIntervalSinceReferenceDate)"
+                if seen.insert(key).inserted { observed.append(Self.observed(occurrence)) }
+            }
         }
         return SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window)
     }
@@ -53,7 +57,7 @@ extension EventKitManager {
         }
         do {
             return try SeriesExceptionsRestorer.restore(
-                exceptions: exceptions, generated: generated,
+                exceptions: exceptions, seriesStart: restored.startDate, generated: generated,
                 remove: { try self.eventStore.remove($0, span: .thisEvent) },
                 createOneOff: { detached in
                     let oneOff = EKEvent(eventStore: self.eventStore)
@@ -93,6 +97,12 @@ extension EventKitManager {
         case .oneOffFailed(let date):
             return EventKitError.seriesExceptionsRestoreFailed(
                 reason: "Undo could not recreate the occurrence edited on its own on \(day(date)). The recreated series and the occurrences recreated so far were deleted again; nothing was restored. Retry undo.")
+        case .strayOneOffs(let date):
+            return EventKitError.seriesExceptionsRestoreFailed(
+                reason: "Undo could not finish restoring the exceptions of the series (the occurrence edited on its own on \(day(date)) could not be recreated). The recreated series was deleted again, but an occurrence recreated before the failure could not be removed and remains in the calendar: check Calendar and remove it before retrying undo, or a retry will add it again.")
+        case .oneOffMaybeLeft(let date):
+            return EventKitError.seriesExceptionsRestoreFailed(
+                reason: "Undo could not recreate the occurrence edited on its own on \(day(date)). The recreated series was deleted again, but that occurrence's save failed in a way that may have written it and it could not be removed: check Calendar for a stray event on that day before retrying undo.")
         case .rollbackFailed(let applied):
             return UnrecoverableUndoError(
                 message: "Undo recreated the series but could not finish restoring its exceptions, and deleting it again failed too: the series exists with \(applied) occurrence(s) removed, and any occurrences edited on their own that were recreated before the failure remain. Check Calendar; this undo entry is discarded because a retry would create a second series.")

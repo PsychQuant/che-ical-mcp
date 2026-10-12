@@ -6,7 +6,7 @@
 
 - [x] 2.1 新增 `SeriesExceptions` 值型別（`window`、`keptSlots`、`detached`，含 `DetachedOccurrence { slot, snapshot }`），並在 `EventSnapshot` 加選用欄位 `exceptions`（init 參數預設 `nil`）。行為：既有 `EventSnapshot(from:)` 呼叫點不需修改即可編譯，未帶 `exceptions` 的快照與以前完全相同。驗證：先寫的 `SeriesExceptionsTests`（紅燈）確認預設為 `nil`，實作後轉綠；`swift test` 其餘測試不受影響。
 - [x] 2.2 實作例外擷取的純函式：輸入視窗內實際場次的值（時段、是否 detached、識別碼）、輸出 `SeriesExceptions`；detached 場次的原始時段取自 `UndoPostState.originalSlot`（`/RID=`），沒有 `/RID=` 時退回 `occurrenceDate`。行為：未分離的場次進 `keptSlots`，detached 進 `detached` 且帶去掉規則的快照。驗證：`SeriesExceptionsTests` 涵蓋含 `/RID=` 的識別碼、缺 `/RID=` 的退回、全部未分離、全部 detached。
-- [x] 2.3 實作「多餘時段」差集純函式：輸入重建後展開的時段、`keptSlots`、`window`，輸出要排除的時段；只在 `window` 內判斷，時段以 `UndoPostState.sameInstant`（到秒）比對。行為：中間被刪除的場次出現在輸出；視窗外的場次**不**出現；規則已縮短（尾端刪除）時輸出為空。驗證：`SeriesExceptionDifferenceTests`（紅燈後轉綠）涵蓋中間刪除、尾端刪除、視窗邊界上下各一秒、DST 轉換前後與非台北時區（例如 `America/New_York`）。
+- [x] 2.3 實作「多餘時段」差集純函式：輸入重建後展開的時段、`keptSlots`、`window`，輸出要排除的時段；只在 `window` 內判斷，時段以 `UndoPostState.sameInstant`（到秒）比對。行為：中間被刪除的場次出現在輸出；視窗外的場次**不**出現；規則已縮短（尾端刪除）時輸出為空。驗證：`SeriesExceptionsTests` 的差集案例（紅燈後轉綠）涵蓋中間刪除、尾端刪除、視窗邊界上下各一秒、DST 轉換前後與非台北時區（例如 `America/New_York`）。
 
 ## 3. 刪除前擷取（例外記在系列快照上，取自「刪除前列舉的實際場次」）
 
@@ -25,7 +25,7 @@
 
 ## 6. 揭露（訊息與說明如實反映視窗）
 
-- [x] 6.1 重寫 `DeleteUndo.swift` 的 `seriesRulesRestoreNote`、`seriesRulesListingNote` 與還原訊息：區分「有例外且已還原」「沒有例外」「無法檢查」三種，並說明視窗外與刪除之後才產生的例外看不到；`undo_history` 與批次的列表文字依 spec 的新場景。行為：「Occurrences outside the checked window (#285)」場景成立，且沒有任何文字宣稱「不會有多餘場次」。驗證：`DeleteUndoTests` 與 `UndoRedoTextHandlerTests` 的字串斷言更新（先紅後綠），含批次的 K 只算不帶例外的成員。
+- [x] 6.1 重寫 `DeleteUndo.swift` 的 `seriesRulesRestoreNote`、`seriesRulesListingNote` 與還原訊息：區分「有例外且已還原」「沒有例外」「無法檢查」三種，並說明視窗外與刪除之後才產生的例外看不到；`undo_history` 與批次的列表文字依 spec 的新場景。行為：「Occurrences outside the checked window (#285)」場景成立，且沒有任何文字宣稱「不會有多餘場次」。驗證：`DeleteUndoTests`（既有字串斷言隨新措辭更新）與新增的 `SeriesExceptionsTextTests`（單筆、批次、混合批次的列表與 undo 文字）；`ManifestParityTests` 釘住描述與 manifest 摘要。
 - [x] 6.2 更新 `Server.swift` 內 `undo`、`delete_event`、`delete_events_batch` 的 tool 描述，移除「span 'all' 尚未檢查」的字樣並改述新行為。行為：描述與實際行為一致。驗證：既有的描述快照或 `ManifestParityTests` 類測試通過；人工對照 `Server.swift` 描述與 spec 場景逐句核對。
 
 ## 7. 文件與規格 [P]
@@ -43,4 +43,5 @@
 
 - [x] 9.1 修正三個必修缺陷：B1 列舉範圍加寬並一律依規則時段判斷（`listingRange`、`capture`）、B2 系列第一場永不移除（`SeriesExceptionsRestorer` anchor）、B3 save 丟錯後的一次性事件一併清理（`SeriesExceptionsOneOffWriteFailed`）。驗證：`SeriesExceptionsTests`、`SeriesExceptionsRestorerTests` 新增 9 項；mutation check（拿掉 anchor 與拿掉 write-then-throw 清理）3 項失敗後還原；iCloud 實機 B1 通過（移出視窗約 70 天的編輯場次以一次性事件回來）；B2 在 iCloud 到不了還原階段（第一場被單獨編輯後系列刪除本身即失敗，#284），僅單元測試。
 - [x] 9.2 對齊文字與文件：`seriesRulesRestoreNote`、`seriesExceptionsRestoredNote`（第一場與移出範圍的說明）、`docs/UNDO_HISTORY.md`、spec（一次性事件建在編輯後開始時間、第一場與跨視窗邊界兩個新場景）、design。
+- [x] 9.4 PR #318 第二輪 verify 修正（FAIL，3 組必修）：A 邊界改為三段獨立查詢（四年上限是每個查詢各自算）；B 擷取為空回 nil，還原前核對紀錄與重建系列是否對得上、對不上就只依規則並說明；anchor 改用重建系列的起點；C 系列回復與一次性事件清理分開回報（`strayOneOffs`、`oneOffMaybeLeft`）。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests`／`SeriesExceptionsTextTests` 新增 8 項；mutation check（拿掉一致性檢查、拿掉邊界查詢）失敗後還原；尚未做的實機：開放式／依次數結束系列的邊界（見實作留言）。
 - [ ] 9.3 後續項目（尚未處理，不在本 PR）：重複防護的誤判取捨（同標題同時段的另一個重複事件）、`UndoBatchRestoreTests` 的帶例外成員案例、批次 undo 文字在 guard 略過成員時的敘述、每次系列刪除的列舉成本、Google／DST 實機（8.3）。

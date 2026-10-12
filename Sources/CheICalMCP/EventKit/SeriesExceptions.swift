@@ -35,16 +35,18 @@ enum SeriesExceptionsPlanner {
         let snapshot: EventSnapshot
     }
 
-    /// The range to LIST occurrences over: the window widened by a year each side, as far as the
-    /// four-year query limit (1460 days) of an EventKit predicate allows. An occurrence edited on
-    /// its own is matched by its current (edited) time, not by its rule slot, so listing only the
-    /// window loses one that was moved out of it (PR #318 verify B1). One moved further than this
-    /// range is still not seen; the undo text says so.
-    static func listingRange(for window: DateInterval) -> DateInterval {
-        let day: TimeInterval = 86_400
-        let spare = max(0, 1460 * day - window.duration)
-        let margin = min(366 * day, spare / 2)
-        return DateInterval(start: window.start.addingTimeInterval(-margin), end: window.end.addingTimeInterval(margin))
+    /// The ranges to LIST occurrences over: the window, and a year on each side of it, as three
+    /// separate queries. An occurrence edited on its own is matched by its current (edited) time,
+    /// not by its rule slot, so listing only the window loses one that was moved out of it (PR #318
+    /// verify B1). The four-year limit of an EventKit predicate applies to each query, so the
+    /// margins do not depend on the window's length (round 2, A: open-ended and count-based rules
+    /// give a 1460-day window, which left no margin when the limit was applied to the whole listing).
+    /// One moved more than a year past the window is still not seen; the undo text says so.
+    static func listingRanges(for window: DateInterval) -> [DateInterval] {
+        let margin: TimeInterval = 366 * 86_400
+        return [window,
+                DateInterval(start: window.start.addingTimeInterval(-margin), end: window.start),
+                DateInterval(start: window.end, end: window.end.addingTimeInterval(margin))]
     }
 
     /// Splits what was listed into the slots that stay and the occurrences edited on their own.
@@ -52,11 +54,17 @@ enum SeriesExceptionsPlanner {
     /// by RULE SLOT against `window`, never by where an occurrence currently sits: a slot outside
     /// the window is left to the rule (an edited occurrence there is not restored as a one-off, or
     /// the rule's own occurrence outside the window would be duplicated).
+    ///
+    /// Nil when no occurrence of the series was listed at all: an empty listing is not "the series
+    /// had no exceptions", and treating it so would make every generated slot surplus on undo
+    /// (round 2, B).
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
-                        window: DateInterval) -> SeriesExceptions {
+                        window: DateInterval) -> SeriesExceptions? {
         var kept: [Date] = []
         var detached: [DetachedOccurrence] = []
+        var sawSeries = false
         for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
+            sawSeries = true
             if occurrence.isDetached {
                 let slot = UndoPostState.originalSlot(eventIdentifier: occurrence.ids.eventIdentifier,
                                                       externalIdentifier: occurrence.ids.externalIdentifier,
@@ -67,6 +75,7 @@ enum SeriesExceptionsPlanner {
                 if window.contains(slot) { kept.append(slot) }
             }
         }
+        guard sawSeries else { return nil }
         return SeriesExceptions(window: window, keptSlots: kept.sorted(),
                                 detached: detached.sorted { $0.slot < $1.slot })
     }
@@ -98,6 +107,12 @@ enum SeriesExceptionsRestoreError: Error, Equatable {
     /// The compensating delete failed after one of the above; `exclusionsApplied` surplus
     /// occurrences had been removed by then.
     case rollbackFailed(exclusionsApplied: Int)
+    /// The recreated series was deleted again, but a one-off event created for an exception could
+    /// not be removed: it remains in the calendar (round 2, C).
+    case strayOneOffs(Date)
+    /// The recreated series was deleted again; a one-off whose save threw may or may not have been
+    /// written and could not be removed, so it may remain.
+    case oneOffMaybeLeft(Date)
 }
 
 /// A one-off save that threw after the store may have taken the write: the closure hands the
@@ -119,22 +134,34 @@ enum SeriesExceptionsRestorer {
         /// restored series keeps it from the rule: removing it would remove the series' anchor
         /// (#182 forbids excluding it; on iCloud the id stops resolving, #284).
         var firstOccurrenceKeptFromRule: Bool = false
+        /// The recorded exceptions did not match the recreated series (empty listing, a recorded
+        /// slot the series does not generate, or no slot at the series' own start), so none was
+        /// applied and the series stands as the rules made it (round 2, B).
+        var notApplied: Bool = false
     }
 
     /// `generated` lists the recreated series' occurrences inside `exceptions.window`, as
-    /// EventKit expanded the rules. Throws `SeriesExceptionsRestoreError`.
+    /// EventKit expanded the rules; `seriesStart` is the start of the recreated series itself.
+    /// Throws `SeriesExceptionsRestoreError`.
     static func restore<Occurrence, OneOff>(
         exceptions: SeriesExceptions,
+        seriesStart: Date,
         generated: [(slot: Date, occurrence: Occurrence)],
         remove: (Occurrence) throws -> Void,
         createOneOff: (DetachedOccurrence) throws -> OneOff,
         removeOneOff: (OneOff) throws -> Void,
         rollbackSeries: () throws -> Void
     ) throws -> Outcome {
-        // The earliest generated slot is the series' first occurrence: never removed.
-        let anchor = generated.map(\.slot).min()
-        func isAnchor(_ slot: Date) -> Bool { anchor.map { UndoPostState.sameInstant($0, slot) } ?? false }
-        let allSurplus = SeriesExceptionsPlanner.surplusSlots(generated: generated.map(\.slot), exceptions: exceptions)
+        // Nothing is removed or created unless the record and the recreated series describe the
+        // same series: every recorded slot is generated, and so is the series' own first slot.
+        let generatedSlots = generated.map(\.slot)
+        func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
+        guard isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated) else {
+            return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)
+        }
+        // The series' first occurrence is its anchor: never removed.
+        func isAnchor(_ slot: Date) -> Bool { UndoPostState.sameInstant(seriesStart, slot) }
+        let allSurplus = SeriesExceptionsPlanner.surplusSlots(generated: generatedSlots, exceptions: exceptions)
         let surplus = allSurplus.filter { !isAnchor($0) }
         let oneOffsToCreate = exceptions.detached.filter { !isAnchor($0.slot) }
         let firstKept = allSurplus.contains(where: isAnchor)
@@ -160,15 +187,21 @@ enum SeriesExceptionsRestorer {
             do {
                 created.append(try createOneOff(detached))
             } catch {
-                // A save that threw may still have written: clean that one up as well.
-                if let failed = error as? SeriesExceptionsOneOffWriteFailed<OneOff> { created.append(failed.possiblyWritten) }
-                var cleanedUp = true
+                // Cleaned up apart from the rest: a save that threw may or may not have written,
+                // so a failure to remove it proves nothing (round 2, C).
+                let uncertain = (error as? SeriesExceptionsOneOffWriteFailed<OneOff>)?.possiblyWritten
+                var confirmedCleaned = true
                 for oneOff in created {
-                    do { try removeOneOff(oneOff) } catch { cleanedUp = false }
+                    do { try removeOneOff(oneOff) } catch { confirmedCleaned = false }
                 }
-                do { try rollbackSeries() } catch { cleanedUp = false }
-                throw cleanedUp ? SeriesExceptionsRestoreError.oneOffFailed(detached.slot)
-                                : SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: exclusionsApplied)
+                var uncertainCleaned = true
+                if let uncertain { do { try removeOneOff(uncertain) } catch { uncertainCleaned = false } }
+                var seriesRemoved = true
+                do { try rollbackSeries() } catch { seriesRemoved = false }
+                if !seriesRemoved { throw SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: exclusionsApplied) }
+                if !confirmedCleaned { throw SeriesExceptionsRestoreError.strayOneOffs(detached.slot) }
+                if !uncertainCleaned { throw SeriesExceptionsRestoreError.oneOffMaybeLeft(detached.slot) }
+                throw SeriesExceptionsRestoreError.oneOffFailed(detached.slot)
             }
         }
 
