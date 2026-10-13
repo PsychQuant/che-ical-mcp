@@ -14,7 +14,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
                             : snapshot)
     }
 
-    private let exceptionsListing = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events"
+    private let exceptionsListing = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events; not for a first occurrence edited or deleted on its own, one moved more than a year outside the window, or a record that does not match the recreated series"
     private let rulesListing = "occurrences deleted on their own earlier come back, edited ones without their edits"
 
     // MARK: - undo_history

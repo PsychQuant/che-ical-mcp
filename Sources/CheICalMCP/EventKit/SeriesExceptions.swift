@@ -35,6 +35,15 @@ enum SeriesExceptionsPlanner {
         let snapshot: EventSnapshot
     }
 
+    /// Whether a rule slot is inside the window: start inclusive, end EXCLUSIVE, like an EventKit
+    /// query, which does not return an event that starts exactly at the end of its range (checked
+    /// on device 2026-10-13). A closed end made an occurrence starting at the window end recorded
+    /// but never listed on undo, which disabled the restore for open-ended daily series (PR #318
+    /// verify round 3).
+    static func inWindow(_ slot: Date, _ window: DateInterval) -> Bool {
+        slot >= window.start && slot < window.end
+    }
+
     /// The ranges to LIST occurrences over: the window, and a year on each side of it, as three
     /// separate queries. An occurrence edited on its own is matched by its current (edited) time,
     /// not by its rule slot, so listing only the window loses one that was moved out of it (PR #318
@@ -55,27 +64,26 @@ enum SeriesExceptionsPlanner {
     /// the window is left to the rule (an edited occurrence there is not restored as a one-off, or
     /// the rule's own occurrence outside the window would be duplicated).
     ///
-    /// Nil when no occurrence of the series was listed at all: an empty listing is not "the series
-    /// had no exceptions", and treating it so would make every generated slot surplus on undo
-    /// (round 2, B).
+    /// Nil when no occurrence of the series was listed INSIDE the window: an empty listing is not
+    /// "the series had no exceptions", and treating it so would make every generated slot surplus
+    /// on undo (round 2, B). Occurrences found only in the margins do not count (round 3: the
+    /// margin queries always find an open-ended series' own occurrences).
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
                         window: DateInterval) -> SeriesExceptions? {
         var kept: [Date] = []
         var detached: [DetachedOccurrence] = []
-        var sawSeries = false
         for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
-            sawSeries = true
             if occurrence.isDetached {
                 let slot = UndoPostState.originalSlot(eventIdentifier: occurrence.ids.eventIdentifier,
                                                       externalIdentifier: occurrence.ids.externalIdentifier,
                                                       occurrenceDate: occurrence.occurrenceDate) ?? occurrence.startDate
-                if window.contains(slot) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
+                if Self.inWindow(slot, window) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
             } else {
                 let slot = occurrence.occurrenceDate ?? occurrence.startDate
-                if window.contains(slot) { kept.append(slot) }
+                if Self.inWindow(slot, window) { kept.append(slot) }
             }
         }
-        guard sawSeries else { return nil }
+        guard !kept.isEmpty || !detached.isEmpty else { return nil }
         return SeriesExceptions(window: window, keptSlots: kept.sorted(),
                                 detached: detached.sorted { $0.slot < $1.slot })
     }
@@ -87,7 +95,7 @@ enum SeriesExceptionsPlanner {
     /// Slots compare as instants, to the second (`UndoPostState.sameInstant`).
     static func surplusSlots(generated: [Date], exceptions: SeriesExceptions) -> [Date] {
         generated.filter { slot in
-            exceptions.window.contains(slot)
+            SeriesExceptionsPlanner.inWindow(slot, exceptions.window)
                 && !exceptions.keptSlots.contains { UndoPostState.sameInstant($0, slot) }
         }
     }
@@ -153,10 +161,11 @@ enum SeriesExceptionsRestorer {
         rollbackSeries: () throws -> Void
     ) throws -> Outcome {
         // Nothing is removed or created unless the record and the recreated series describe the
-        // same series: every recorded slot is generated, and so is the series' own first slot.
+        // same series: every recorded slot (kept and edited) is generated, and so is the series' own first slot.
         let generatedSlots = generated.map(\.slot)
         func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
-        guard isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated) else {
+        guard isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
+              exceptions.detached.allSatisfy({ isGenerated($0.slot) }) else {
             return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)
         }
         // The series' first occurrence is its anchor: never removed.

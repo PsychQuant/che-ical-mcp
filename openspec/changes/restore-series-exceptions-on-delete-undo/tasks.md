@@ -31,7 +31,7 @@
 ## 7. 文件與規格 [P]
 
 - [x] 7.1 [P] （一致性已核對：`recurrence-excluded-dates` 的需求只涵蓋建立時的排除與 createEvent 的 undo，與本 change 重用同一個 executor 但不互相矛盾，無需修改）把 `restore-series-exceptions-on-delete-undo` 的 delta 合併進 `openspec/specs/undo-history-discard`（歸檔時），並確認 `recurrence-excluded-dates` 只是重用內部機制、不需修改。行為：兩份 spec 對「排除」的敘述不互相矛盾。驗證：`spectra validate` 通過；對照 `recurrence-excluded-dates` 的需求逐條確認未被牽動，結論寫在 #285 的實作留言。
-- [x] 7.2 [P] 更新 `README.md`、`README_zh-TW.md`、`plugin/README.md` 與兩份 `CHANGELOG.md` 的 `[Unreleased]`：說明整個系列刪除的 undo 現在還原視窗內的例外、編輯過的場次以一次性事件還原、以及視窗限制。行為：文件與新行為一致且不宣稱超出視窗的保證。驗證：doc-sync 掃描（`git ls-files` 的 README*／CLAUDE.md）逐檔確認無過時敘述；`ManifestParityTests` 與版本一致性測試不受影響。
+- [x] 7.2 [P] （`plugin/README.md` 沒有改動：它只在發版時彙整；plugin 的 CHANGELOG 已更新）更新 `README.md`、`README_zh-TW.md`、`plugin/README.md` 與兩份 `CHANGELOG.md` 的 `[Unreleased]`：說明整個系列刪除的 undo 現在還原視窗內的例外、編輯過的場次以一次性事件還原、以及視窗限制。行為：文件與新行為一致且不宣稱超出視窗的保證。驗證：doc-sync 掃描（`git ls-files` 的 README*／CLAUDE.md）逐檔確認無過時敘述；`ManifestParityTests` 與版本一致性測試不受影響。
 
 ## 8. 驗證
 
@@ -43,5 +43,6 @@
 
 - [x] 9.1 修正三個必修缺陷：B1 列舉範圍加寬並一律依規則時段判斷（`listingRange`、`capture`）、B2 系列第一場永不移除（`SeriesExceptionsRestorer` anchor）、B3 save 丟錯後的一次性事件一併清理（`SeriesExceptionsOneOffWriteFailed`）。驗證：`SeriesExceptionsTests`、`SeriesExceptionsRestorerTests` 新增 9 項；mutation check（拿掉 anchor 與拿掉 write-then-throw 清理）3 項失敗後還原；iCloud 實機 B1 通過（移出視窗約 70 天的編輯場次以一次性事件回來）；B2 在 iCloud 到不了還原階段（第一場被單獨編輯後系列刪除本身即失敗，#284），僅單元測試。
 - [x] 9.2 對齊文字與文件：`seriesRulesRestoreNote`、`seriesExceptionsRestoredNote`（第一場與移出範圍的說明）、`docs/UNDO_HISTORY.md`、spec（一次性事件建在編輯後開始時間、第一場與跨視窗邊界兩個新場景）、design。
-- [x] 9.4 PR #318 第二輪 verify 修正（FAIL，3 組必修）：A 邊界改為三段獨立查詢（四年上限是每個查詢各自算）；B 擷取為空回 nil，還原前核對紀錄與重建系列是否對得上、對不上就只依規則並說明；anchor 改用重建系列的起點；C 系列回復與一次性事件清理分開回報（`strayOneOffs`、`oneOffMaybeLeft`）。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests`／`SeriesExceptionsTextTests` 新增 8 項；mutation check（拿掉一致性檢查、拿掉邊界查詢）失敗後還原；尚未做的實機：開放式／依次數結束系列的邊界（見實作留言）。
+- [x] 9.4 PR #318 第二輪 verify 修正（FAIL，3 組必修）：A 邊界改為三段獨立查詢（四年上限是每個查詢各自算）；B 擷取為空回 nil，還原前核對紀錄與重建系列是否對得上、對不上就只依規則並說明；anchor 改用重建系列的起點；C 系列回復與一次性事件清理分開回報（`strayOneOffs`、`oneOffMaybeLeft`）。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests`／`SeriesExceptionsTextTests` 新增 8 項；mutation check（拿掉一致性檢查、拿掉邊界查詢）失敗後還原；實機：依次數結束的系列（完整 1460 天視窗）已驗證；開放式每日系列在第三輪驗證（見下）。
 - [x] 9.3 後續項目已開成 issue（不在本 PR 處理）：#319 長期系列的掃描視窗整段在過去（含每次刪除的列舉成本）、#320 沒有 `/RID=` 的來源的編輯場次時段、#321 重複防護以標題與開始時間比對、#322 記錄點與批次成員的 handler 測試縫、#323 批次 undo 文字無法逐系列說明、#324 Google／DST／非台北時區驗證（即 8.3）。
+- [x] 9.5 PR #318 第三輪 verify 修正（FAIL）：視窗成員判斷改半開（起點含、終點不含；EventKit 查詢不回傳開始於終點的事件，實機確認），解決開放式每日系列整個還原失效；一致性檢查也核對 `detached` 時段；擷取只在視窗內找到該系列場次時才有效；工具描述／manifest／`undo_history` 列表補上第一場、移出一年以外、對不上三種限制；文件與過時註解對齊。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests` 新增 5 項，mutation check 5 項失敗後還原；實機：開放式每日系列（`window.end` 落在真實場次上）例外正確還原。

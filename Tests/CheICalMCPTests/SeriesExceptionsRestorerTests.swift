@@ -181,6 +181,23 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         XCTAssertTrue(outcome.notApplied)
     }
 
+    func testADetachedSlotTheRecreatedSeriesDoesNotGenerateFallsBackToTheRules() throws {
+        // PR #318 verify round 3: every recorded slot is checked, edited ones included.
+        let stray = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
+                                     detached: [detached("Edited", slot: "2028-04-12T10:00:00+08:00")])
+        let (outcome, log) = try run(stray)
+        XCTAssertTrue(outcome.notApplied)
+        XCTAssertEqual(log.events, [])
+    }
+
+    func testWithNoKeptSlotsOnlyTheStartAndTheDetachedSlotsAreChecked() throws {
+        let allEdited = SeriesExceptions(window: window, keptSlots: [],
+                                         detached: [detached("B", slot: slots[1]), detached("C", slot: slots[2])])
+        let (outcome, log) = try run(allEdited)
+        XCTAssertFalse(outcome.notApplied)
+        XCTAssertEqual(log.created, ["B", "C"])
+    }
+
     func testAMatchingListingStillAppliesTheExceptions() throws {
         let (outcome, log) = try run(spikeExceptions)
         XCTAssertFalse(outcome.notApplied)

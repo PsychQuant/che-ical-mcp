@@ -599,11 +599,12 @@ actor CalendarUndoManager {
 ///
 /// A batch member whose write throws this is dropped from its batch without a
 /// retry or the user's agreement (`UndoOperation.batchUndoFailure`, #248), so
-/// throw it only for a member no retry can restore. Today no delete member's
-/// write throws it: the #244 marker's refusal runs in the batch pre-check
-/// first (PR #282 round 3, findings 15 and 39), so the `undo` description does
-/// not say a member is dropped (round 5, finding 17). A batch member's write
-/// that starts throwing it has to add that to the description.
+/// throw it only for a member no retry can restore. The #244 marker's refusal
+/// runs in the batch pre-check first (PR #282 round 3, findings 15 and 39). One
+/// delete member's write does throw it since #285: restoring a series' exceptions
+/// failed and deleting the recreated series again failed too (a retry would
+/// create a second series). The `undo` description says that entry, or that
+/// batch member, is dropped (PR #318 verify round 3).
 ///
 /// `message` MUST be author-controlled literal text; any store-derived value
 /// interpolated into it (today: the reminder title) MUST pass

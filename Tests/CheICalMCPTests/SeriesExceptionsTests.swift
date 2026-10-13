@@ -144,14 +144,33 @@ final class SeriesExceptionsTests: XCTestCase {
             generated: [at(slot1), at(outside)], exceptions: exceptions), [])
     }
 
-    func testWindowEdgesAreInclusiveAndOneSecondOutsideIsNot() {
+    func testTheWindowStartsInclusiveAndEndsExclusiveLikeAnEventKitQuery() {
+        // PR #318 verify round 3: EventKit does not return an event that starts exactly at the end
+        // of a query range (checked on device 2026-10-13), so a slot at window.end is outside it.
         let exceptions = SeriesExceptions(window: window, keptSlots: [], detached: [])
         let atEnd = at("2028-04-25T10:00:00+08:00")
-        let afterEnd = atEnd.addingTimeInterval(1)
         let atStart = at("2028-04-02T10:00:00+08:00")
-        let beforeStart = atStart.addingTimeInterval(-1)
-        XCTAssertEqual(SeriesExceptionsPlanner.surplusSlots(generated: [beforeStart, atStart, atEnd, afterEnd],
-                                                            exceptions: exceptions), [atStart, atEnd])
+        XCTAssertEqual(SeriesExceptionsPlanner.surplusSlots(
+            generated: [atStart.addingTimeInterval(-1), atStart, atEnd.addingTimeInterval(-1), atEnd], exceptions: exceptions),
+                       [atStart, atEnd.addingTimeInterval(-1)])
+    }
+
+    func testAnOccurrenceAtTheWindowEndIsLeftToTheRuleWhetherPlainOrEdited() {
+        let atEnd = "2028-04-25T10:00:00+08:00"
+        let plain = observed(detached: false, start: atEnd, occurrenceDate: atEnd)
+        let edited = observed(ids: .init(eventIdentifier: "SERIES/RID=\(Int(at(atEnd).timeIntervalSinceReferenceDate))", externalIdentifier: nil),
+                              detached: true, start: atEnd, occurrenceDate: atEnd, title: "Edited at the end")
+        let inside = observed(detached: false, start: slot1, occurrenceDate: slot1)
+        let result = captured([inside, plain, edited], of: series, window: window)
+        XCTAssertEqual(result.keptSlots, [at(slot1)])
+        XCTAssertTrue(result.detached.isEmpty)
+    }
+
+    func testAListingThatOnlyReachedTheMarginsIsNotAListing() {
+        // PR #318 verify round 3: occurrences found only outside the window must not count as
+        // "the series was listed" (the margin queries always find an open-ended series' own).
+        let outside = observed(detached: false, start: "2029-01-01T10:00:00+08:00", occurrenceDate: "2029-01-01T10:00:00+08:00")
+        XCTAssertNil(SeriesExceptionsPlanner.capture([outside], of: series, window: window))
     }
 
     func testSlotsAreComparedAsInstantsAcrossADaylightSavingChange() {
@@ -203,12 +222,15 @@ final class SeriesExceptionsTests: XCTestCase {
 
     func testAnOccurrenceWhoseSlotIsOutsideTheWindowIsLeftToTheRule() {
         // Slot outside the window, moved into it: restoring it as a one-off would duplicate the
-        // occurrence the rule regenerates outside the window.
+        // occurrence the rule regenerates outside the window. With nothing else of the series
+        // inside the window, the listing is not usable at all (nil).
         let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=830000000", externalIdentifier: nil),
                              detached: true, start: slot2, occurrenceDate: slot2, title: "Moved in")
-        let result = captured([moved], of: series, window: window)
-        XCTAssertTrue(result.detached.isEmpty)
-        XCTAssertEqual(result.keptSlots, [])
+        XCTAssertNil(SeriesExceptionsPlanner.capture([moved], of: series, window: window))
+        // With a plain occurrence inside, the moved one is simply left to the rule.
+        let both = captured([moved, observed(detached: false, start: slot1, occurrenceDate: slot1)], of: series, window: window)
+        XCTAssertTrue(both.detached.isEmpty)
+        XCTAssertEqual(both.keptSlots, [at(slot1)])
     }
 
     func testUndetachedOccurrencesOutsideTheWindowAreNotKeptSlots() {

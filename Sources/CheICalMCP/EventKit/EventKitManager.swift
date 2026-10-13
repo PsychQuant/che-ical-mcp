@@ -2343,9 +2343,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
-    /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
-    /// reminders).
     /// #285: saves `event` (new) as a one-off from `snapshot` (an occurrence edited on its own, restored
     /// beside the series recreated from its rules). Takes the event so a caller can clean it up if the
     /// save throws after the store took the write.
@@ -2355,6 +2352,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return event
     }
 
+    /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
+    /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
+    /// reminders).
     private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
         let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
         snapshot.apply(to: event, calendar: originalCalendar)

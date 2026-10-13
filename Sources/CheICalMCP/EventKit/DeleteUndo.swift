@@ -159,7 +159,7 @@ extension UndoOperation {
     static let seriesRulesListingNote = "occurrences deleted on their own earlier come back, edited ones without their edits"
 
     /// #285: the same for a series whose exceptions were recorded.
-    static let seriesExceptionsListingNote = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events"
+    static let seriesExceptionsListingNote = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events; not for a first occurrence edited or deleted on its own, one moved more than a year outside the window, or a record that does not match the recreated series"
 
     /// How many series this record's undo recreates from their rules, nested batches included, for
     /// the `undo_history` line of a batch (verify round 5, findings 1/2). Counted from the same

@@ -328,6 +328,8 @@ final class ManifestParityTests: XCTestCase {
     func testUndoSurfacesSayAWholeSeriesRestoreKeepsItsExceptions() throws {
         let restored = "an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event"
         let window = "exceptions outside that window"
+        // PR #318 verify round 3: the limits clients cannot see otherwise are stated before the undo.
+        let limits = ["first occurrence", "more than a year outside the window", "does not match the recreated series"]
         let retired = ["adds it a second time", "not yet checked with span", "comes back without its edit"]
         let backwards = "without the occurrences"
         let data = try Data(contentsOf: try locateManifest())
@@ -338,11 +340,13 @@ final class ManifestParityTests: XCTestCase {
             let description = declared.first { $0.name == name }?.description ?? ""
             XCTAssertTrue(description.contains(restored), "defineTools() \(name): \(description)")
             XCTAssertTrue(description.lowercased().contains(window), "defineTools() \(name) lost the window limit: \(description)")
+            for limit in limits { XCTAssertTrue(description.contains(limit), "defineTools() \(name) lost the limit: \(limit)") }
             for phrase in retired { XCTAssertFalse(description.contains(phrase), "defineTools() \(name) still says: \(phrase)") }
         }
         let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
         XCTAssertTrue(summary.contains(restored), "mcpb/manifest.json undo: \(summary)")
         XCTAssertTrue(summary.lowercased().contains(window), "mcpb/manifest.json undo lost the window limit: \(summary)")
+        for limit in limits { XCTAssertTrue(summary.contains(limit), "mcpb/manifest.json undo lost the limit: \(limit)") }
         for phrase in retired { XCTAssertFalse(summary.contains(phrase), "mcpb/manifest.json undo still says: \(phrase)") }
         for tool in declared {
             XCTAssertFalse((tool.description ?? "").contains(backwards), "defineTools() \(tool.name)")
