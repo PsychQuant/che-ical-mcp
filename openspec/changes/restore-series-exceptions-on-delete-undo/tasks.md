@@ -37,11 +37,11 @@
 
 - [x] 8.1 完整測試：`swift test` 在本機時區與 `TZ=UTC` 各跑一次，並記錄失敗的測試名稱（#315 的教訓）。行為：沒有新增失敗。驗證：兩次輸出的 `Executed N tests, with 0 failures` 貼在實作留言。
 - [x] 8.2 （2026-10-12 完成；以簽名的新 binary 作單一長駐 stdio 行程、另一行程讀回，等同乾淨表面；案例 1 的預期已更正，見 proposal）iCloud 實機（重啟後的 session MCP，先以行為探測確認載入的是新版）：診斷的案例 1（兩次 undo 只留一個事件）、案例 2（編輯過的場次以一次性事件還原）、案例 3（span "all" 含中間刪除與編輯）、案例 4（尾端刪除不多排除）。行為：與 spec 場景一致。驗證：每案例的讀回結果（由另一個行程以新的 store 讀取）貼在 #285，日曆用完以 id 清掉並以計數確認殘留為 0。
-- [ ] 8.3 Google 與 DST／非台北時區實機：案例 1、2 在 Google 日曆各跑一次；在跨 DST 的系列與非台北時區事件各跑一次案例 3。行為：還原結果與 iCloud 一致，或差異被記錄並進揭露文字。驗證：結果貼在 #285；Google 日曆需由使用者在網頁建立並刪除拋棄式日曆（EventKit 不允許在 Google 建立日曆）。
+- [ ] 8.3 （移至 #324）Google 與 DST／非台北時區實機：案例 1、2 在 Google 日曆各跑一次；在跨 DST 的系列與非台北時區事件各跑一次案例 3。行為：還原結果與 iCloud 一致，或差異被記錄並進揭露文字。驗證：結果貼在 #285；Google 日曆需由使用者在網頁建立並刪除拋棄式日曆（EventKit 不允許在 Google 建立日曆）。
 
 ## 9. PR #318 verify 修正（2026-10-12）
 
 - [x] 9.1 修正三個必修缺陷：B1 列舉範圍加寬並一律依規則時段判斷（`listingRange`、`capture`）、B2 系列第一場永不移除（`SeriesExceptionsRestorer` anchor）、B3 save 丟錯後的一次性事件一併清理（`SeriesExceptionsOneOffWriteFailed`）。驗證：`SeriesExceptionsTests`、`SeriesExceptionsRestorerTests` 新增 9 項；mutation check（拿掉 anchor 與拿掉 write-then-throw 清理）3 項失敗後還原；iCloud 實機 B1 通過（移出視窗約 70 天的編輯場次以一次性事件回來）；B2 在 iCloud 到不了還原階段（第一場被單獨編輯後系列刪除本身即失敗，#284），僅單元測試。
 - [x] 9.2 對齊文字與文件：`seriesRulesRestoreNote`、`seriesExceptionsRestoredNote`（第一場與移出範圍的說明）、`docs/UNDO_HISTORY.md`、spec（一次性事件建在編輯後開始時間、第一場與跨視窗邊界兩個新場景）、design。
 - [x] 9.4 PR #318 第二輪 verify 修正（FAIL，3 組必修）：A 邊界改為三段獨立查詢（四年上限是每個查詢各自算）；B 擷取為空回 nil，還原前核對紀錄與重建系列是否對得上、對不上就只依規則並說明；anchor 改用重建系列的起點；C 系列回復與一次性事件清理分開回報（`strayOneOffs`、`oneOffMaybeLeft`）。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests`／`SeriesExceptionsTextTests` 新增 8 項；mutation check（拿掉一致性檢查、拿掉邊界查詢）失敗後還原；尚未做的實機：開放式／依次數結束系列的邊界（見實作留言）。
-- [ ] 9.3 後續項目（尚未處理，不在本 PR）：重複防護的誤判取捨（同標題同時段的另一個重複事件）、`UndoBatchRestoreTests` 的帶例外成員案例、批次 undo 文字在 guard 略過成員時的敘述、每次系列刪除的列舉成本、Google／DST 實機（8.3）。
+- [x] 9.3 後續項目已開成 issue（不在本 PR 處理）：#319 長期系列的掃描視窗整段在過去（含每次刪除的列舉成本）、#320 沒有 `/RID=` 的來源的編輯場次時段、#321 重複防護以標題與開始時間比對、#322 記錄點與批次成員的 handler 測試縫、#323 批次 undo 文字無法逐系列說明、#324 Google／DST／非台北時區驗證（即 8.3）。
