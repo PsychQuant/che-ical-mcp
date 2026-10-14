@@ -103,6 +103,16 @@ struct EventSnapshot {
     /// #245: a delete-undo recreated a free event busy (the calendar default). `.notSupported` when
     /// the event's calendar has none; written back only where the calendar supports it.
     let availability: EKEventAvailability
+    /// #285: the exceptions of a series whose whole-series delete this snapshot records; nil for
+    /// every other record and when they could not be listed. Set through `withExceptions`.
+    private(set) var exceptions: SeriesExceptions? = nil
+
+    /// A copy of this snapshot carrying `exceptions`; this one is unchanged.
+    func withExceptions(_ exceptions: SeriesExceptions?) -> EventSnapshot {
+        var copy = self
+        copy.exceptions = exceptions
+        return copy
+    }
 
     /// `alarms` replaces the event's own: the undo record of a copy-out holds the alarms the
     /// copy was given (`EventKitManager.copyOutAlarms`). `availability` replaces the event's own
@@ -347,7 +357,12 @@ enum UndoOperation {
             return "Created event: \(undoVisibleTitle(title))"
         case .deleteEvent(let snapshot):
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
-            let restore = snapshot.restoresFromRules ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))" : ""
+            var restore = ""
+            if snapshot.restoresFromRules {
+                restore = snapshot.exceptions == nil
+                    ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
+                    : " (undo recreates the series and its exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote))"
+            }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
             return "Deleted occurrence of event: \(undoVisibleTitle(snapshot.title)) (undo restores it as a one-off event)"
@@ -379,8 +394,16 @@ enum UndoOperation {
                 return "Batch (\(operations); undo not available: a member deleted an occurrence and the following ones of a recurring event)"
             }
             let series = seriesRecreatedFromRules
-            guard series > 0 else { return "Batch (\(operations))" }
-            return "Batch (\(operations); undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote))"
+            let withExceptions = seriesRecreatedWithExceptions
+            guard series + withExceptions > 0 else { return "Batch (\(operations))" }
+            var parts: [String] = []
+            if series > 0 {
+                parts.append("undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote)")
+            }
+            if withExceptions > 0 {
+                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote)")
+            }
+            return "Batch (\(operations); \(parts.joined(separator: "; ")))"
         }
     }
 }
@@ -576,11 +599,12 @@ actor CalendarUndoManager {
 ///
 /// A batch member whose write throws this is dropped from its batch without a
 /// retry or the user's agreement (`UndoOperation.batchUndoFailure`, #248), so
-/// throw it only for a member no retry can restore. Today no delete member's
-/// write throws it: the #244 marker's refusal runs in the batch pre-check
-/// first (PR #282 round 3, findings 15 and 39), so the `undo` description does
-/// not say a member is dropped (round 5, finding 17). A batch member's write
-/// that starts throwing it has to add that to the description.
+/// throw it only for a member no retry can restore. The #244 marker's refusal
+/// runs in the batch pre-check first (PR #282 round 3, findings 15 and 39). One
+/// delete member's write does throw it since #285: restoring a series' exceptions
+/// failed and deleting the recreated series again failed too (a retry would
+/// create a second series). The `undo` description says that entry, or that
+/// batch member, is dropped (PR #318 verify round 3).
 ///
 /// `message` MUST be author-controlled literal text; any store-derived value
 /// interpolated into it (today: the reminder title) MUST pass

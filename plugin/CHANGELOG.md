@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Undo of a whole-series delete restores the series' exceptions inside the scan window (#285)**: an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event; the series' first occurrence is always kept from the rule, and exceptions outside the window still come back from the rules; the undo text says which. Binary change; the plugin shell is unchanged.
+
 ## [1.20.0] - 2026-10-10
 
 - **BREAKING (behavior) — a date-only reminder is overdue only once its day has ended (#297)**: `is_overdue` and `filter: "overdue"` in `list_reminders` read a date-only due as a day in the host time zone, not as 00:00, so a reminder due today is not overdue at any time today; `sort: "due_date"` puts it before the timed dues of its day; its `due_date` / `due_date_local` (also in `search_reminders`) print 00:00 of that day in the host time zone, and a start stored as 00:00 without a zone reads as a day in `start` (`time: null`).

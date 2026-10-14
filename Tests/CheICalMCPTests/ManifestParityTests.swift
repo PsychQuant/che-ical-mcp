@@ -236,9 +236,9 @@ final class ManifestParityTests: XCTestCase {
             ("#244: a deleted occurrence comes back as a one-off event",
              "Undo of a delete of one occurrence restores it as a one-off event",
              "a deleted occurrence comes back as a one-off event"),
-            ("#244 (#285): a series deleted whole comes back from its rules alone",
-             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules alone",
-             "a series deleted whole comes back from its rules alone"),
+            ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
+             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the scan window",
+             "a series deleted whole comes back from its rules with its exceptions inside the scan window restored"),
             ("#261: a delete_reminder undo names the fields the store holds differently, in a batch too",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
@@ -317,17 +317,20 @@ final class ManifestParityTests: XCTestCase {
         return (declared, summary)
     }
 
-    /// #244 verify round 4: undo of a whole-series delete recreates the series from its rules
-    /// alone (#285), so an occurrence deleted on its own before comes back. "Comes back from its
-    /// rules, without the occurrences deleted or edited on their own before" read as the opposite.
-    /// Every place a client reads about the undo before it runs states it in the same words, with
-    /// what was seen on device (round 5, findings 9/12; round 6, findings 5/9/13: the manifest
-    /// summary too, and seen with delete_event, not delete_events_batch). The
-    /// negative check catches that one phrase only, not every backwards rewording (round 5,
-    /// findings 5/15): the positive clause is the guard.
-    func testUndoSurfacesSayAWholeSeriesRestoreBringsDeletedOccurrencesBack() throws {
-        let restored = "an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
-        let evidence = restored + " (seen on iCloud only, with delete_event; the lost edit and the duplicate not yet checked with span 'all')"
+    /// #285: undo of a whole-series delete recreates the series from its rules and restores its
+    /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
+    /// one edited on its own comes back as a separate one-off event, and exceptions outside the
+    /// window come back from the rules alone. Every place a client reads about the undo before it
+    /// runs states it in the same words (#244 verify rounds 4-6: the manifest summary too), and
+    /// none keeps the earlier claim that an occurrence deleted on its own comes back and an edit is
+    /// lost, or the "not yet checked" hedge that went with it. The negative checks catch those
+    /// phrases only, not every rewording: the positive clauses are the guard.
+    func testUndoSurfacesSayAWholeSeriesRestoreKeepsItsExceptions() throws {
+        let restored = "an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event"
+        let window = "exceptions outside that window"
+        // PR #318 verify round 3: the limits clients cannot see otherwise are stated before the undo.
+        let limits = ["first occurrence", "more than a year outside the window", "does not match the recreated series"]
+        let retired = ["adds it a second time", "not yet checked with span", "comes back without its edit"]
         let backwards = "without the occurrences"
         let data = try Data(contentsOf: try locateManifest())
         let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -335,10 +338,16 @@ final class ManifestParityTests: XCTestCase {
         let declared = CheICalMCPServer.defineTools()
         for name in ["delete_event", "delete_events_batch", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
-            XCTAssertTrue(description.contains(evidence), "defineTools() \(name): \(description)")
+            XCTAssertTrue(description.contains(restored), "defineTools() \(name): \(description)")
+            XCTAssertTrue(description.lowercased().contains(window), "defineTools() \(name) lost the window limit: \(description)")
+            for limit in limits { XCTAssertTrue(description.contains(limit), "defineTools() \(name) lost the limit: \(limit)") }
+            for phrase in retired { XCTAssertFalse(description.contains(phrase), "defineTools() \(name) still says: \(phrase)") }
         }
         let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
-        XCTAssertTrue(summary.contains(evidence), "mcpb/manifest.json undo: \(summary)")
+        XCTAssertTrue(summary.contains(restored), "mcpb/manifest.json undo: \(summary)")
+        XCTAssertTrue(summary.lowercased().contains(window), "mcpb/manifest.json undo lost the window limit: \(summary)")
+        for limit in limits { XCTAssertTrue(summary.contains(limit), "mcpb/manifest.json undo lost the limit: \(limit)") }
+        for phrase in retired { XCTAssertFalse(summary.contains(phrase), "mcpb/manifest.json undo still says: \(phrase)") }
         for tool in declared {
             XCTAssertFalse((tool.description ?? "").contains(backwards), "defineTools() \(tool.name)")
         }

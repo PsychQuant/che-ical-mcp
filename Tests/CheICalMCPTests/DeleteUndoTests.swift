@@ -306,7 +306,7 @@ final class DeleteUndoTests: XCTestCase {
     func testAWholeSeriesRestoreSaysItCameBackFromItsRules() {
         let series = EventSnapshot(from: weekly(startingAt: firstStart))
         XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: series, newID: "n1"),
-                       "Undone: restored event 'Standup' (new ID: n1). Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time")
+                       "Undone: restored event 'Standup' (new ID: n1). Restored from the series rules alone, because its exceptions were not checked when it was deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot")
         XCTAssertEqual(UndoOperation.eventRestoredMessage(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up"), newID: "n1"),
                        "Undone: restored event 'Standup' (new ID: n1)")
     }
@@ -316,7 +316,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
         let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
         let moved = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: ["absolute_alarms"])
-        let rules = "Restored from the series rules: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit, and undoing the earlier delete of that occurrence as well adds it a second time"
+        let rules = "Restored from the series rules alone, because its exceptions were not checked when it was deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot"
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff, .batch([series])], count: 2),
                        "Undone batch (2 operations). " + rules)
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [series, moved], count: 2),
