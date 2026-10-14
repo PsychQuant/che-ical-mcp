@@ -7,7 +7,7 @@ import Foundation
 extension EventKitManager {
     /// The exceptions of `series`, read before a whole-series delete removes anything: the
     /// occurrences that exist over the series' scan window, split into those that stay and those
-    /// edited on their own. Nil when they cannot be listed (no identifier or calendar), so the
+    /// edited on their own. Nil when they cannot be listed (no identifier or calendar, or no occurrence of the series found inside the window), so the
     /// record says so instead of claiming there were none.
     func captureSeriesExceptions(of series: EKEvent) -> SeriesExceptions? {
         guard let id = series.eventIdentifier, !id.isEmpty, let calendar = series.calendar else { return nil }

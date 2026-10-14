@@ -239,4 +239,32 @@ final class SeriesExceptionsTests: XCTestCase {
              observed(detached: false, start: slot1, occurrenceDate: slot1)], of: series, window: window)
         XCTAssertEqual(result.keptSlots, [at(slot1)])
     }
+    // MARK: - all-day (floating) RID (PR #318 verify round 4, finding 4; checked on device 2026-10-14)
+
+    func testAnAllDayOccurrencesRIDIsAFloatingDateNotAnInstant() {
+        // On device an edited all-day occurrence on 2028-05-08 carries /RID=863049600, which is
+        // 2028-05-08 00:00 UTC: the wall-clock date read as UTC. The slot of the recreated
+        // series is local midnight of that day, so the RID must be reinterpreted in the host zone.
+        var comps = DateComponents(); comps.year = 2028; comps.month = 5; comps.day = 8
+        let localMidnight = Calendar.current.date(from: comps)!      // independent derivation of the expected slot
+        let edited = SeriesExceptionsPlanner.ObservedOccurrence(
+            ids: .init(eventIdentifier: "SERIES/RID=863049600", externalIdentifier: "UID/RID=863049600"),
+            isDetached: true, occurrenceDate: localMidnight, startDate: localMidnight,
+            snapshot: UndoSnapshotFixtures.event(title: "Edited all-day", startDate: localMidnight, allDay: true))
+        let plain = SeriesExceptionsPlanner.ObservedOccurrence(
+            ids: series, isDetached: false, occurrenceDate: localMidnight.addingTimeInterval(-7 * 86_400),
+            startDate: localMidnight.addingTimeInterval(-7 * 86_400),
+            snapshot: UndoSnapshotFixtures.event(title: "Plain", allDay: true))
+        let w = DateInterval(start: localMidnight.addingTimeInterval(-10 * 86_400), end: localMidnight.addingTimeInterval(30 * 86_400))
+        let result = captured([plain, edited], of: series, window: w)
+        XCTAssertEqual(result.detached.map(\.slot), [localMidnight])
+    }
+
+    func testATimedOccurrencesRIDIsStillAnInstant() {
+        // Unchanged for timed events (837050400 = 2027-07-12T10:00:00+08:00, from device).
+        let moved = observed(ids: .init(eventIdentifier: "SERIES/RID=837050400", externalIdentifier: nil),
+                             detached: true, start: "2027-07-12T10:30:00+08:00", occurrenceDate: "2027-07-12T10:30:00+08:00")
+        let w = DateInterval(start: at("2027-07-01T00:00:00+08:00"), end: at("2027-08-01T00:00:00+08:00"))
+        XCTAssertEqual(captured([moved], of: series, window: w).detached[0].slot, at("2027-07-12T10:00:00+08:00"))
+    }
 }
