@@ -67,6 +67,29 @@ enum EventRangeQuery {
         return found
     }
 
+    /// How far `delete_events_batch` by date range searches past the one bound it was given.
+    static let openRangeYears = 100
+
+    /// The range `delete_events_batch` by date range searches. With one bound, the open side
+    /// reaches `openRangeYears` out instead of `Date.distantPast` / `distantFuture`: those were
+    /// cut by EventKit to four years (one bound only: nothing found before `before_date`, events
+    /// left undeleted after `after_date + 4 years`), and chunking them would take about a thousand
+    /// queries. The response states the range, so the horizon is never claimed as everything.
+    /// Nil with no bound; the handler refuses that case itself.
+    static func deletionRange(after: Date?, before: Date?) -> Span? {
+        let gregorian = Calendar.gregorian(in: TimeZone(identifier: "UTC")!)
+        switch (after, before) {
+        case let (after?, before?):
+            return Span(start: after, end: before)
+        case let (after?, nil):
+            return gregorian.date(byAdding: .year, value: openRangeYears, to: after).map { Span(start: after, end: $0) }
+        case let (nil, before?):
+            return gregorian.date(byAdding: .year, value: -openRangeYears, to: before).map { Span(start: $0, end: before) }
+        case (nil, nil):
+            return nil
+        }
+    }
+
     /// One occurrence: the event identifier (shared by a series' unedited occurrences) and its
     /// start. `fallbackIdentifier` (the calendar item identifier) stands in when an event has no
     /// event identifier yet, so two such events at the same start are not merged.

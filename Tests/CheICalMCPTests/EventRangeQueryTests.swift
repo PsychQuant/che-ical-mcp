@@ -109,6 +109,36 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(found, [first, later], "occurrences share the series identifier; the start keeps them apart")
     }
 
+    // MARK: delete_events_batch by date range
+
+    /// One bound given: the other side reaches 100 years out, not `distantPast` / `distantFuture`
+    /// (about a thousand spans, refused by the ceiling), and the range fits the chunked query.
+    func testDeletionRangeWithOnlyAfterDateReaches100YearsAhead() throws {
+        let range = try XCTUnwrap(EventRangeQuery.deletionRange(after: start, before: nil))
+        XCTAssertEqual(range.start, start)
+        XCTAssertEqual(range.end, Calendar.gregorian(in: TimeZone(identifier: "UTC")!).date(byAdding: .year, value: 100, to: start))
+        XCTAssertNoThrow(try EventRangeQuery.spans(from: range.start, to: range.end))
+    }
+
+    func testDeletionRangeWithOnlyBeforeDateReaches100YearsBack() throws {
+        let range = try XCTUnwrap(EventRangeQuery.deletionRange(after: nil, before: start))
+        XCTAssertEqual(range.end, start)
+        XCTAssertEqual(range.start, Calendar.gregorian(in: TimeZone(identifier: "UTC")!).date(byAdding: .year, value: -100, to: start))
+        XCTAssertNoThrow(try EventRangeQuery.spans(from: range.start, to: range.end))
+    }
+
+    func testDeletionRangeWithBothBoundsIsUnchanged() throws {
+        let end = start.addingTimeInterval(30 * day)
+        let range = try XCTUnwrap(EventRangeQuery.deletionRange(after: start, before: end))
+        XCTAssertEqual(range.start, start)
+        XCTAssertEqual(range.end, end)
+    }
+
+    func testDeletionRangeWithNoBoundIsNil() {
+        XCTAssertNil(EventRangeQuery.deletionRange(after: nil, before: nil),
+                     "the handler keeps its own error for this case")
+    }
+
     // MARK: wiring
 
     /// Every range a caller gives (`list_events`, `list_events_quick`, `search_events`,
@@ -134,6 +164,20 @@ final class EventRangeQueryTests: XCTestCase {
             }
         }
         XCTAssertEqual(offenders, [], "range queries must go through EventKitManager.events(from:to:calendars:)")
+    }
+
+    /// `delete_events_batch` by date range takes its range from `deletionRange`, not from an
+    /// open bound filled with `Date.distantPast` / `distantFuture` (cut to four years by EventKit,
+    /// #325): the handler is tied to the concrete manager, so its wiring is pinned in the source.
+    func testDeleteByDateRangeUsesTheBoundedDeletionRange() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let server = try String(contentsOf: repoRoot.appendingPathComponent("Sources/CheICalMCP/Server.swift"), encoding: .utf8)
+        XCTAssertFalse(server.contains("Date.distantPast") || server.contains("Date.distantFuture"),
+                       "an open delete bound must not become an unbounded EventKit range")
+        XCTAssertTrue(server.contains("EventRangeQuery.deletionRange("))
+        XCTAssertTrue(server.contains("\"searched_from\"") && server.contains("\"searched_to\""),
+                      "the response must state the range that was searched")
     }
 
     func testOccurrenceKeyFallsBackWhenTheEventIdentifierIsMissing() {

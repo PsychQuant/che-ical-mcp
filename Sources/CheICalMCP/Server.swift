@@ -2876,17 +2876,19 @@ class CheICalMCPServer {
             let beforeDate: Date? = try arguments["before_date"]?.stringValue.map { try parseFlexibleDate($0) }
             let afterDate: Date? = try arguments["after_date"]?.stringValue.map { try parseFlexibleDate($0) }
 
-            if beforeDate == nil && afterDate == nil {
+            // #325: with one bound the other side reaches EventRangeQuery.openRangeYears out (an
+            // unbounded side was cut to four years by EventKit); the response states the range.
+            guard let searched = EventRangeQuery.deletionRange(after: afterDate, before: beforeDate) else {
                 throw ToolError.invalidParameter("At least one of before_date or after_date is required for calendar-based deletion")
             }
-
-            // Determine search range
-            let searchStart = afterDate ?? Date.distantPast
-            let searchEnd = beforeDate ?? Date.distantFuture
+            let searchedFields: [String: Any] = [
+                "searched_from": localDateFormatter.string(from: searched.start),
+                "searched_to": localDateFormatter.string(from: searched.end)
+            ]
 
             let events = try await eventKitManager.listEvents(
-                startDate: searchStart,
-                endDate: searchEnd,
+                startDate: searched.start,
+                endDate: searched.end,
                 calendarName: calendarName,
                 calendarSource: calendarSource
             )
@@ -2914,6 +2916,7 @@ class CheICalMCPServer {
                 ]
                 if let afterDate = afterDate { response["after_date"] = localDateFormatter.string(from: afterDate) }
                 if let beforeDate = beforeDate { response["before_date"] = localDateFormatter.string(from: beforeDate) }
+                response.merge(searchedFields) { $1 }
                 return try formatJSON(response)
             }
 
@@ -2925,7 +2928,7 @@ class CheICalMCPServer {
 
             return try await deleteEventsWithSpan(
                 items: batchItems, spanStr: spanStr, mode: "by_date_range",
-                extraFields: ["calendar": calendarName]
+                extraFields: searchedFields.merging(["calendar": calendarName]) { $1 }
             )
 
         } else {
