@@ -1325,39 +1325,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
-        var duplicates: [DuplicatePair] = []
+        // #325 verify round 1: pairs are found by title group and start order, not by comparing
+        // every pair (the range is no longer cut to four years, so n can be large).
         let tolerance = TimeInterval(toleranceMinutes * 60)
-
-        for i in 0..<events.count {
-            for j in (i + 1)..<events.count {
-                let e1 = events[i]
-                let e2 = events[j]
-
-                // Skip if same calendar
-                if e1.calendar.calendarIdentifier == e2.calendar.calendarIdentifier { continue }
-
-                // Compare titles (case-insensitive)
-                guard let t1 = e1.title?.lowercased(), let t2 = e2.title?.lowercased(),
-                      t1 == t2 else { continue }
-
-                // Compare times with tolerance
-                let startDiff = abs(e1.startDate.timeIntervalSince(e2.startDate))
-                let endDiff = abs(e1.endDate.timeIntervalSince(e2.endDate))
-
-                if startDiff <= tolerance && endDiff <= tolerance {
-                    duplicates.append(DuplicatePair(
-                        event1Id: e1.eventIdentifier ?? "",
-                        event1Title: e1.title ?? "",
-                        event1Calendar: e1.calendar.title,
-                        event1StartDate: e1.startDate,
-                        event2Id: e2.eventIdentifier ?? "",
-                        event2Title: e2.title ?? "",
-                        event2Calendar: e2.calendar.title,
-                        event2StartDate: e2.startDate,
-                        timeDifferenceSeconds: Int(startDiff)
-                    ))
-                }
-            }
+        let pairs = DuplicateMatcher.pairs(
+            count: events.count, tolerance: tolerance,
+            title: { events[$0].title }, calendar: { events[$0].calendar.calendarIdentifier },
+            start: { events[$0].startDate }, end: { events[$0].endDate }
+        )
+        let duplicates = pairs.map { pair -> DuplicatePair in
+            let e1 = events[pair.first], e2 = events[pair.second]
+            return DuplicatePair(
+                event1Id: e1.eventIdentifier ?? "",
+                event1Title: e1.title ?? "",
+                event1Calendar: e1.calendar.title,
+                event1StartDate: e1.startDate,
+                event2Id: e2.eventIdentifier ?? "",
+                event2Title: e2.title ?? "",
+                event2Calendar: e2.calendar.title,
+                event2StartDate: e2.startDate,
+                timeDifferenceSeconds: Int(pair.startDifference)
+            )
         }
 
         return duplicates

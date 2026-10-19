@@ -25,13 +25,29 @@ enum EventRangeQuery {
         let end: Date
     }
 
+    /// The most occurrences one `delete_events_batch` by date range may delete (verify round 1):
+    /// a one-sided range reaches 100 years, and each occurrence becomes its own delete, undo entry
+    /// and preview row. 2000 is above the 1,461 occurrences one daily series had under EventKit's
+    /// four-year cut, so a call that worked before still does.
+    static let maxDeletionOccurrences = 2000
+
     enum RangeError: LocalizedError, Equatable {
         case tooWide(days: Int)
+        case tooManyToDelete(count: Int, from: Date, to: Date)
 
         var errorDescription: String? {
             switch self {
             case .tooWide(let days):
-                return "Date range too wide: \(days) days. At most 400 years (\(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
+                let number = NumberFormatter()
+                number.locale = Locale(identifier: "en_US_POSIX")
+                number.numberStyle = .decimal
+                number.usesGroupingSeparator = true
+                number.groupingSeparator = ","
+                let ceiling = number.string(from: NSNumber(value: EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)) ?? "\(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)"
+                return "Date range too wide: \(days) days. At most \(ceiling) days (about 400 years; \(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
+            case .tooManyToDelete(let count, let from, let to):
+                let format = ISO8601DateFormatter()
+                return "Refusing to delete: the range \(format.string(from: from)) to \(format.string(from: to)) holds \(count) occurrences, more than the \(EventRangeQuery.maxDeletionOccurrences) one call may delete. Nothing was deleted. Narrow the range with before_date and after_date, or delete a recurring series whole with delete_event span 'all'."
             }
         }
     }
@@ -87,6 +103,15 @@ enum EventRangeQuery {
             return gregorian.date(byAdding: .year, value: -openRangeYears, to: before).map { Span(start: $0, end: before) }
         case (nil, nil):
             return nil
+        }
+    }
+
+    /// Refuses a by-date-range deletion of more than `maxDeletionOccurrences` occurrences, dry
+    /// run included, so the caller learns the count and the searched range before anything is
+    /// deleted and no preview grows without bound.
+    static func checkDeletionSize(_ count: Int, searched: Span) throws {
+        guard count <= maxDeletionOccurrences else {
+            throw RangeError.tooManyToDelete(count: count, from: searched.start, to: searched.end)
         }
     }
 

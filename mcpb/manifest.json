@@ -53,7 +53,7 @@
     },
     {
       "name": "list_events",
-      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 400 years)"
+      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 146,000 days, about 400 years)"
     },
     {
       "name": "create_event",
@@ -89,7 +89,7 @@
     },
     {
       "name": "search_events",
-      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit"
+      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit (ranges up to 146,000 days, about 400 years)"
     },
     {
       "name": "list_events_quick",
@@ -101,7 +101,7 @@
     },
     {
       "name": "check_conflicts",
-      "description": "Check for overlapping events in a time range with attendees/organizer"
+      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years)"
     },
     {
       "name": "copy_event",
@@ -113,11 +113,11 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to, and more than 2000 occurrences are refused (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",
-      "description": "Find duplicate events across calendars"
+      "description": "Find duplicate events across calendars (ranges up to 146,000 days, about 400 years)"
     },
     {
       "name": "update_calendar",

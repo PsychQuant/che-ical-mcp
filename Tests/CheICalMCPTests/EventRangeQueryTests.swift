@@ -139,45 +139,91 @@ final class EventRangeQueryTests: XCTestCase {
                      "the handler keeps its own error for this case")
     }
 
+    func testDeletionOfUpToTheCeilingIsAccepted() throws {
+        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(30 * day))
+        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(EventRangeQuery.maxDeletionOccurrences, searched: range))
+    }
+
+    /// A one-sided range reaches 100 years, so an open-ended daily series alone gives about
+    /// 36,500 occurrences — each its own delete and undo entry, and a dry-run preview of the same
+    /// size (#325 verify round 1). Above the ceiling the call is refused, dry run included, with the
+    /// count and the searched range, before anything is deleted.
+    func testDeletionAboveTheCeilingIsRefusedWithTheCountAndTheRange() {
+        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(30 * day))
+        XCTAssertThrowsError(try EventRangeQuery.checkDeletionSize(EventRangeQuery.maxDeletionOccurrences + 1, searched: range)) { error in
+            XCTAssertTrue(error is TrustedErrorMessage, "the message must reach the caller unsanitized")
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("\(EventRangeQuery.maxDeletionOccurrences + 1)"), message)
+            XCTAssertTrue(message.contains("\(EventRangeQuery.maxDeletionOccurrences)"), message)
+            XCTAssertTrue(message.contains("2018-01-01"), "the searched range is named: \(message)")
+        }
+    }
+
+    func testTooWideMessageStatesTheExactCeiling() {
+        let message = EventRangeQuery.RangeError.tooWide(days: 200_000).localizedDescription
+        XCTAssertTrue(message.contains("146,000 days"), message)
+        XCTAssertTrue(message.contains("about 400 years"), message)
+    }
+
     // MARK: wiring
+
+    private var repoRoot: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    }
 
     /// Every range a caller gives (`list_events`, `list_events_quick`, `search_events`,
     /// `find_duplicate_events`, `check_conflicts`, `delete_events_batch` by date range, and the
     /// ±2-year `findSimilarEvents`) must reach EventKit through `events(from:to:calendars:)`.
-    /// A direct `predicateForEvents(` in `EventKitManager.swift` is allowed only where the window
-    /// is a fixed day or less, so a new range path cannot bypass the chunking unnoticed.
-    func testEventKitManagerBuildsNoCallerRangePredicateDirectly() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: repoRoot.appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift"),
-                                encoding: .utf8)
-        let allowed: Set<String> = ["findDuplicateEvent", "findOccurrence"]
-        var function = ""
+    /// A direct `predicateForEvents(` anywhere in `Sources/` is allowed only in the functions
+    /// listed here: the one-day lookups and the undo scans, whose windows are at most 1460 days
+    /// and queried one per window. A new range path in any file cannot bypass the chunking
+    /// unnoticed (verify round 1: the first guard read one file and missed generic functions).
+    func testNoCallerRangePredicateIsBuiltOutsideTheAllowedFunctions() throws {
+        let allowed: [String: Set<String>] = [
+            "EventKit/EventRangeQuery.swift": ["events"],
+            "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence"],
+            "EventKit/EventKitManager+SeriesExceptions.swift": ["captureSeriesExceptions", "restoreSeriesExceptions", "seriesHoldsSlot"],
+            "EventKit/UndoPostStateGuard.swift": ["modifiedOccurrenceCount"],
+        ]
+        let sources = repoRoot.appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 10, "the scan must actually read the source tree")
         var offenders: [String] = []
-        for (index, line) in source.components(separatedBy: "\n").enumerated() {
-            if let match = line.range(of: #"func ([A-Za-z0-9_]+)\("#, options: .regularExpression) {
-                function = String(line[match].dropFirst(5).dropLast())
-            }
-            let code = line.components(separatedBy: "//").first ?? ""
-            if code.contains("predicateForEvents("), !allowed.contains(function) {
-                offenders.append("line \(index + 1) in \(function)")
+        for file in files {
+            let relative = String(file.path.dropFirst(sources.path.count + 1))
+            var function = ""
+            for (index, line) in try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n").enumerated() {
+                let code = line.components(separatedBy: "//").first ?? ""
+                if let match = code.range(of: #"func\s+[A-Za-z0-9_]+\s*[<(]"#, options: .regularExpression) {
+                    function = String(code[match].dropFirst(4)).trimmingCharacters(in: CharacterSet(charactersIn: " <("))
+                } else if code.range(of: #"(^|\s)init\s*[<(?!]"#, options: .regularExpression) != nil {
+                    function = "init"
+                }
+                if code.contains("predicateForEvents("), !(allowed[relative]?.contains(function) ?? false) {
+                    offenders.append("\(relative):\(index + 1) in \(function)")
+                }
             }
         }
         XCTAssertEqual(offenders, [], "range queries must go through EventKitManager.events(from:to:calendars:)")
     }
 
-    /// `delete_events_batch` by date range takes its range from `deletionRange`, not from an
-    /// open bound filled with `Date.distantPast` / `distantFuture` (cut to four years by EventKit,
-    /// #325): the handler is tied to the concrete manager, so its wiring is pinned in the source.
-    func testDeleteByDateRangeUsesTheBoundedDeletionRange() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    /// `delete_events_batch` by date range takes its range from `deletionRange`, checks the size,
+    /// and reports the searched range on BOTH the dry-run and the deletion path. The handler is
+    /// tied to the concrete manager, so its wiring is pinned in the source — inside that handler's
+    /// body only, and with the `.distantPast` shorthand caught too (verify round 1).
+    func testDeleteByDateRangeHandlerIsBoundedCheckedAndReportsTheRange() throws {
         let server = try String(contentsOf: repoRoot.appendingPathComponent("Sources/CheICalMCP/Server.swift"), encoding: .utf8)
-        XCTAssertFalse(server.contains("Date.distantPast") || server.contains("Date.distantFuture"),
-                       "an open delete bound must not become an unbounded EventKit range")
-        XCTAssertTrue(server.contains("EventRangeQuery.deletionRange("))
-        XCTAssertTrue(server.contains("\"searched_from\"") && server.contains("\"searched_to\""),
-                      "the response must state the range that was searched")
+        let start = try XCTUnwrap(server.range(of: "private func handleDeleteEventsBatch("))
+        let rest = server[start.upperBound...]
+        let end = rest.range(of: "\n    private func ")?.lowerBound ?? rest.endIndex
+        let body = String(rest[..<end])
+        XCTAssertNil(body.range(of: #"\.distant(Past|Future)"#, options: .regularExpression),
+                     "an open delete bound must not become an unbounded EventKit range")
+        XCTAssertTrue(body.contains("EventRangeQuery.deletionRange("))
+        XCTAssertTrue(body.contains("EventRangeQuery.checkDeletionSize("), "the size is checked before anything is deleted")
+        XCTAssertTrue(body.contains("response.merge(searchedFields)"), "the dry run reports the searched range")
+        XCTAssertTrue(body.contains("extraFields: searchedFields"), "the deletion reports the searched range")
     }
 
     func testOccurrenceKeyFallsBackWhenTheEventIdentifierIsMissing() {
