@@ -911,7 +911,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1461 days, more than 2000 deletions (span all counts each series once) are refused, dry run included, nothing is deleted, and the dry-run preview lists at most 2000 events (preview_truncated). Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1461 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted; span all and span future count each series once, and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, including its occurrences outside searched_from / searched_to. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -953,7 +953,7 @@ class CheICalMCPServer {
             // Feature 9: Find Duplicate Events
             Tool(
                 name: "find_duplicate_events",
-                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error.",
+                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range wider than 1461 days the search stops with an error, returning nothing, once it passes 2,000,000 comparisons (a large tolerance_minutes over two calendars of one repeating event); narrow the range or the tolerance.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2885,8 +2885,8 @@ class CheICalMCPServer {
                 throw ToolError.invalidParameter("The search range could not be computed from the given before_date / after_date")
             }
             let searchedFields: [String: Any] = [
-                "searched_from": localDateFormatter.string(from: searched.start),
-                "searched_to": localDateFormatter.string(from: searched.end)
+                "searched_from": EventRangeQuery.localText(searched.start),
+                "searched_to": EventRangeQuery.localText(searched.end)
             ]
 
             let events = try await eventKitManager.listEvents(
@@ -2895,21 +2895,16 @@ class CheICalMCPServer {
                 calendarName: calendarName,
                 calendarSource: calendarSource
             )
-            // Build items with per-occurrence dates (supports multiple occurrences of same series)
-            let batchItems: [(identifier: String, occurrenceDate: Date?)] = events.compactMap { event in
-                guard let eid = event.eventIdentifier else { return nil }
-                return (identifier: eid, occurrenceDate: event.startDate)
-            }
-            // #325 verify rounds 1-2: over a range wider than EventKit's old cut, refuse more than
-            // the ceiling of deletions before the dry run too, counted as this call would delete
-            // (span "all" once per series). A narrower range behaves exactly as before.
-            try EventRangeQuery.checkDeletionSize(
-                operations: EventRangeQuery.deletionOperations(identifiers: events.map(\.eventIdentifier),
-                                                               deleteAll: spanStr == "all"),
-                searched: searched,
-                fromText: localDateFormatter.string(from: searched.start),
-                toText: localDateFormatter.string(from: searched.end)
-            )
+            // Items with per-occurrence dates (supports multiple occurrences of same series); with
+            // span "future", only each series' earliest listed occurrence (verify round 3).
+            let batchItems = EventRangeQuery.deletionItems(
+                events.map { (identifier: $0.eventIdentifier, start: $0.startDate) }, span: spanStr
+            ).map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
+            // #325 verify rounds 1-3: over a range wider than EventKit's old cut (every one-sided
+            // range is), refuse more than the ceiling of deletions before the dry run too, counted
+            // as this call deletes (span "all" once per series). A narrower range is not limited.
+            let deletions = EventRangeQuery.deletionOperations(batchItems.map(\.identifier), span: spanStr)
+            try EventRangeQuery.checkDeletionSize(operations: deletions, searched: searched)
 
             if dryRun {
                 // #27: drop event.title and event.calendar.title from the
@@ -2931,6 +2926,7 @@ class CheICalMCPServer {
                     "mode": "by_date_range",
                     "calendar": calendarName,
                     "total": events.count,
+                    "deletions": deletions,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles."
                 ]

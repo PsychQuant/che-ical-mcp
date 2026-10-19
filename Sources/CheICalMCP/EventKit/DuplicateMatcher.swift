@@ -14,6 +14,10 @@ import Foundation
 /// tolerance (round 2: the first version still compared same-calendar items inside the window).
 /// The result is the same pairs the earlier loop returned, in the same order (by first index,
 /// then second).
+///
+/// The window bounds the work only while the tolerance is small next to the range: with a
+/// tolerance covering it, two calendars of one daily series pair everything with everything
+/// (round 3). `maxComparisons` stops the matching as it goes, before the pairs are held or sorted.
 enum DuplicateMatcher {
     struct Pair: Equatable {
         let first: Int
@@ -21,9 +25,10 @@ enum DuplicateMatcher {
         let startDifference: TimeInterval
     }
 
-    static func pairs(count: Int, tolerance: TimeInterval,
+    static func pairs(count: Int, tolerance: TimeInterval, maxComparisons: Int? = nil,
                       title: (Int) -> String?, calendar: (Int) -> String,
-                      start: (Int) -> Date, end: (Int) -> Date) -> [Pair] {
+                      start: (Int) -> Date, end: (Int) -> Date) throws -> [Pair] {
+        var comparisons = 0
         var groups: [String: [String: [Int]]] = [:]
         for index in 0..<count {
             guard let key = title(index)?.lowercased() else { continue }
@@ -45,6 +50,10 @@ enum DuplicateMatcher {
                         while y < b.count {
                             let startDifference = start(b[y]).timeIntervalSince(start(x))
                             if startDifference > tolerance { break }
+                            comparisons += 1
+                            if let limit = maxComparisons, comparisons > limit {
+                                throw EventRangeQuery.RangeError.tooManyComparisons(limit: limit)
+                            }
                             if abs(end(x).timeIntervalSince(end(b[y]))) <= tolerance {
                                 pairs.append(Pair(first: min(x, b[y]), second: max(x, b[y]),
                                                   startDifference: abs(startDifference)))

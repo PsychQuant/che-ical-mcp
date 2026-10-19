@@ -101,6 +101,23 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(found, [straddling])
     }
 
+    /// A zero-length event exactly on a span boundary overlaps neither half-open span under a strict
+    /// overlap test (verify round 3); each span after the first reaches one second back, and the
+    /// key drops what both spans return. Nothing before the caller's start is queried.
+    func testZeroLengthEventOnASpanBoundaryIsFound() throws {
+        let boundary = start.addingTimeInterval(1460 * day)
+        let instant = StubEvent(id: "z", start: boundary, end: boundary)
+        let before = StubEvent(id: "b", start: start.addingTimeInterval(-2), end: start.addingTimeInterval(-1))
+        let end = start.addingTimeInterval(2000 * day)
+        var queried: [Date] = []
+        let found = try EventRangeQuery.collect(from: start, to: end,
+                                                query: { queried.append($0); return self.eventKitLikeQuery([instant, before])($0, $1) },
+                                                key: key)
+        XCTAssertEqual(found, [instant])
+        XCTAssertEqual(queried.first, start)
+        XCTAssertTrue(queried.allSatisfy { $0 >= start })
+    }
+
     func testOccurrencesOfOneSeriesInDifferentSpansAreKept() throws {
         let first = StubEvent(id: "series", start: start.addingTimeInterval(10 * day), end: start.addingTimeInterval(10 * day + 3600))
         let later = StubEvent(id: "series", start: start.addingTimeInterval(1500 * day), end: start.addingTimeInterval(1500 * day + 3600))
@@ -146,14 +163,13 @@ final class EventRangeQueryTests: XCTestCase {
     /// ceiling applies only where #325 widened what a call reaches (verify round 2).
     func testNarrowRangeIsNotLimitedWhateverItsSize() {
         let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(narrow * day))
-        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: 50_000, searched: range, fromText: "a", toText: "b"))
+        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: 50_000, searched: range))
         XCTAssertNil(EventRangeQuery.previewLimit(searched: range))
     }
 
     func testWideRangeAcceptsUpToTheCeiling() {
         let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(wide * day))
-        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: EventRangeQuery.maxDeletionOccurrences, searched: range,
-                                                               fromText: "a", toText: "b"))
+        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: EventRangeQuery.maxDeletionOccurrences, searched: range))
         XCTAssertEqual(EventRangeQuery.previewLimit(searched: range), EventRangeQuery.maxDeletionOccurrences)
     }
 
@@ -163,23 +179,66 @@ final class EventRangeQueryTests: XCTestCase {
     func testWideRangeAboveTheCeilingIsRefusedWithTheCountAndTheRange() {
         let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(wide * day))
         let count = EventRangeQuery.maxDeletionOccurrences + 1
-        XCTAssertThrowsError(try EventRangeQuery.checkDeletionSize(operations: count, searched: range,
-                                                                   fromText: "2018-01-01T08:00:00", toText: "2026-03-20T08:00:00")) { error in
+        XCTAssertThrowsError(try EventRangeQuery.checkDeletionSize(operations: count, searched: range)) { error in
             XCTAssertTrue(error is TrustedErrorMessage, "the message must reach the caller unsanitized")
             let message = error.localizedDescription
             XCTAssertTrue(message.contains("\(count)"), message)
             XCTAssertTrue(message.contains("\(EventRangeQuery.maxDeletionOccurrences)"), message)
-            XCTAssertTrue(message.contains("2018-01-01T08:00:00") && message.contains("2026-03-20T08:00:00"), message)
+            XCTAssertTrue(message.contains(EventRangeQuery.localText(range.start)) && message.contains(EventRangeQuery.localText(range.end)), message)
             XCTAssertFalse(message.contains("delete_event") || message.contains("span 'all'"), "no advice to delete more: \(message)")
         }
     }
 
     /// What is counted is what the call would delete: events without an identifier are skipped by
-    /// the delete path, and span "all" deletes each series once.
+    /// the delete path; span "all" deletes each series once, and span "future" too (verify round 3),
+    /// since the handler deletes in start order and the earliest occurrence removes the rest.
     func testDeletionOperationsCountWhatTheCallWouldDelete() {
-        let ids: [String?] = ["s1", "s1", "s1", "s2", nil, "one-off"]
-        XCTAssertEqual(EventRangeQuery.deletionOperations(identifiers: ids, deleteAll: false), 5)
-        XCTAssertEqual(EventRangeQuery.deletionOperations(identifiers: ids, deleteAll: true), 3)
+        let listed: [(identifier: String?, start: Date)] = [
+            ("s1", start.addingTimeInterval(2 * day)), ("s1", start), ("s1", start.addingTimeInterval(day)),
+            ("s2", start), (nil, start), ("one-off", start)
+        ]
+        func count(_ span: String) -> Int {
+            EventRangeQuery.deletionOperations(EventRangeQuery.deletionItems(listed, span: span).map(\.identifier), span: span)
+        }
+        XCTAssertEqual(count("this"), 5)
+        XCTAssertEqual(count("all"), 3)
+        XCTAssertEqual(count("future"), 3)
+    }
+
+    /// Span "future" deletes from each series' earliest listed occurrence only, whatever order
+    /// EventKit listed them in; other spans keep every listed occurrence, in listed order.
+    func testFutureSpanKeepsOnlyTheEarliestOccurrenceOfEachSeries() {
+        let listed: [(identifier: String?, start: Date)] = [
+            ("s1", start.addingTimeInterval(2 * day)), ("one-off", start), ("s1", start),
+            ("s1", start.addingTimeInterval(day)), ("s2", start.addingTimeInterval(5 * day)), (nil, start)
+        ]
+        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future"), [
+            .init(identifier: "one-off", occurrenceDate: start),
+            .init(identifier: "s1", occurrenceDate: start),
+            .init(identifier: "s2", occurrenceDate: start.addingTimeInterval(5 * day))
+        ])
+        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "this").map(\.identifier), ["s1", "one-off", "s1", "s1", "s2"])
+    }
+
+    /// The local form the handler reports `searched_from` / `searched_to` in, so the refusal and
+    /// those fields cannot disagree.
+    func testLocalTextIsTheResponseDateForm() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.timeZone = TimeZone.current
+        XCTAssertEqual(EventRangeQuery.localText(start), formatter.string(from: start))
+    }
+
+    /// find_duplicate_events over a range wider than the old cut stops at about the old worst case
+    /// (verify round 3): two calendars of the same daily series over four years, any tolerance.
+    func testDuplicateComparisonLimitAppliesOnlyToWideRanges() {
+        let narrow = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(self.narrow * day))
+        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(self.wide * day))
+        XCTAssertNil(EventRangeQuery.comparisonLimit(searched: narrow))
+        XCTAssertEqual(EventRangeQuery.comparisonLimit(searched: wide), EventRangeQuery.maxDuplicateComparisons)
+        let oldWorstCase = Double(1461 * 1461)
+        XCTAssertEqual(Double(EventRangeQuery.maxDuplicateComparisons), oldWorstCase, accuracy: 0.1 * oldWorstCase,
+                       "about what a four-year range could already compare")
     }
 
     func testTooWideMessageStatesTheExactCeiling() {
@@ -251,6 +310,8 @@ final class EventRangeQueryTests: XCTestCase {
         let check = try XCTUnwrap(body.range(of: "EventRangeQuery.checkDeletionSize("), "the size is checked")
         let dryRunBranch = try XCTUnwrap(body.range(of: "if dryRun {", range: body.range(of: "deletionRange(")!.upperBound..<body.endIndex))
         XCTAssertLessThan(check.lowerBound, dryRunBranch.lowerBound, "the size is checked before the dry run returns")
+        XCTAssertTrue(body.contains("\"deletions\""), "the dry run reports the number the ceiling is compared against")
+        XCTAssertTrue(body.contains("EventRangeQuery.deletionItems("), "the deletion and its count come from one item list")
         XCTAssertTrue(body.contains("response.merge(searchedFields)"), "the dry run reports the searched range")
         XCTAssertTrue(body.contains("extraFields: searchedFields"), "the deletion reports the searched range")
     }

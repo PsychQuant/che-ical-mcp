@@ -33,27 +33,43 @@ enum EventRangeQuery {
     /// `previousCutDays` (verify rounds 1-2). Only those ranges reach more than they did before #325:
     /// a one-sided range now reaches 100 years, and an open-ended daily series alone is about 36,500
     /// occurrences there, all in one `.batch` undo entry that restores each as a one-off event. A
-    /// narrower range is not limited: it behaves exactly as before. Counted as deletions, not
-    /// occurrences: span "all" deletes each series once.
+    /// narrower range is not limited: it behaves exactly as before. A one-sided range is always
+    /// wider (it reaches 100 years), so it is always under this limit (verify round 3, maintainer's
+    /// choice): before #325 the same call deleted only the first four years, silently. Counted as
+    /// deletions, not occurrences: span "all" and span "future" delete each series once.
     static let maxDeletionOccurrences = 2000
+
+    /// The most candidate comparisons one `find_duplicate_events` may make over a range wider than
+    /// `previousCutDays` (verify round 3). Two calendars holding the same daily series, with a
+    /// tolerance covering the range, pair every occurrence with every other: 1461² ≈ 2.1 million
+    /// over the old four-year cut, about 1.3 billion over 100 years, held in memory and sorted on
+    /// the manager's actor. This limit is about the old worst case; a narrower range is not limited.
+    static let maxDuplicateComparisons = 2_000_000
 
     enum RangeError: LocalizedError, Equatable {
         case tooWide(days: Int)
-        case tooManyToDelete(count: Int, from: String, to: String)
+        case tooManyToDelete(count: Int, from: Date, to: Date)
+        case tooManyComparisons(limit: Int)
 
         var errorDescription: String? {
             switch self {
             case .tooWide(let days):
-                let number = NumberFormatter()
-                number.locale = Locale(identifier: "en_US_POSIX")
-                number.numberStyle = .decimal
-                number.usesGroupingSeparator = true
-                number.groupingSeparator = ","
-                let ceiling = number.string(from: NSNumber(value: EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)) ?? "\(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)"
+                let ceiling = Self.grouped(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)
                 return "Date range too wide: \(days) days. At most \(ceiling) days (about 400 years; \(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
             case .tooManyToDelete(let count, let from, let to):
-                return "Refusing to delete: from \(from) to \(to) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Narrow the range with before_date and after_date."
+                return "Refusing to delete: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays) days apart, or a narrower range."
+            case .tooManyComparisons(let limit):
+                return "Stopped: finding duplicates over a range wider than \(EventRangeQuery.previousCutDays) days took more than \(Self.grouped(limit)) comparisons. Nothing was returned. Narrow the range or lower tolerance_minutes."
             }
+        }
+
+        private static func grouped(_ value: Int) -> String {
+            let number = NumberFormatter()
+            number.locale = Locale(identifier: "en_US_POSIX")
+            number.numberStyle = .decimal
+            number.usesGroupingSeparator = true
+            number.groupingSeparator = ","
+            return number.string(from: NSNumber(value: value)) ?? "\(value)"
         }
     }
 
@@ -75,13 +91,17 @@ enum EventRangeQuery {
     }
 
     /// Runs `query` once per span and returns the results in span order, each occurrence once.
+    /// Each span after the first is queried from one second before its start (verify round 3): a
+    /// zero-length event exactly on a boundary overlaps neither half-open span under a strict
+    /// overlap test. The key drops what both spans return; nothing before `start` is queried.
     static func collect<Item>(from start: Date, to end: Date,
                               query: (Date, Date) -> [Item],
                               key: (Item) -> String) throws -> [Item] {
         var seen = Set<String>()
         var found: [Item] = []
         for span in try spans(from: start, to: end) {
-            for item in query(span.start, span.end) where seen.insert(key(item)).inserted {
+            let from = span.start > start ? max(start, span.start.addingTimeInterval(-1)) : span.start
+            for item in query(from, span.end) where seen.insert(key(item)).inserted {
                 found.append(item)
             }
         }
@@ -116,19 +136,54 @@ enum EventRangeQuery {
         range.end.timeIntervalSince(range.start) > TimeInterval(previousCutDays) * 86_400
     }
 
-    /// The deletions a by-date-range call makes for these listed events: events without an
-    /// identifier are skipped by the delete path, and span "all" deletes each series once.
-    static func deletionOperations(identifiers: [String?], deleteAll: Bool) -> Int {
-        let ids = identifiers.compactMap { $0 }
-        return deleteAll ? Set(ids).count : ids.count
+    struct DeletionItem: Equatable {
+        let identifier: String
+        let occurrenceDate: Date
+    }
+
+    /// What a by-date-range call deletes from the listed events, in order: events without an
+    /// identifier are skipped, as the delete path always skipped them. With span "future" only each
+    /// series' earliest listed occurrence is kept (verify round 3): deleting it removes the rest of
+    /// the series, and every later occurrence used to cost one EventKit lookup and come back as a
+    /// failure ("No occurrence found"), about 36,500 of them for a daily series over 100 years.
+    static func deletionItems(_ listed: [(identifier: String?, start: Date)], span: String) -> [DeletionItem] {
+        let items = listed.compactMap { event in
+            event.identifier.map { DeletionItem(identifier: $0, occurrenceDate: event.start) }
+        }
+        guard span == "future" else { return items }
+        var earliest: [String: Int] = [:]
+        for (index, item) in items.enumerated() {
+            if let kept = earliest[item.identifier], items[kept].occurrenceDate <= item.occurrenceDate { continue }
+            earliest[item.identifier] = index
+        }
+        return items.indices.filter { earliest[items[$0].identifier] == $0 }.map { items[$0] }
+    }
+
+    /// The deletions `deletionItems` makes: span "all" deletes each series once, whole.
+    static func deletionOperations(_ identifiers: [String], span: String) -> Int {
+        span == "all" ? Set(identifiers).count : identifiers.count
     }
 
     /// Refuses, dry run included, a call over a range wider than `previousCutDays` that would make
-    /// more than `maxDeletionOccurrences` deletions, before anything is deleted. `fromText` and
-    /// `toText` are the range as `searched_from` / `searched_to` state it.
-    static func checkDeletionSize(operations: Int, searched: Span, fromText: String, toText: String) throws {
+    /// more than `maxDeletionOccurrences` deletions, before anything is deleted.
+    static func checkDeletionSize(operations: Int, searched: Span) throws {
         guard widensPreviousCut(searched), operations > maxDeletionOccurrences else { return }
-        throw RangeError.tooManyToDelete(count: operations, from: fromText, to: toText)
+        throw RangeError.tooManyToDelete(count: operations, from: searched.start, to: searched.end)
+    }
+
+    /// The most duplicate comparisons over `searched`: limited only where the range is wider than
+    /// the old cut.
+    static func comparisonLimit(searched: Span) -> Int? {
+        widensPreviousCut(searched) ? maxDuplicateComparisons : nil
+    }
+
+    /// The local form the responses use (`searched_from`, `searched_to`, the `*_local` fields), so
+    /// a refusal and those fields state the same range.
+    static func localText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.timeZone = TimeZone.current
+        return formatter.string(from: date)
     }
 
     /// The most dry-run preview rows over `searched`: bounded only where the range is wider than

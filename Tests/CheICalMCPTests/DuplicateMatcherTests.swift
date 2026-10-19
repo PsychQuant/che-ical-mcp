@@ -1,3 +1,4 @@
+import CheMCPKit
 import XCTest
 @testable import CheICalMCP
 
@@ -42,7 +43,7 @@ final class DuplicateMatcherTests: XCTestCase {
     }
 
     private func matched(_ items: [Item], tolerance: TimeInterval) -> [DuplicateMatcher.Pair] {
-        DuplicateMatcher.pairs(count: items.count, tolerance: tolerance,
+        try! DuplicateMatcher.pairs(count: items.count, tolerance: tolerance,
                                title: { items[$0].title }, calendar: { items[$0].calendar },
                                start: { items[$0].start }, end: { items[$0].end })
     }
@@ -75,7 +76,7 @@ final class DuplicateMatcherTests: XCTestCase {
     /// Counts the candidate comparisons: `end` is read only for a pair the matcher compares.
     private func comparisons(_ items: [Item], tolerance: TimeInterval) -> (pairs: [DuplicateMatcher.Pair], compared: Int) {
         var compared = 0
-        let pairs = DuplicateMatcher.pairs(count: items.count, tolerance: tolerance,
+        let pairs = try! DuplicateMatcher.pairs(count: items.count, tolerance: tolerance,
                                            title: { items[$0].title }, calendar: { items[$0].calendar },
                                            start: { items[$0].start }, end: { compared += 1; return items[$0].end })
         return (pairs, compared / 2)
@@ -109,5 +110,36 @@ final class DuplicateMatcherTests: XCTestCase {
         }
         let tolerance: TimeInterval = 3 * 3600
         XCTAssertEqual(matched(items, tolerance: tolerance), bruteForce(items, tolerance: tolerance))
+    }
+
+    /// Two calendars of the same daily series and a tolerance covering everything: the Cartesian
+    /// case (verify round 3, codex). With a limit, matching stops once the limit is passed, so
+    /// neither the comparisons nor the pairs grow past it, and the caller is told why.
+    func testComparisonLimitStopsTheCartesianCase() {
+        let n = 3_000
+        let items = (0..<n).map { item("Daily", "A", startMinute: Double($0) * 1440) }
+            + (0..<n).map { item("Daily", "B", startMinute: Double($0) * 1440) }
+        var compared = 0
+        XCTAssertThrowsError(try DuplicateMatcher.pairs(
+            count: items.count, tolerance: 200 * 365 * 86_400, maxComparisons: 1_000_000,
+            title: { items[$0].title }, calendar: { items[$0].calendar },
+            start: { items[$0].start }, end: { compared += 1; return items[$0].end })) { error in
+            XCTAssertEqual(error as? EventRangeQuery.RangeError, .tooManyComparisons(limit: 1_000_000))
+            XCTAssertTrue(error is TrustedErrorMessage)
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("1,000,000") && message.contains("tolerance_minutes"), message)
+        }
+        XCTAssertLessThanOrEqual(compared / 2, 1_000_001)
+    }
+
+    func testComparisonLimitIsNotReachedByAnOrdinaryWideSearch() throws {
+        let n = 36_500
+        let items = (0..<n).map { item("Daily", "A", startMinute: Double($0) * 1440) }
+            + (0..<n).map { item("Daily", "B", startMinute: Double($0) * 1440 + 2) }
+        let pairs = try DuplicateMatcher.pairs(
+            count: items.count, tolerance: 5 * 60, maxComparisons: EventRangeQuery.maxDuplicateComparisons,
+            title: { items[$0].title }, calendar: { items[$0].calendar },
+            start: { items[$0].start }, end: { items[$0].end })
+        XCTAssertEqual(pairs.count, n)
     }
 }
