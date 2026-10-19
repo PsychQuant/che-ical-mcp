@@ -53,7 +53,7 @@
     },
     {
       "name": "list_events",
-      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting"
+      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 400 years)"
     },
     {
       "name": "create_event",
@@ -113,7 +113,7 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",
