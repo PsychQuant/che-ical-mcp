@@ -214,19 +214,26 @@ enum EventRangeQuery {
 
 extension EventRangeQuery.RangeError: TrustedErrorMessage {}
 
-/// #325 verify rounds 3-4: which listed occurrences a span "future" delete already removed.
+/// #325 verify rounds 3-7: which listed occurrences a span "future" delete already removed.
 ///
 /// Removing an occurrence with `.futureEvents` removes its series from that occurrence's slot on.
-/// A later listed occurrence of the same series is then skipped without an EventKit lookup. A
-/// removal is recorded only when the occurrence removed is the one requested (`findOccurrence`
-/// matches by day, and on a series with two occurrences that day can return the later one), and
-/// it covers from the removed occurrence's slot (its `occurrenceDate`), which differs from its
-/// start when it was moved. A later item is compared by its own slot too. Anything not covered,
-/// or without a slot (the event_ids mode sends none), is tried as before.
+/// A later listed occurrence of the same series is then skipped without an EventKit lookup. With
+/// a slot the occurrence is located exactly (`isRequested`), and a removal is recorded only when
+/// the start and the slot are the requested ones; it covers from the removed occurrence's slot
+/// (its `occurrenceDate`), which differs from its start when it was moved, and a later item is
+/// compared by its own slot. An occurrence edited on its own (`<series>/RID=<slot>`) is judged
+/// by the slot in its identifier, both when it is removed and when it is skipped. The event_ids
+/// mode passes no occurrence dates, so nothing is recorded and nothing is skipped there.
 struct FutureDeletionCoverage {
     private var coveredFrom: [String: Date] = [:]
 
-    /// `slot` is the item's own slot (`EKEvent.occurrenceDate`); without one the item is tried.
+    /// Whether an enumerated event is the requested occurrence: the same series identifier and,
+    /// when a slot is given, that slot (verify round 6: a day can hold two occurrences of one series).
+    static func isRequested(eventIdentifier: String?, occurrenceDate: Date?, identifier: String, slot: Date?) -> Bool {
+        eventIdentifier == identifier && (slot == nil || occurrenceDate == slot)
+    }
+
+    /// `slot` is the item's own slot (`EKEvent.occurrenceDate`); a plain item without one is tried.
     func covers(identifier: String, slot: Date?) -> Bool {
         // An occurrence edited on its own reads back as `<series>/RID=<slot>` (iCloud): its series
         // removal reaches it by its slot (device, 2026-10-20: it was reported "Event not found").
@@ -250,7 +257,8 @@ struct FutureDeletionCoverage {
     mutating func recordRemoval(identifier: String, requested: Date?, requestedSlot: Date?,
                                 removedStart: Date, removedSlot: Date?) {
         guard let requested, requested == removedStart else { return }
-        if let requestedSlot, requestedSlot != removedSlot { return }
+        // An identifier with `/RID=` names one occurrence by itself (verify round 7): no slot check.
+        if let requestedSlot, requestedSlot != removedSlot, !identifier.contains("/RID=") { return }
         var key = identifier
         var slot = removedSlot ?? removedStart
         if let rid = identifier.range(of: "/RID=", options: .backwards) {

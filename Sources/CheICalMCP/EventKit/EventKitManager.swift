@@ -992,7 +992,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in
-            if event.eventIdentifier == identifier, slot == nil || event.occurrenceDate == slot {
+            if FutureDeletionCoverage.isRequested(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate,
+                                                  identifier: identifier, slot: slot) {
                 target = event
                 stop.pointee = true
             }
