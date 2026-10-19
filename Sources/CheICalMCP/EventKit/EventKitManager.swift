@@ -1237,7 +1237,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The same eventIdentifier can appear multiple times with different dates (multiple occurrences).
     func deleteEventsBatch(
         items: [(identifier: String, occurrenceDate: Date?)],
-        span: EKSpan = .thisEvent
+        span: EKSpan = .thisEvent,
+        slots: [Date?]? = nil
     ) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
@@ -1256,8 +1257,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var coverage = FutureDeletionCoverage()
         var coveredCount = 0
 
-        for item in items {
-            if span == .futureEvents, coverage.covers(identifier: item.identifier, start: item.occurrenceDate) {
+        for (index, item) in items.enumerated() {
+            // `slots` is index-aligned with `items` (the by-date-range handler); absent, nothing is skipped.
+            let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
+            if span == .futureEvents, coverage.covers(identifier: item.identifier, slot: slot) {
                 coveredCount += 1
                 continue
             }

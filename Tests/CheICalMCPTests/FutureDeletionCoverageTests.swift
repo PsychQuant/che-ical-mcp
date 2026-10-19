@@ -18,17 +18,17 @@ final class FutureDeletionCoverageTests: XCTestCase {
 
     func testNothingIsCoveredBeforeARemoval() {
         let coverage = FutureDeletionCoverage()
-        XCTAssertFalse(coverage.covers(identifier: "s", start: start))
-        XCTAssertFalse(coverage.covers(identifier: "s", start: nil))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: nil))
     }
 
     func testRemovalOfTheRequestedOccurrenceCoversItsSlotAndLater() {
         var coverage = FutureDeletionCoverage()
         coverage.recordRemoval(identifier: "s", requested: start, removedStart: start, removedSlot: start)
-        XCTAssertTrue(coverage.covers(identifier: "s", start: start))
-        XCTAssertTrue(coverage.covers(identifier: "s", start: start.addingTimeInterval(day)))
-        XCTAssertFalse(coverage.covers(identifier: "s", start: start.addingTimeInterval(-day)), "an earlier slot is not removed")
-        XCTAssertFalse(coverage.covers(identifier: "other", start: start.addingTimeInterval(day)), "another series is not removed")
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start))
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(-day)), "an earlier slot is not removed")
+        XCTAssertFalse(coverage.covers(identifier: "other", slot: start.addingTimeInterval(day)), "another series is not removed")
     }
 
     /// `findOccurrence` matches by day: on a series with two occurrences that day it can return the
@@ -37,19 +37,29 @@ final class FutureDeletionCoverageTests: XCTestCase {
         var coverage = FutureDeletionCoverage()
         let later = start.addingTimeInterval(3600)
         coverage.recordRemoval(identifier: "s", requested: start, removedStart: later, removedSlot: later)
-        XCTAssertFalse(coverage.covers(identifier: "s", start: later))
-        XCTAssertFalse(coverage.covers(identifier: "s", start: start.addingTimeInterval(day)))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: later))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
     }
 
     /// An occurrence moved earlier from a later slot (on a store that keeps the series identifier
     /// for it): its removal reaches from its slot on, not from its new start, so the occurrences
     /// listed between the two are still tried.
+    /// An occurrence whose slot is before the covered one but which was moved past it (a store that
+    /// keeps the series identifier for it) is not reached by the removal, and is tried (round 5).
+    func testAnOccurrenceMovedPastTheCoveredSlotIsJudgedByItsSlot() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "s", requested: start.addingTimeInterval(5 * day),
+                               removedStart: start.addingTimeInterval(5 * day), removedSlot: start.addingTimeInterval(5 * day))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(3 * day)), "slot day 3, moved to day 20")
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(6 * day)))
+    }
+
     func testAMovedOccurrenceCoversFromItsSlotNotItsStart() {
         var coverage = FutureDeletionCoverage()
         let movedTo = start, slot = start.addingTimeInterval(10 * day)
         coverage.recordRemoval(identifier: "s", requested: movedTo, removedStart: movedTo, removedSlot: slot)
-        XCTAssertFalse(coverage.covers(identifier: "s", start: start.addingTimeInterval(2 * day)))
-        XCTAssertTrue(coverage.covers(identifier: "s", start: slot))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(2 * day)))
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: slot))
     }
 
     /// An occurrence edited on its own (`<series>/RID=<slot seconds>` on iCloud) is removed with its
@@ -60,11 +70,11 @@ final class FutureDeletionCoverageTests: XCTestCase {
         coverage.recordRemoval(identifier: "S", requested: start, removedStart: start, removedSlot: start)
         let later = Int(start.addingTimeInterval(7 * day).timeIntervalSinceReferenceDate)
         let earlier = Int(start.addingTimeInterval(-7 * day).timeIntervalSinceReferenceDate)
-        XCTAssertTrue(coverage.covers(identifier: "S/RID=\(later)", start: start.addingTimeInterval(-30 * day)),
+        XCTAssertTrue(coverage.covers(identifier: "S/RID=\(later)", slot: start.addingTimeInterval(-30 * day)),
                       "the slot decides, not where the edited occurrence was moved")
-        XCTAssertFalse(coverage.covers(identifier: "S/RID=\(earlier)", start: start.addingTimeInterval(day)))
-        XCTAssertFalse(coverage.covers(identifier: "T/RID=\(later)", start: start.addingTimeInterval(7 * day)))
-        XCTAssertFalse(coverage.covers(identifier: "S/RID=x", start: start.addingTimeInterval(7 * day)))
+        XCTAssertFalse(coverage.covers(identifier: "S/RID=\(earlier)", slot: start.addingTimeInterval(day)))
+        XCTAssertFalse(coverage.covers(identifier: "T/RID=\(later)", slot: start.addingTimeInterval(7 * day)))
+        XCTAssertFalse(coverage.covers(identifier: "S/RID=x", slot: start.addingTimeInterval(7 * day)))
     }
 
     func testTheEarliestCoveredSlotIsKept() {
@@ -72,7 +82,7 @@ final class FutureDeletionCoverageTests: XCTestCase {
         coverage.recordRemoval(identifier: "s", requested: start.addingTimeInterval(5 * day),
                                removedStart: start.addingTimeInterval(5 * day), removedSlot: start.addingTimeInterval(5 * day))
         coverage.recordRemoval(identifier: "s", requested: start, removedStart: start, removedSlot: start)
-        XCTAssertTrue(coverage.covers(identifier: "s", start: start.addingTimeInterval(day)))
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
     }
 
     /// The span "future" path of deleteEventsBatch consults the coverage before any EventKit lookup

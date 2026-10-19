@@ -193,9 +193,9 @@ final class EventRangeQueryTests: XCTestCase {
     /// the delete path; span "all" deletes each series once, and span "future" too (verify round 3),
     /// since the handler deletes in start order and the earliest occurrence removes the rest.
     func testDeletionOperationsCountWhatTheCallWouldDelete() {
-        let listed: [(identifier: String?, start: Date)] = [
-            ("s1", start.addingTimeInterval(2 * day)), ("s1", start), ("s1", start.addingTimeInterval(day)),
-            ("s2", start), (nil, start), ("one-off", start)
+        let listed: [(identifier: String?, start: Date, slot: Date?)] = [
+            ("s1", start.addingTimeInterval(2 * day), nil), ("s1", start, nil), ("s1", start.addingTimeInterval(day), nil),
+            ("s2", start, nil), (nil, start, nil), ("one-off", start, nil)
         ]
         func count(_ span: String) -> Int {
             EventRangeQuery.deletionOperations(EventRangeQuery.deletionItems(listed, span: span).map(\.identifier), span: span)
@@ -205,18 +205,24 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(count("future"), 3)
     }
 
-    /// Span "future" sends every listed occurrence in start order (verify round 4: dropping all but
-    /// the earliest also dropped the fallback when that one failed); deleteEventsBatch skips the ones
-    /// an earlier removal already reached. Other spans keep the listed order.
-    func testFutureSpanSendsEveryOccurrenceInStartOrder() {
-        let listed: [(identifier: String?, start: Date)] = [
-            ("s1", start.addingTimeInterval(2 * day)), ("one-off", start), ("s1", start),
-            ("s1", start.addingTimeInterval(day)), ("s2", start.addingTimeInterval(5 * day)), (nil, start)
+    /// Span "future" sends every listed occurrence in slot order (verify rounds 4-5): the removal
+    /// from a series' earliest slot reaches all the rest, so each series is deleted once, as
+    /// counted. An occurrence moved earlier than its slot sorts by its slot. Other spans keep the
+    /// listed order.
+    func testFutureSpanSendsEveryOccurrenceInSlotOrder() {
+        let movedSlot = start.addingTimeInterval(9 * day)
+        let listed: [(identifier: String?, start: Date, slot: Date?)] = [
+            ("s1", start.addingTimeInterval(2 * day), start.addingTimeInterval(2 * day)),
+            ("one-off", start, nil),
+            ("s1", start.addingTimeInterval(-day), movedSlot),          // moved from day 9 to day -1
+            ("s1", start.addingTimeInterval(day), start.addingTimeInterval(day)),
+            (nil, start, nil)
         ]
-        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future").map(\.occurrenceDate),
-                       [start, start, start.addingTimeInterval(day), start.addingTimeInterval(2 * day), start.addingTimeInterval(5 * day)])
-        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future").map(\.identifier), ["one-off", "s1", "s1", "s1", "s2"])
-        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "this").map(\.identifier), ["s1", "one-off", "s1", "s1", "s2"])
+        let future = EventRangeQuery.deletionItems(listed, span: "future")
+        XCTAssertEqual(future.map(\.slot), [nil, start.addingTimeInterval(day), start.addingTimeInterval(2 * day), movedSlot])
+        XCTAssertEqual(future.map(\.occurrenceDate), [start, start.addingTimeInterval(day), start.addingTimeInterval(2 * day), start.addingTimeInterval(-day)],
+                       "the lookup still uses each occurrence's start")
+        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "this").map(\.identifier), ["s1", "one-off", "s1", "s1"])
     }
 
     /// The local form the handler reports `searched_from` / `searched_to` in, so the refusal and
