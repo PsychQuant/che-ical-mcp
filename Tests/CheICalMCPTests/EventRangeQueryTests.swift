@@ -191,7 +191,9 @@ final class EventRangeQueryTests: XCTestCase {
 
     /// What is counted is what the call would delete: events without an identifier are skipped by
     /// the delete path; span "all" deletes each series once, and span "future" too (verify round 3),
-    /// since the handler deletes in start order and the earliest occurrence removes the rest.
+    /// What is counted is what the call would delete, at most: events without an identifier are
+    /// skipped by the delete path; span "all" deletes each series once, and span "future" too, from
+    /// its earliest listed slot (verify rounds 3-6).
     func testDeletionOperationsCountWhatTheCallWouldDelete() {
         let listed: [(identifier: String?, start: Date, slot: Date?)] = [
             ("s1", start.addingTimeInterval(2 * day), nil), ("s1", start, nil), ("s1", start.addingTimeInterval(day), nil),
@@ -317,6 +319,7 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertLessThan(check.lowerBound, dryRunBranch.lowerBound, "the size is checked before the dry run returns")
         XCTAssertTrue(body.contains("\"deletions\""), "the dry run reports the number the ceiling is compared against")
         XCTAssertTrue(body.contains("EventRangeQuery.deletionItems("), "the deletion and its count come from one item list")
+        XCTAssertTrue(body.contains("slots: deletionItems.map(\\.slot)"), "the slots reach deleteEventsBatch (round 6)")
         XCTAssertTrue(body.contains("response.merge(searchedFields)"), "the dry run reports the searched range")
         XCTAssertTrue(body.contains("extraFields: searchedFields"), "the deletion reports the searched range")
     }

@@ -980,8 +980,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
-    /// Returns the occurrence EKEvent (not the master event).
-    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil) -> EKEvent? {
+    /// Returns the occurrence EKEvent (not the master event). With `slot`, only the occurrence
+    /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
+    /// one series, and the first enumerated one is not necessarily the one asked for.
+    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
         var calendar = Calendar.current
         if let tz = timeZone { calendar.timeZone = tz }
         let dayStart = calendar.startOfDay(for: date)
@@ -990,7 +992,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in
-            if event.eventIdentifier == identifier {
+            if event.eventIdentifier == identifier, slot == nil || event.occurrenceDate == slot {
                 target = event
                 stop.pointee = true
             }
@@ -1274,7 +1276,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
                 let snapshots: DeletedEventSnapshots
                 if hadRules, let date = item.occurrenceDate {
-                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone) else {
+                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
@@ -1283,7 +1285,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
                     try eventStore.remove(occurrence, span: span)
                     if span == .futureEvents, let removedStart {
-                        coverage.recordRemoval(identifier: item.identifier, requested: date,
+                        coverage.recordRemoval(identifier: item.identifier, requested: date, requestedSlot: slot,
                                                removedStart: removedStart, removedSlot: removedSlot)
                     }
                 } else if hadRules {
@@ -1291,7 +1293,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     continue
                 } else {
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+                    let removedStart = masterEvent.startDate, removedSlot = masterEvent.occurrenceDate
                     try eventStore.remove(masterEvent, span: span)
+                    // An occurrence edited on its own reads back without rules; with span future its
+                    // removal takes its series from its slot on (#325 verify round 6).
+                    if span == .futureEvents, let removedStart, item.identifier.contains("/RID=") {
+                        coverage.recordRemoval(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
+                                               removedStart: removedStart, removedSlot: removedSlot)
+                    }
                 }
                 successCount += 1
                 let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: item.identifier) })

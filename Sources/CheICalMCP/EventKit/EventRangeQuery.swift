@@ -232,9 +232,9 @@ struct FutureDeletionCoverage {
         // removal reaches it by its slot (device, 2026-10-20: it was reported "Event not found").
         if let rid = identifier.range(of: "/RID=", options: .backwards),
            let from = coveredFrom[String(identifier[..<rid.lowerBound])] {
-            guard let slot = UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: nil,
-                                                        occurrenceDate: nil) else { return false }
-            return slot >= from
+            guard let ridSlot = UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: nil,
+                                                           occurrenceDate: nil) else { return false }
+            return ridSlot >= from
         }
         // By slot, not start (verify round 5): an occurrence whose slot is before the cut but
         // which was moved past it is not removed by the cut.
@@ -242,10 +242,24 @@ struct FutureDeletionCoverage {
         return slot >= from
     }
 
-    mutating func recordRemoval(identifier: String, requested: Date?, removedStart: Date, removedSlot: Date?) {
+    /// Records a span future removal, only when it removed exactly the requested occurrence: the
+    /// same start and, when the request named one, the same slot (verify round 6: two occurrences
+    /// can share a start). An occurrence edited on its own (`<series>/RID=<slot>`) is recorded for
+    /// its series from that slot: removing it with span future removes the series from there on
+    /// (device, iCloud, 2026-10-20).
+    mutating func recordRemoval(identifier: String, requested: Date?, requestedSlot: Date?,
+                                removedStart: Date, removedSlot: Date?) {
         guard let requested, requested == removedStart else { return }
-        let slot = removedSlot ?? removedStart
-        coveredFrom[identifier] = min(coveredFrom[identifier] ?? slot, slot)
+        if let requestedSlot, requestedSlot != removedSlot { return }
+        var key = identifier
+        var slot = removedSlot ?? removedStart
+        if let rid = identifier.range(of: "/RID=", options: .backwards) {
+            guard let ridSlot = UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: nil,
+                                                           occurrenceDate: nil) else { return }
+            key = String(identifier[..<rid.lowerBound])
+            slot = ridSlot
+        }
+        coveredFrom[key] = min(coveredFrom[key] ?? slot, slot)
     }
 }
 
