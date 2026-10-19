@@ -113,7 +113,7 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1461 days (every one-sided range) more than 2000 deletions are refused (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1461 days (every one-sided range) more than 2000 deletions are refused; span future skips occurrences already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",

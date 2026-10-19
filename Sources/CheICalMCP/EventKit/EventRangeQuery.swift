@@ -33,7 +33,7 @@ enum EventRangeQuery {
     /// `previousCutDays` (verify rounds 1-2). Only those ranges reach more than they did before #325:
     /// a one-sided range now reaches 100 years, and an open-ended daily series alone is about 36,500
     /// occurrences there, all in one `.batch` undo entry that restores each as a one-off event. A
-    /// narrower range is not limited: it behaves exactly as before. A one-sided range is always
+    /// narrower range is not limited by it. A one-sided range is always
     /// wider (it reaches 100 years), so it is always under this limit (verify round 3, maintainer's
     /// choice): before #325 the same call deleted only the first four years, silently. Counted as
     /// deletions, not occurrences: span "all" and span "future" delete each series once.
@@ -57,7 +57,7 @@ enum EventRangeQuery {
                 let ceiling = Self.grouped(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)
                 return "Date range too wide: \(days) days. At most \(ceiling) days (about 400 years; \(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
             case .tooManyToDelete(let count, let from, let to):
-                return "Refusing to delete: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays) days apart, or a narrower range."
+                return "Refusing to delete: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
             case .tooManyComparisons(let limit):
                 return "Stopped: finding duplicates over a range wider than \(EventRangeQuery.previousCutDays) days took more than \(Self.grouped(limit)) comparisons. Nothing was returned. Narrow the range or lower tolerance_minutes."
             }
@@ -141,27 +141,28 @@ enum EventRangeQuery {
         let occurrenceDate: Date
     }
 
-    /// What a by-date-range call deletes from the listed events, in order: events without an
-    /// identifier are skipped, as the delete path always skipped them. With span "future" only each
-    /// series' earliest listed occurrence is kept (verify round 3): deleting it removes the rest of
-    /// the series, and every later occurrence used to cost one EventKit lookup and come back as a
-    /// failure ("No occurrence found"), about 36,500 of them for a daily series over 100 years.
+    /// What a by-date-range call sends to the delete path, in order: events without an identifier
+    /// are skipped, as the delete path always skipped them. With span "future" every listed
+    /// occurrence is sent in start order (verify rounds 3-4), and `deleteEventsBatch` skips the
+    /// ones an earlier removal of the same series already reached (`FutureDeletionCoverage`): each
+    /// used to cost one EventKit lookup and come back as a failure ("No occurrence found"), about
+    /// 36,500 for a daily series over 100 years. Sending them all keeps the old fallback when the
+    /// earliest one cannot be removed.
     static func deletionItems(_ listed: [(identifier: String?, start: Date)], span: String) -> [DeletionItem] {
         let items = listed.compactMap { event in
             event.identifier.map { DeletionItem(identifier: $0, occurrenceDate: event.start) }
         }
         guard span == "future" else { return items }
-        var earliest: [String: Int] = [:]
-        for (index, item) in items.enumerated() {
-            if let kept = earliest[item.identifier], items[kept].occurrenceDate <= item.occurrenceDate { continue }
-            earliest[item.identifier] = index
-        }
-        return items.indices.filter { earliest[items[$0].identifier] == $0 }.map { items[$0] }
+        return items.enumerated()
+            .sorted { ($0.element.occurrenceDate, $0.offset) < ($1.element.occurrenceDate, $1.offset) }
+            .map(\.element)
     }
 
-    /// The deletions `deletionItems` makes: span "all" deletes each series once, whole.
+    /// The deletions these items make: span "all" deletes each series once, whole, and span
+    /// "future" each series once from its earliest listed occurrence. An occurrence edited on its
+    /// own has its own identifier (`<series>/RID=…` on iCloud) and counts separately.
     static func deletionOperations(_ identifiers: [String], span: String) -> Int {
-        span == "all" ? Set(identifiers).count : identifiers.count
+        span == "all" || span == "future" ? Set(identifiers).count : identifiers.count
     }
 
     /// Refuses, dry run included, a call over a range wider than `previousCutDays` that would make
@@ -206,6 +207,37 @@ enum EventRangeQuery {
 }
 
 extension EventRangeQuery.RangeError: TrustedErrorMessage {}
+
+/// #325 verify rounds 3-4: which listed occurrences a span "future" delete already removed.
+///
+/// Removing an occurrence with `.futureEvents` removes its series from that occurrence's slot on.
+/// A later listed occurrence of the same series is then skipped without an EventKit lookup. A
+/// removal is recorded only when the occurrence removed is the one requested (`findOccurrence`
+/// matches by day, and on a series with two occurrences that day can return the later one), and
+/// it covers from the removed occurrence's slot (its `occurrenceDate`), which differs from its
+/// start when it was moved. Anything not covered is tried as before.
+struct FutureDeletionCoverage {
+    private var coveredFrom: [String: Date] = [:]
+
+    func covers(identifier: String, start: Date?) -> Bool {
+        // An occurrence edited on its own reads back as `<series>/RID=<slot>` (iCloud): its series
+        // removal reaches it by its slot (device, 2026-10-20: it was reported "Event not found").
+        if let rid = identifier.range(of: "/RID=", options: .backwards),
+           let from = coveredFrom[String(identifier[..<rid.lowerBound])] {
+            guard let slot = UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: nil,
+                                                        occurrenceDate: nil) else { return false }
+            return slot >= from
+        }
+        guard let start, let from = coveredFrom[identifier] else { return false }
+        return start >= from
+    }
+
+    mutating func recordRemoval(identifier: String, requested: Date?, removedStart: Date, removedSlot: Date?) {
+        guard let requested, requested == removedStart else { return }
+        let slot = removedSlot ?? removedStart
+        coveredFrom[identifier] = min(coveredFrom[identifier] ?? slot, slot)
+    }
+}
 
 extension EventKitManager {
     /// The events overlapping `[start, end)` in `calendars` (all event calendars when nil), over

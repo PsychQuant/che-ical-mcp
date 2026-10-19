@@ -205,18 +205,17 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(count("future"), 3)
     }
 
-    /// Span "future" deletes from each series' earliest listed occurrence only, whatever order
-    /// EventKit listed them in; other spans keep every listed occurrence, in listed order.
-    func testFutureSpanKeepsOnlyTheEarliestOccurrenceOfEachSeries() {
+    /// Span "future" sends every listed occurrence in start order (verify round 4: dropping all but
+    /// the earliest also dropped the fallback when that one failed); deleteEventsBatch skips the ones
+    /// an earlier removal already reached. Other spans keep the listed order.
+    func testFutureSpanSendsEveryOccurrenceInStartOrder() {
         let listed: [(identifier: String?, start: Date)] = [
             ("s1", start.addingTimeInterval(2 * day)), ("one-off", start), ("s1", start),
             ("s1", start.addingTimeInterval(day)), ("s2", start.addingTimeInterval(5 * day)), (nil, start)
         ]
-        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future"), [
-            .init(identifier: "one-off", occurrenceDate: start),
-            .init(identifier: "s1", occurrenceDate: start),
-            .init(identifier: "s2", occurrenceDate: start.addingTimeInterval(5 * day))
-        ])
+        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future").map(\.occurrenceDate),
+                       [start, start, start.addingTimeInterval(day), start.addingTimeInterval(2 * day), start.addingTimeInterval(5 * day)])
+        XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "future").map(\.identifier), ["one-off", "s1", "s1", "s1", "s2"])
         XCTAssertEqual(EventRangeQuery.deletionItems(listed, span: "this").map(\.identifier), ["s1", "one-off", "s1", "s1", "s2"])
     }
 

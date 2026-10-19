@@ -1252,8 +1252,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // snapshots of one identifier would rebuild it twice; occurrence records are distinct items.
         var undoOperations: [UndoOperation] = []
         var undoSeenWholeIdentifiers = Set<String>()
+        // #325 verify rounds 3-4: occurrences an earlier span-future removal already reached.
+        var coverage = FutureDeletionCoverage()
+        var coveredCount = 0
 
         for item in items {
+            if span == .futureEvents, coverage.covers(identifier: item.identifier, start: item.occurrenceDate) {
+                coveredCount += 1
+                continue
+            }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
                 guard let masterEvent = freshEvent(id: item.identifier) else {
@@ -1270,7 +1277,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     }
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
                                                       seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
+                    let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
                     try eventStore.remove(occurrence, span: span)
+                    if span == .futureEvents, let removedStart {
+                        coverage.recordRemoval(identifier: item.identifier, requested: date,
+                                               removedStart: removedStart, removedSlot: removedSlot)
+                    }
                 } else if hadRules {
                     failures.append((item.identifier, "For recurring events, occurrence_date is required"))
                     continue
@@ -1302,7 +1314,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,
-            failures: failures
+            failures: failures,
+            coveredCount: coveredCount
         )
     }
 
@@ -2640,6 +2653,8 @@ struct BatchDeleteResult {
     let successCount: Int
     let failedCount: Int
     let failures: [(identifier: String, error: String)]
+    /// Span "future" items an earlier removal of their series already reached (#325).
+    var coveredCount: Int = 0
 }
 
 struct DuplicatePair {
