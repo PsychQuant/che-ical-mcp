@@ -72,13 +72,42 @@ final class DuplicateMatcherTests: XCTestCase {
         XCTAssertEqual(matched(items, tolerance: 0), bruteForce(items, tolerance: 0))
     }
 
-    /// 50,000 occurrences of one daily series in one calendar: the old loop made about 1.25 × 10^9
-    /// comparisons and held the actor for minutes. Same-title items more than the tolerance apart
-    /// are not compared at all.
-    func testOneLargeDailySeriesIsNotComparedPairByPair() {
+    /// Counts the candidate comparisons: `end` is read only for a pair the matcher compares.
+    private func comparisons(_ items: [Item], tolerance: TimeInterval) -> (pairs: [DuplicateMatcher.Pair], compared: Int) {
+        var compared = 0
+        let pairs = DuplicateMatcher.pairs(count: items.count, tolerance: tolerance,
+                                           title: { items[$0].title }, calendar: { items[$0].calendar },
+                                           start: { items[$0].start }, end: { compared += 1; return items[$0].end })
+        return (pairs, compared / 2)
+    }
+
+    /// 50,000 occurrences of one daily series in one calendar, with a tolerance that covers the whole
+    /// range (verify round 2): one calendar can hold no cross-calendar pair, so nothing is compared.
+    /// The old loop made about 1.25 × 10^9 comparisons. Counted, not timed, so host load cannot
+    /// make it flake.
+    func testOneCalendarIsNeverComparedWithItselfEvenWithAHugeTolerance() {
         let items = (0..<50_000).map { item("Daily", "A", startMinute: Double($0) * 1440) }
-        let begin = Date()
-        XCTAssertEqual(matched(items, tolerance: 5 * 60), [])
-        XCTAssertLessThan(Date().timeIntervalSince(begin), 10, "pairing must not be quadratic in the series length")
+        let result = comparisons(items, tolerance: 200 * 365 * 86_400)
+        XCTAssertEqual(result.pairs, [])
+        XCTAssertEqual(result.compared, 0)
+    }
+
+    /// Two calendars holding the same daily series: each occurrence is compared with its
+    /// counterpart, not with the whole other series.
+    func testTwoCalendarsAreComparedOnlyWithinTheTolerance() {
+        let n = 5_000
+        let items = (0..<n).map { item("Daily", "A", startMinute: Double($0) * 1440) }
+            + (0..<n).map { item("Daily", "B", startMinute: Double($0) * 1440 + 2) }
+        let result = comparisons(items, tolerance: 5 * 60)
+        XCTAssertEqual(result.pairs.count, n)
+        XCTAssertLessThanOrEqual(result.compared, 2 * n)
+    }
+
+    func testLargeToleranceAcrossSeveralCalendarsMatchesTheBruteForce() {
+        let items = (0..<60).map { i in
+            item(i % 3 == 0 ? "Sync" : "Plan", ["A", "B", "C"][i % 3], startMinute: Double((i * 37) % 500))
+        }
+        let tolerance: TimeInterval = 3 * 3600
+        XCTAssertEqual(matched(items, tolerance: tolerance), bruteForce(items, tolerance: tolerance))
     }
 }

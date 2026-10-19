@@ -139,24 +139,47 @@ final class EventRangeQueryTests: XCTestCase {
                      "the handler keeps its own error for this case")
     }
 
-    func testDeletionOfUpToTheCeilingIsAccepted() throws {
-        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(30 * day))
-        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(EventRangeQuery.maxDeletionOccurrences, searched: range))
+    private let wide = 3000.0   // days: wider than EventKit's old 1461-day cut
+    private let narrow = 1461.0 // days: what EventKit already returned in full before #325
+
+    /// Ranges of at most 1461 days were complete before #325 and are not limited now: the
+    /// ceiling applies only where #325 widened what a call reaches (verify round 2).
+    func testNarrowRangeIsNotLimitedWhateverItsSize() {
+        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(narrow * day))
+        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: 50_000, searched: range, fromText: "a", toText: "b"))
+        XCTAssertNil(EventRangeQuery.previewLimit(searched: range))
     }
 
-    /// A one-sided range reaches 100 years, so an open-ended daily series alone gives about
-    /// 36,500 occurrences — each its own delete and undo entry, and a dry-run preview of the same
-    /// size (#325 verify round 1). Above the ceiling the call is refused, dry run included, with the
-    /// count and the searched range, before anything is deleted.
-    func testDeletionAboveTheCeilingIsRefusedWithTheCountAndTheRange() {
-        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(30 * day))
-        XCTAssertThrowsError(try EventRangeQuery.checkDeletionSize(EventRangeQuery.maxDeletionOccurrences + 1, searched: range)) { error in
+    func testWideRangeAcceptsUpToTheCeiling() {
+        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(wide * day))
+        XCTAssertNoThrow(try EventRangeQuery.checkDeletionSize(operations: EventRangeQuery.maxDeletionOccurrences, searched: range,
+                                                               fromText: "a", toText: "b"))
+        XCTAssertEqual(EventRangeQuery.previewLimit(searched: range), EventRangeQuery.maxDeletionOccurrences)
+    }
+
+    /// Above the ceiling a wide range is refused, dry run included, with the count and the range
+    /// in the same local form as `searched_from` / `searched_to`, and only "narrow the range" as
+    /// advice: pointing at a whole-series delete would invite deleting more than was asked.
+    func testWideRangeAboveTheCeilingIsRefusedWithTheCountAndTheRange() {
+        let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(wide * day))
+        let count = EventRangeQuery.maxDeletionOccurrences + 1
+        XCTAssertThrowsError(try EventRangeQuery.checkDeletionSize(operations: count, searched: range,
+                                                                   fromText: "2018-01-01T08:00:00", toText: "2026-03-20T08:00:00")) { error in
             XCTAssertTrue(error is TrustedErrorMessage, "the message must reach the caller unsanitized")
             let message = error.localizedDescription
-            XCTAssertTrue(message.contains("\(EventRangeQuery.maxDeletionOccurrences + 1)"), message)
+            XCTAssertTrue(message.contains("\(count)"), message)
             XCTAssertTrue(message.contains("\(EventRangeQuery.maxDeletionOccurrences)"), message)
-            XCTAssertTrue(message.contains("2018-01-01"), "the searched range is named: \(message)")
+            XCTAssertTrue(message.contains("2018-01-01T08:00:00") && message.contains("2026-03-20T08:00:00"), message)
+            XCTAssertFalse(message.contains("delete_event") || message.contains("span 'all'"), "no advice to delete more: \(message)")
         }
+    }
+
+    /// What is counted is what the call would delete: events without an identifier are skipped by
+    /// the delete path, and span "all" deletes each series once.
+    func testDeletionOperationsCountWhatTheCallWouldDelete() {
+        let ids: [String?] = ["s1", "s1", "s1", "s2", nil, "one-off"]
+        XCTAssertEqual(EventRangeQuery.deletionOperations(identifiers: ids, deleteAll: false), 5)
+        XCTAssertEqual(EventRangeQuery.deletionOperations(identifiers: ids, deleteAll: true), 3)
     }
 
     func testTooWideMessageStatesTheExactCeiling() {
@@ -199,6 +222,10 @@ final class EventRangeQueryTests: XCTestCase {
                     function = String(code[match].dropFirst(4)).trimmingCharacters(in: CharacterSet(charactersIn: " <("))
                 } else if code.range(of: #"(^|\s)init\s*[<(?!]"#, options: .regularExpression) != nil {
                     function = "init"
+                } else if let member = code.range(of: #"^    (?:(?:static|private|fileprivate|internal|public|lazy|override|nonisolated)\s+)*(?:var|let)\s+[A-Za-z0-9_]+|^\s*(?:subscript|deinit)\b"#, options: .regularExpression) {
+                    // A type member that is not a function (verify round 2): reset the attribution
+                    // so code in it is not credited to the function above it.
+                    function = String(code[member]).trimmingCharacters(in: .whitespaces)
                 }
                 if code.contains("predicateForEvents("), !(allowed[relative]?.contains(function) ?? false) {
                     offenders.append("\(relative):\(index + 1) in \(function)")
@@ -221,9 +248,22 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertNil(body.range(of: #"\.distant(Past|Future)"#, options: .regularExpression),
                      "an open delete bound must not become an unbounded EventKit range")
         XCTAssertTrue(body.contains("EventRangeQuery.deletionRange("))
-        XCTAssertTrue(body.contains("EventRangeQuery.checkDeletionSize("), "the size is checked before anything is deleted")
+        let check = try XCTUnwrap(body.range(of: "EventRangeQuery.checkDeletionSize("), "the size is checked")
+        let dryRunBranch = try XCTUnwrap(body.range(of: "if dryRun {", range: body.range(of: "deletionRange(")!.upperBound..<body.endIndex))
+        XCTAssertLessThan(check.lowerBound, dryRunBranch.lowerBound, "the size is checked before the dry run returns")
         XCTAssertTrue(body.contains("response.merge(searchedFields)"), "the dry run reports the searched range")
         XCTAssertTrue(body.contains("extraFields: searchedFields"), "the deletion reports the searched range")
+    }
+
+    /// Two occurrences of one series at the same start (one edited onto the other's slot, on a store
+    /// that keeps the series identifier) are different occurrences; the same occurrence seen by two
+    /// spans is one (verify round 2).
+    func testOccurrenceKeyKeepsDifferentOccurrencesAtTheSameStartApart() {
+        let slotA = start.addingTimeInterval(day), slotB = start.addingTimeInterval(2 * day)
+        let edited = EventRangeQuery.occurrenceKey(eventIdentifier: "s", fallbackIdentifier: "", start: slotB, occurrenceDate: slotA)
+        let own = EventRangeQuery.occurrenceKey(eventIdentifier: "s", fallbackIdentifier: "", start: slotB, occurrenceDate: slotB)
+        XCTAssertNotEqual(edited, own)
+        XCTAssertEqual(own, EventRangeQuery.occurrenceKey(eventIdentifier: "s", fallbackIdentifier: "", start: slotB, occurrenceDate: slotB))
     }
 
     func testOccurrenceKeyFallsBackWhenTheEventIdentifierIsMissing() {

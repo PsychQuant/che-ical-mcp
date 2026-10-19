@@ -1327,7 +1327,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #325 verify round 1: pairs are found by title group and start order, not by comparing
         // every pair (the range is no longer cut to four years, so n can be large).
-        let tolerance = TimeInterval(toleranceMinutes * 60)
+        let tolerance = TimeInterval(toleranceMinutes) * 60   // no Int overflow for a huge tolerance_minutes (verify round 2)
         let pairs = DuplicateMatcher.pairs(
             count: events.count, tolerance: tolerance,
             title: { events[$0].title }, calendar: { events[$0].calendar.calendarIdentifier },

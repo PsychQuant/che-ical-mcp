@@ -25,15 +25,21 @@ enum EventRangeQuery {
         let end: Date
     }
 
-    /// The most occurrences one `delete_events_batch` by date range may delete (verify round 1):
-    /// a one-sided range reaches 100 years, and each occurrence becomes its own delete, undo entry
-    /// and preview row. 2000 is above the 1,461 occurrences one daily series had under EventKit's
-    /// four-year cut, so a call that worked before still does.
+    /// EventKit's own cut (measured, #325): a range of at most this many days was already
+    /// returned in full before #325, so nothing changes for it.
+    static let previousCutDays = 1461
+
+    /// The most deletions one `delete_events_batch` by date range may make over a range wider than
+    /// `previousCutDays` (verify rounds 1-2). Only those ranges reach more than they did before #325:
+    /// a one-sided range now reaches 100 years, and an open-ended daily series alone is about 36,500
+    /// occurrences there, all in one `.batch` undo entry that restores each as a one-off event. A
+    /// narrower range is not limited: it behaves exactly as before. Counted as deletions, not
+    /// occurrences: span "all" deletes each series once.
     static let maxDeletionOccurrences = 2000
 
     enum RangeError: LocalizedError, Equatable {
         case tooWide(days: Int)
-        case tooManyToDelete(count: Int, from: Date, to: Date)
+        case tooManyToDelete(count: Int, from: String, to: String)
 
         var errorDescription: String? {
             switch self {
@@ -46,8 +52,7 @@ enum EventRangeQuery {
                 let ceiling = number.string(from: NSNumber(value: EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)) ?? "\(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)"
                 return "Date range too wide: \(days) days. At most \(ceiling) days (about 400 years; \(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
             case .tooManyToDelete(let count, let from, let to):
-                let format = ISO8601DateFormatter()
-                return "Refusing to delete: the range \(format.string(from: from)) to \(format.string(from: to)) holds \(count) occurrences, more than the \(EventRangeQuery.maxDeletionOccurrences) one call may delete. Nothing was deleted. Narrow the range with before_date and after_date, or delete a recurring series whole with delete_event span 'all'."
+                return "Refusing to delete: from \(from) to \(to) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Narrow the range with before_date and after_date."
             }
         }
     }
@@ -106,21 +111,42 @@ enum EventRangeQuery {
         }
     }
 
-    /// Refuses a by-date-range deletion of more than `maxDeletionOccurrences` occurrences, dry
-    /// run included, so the caller learns the count and the searched range before anything is
-    /// deleted and no preview grows without bound.
-    static func checkDeletionSize(_ count: Int, searched: Span) throws {
-        guard count <= maxDeletionOccurrences else {
-            throw RangeError.tooManyToDelete(count: count, from: searched.start, to: searched.end)
-        }
+    /// Whether `range` is wider than EventKit's old cut, i.e. one #325 widened.
+    static func widensPreviousCut(_ range: Span) -> Bool {
+        range.end.timeIntervalSince(range.start) > TimeInterval(previousCutDays) * 86_400
+    }
+
+    /// The deletions a by-date-range call makes for these listed events: events without an
+    /// identifier are skipped by the delete path, and span "all" deletes each series once.
+    static func deletionOperations(identifiers: [String?], deleteAll: Bool) -> Int {
+        let ids = identifiers.compactMap { $0 }
+        return deleteAll ? Set(ids).count : ids.count
+    }
+
+    /// Refuses, dry run included, a call over a range wider than `previousCutDays` that would make
+    /// more than `maxDeletionOccurrences` deletions, before anything is deleted. `fromText` and
+    /// `toText` are the range as `searched_from` / `searched_to` state it.
+    static func checkDeletionSize(operations: Int, searched: Span, fromText: String, toText: String) throws {
+        guard widensPreviousCut(searched), operations > maxDeletionOccurrences else { return }
+        throw RangeError.tooManyToDelete(count: operations, from: fromText, to: toText)
+    }
+
+    /// The most dry-run preview rows over `searched`: bounded only where the range is wider than
+    /// the old cut (a span "all" call within the deletion ceiling can still list many occurrences).
+    static func previewLimit(searched: Span) -> Int? {
+        widensPreviousCut(searched) ? maxDeletionOccurrences : nil
     }
 
     /// One occurrence: the event identifier (shared by a series' unedited occurrences) and its
     /// start. `fallbackIdentifier` (the calendar item identifier) stands in when an event has no
     /// event identifier yet, so two such events at the same start are not merged.
-    static func occurrenceKey(eventIdentifier: String?, fallbackIdentifier: String, start: Date) -> String {
+    static func occurrenceKey(eventIdentifier: String?, fallbackIdentifier: String, start: Date,
+                              occurrenceDate: Date? = nil) -> String {
         let id = (eventIdentifier?.isEmpty == false ? eventIdentifier : nil) ?? "item:\(fallbackIdentifier)"
-        return "\(id)|\(start.timeIntervalSinceReferenceDate)"
+        // The rule slot too (verify round 2): an occurrence edited onto another's start, on a store
+        // that keeps the series identifier for it, is a different occurrence.
+        let slot = occurrenceDate.map { "\($0.timeIntervalSinceReferenceDate)" } ?? "-"
+        return "\(id)|\(start.timeIntervalSinceReferenceDate)|\(slot)"
     }
 }
 
@@ -136,7 +162,8 @@ extension EventKitManager {
             query: { eventStore.events(matching: eventStore.predicateForEvents(withStart: $0, end: $1, calendars: calendars)) },
             key: { EventRangeQuery.occurrenceKey(eventIdentifier: $0.eventIdentifier,
                                                  fallbackIdentifier: $0.calendarItemIdentifier,
-                                                 start: $0.startDate) }
+                                                 start: $0.startDate,
+                                                 occurrenceDate: $0.occurrenceDate) }
         )
     }
 }
