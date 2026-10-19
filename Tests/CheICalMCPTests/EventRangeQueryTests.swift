@@ -109,6 +109,33 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(found, [first, later], "occurrences share the series identifier; the start keeps them apart")
     }
 
+    // MARK: wiring
+
+    /// Every range a caller gives (`list_events`, `list_events_quick`, `search_events`,
+    /// `find_duplicate_events`, `check_conflicts`, `delete_events_batch` by date range, and the
+    /// ±2-year `findSimilarEvents`) must reach EventKit through `events(from:to:calendars:)`.
+    /// A direct `predicateForEvents(` in `EventKitManager.swift` is allowed only where the window
+    /// is a fixed day or less, so a new range path cannot bypass the chunking unnoticed.
+    func testEventKitManagerBuildsNoCallerRangePredicateDirectly() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: repoRoot.appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift"),
+                                encoding: .utf8)
+        let allowed: Set<String> = ["findDuplicateEvent", "findOccurrence"]
+        var function = ""
+        var offenders: [String] = []
+        for (index, line) in source.components(separatedBy: "\n").enumerated() {
+            if let match = line.range(of: #"func ([A-Za-z0-9_]+)\("#, options: .regularExpression) {
+                function = String(line[match].dropFirst(5).dropLast())
+            }
+            let code = line.components(separatedBy: "//").first ?? ""
+            if code.contains("predicateForEvents("), !allowed.contains(function) {
+                offenders.append("line \(index + 1) in \(function)")
+            }
+        }
+        XCTAssertEqual(offenders, [], "range queries must go through EventKitManager.events(from:to:calendars:)")
+    }
+
     func testOccurrenceKeyFallsBackWhenTheEventIdentifierIsMissing() {
         let a = EventRangeQuery.occurrenceKey(eventIdentifier: nil, fallbackIdentifier: "item-a", start: start)
         let b = EventRangeQuery.occurrenceKey(eventIdentifier: nil, fallbackIdentifier: "item-b", start: start)

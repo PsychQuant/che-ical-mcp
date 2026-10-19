@@ -519,8 +519,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        return eventStore.events(matching: predicate)
+        return try events(from: startDate, to: endDate, calendars: calendars)
     }
 
     /// Validates that a timed event's start is strictly before its end.
@@ -1148,8 +1147,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: searchStart, end: searchEnd, calendars: calendars)
-        let allEvents = eventStore.events(matching: predicate)
+        let allEvents = try events(from: searchStart, to: searchEnd, calendars: calendars)
 
         // Lowercase all keywords
         let lowercasedKeywords = keywords.map { $0.lowercased() }
@@ -1204,8 +1202,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let searchStart = Calendar.current.date(byAdding: .year, value: -2, to: now)!
         let searchEnd = Calendar.current.date(byAdding: .year, value: 2, to: now)!
 
-        let predicate = eventStore.predicateForEvents(withStart: searchStart, end: searchEnd, calendars: nil)
-        let allEvents = eventStore.events(matching: predicate)
+        let allEvents = try events(from: searchStart, to: searchEnd, calendars: nil)
 
         let lowercasedTitle = title.lowercased()
         // Split title into words for flexible matching
@@ -1326,8 +1323,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = allCalendars.filter { names.contains($0.title) }
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        let events = eventStore.events(matching: predicate)
+        let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
         var duplicates: [DuplicatePair] = []
         let tolerance = TimeInterval(toleranceMinutes * 60)
@@ -1383,8 +1379,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        let events = eventStore.events(matching: predicate)
+        let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
         // Filter out excluded event and check for actual overlap
         return events.filter { event in

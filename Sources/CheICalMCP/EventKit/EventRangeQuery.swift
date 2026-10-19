@@ -1,4 +1,5 @@
 import CheMCPKit
+import EventKit
 import Foundation
 
 /// #325: listing events over a range of any length.
@@ -76,3 +77,18 @@ enum EventRangeQuery {
 }
 
 extension EventRangeQuery.RangeError: TrustedErrorMessage {}
+
+extension EventKitManager {
+    /// The events overlapping `[start, end)` in `calendars` (all event calendars when nil), over
+    /// a range of any length up to `EventRangeQuery.maxSpans` spans. Every caller-given range
+    /// reaches EventKit through here (#325; pinned by `EventRangeQueryTests`).
+    func events(from start: Date, to end: Date, calendars: [EKCalendar]?) throws -> [EKEvent] {
+        try EventRangeQuery.collect(
+            from: start, to: end,
+            query: { eventStore.events(matching: eventStore.predicateForEvents(withStart: $0, end: $1, calendars: calendars)) },
+            key: { EventRangeQuery.occurrenceKey(eventIdentifier: $0.eventIdentifier,
+                                                 fallbackIdentifier: $0.calendarItemIdentifier,
+                                                 start: $0.startDate) }
+        )
+    }
+}
