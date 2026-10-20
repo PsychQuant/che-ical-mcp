@@ -31,10 +31,15 @@ extension EventKitManager {
     /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is
     /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads. A
     /// reminder's id is not found (#260, `storedEvent(id:)`).
+    ///
+    /// A series whose first occurrence was deleted resolves, but its object does not refresh
+    /// (#326, root cause #284); the earliest remaining occurrence stands in for it
+    /// (`FirstRemainingOccurrence`), and a series with none left stays not found.
     func freshEvent(id: String) -> EKEvent? {
         refreshIfNeeded()
-        guard let event = storedEvent(id: id), event.refresh() else { return nil }
-        return event
+        guard let event = storedEvent(id: id) else { return nil }
+        if event.refresh() { return event }
+        return firstRemainingOccurrence(of: event, id: id)
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.
