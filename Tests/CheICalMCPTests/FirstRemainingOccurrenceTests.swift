@@ -81,6 +81,61 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             identifier: "S"), 0, "an unrelated detached event is not the series' edited occurrence")
     }
 
+    /// A move changes the calendar of the whole series and a copy copies one occurrence, so neither
+    /// leaves an edited occurrence behind (device, iCloud, 2026-10-21: a move from the stand-in
+    /// with an edited occurrence before it moved all 16 events; a delete from it left that
+    /// occurrence in place). They resolve the stand-in without the edited-before refusal
+    /// (verify round 4); deletes and updates keep it.
+    func testTheEditedBeforeRefusalCanBeSwitchedOffForMoveAndCopy() {
+        let listed = [candidate("S", dayOffset: 14),
+                      candidate("S/RID=5", detached: true, rules: false, dayOffset: 8, slotOffset: 7)]
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S", refuseWhenEditedBefore: true))
+        XCTAssertEqual(FirstRemainingOccurrence.pick(listed, identifier: "S", refuseWhenEditedBefore: false), 0)
+    }
+
+    /// The refusal of span future at the stand-in itself turns on `<=`: an occurrence that starts
+    /// at the stand-in is the stand-in (refused), a later one is not (verify round 4: nothing
+    /// pinned the operator).
+    func testSpanFutureAtTheStandInIsRefusedAndLaterOccurrencesAreNot() {
+        let standIn = start
+        XCTAssertTrue(FirstRemainingOccurrence.refusesFutureUpdate(viaStandIn: true, isFutureSpan: true,
+                                                                   occurrenceStart: standIn, standInStart: standIn))
+        XCTAssertTrue(FirstRemainingOccurrence.refusesFutureUpdate(viaStandIn: true, isFutureSpan: true,
+                                                                   occurrenceStart: standIn.addingTimeInterval(-day), standInStart: standIn))
+        XCTAssertFalse(FirstRemainingOccurrence.refusesFutureUpdate(viaStandIn: true, isFutureSpan: true,
+                                                                    occurrenceStart: standIn.addingTimeInterval(day), standInStart: standIn))
+        XCTAssertFalse(FirstRemainingOccurrence.refusesFutureUpdate(viaStandIn: false, isFutureSpan: true,
+                                                                    occurrenceStart: standIn, standInStart: standIn), "a healthy series is never refused")
+        XCTAssertFalse(FirstRemainingOccurrence.refusesFutureUpdate(viaStandIn: true, isFutureSpan: false,
+                                                                    occurrenceStart: standIn, standInStart: standIn))
+    }
+
+    /// An occurrence's own id is not a way round the refusal: updating the whole series from an
+    /// occurrence edited on its own splits it too (device, iCloud, 2026-10-21, on a series that
+    /// had lost no occurrence), so the message does not recommend it.
+    func testTheRefusalDoesNotRecommendAnOccurrencesOwnId() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let line = try XCTUnwrap(source.components(separatedBy: "\n").first { $0.contains("static let standInSplitReason") })
+        XCTAssertFalse(line.contains("own id"), line)
+    }
+
+    func testMoveAndCopyResolveWithoutTheEditedBeforeRefusal() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        for name in ["func copyEvent(", "func moveEventForCopyTool(", "func moveEvent("] {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            XCTAssertTrue(source[from.upperBound...].prefix(900).contains("refuseWhenEditedBefore: false"), name)
+        }
+        for name in ["func deleteEvent(identifier", "func deleteEventSeries(", "func deleteEventsBatch("] {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            XCTAssertFalse(source[from.upperBound...].prefix(900).contains("refuseWhenEditedBefore: false"), name)
+        }
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {
@@ -129,7 +184,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let rest = source[from.upperBound...]
         let lookup = try XCTUnwrap(rest.range(of: "freshEventWithOrigin(id: identifier)"))
         let wholeRefusal = try XCTUnwrap(rest.range(of: "applyToAll, resolved.viaStandIn"))
-        let futureRefusal = try XCTUnwrap(rest.range(of: "resolved.viaStandIn, span == .futureEvents"))
+        let futureRefusal = try XCTUnwrap(rest.range(of: "FirstRemainingOccurrence.refusesFutureUpdate("))
         let firstWrite = try XCTUnwrap(rest.range(of: "event.title = "))
         let save = try XCTUnwrap(rest.range(of: "try eventStore.save(event, span: span)"))
         XCTAssertLessThan(lookup.lowerBound, wholeRefusal.lowerBound)

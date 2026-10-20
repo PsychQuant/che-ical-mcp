@@ -33,7 +33,12 @@ enum FirstRemainingOccurrence {
 
     /// The index of the earliest qualifying candidate (the first listed on a tie), or nil, also
     /// when an edited occurrence of the series has a slot before it.
-    static func pick(_ candidates: [Candidate], identifier: String) -> Int? {
+    ///
+    /// `refuseWhenEditedBefore: false` skips that refusal, for the writes it does not apply to: a
+    /// move changes the calendar of the whole series and a copy copies one occurrence, so neither
+    /// leaves an edited occurrence behind (device, iCloud, 2026-10-21), whereas a delete from the
+    /// stand-in does.
+    static func pick(_ candidates: [Candidate], identifier: String, refuseWhenEditedBefore: Bool = true) -> Int? {
         var best: Int?
         for (index, candidate) in candidates.enumerated() {
             guard candidate.eventIdentifier == identifier, !candidate.isDetached, candidate.hasRecurrenceRules else { continue }
@@ -41,6 +46,7 @@ enum FirstRemainingOccurrence {
             best = index
         }
         guard let best else { return nil }
+        guard refuseWhenEditedBefore else { return best }
         let standIn = candidates[best].start
         let editedBefore = candidates.contains { candidate in
             guard candidate.isDetached else { return false }
@@ -49,6 +55,14 @@ enum FirstRemainingOccurrence {
             return ofTheSeries && (candidate.slot ?? candidate.start) < standIn
         }
         return editedBefore ? nil : best
+    }
+
+    /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence
+    /// found is the stand-in itself (or earlier), a whole-series save from a middle occurrence that
+    /// splits the series into a new event id (verify rounds 3-4; `<=`, because the stand-in's own
+    /// date is exactly the case).
+    static func refusesFutureUpdate(viaStandIn: Bool, isFutureSpan: Bool, occurrenceStart: Date, standInStart: Date) -> Bool {
+        viaStandIn && isFutureSpan && occurrenceStart <= standInStart
     }
 
     /// The flow of `freshEvent`, with the lookup result, the refresh and the stand-in injected so
@@ -73,7 +87,7 @@ extension EventKitManager {
     /// series with rules is searched (a one-off or a deleted event is not, which also spares the
     /// scan), `startDate` is optional-checked, and the series' own calendar is required, never
     /// widened to all calendars.
-    func firstRemainingOccurrence(of stale: EKEvent, id: String) -> EKEvent? {
+    func firstRemainingOccurrence(of stale: EKEvent, id: String, refuseWhenEditedBefore: Bool = true) -> EKEvent? {
         guard stale.hasRecurrenceRules, let calendar = stale.calendar else { return nil }
         let firstStart: Date? = stale.startDate
         guard let firstStart else { return nil }
@@ -107,7 +121,8 @@ extension EventKitManager {
                                                  occurrenceDate: event.occurrenceDate),
                 sameSeriesByExternalID: external)
         }
-        guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id), listed[index].refresh() else { return nil }
+        guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore),
+              listed[index].refresh() else { return nil }
         return listed[index]
     }
 }

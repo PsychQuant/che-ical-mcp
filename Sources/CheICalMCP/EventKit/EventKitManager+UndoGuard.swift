@@ -43,10 +43,11 @@ extension EventKitManager {
     /// `freshEvent(id:)` and whether the event is the stand-in for the series (#326): a caller
     /// that writes to the whole series needs to know, because that write is a `.futureEvents`
     /// save on a middle occurrence.
-    func freshEventWithOrigin(id: String) -> (event: EKEvent, viaStandIn: Bool)? {
+    func freshEventWithOrigin(id: String, refuseWhenEditedBefore: Bool = true) -> (event: EKEvent, viaStandIn: Bool)? {
         refreshIfNeeded()
-        return FirstRemainingOccurrence.resolve(stored: storedEvent(id: id), refresh: { $0.refresh() },
-                                                standIn: { firstRemainingOccurrence(of: $0, id: id) })
+        return FirstRemainingOccurrence.resolve(
+            stored: storedEvent(id: id), refresh: { $0.refresh() },
+            standIn: { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: refuseWhenEditedBefore) })
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.

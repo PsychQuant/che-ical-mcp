@@ -789,7 +789,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// The fixed reason for refusing a whole-series save from the stand-in (#326).
-    private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this', or use an occurrence's own id."
+    private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     func updateEvent(
         identifier: String,
@@ -846,7 +846,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             // Span future at the stand-in itself is the same whole-series save (verify round 3).
-            if resolved.viaStandIn, span == .futureEvents, occurrence.startDate <= masterEvent.startDate {
+            if FirstRemainingOccurrence.refusesFutureUpdate(
+                viaStandIn: resolved.viaStandIn, isFutureSpan: span == .futureEvents,
+                occurrenceStart: occurrence.startDate, standInStart: masterEvent.startDate) {
                 throw EventKitError.standInRefused(reason: Self.standInSplitReason)
             }
             event = occurrence
@@ -1423,7 +1425,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEvent(id: identifier) else {
+        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
@@ -1456,7 +1458,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEvent(id: identifier) else {
+        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         if sourceEvent.hasRecurrenceRules {
@@ -1477,7 +1479,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let master = freshEvent(id: identifier) else {
+        guard let master = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
