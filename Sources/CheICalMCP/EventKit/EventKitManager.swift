@@ -788,6 +788,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
+    /// The fixed reason for refusing a whole-series save from the stand-in (#326).
+    private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this', or use an occurrence's own id."
+
     func updateEvent(
         identifier: String,
         title: String? = nil,
@@ -822,8 +825,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // identifier (device, iCloud). Refused rather than done silently; the other writes
         // (move, copy, delete) keep the identifier.
         if applyToAll, resolved.viaStandIn {
-            throw EventKitError.invalidTimeRange(
-                message: "This series' first occurrence was deleted, and updating the whole series would split it into a new series with a new event id. Update single occurrences with occurrence_date (span 'this' or 'future') instead.")
+            throw EventKitError.standInRefused(reason: Self.standInSplitReason)
         }
 
         // Snapshot before update for undo
@@ -842,6 +844,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         } else if let date = occurrenceDate {
             guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
+            }
+            // Span future at the stand-in itself is the same whole-series save (verify round 3).
+            if resolved.viaStandIn, span == .futureEvents, occurrence.startDate <= masterEvent.startDate {
+                throw EventKitError.standInRefused(reason: Self.standInSplitReason)
             }
             event = occurrence
         } else {
@@ -2497,6 +2503,10 @@ enum EventKitError: LocalizedError {
     /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
+    /// #326: a write refused because the series resolved through its first remaining occurrence
+    /// (the stand-in), where saving it would split the series into a new one with a new event id.
+    /// `reason` is one of the fixed strings in `updateEvent` (no EventKit text, no user input).
+    case standInRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -2598,6 +2608,8 @@ enum EventKitError: LocalizedError {
         case .allDayTimezoneConflict:
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
         case .moveRefused(let reason):
+            return reason
+        case .standInRefused(let reason):
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason

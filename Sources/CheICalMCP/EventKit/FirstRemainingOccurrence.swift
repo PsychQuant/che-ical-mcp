@@ -80,16 +80,23 @@ extension EventKitManager {
         let ruleEnds = (stale.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
         let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
         let window = UndoPostState.seriesScanWindow(firstStart: firstStart, ruleEnd: ruleEnd)
-        let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
         let series = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: stale.calendarItemExternalIdentifier)
         var listed: [EKEvent] = []
         var byExternalID: [Bool] = []
-        eventStore.enumerateEvents(matching: predicate) { event, _ in
-            let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
-                                                  externalIdentifier: event.calendarItemExternalIdentifier)
-            guard UndoPostState.isOccurrence(ids, of: series) else { return }
-            listed.append(event)
-            byExternalID.append(event.eventIdentifier != id && !(event.eventIdentifier?.hasPrefix(id + "/") ?? false))
+        // The window and a year on each side, as #285's exception capture lists them (verify round
+        // 3): an edited occurrence moved a few months out of the window blocks the stand-in too.
+        for range in SeriesExceptionsPlanner.listingRanges(for: window) {
+            let predicate = eventStore.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])
+            eventStore.enumerateEvents(matching: predicate) { event, _ in
+                let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
+                                                      externalIdentifier: event.calendarItemExternalIdentifier)
+                guard UndoPostState.isOccurrence(ids, of: series) else { return }
+                // An occurrence overlapping two ranges is listed by both.
+                guard !listed.contains(where: { $0.calendarItemIdentifier == event.calendarItemIdentifier
+                                                 && $0.startDate == event.startDate }) else { return }
+                listed.append(event)
+                byExternalID.append(event.eventIdentifier != id && !(event.eventIdentifier?.hasPrefix(id + "/") ?? false))
+            }
         }
         let candidates = zip(listed, byExternalID).map { event, external in
             FirstRemainingOccurrence.Candidate(

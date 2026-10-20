@@ -29,8 +29,9 @@ extension EventKitManager {
     /// The event under `id`, refreshed, or nil when it is not there. `refresh()` because a
     /// long-lived store can return stale fields after an edit made elsewhere until the object is
     /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is
-    /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads. A
-    /// reminder's id is not found (#260, `storedEvent(id:)`).
+    /// gone, except for a series whose first occurrence was deleted (#326, below), which fails to
+    /// refresh while its other occurrences remain. Used where undo state is captured (PR #259
+    /// verify #5) and where undo reads. A reminder's id is not found (#260, `storedEvent(id:)`).
     ///
     /// A series whose first occurrence was deleted resolves, but its object does not refresh
     /// (#326, root cause #284); the earliest remaining occurrence stands in for it

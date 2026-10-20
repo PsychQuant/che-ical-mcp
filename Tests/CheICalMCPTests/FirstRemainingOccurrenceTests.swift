@@ -1,3 +1,4 @@
+import CheMCPKit
 import XCTest
 @testable import CheICalMCP
 
@@ -116,18 +117,44 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     /// A write to the whole series from the stand-in is a `.futureEvents` save on a middle
     /// occurrence, which EventKit splits into a new series with a new identifier (device, iCloud,
     /// 2026-10-20: after `update_event` span all the old id was "Event not found"; for an invitee
-    /// it reads as the series cancelled and a new one sent). update_event span all refuses it;
-    /// move, copy and delete keep the identifier (device) and are not refused.
-    func testUpdateOfTheWholeSeriesRefusesAStandIn() throws {
+    /// it reads as the series cancelled and a new one sent). update_event refuses it for span all
+    /// and for span future at the stand-in itself (verify round 3), before any write, with its
+    /// own error (not labelled as a time range problem); move, copy and delete keep the
+    /// identifier (device) and are not refused.
+    func testUpdateRefusesAWholeSeriesSaveFromTheStandInBeforeAnyWrite() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         let from = try XCTUnwrap(source.range(of: "func updateEvent("))
-        let lookup = try XCTUnwrap(source.range(of: "freshEventWithOrigin(id: identifier)", range: from.upperBound..<source.endIndex))
-        let refusal = try XCTUnwrap(source.range(of: "applyToAll, resolved.viaStandIn", range: from.upperBound..<source.endIndex))
-        XCTAssertLessThan(lookup.lowerBound, refusal.lowerBound)
+        let rest = source[from.upperBound...]
+        let lookup = try XCTUnwrap(rest.range(of: "freshEventWithOrigin(id: identifier)"))
+        let wholeRefusal = try XCTUnwrap(rest.range(of: "applyToAll, resolved.viaStandIn"))
+        let futureRefusal = try XCTUnwrap(rest.range(of: "resolved.viaStandIn, span == .futureEvents"))
+        let firstWrite = try XCTUnwrap(rest.range(of: "event.title = "))
+        let save = try XCTUnwrap(rest.range(of: "try eventStore.save(event, span: span)"))
+        XCTAssertLessThan(lookup.lowerBound, wholeRefusal.lowerBound)
+        XCTAssertLessThan(wholeRefusal.lowerBound, futureRefusal.lowerBound)
+        XCTAssertLessThan(futureRefusal.lowerBound, firstWrite.lowerBound, "refused before any field is written")
+        XCTAssertLessThan(futureRefusal.lowerBound, save.lowerBound)
+        XCTAssertFalse(rest.prefix(3000).contains("invalidTimeRange(\n                message: \"This series"), "own error, not a time range")
         let moveFrom = try XCTUnwrap(source.range(of: "func moveEvent("))
         XCTAssertFalse(source[moveFrom.lowerBound...].prefix(1500).contains("viaStandIn"), "move is not refused")
+    }
+
+    func testTheStandInRefusalIsATrustedFixedMessage() {
+        let error = EventKitError.standInRefused(reason: "fixed reason")
+        XCTAssertEqual(error.localizedDescription, "fixed reason")
+        XCTAssertTrue((error as Error) is TrustedErrorMessage)
+    }
+
+    /// The guard that looks for edited occurrences lists the same ranges as #285's exception
+    /// capture: the window and a year on each side (verify round 3), so one moved a few months out
+    /// is seen too.
+    func testTheStandInSearchListsTheSameRangesAsTheSeriesExceptionCapture() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/FirstRemainingOccurrence.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(source.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
     }
 
     /// `freshEvent` and the dry-run preview (`getEvent`) both resolve through it; the preview used
