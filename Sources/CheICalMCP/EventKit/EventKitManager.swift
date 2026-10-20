@@ -813,8 +813,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
         // that would write back over an edit made elsewhere before this call.
-        guard let masterEvent = freshEvent(id: identifier) else {
+        guard let resolved = freshEventWithOrigin(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
+        }
+        let masterEvent = resolved.event
+        // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
+        // occurrence, and saving the whole series from it splits it into a new series with a new
+        // identifier (device, iCloud). Refused rather than done silently; the other writes
+        // (move, copy, delete) keep the identifier.
+        if applyToAll, resolved.viaStandIn {
+            throw EventKitError.invalidTimeRange(
+                message: "This series' first occurrence was deleted, and updating the whole series would split it into a new series with a new event id. Update single occurrences with occurrence_date (span 'this' or 'future') instead.")
         }
 
         // Snapshot before update for undo

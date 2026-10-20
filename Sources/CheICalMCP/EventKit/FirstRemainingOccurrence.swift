@@ -27,6 +27,8 @@ enum FirstRemainingOccurrence {
         /// The slot an edited occurrence had in the series (from its `/RID=` identifier, else its
         /// `occurrenceDate`); nil when unknown, then its start stands in.
         var slot: Date? = nil
+        /// Another store's edited occurrence: an unrelated identifier, the same iCalendar UID.
+        var sameSeriesByExternalID: Bool = false
     }
 
     /// The index of the earliest qualifying candidate (the first listed on a tie), or nil, also
@@ -41,8 +43,10 @@ enum FirstRemainingOccurrence {
         guard let best else { return nil }
         let standIn = candidates[best].start
         let editedBefore = candidates.contains { candidate in
-            guard candidate.isDetached, let id = candidate.eventIdentifier, id.hasPrefix(identifier + "/") else { return false }
-            return (candidate.slot ?? candidate.start) < standIn
+            guard candidate.isDetached else { return false }
+            let id = candidate.eventIdentifier
+            let ofTheSeries = id == identifier || (id?.hasPrefix(identifier + "/") ?? false) || candidate.sameSeriesByExternalID
+            return ofTheSeries && (candidate.slot ?? candidate.start) < standIn
         }
         return editedBefore ? nil : best
     }
@@ -51,9 +55,11 @@ enum FirstRemainingOccurrence {
     /// that each branch is tested without an event store: the stored object when it refreshes (the
     /// stand-in is not asked for), the stand-in when it does not, nil when nothing is stored or no
     /// stand-in exists.
-    static func resolve<Event>(stored: Event?, refresh: (Event) -> Bool, standIn: (Event) -> Event?) -> Event? {
+    static func resolve<Event>(stored: Event?, refresh: (Event) -> Bool,
+                               standIn: (Event) -> Event?) -> (event: Event, viaStandIn: Bool)? {
         guard let stored else { return nil }
-        return refresh(stored) ? stored : standIn(stored)
+        if refresh(stored) { return (stored, false) }
+        return standIn(stored).map { ($0, true) }
     }
 }
 
@@ -75,21 +81,24 @@ extension EventKitManager {
         let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
         let window = UndoPostState.seriesScanWindow(firstStart: firstStart, ruleEnd: ruleEnd)
         let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: [calendar])
+        let series = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: stale.calendarItemExternalIdentifier)
         var listed: [EKEvent] = []
+        var byExternalID: [Bool] = []
         eventStore.enumerateEvents(matching: predicate) { event, _ in
             let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
                                                   externalIdentifier: event.calendarItemExternalIdentifier)
-            if event.eventIdentifier == id
-                || UndoPostState.isOccurrence(ids, of: .init(eventIdentifier: id, externalIdentifier: nil)) {
-                listed.append(event)
-            }
+            guard UndoPostState.isOccurrence(ids, of: series) else { return }
+            listed.append(event)
+            byExternalID.append(event.eventIdentifier != id && !(event.eventIdentifier?.hasPrefix(id + "/") ?? false))
         }
-        let candidates = listed.map {
+        let candidates = zip(listed, byExternalID).map { event, external in
             FirstRemainingOccurrence.Candidate(
-                eventIdentifier: $0.eventIdentifier, isDetached: $0.isDetached,
-                hasRecurrenceRules: $0.hasRecurrenceRules, start: $0.startDate,
-                slot: UndoPostState.originalSlot(eventIdentifier: $0.eventIdentifier, externalIdentifier: nil,
-                                                 occurrenceDate: $0.occurrenceDate))
+                eventIdentifier: event.eventIdentifier, isDetached: event.isDetached,
+                hasRecurrenceRules: event.hasRecurrenceRules, start: event.startDate,
+                slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
+                                                 externalIdentifier: event.calendarItemExternalIdentifier,
+                                                 occurrenceDate: event.occurrenceDate),
+                sameSeriesByExternalID: external)
         }
         guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id), listed[index].refresh() else { return nil }
         return listed[index]

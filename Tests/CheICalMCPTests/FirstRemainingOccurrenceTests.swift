@@ -15,10 +15,11 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
     private func candidate(_ id: String?, detached: Bool = false, rules: Bool = true, dayOffset: Double,
-                           slotOffset: Double? = nil) -> FirstRemainingOccurrence.Candidate {
+                           slotOffset: Double? = nil, sameSeriesByExternalID: Bool = false) -> FirstRemainingOccurrence.Candidate {
         .init(eventIdentifier: id, isDetached: detached, hasRecurrenceRules: rules,
               start: start.addingTimeInterval(dayOffset * day),
-              slot: slotOffset.map { start.addingTimeInterval($0 * day) })
+              slot: slotOffset.map { start.addingTimeInterval($0 * day) },
+              sameSeriesByExternalID: sameSeriesByExternalID)
     }
 
     func testTheEarliestOccurrenceOfTheSeriesIsPicked() {
@@ -30,7 +31,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let listed = [
             candidate("T", dayOffset: 1),                              // another series
             candidate("S/RID=1", detached: true, rules: false, dayOffset: 12, slotOffset: 12), // edited, after the stand-in
-            candidate("S", detached: true, dayOffset: 3),              // detached even though it kept the id
+            candidate("S", detached: true, dayOffset: 30, slotOffset: 30), // detached even though it kept the id (after the stand-in)
             candidate("S", rules: false, dayOffset: 4),                // a one-off sharing the id: not the series
             candidate(nil, dayOffset: 5),
             candidate("S", dayOffset: 9)
@@ -64,6 +65,21 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
     }
 
+    /// The refusal is conservative about how an edited occurrence is tied to its series (verify
+    /// round 2): a detached occurrence that kept the bare series id, and one that other stores give
+    /// an unrelated identifier but the same iCalendar UID (the external identifier), count too.
+    func testAnEditedOccurrenceKeepingTheBareIdOrTheSameUIDAlsoBlocks() {
+        XCTAssertNil(FirstRemainingOccurrence.pick(
+            [candidate("S", dayOffset: 14), candidate("S", detached: true, dayOffset: 3, slotOffset: 3)], identifier: "S"))
+        XCTAssertNil(FirstRemainingOccurrence.pick(
+            [candidate("S", dayOffset: 14),
+             candidate("unrelated-id", detached: true, rules: false, dayOffset: 3, slotOffset: 3, sameSeriesByExternalID: true)],
+            identifier: "S"))
+        XCTAssertEqual(FirstRemainingOccurrence.pick(
+            [candidate("S", dayOffset: 14), candidate("unrelated-id", detached: true, rules: false, dayOffset: 3, slotOffset: 3)],
+            identifier: "S"), 0, "an unrelated detached event is not the series' edited occurrence")
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {
@@ -79,20 +95,39 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     /// (closure seam, #182): the cases a source-string check cannot tell apart (verify round 1).
     func testResolutionReturnsTheStoredObjectWhenItRefreshesAndNeverAsksForAStandIn() {
         var askedStandIn = false
-        let result: String? = FirstRemainingOccurrence.resolve(stored: "series", refresh: { _ in true },
-                                                               standIn: { _ in askedStandIn = true; return "occurrence" })
-        XCTAssertEqual(result, "series")
+        let result = FirstRemainingOccurrence.resolve(stored: "series", refresh: { _ in true },
+                                                      standIn: { _ in askedStandIn = true; return "occurrence" })
+        XCTAssertEqual(result?.event, "series")
+        XCTAssertEqual(result?.viaStandIn, false)
         XCTAssertFalse(askedStandIn)
     }
 
-    func testResolutionReturnsTheStandInWhenTheStoredObjectDoesNotRefresh() {
-        XCTAssertEqual(FirstRemainingOccurrence.resolve(stored: "series", refresh: { _ in false }, standIn: { _ in "occurrence" }),
-                       "occurrence")
+    func testResolutionReturnsTheStandInAndSaysSoWhenTheStoredObjectDoesNotRefresh() {
+        let result = FirstRemainingOccurrence.resolve(stored: "series", refresh: { _ in false }, standIn: { _ in "occurrence" })
+        XCTAssertEqual(result?.event, "occurrence")
+        XCTAssertEqual(result?.viaStandIn, true)
     }
 
     func testResolutionIsNilWhenNothingIsStoredOrNoStandInExists() {
         XCTAssertNil(FirstRemainingOccurrence.resolve(stored: String?.none, refresh: { _ in true }, standIn: { _ in "occurrence" }))
         XCTAssertNil(FirstRemainingOccurrence.resolve(stored: "series", refresh: { _ in false }, standIn: { _ in nil }))
+    }
+
+    /// A write to the whole series from the stand-in is a `.futureEvents` save on a middle
+    /// occurrence, which EventKit splits into a new series with a new identifier (device, iCloud,
+    /// 2026-10-20: after `update_event` span all the old id was "Event not found"; for an invitee
+    /// it reads as the series cancelled and a new one sent). update_event span all refuses it;
+    /// move, copy and delete keep the identifier (device) and are not refused.
+    func testUpdateOfTheWholeSeriesRefusesAStandIn() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func updateEvent("))
+        let lookup = try XCTUnwrap(source.range(of: "freshEventWithOrigin(id: identifier)", range: from.upperBound..<source.endIndex))
+        let refusal = try XCTUnwrap(source.range(of: "applyToAll, resolved.viaStandIn", range: from.upperBound..<source.endIndex))
+        XCTAssertLessThan(lookup.lowerBound, refusal.lowerBound)
+        let moveFrom = try XCTUnwrap(source.range(of: "func moveEvent("))
+        XCTAssertFalse(source[moveFrom.lowerBound...].prefix(1500).contains("viaStandIn"), "move is not refused")
     }
 
     /// `freshEvent` and the dry-run preview (`getEvent`) both resolve through it; the preview used
