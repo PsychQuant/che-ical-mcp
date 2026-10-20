@@ -1110,7 +1110,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Get a single event by identifier
     func getEvent(identifier: String) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let event = storedEvent(id: identifier) else {
+        // Refreshed, like the writes the dry-run preview describes (#326): a series whose first
+        // occurrence was deleted shows its first remaining occurrence, not the deleted one.
+        guard let event = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         return event

@@ -37,9 +37,8 @@ extension EventKitManager {
     /// (`FirstRemainingOccurrence`), and a series with none left stays not found.
     func freshEvent(id: String) -> EKEvent? {
         refreshIfNeeded()
-        guard let event = storedEvent(id: id) else { return nil }
-        if event.refresh() { return event }
-        return firstRemainingOccurrence(of: event, id: id)
+        return FirstRemainingOccurrence.resolve(stored: storedEvent(id: id), refresh: { $0.refresh() },
+                                                standIn: { firstRemainingOccurrence(of: $0, id: id) })
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.
