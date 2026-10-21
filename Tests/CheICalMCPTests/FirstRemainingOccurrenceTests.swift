@@ -59,7 +59,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     /// An occurrence edited on its own whose slot is before the stand-in would be left behind by a
     /// write from the stand-in (a delete or update with `.futureEvents` covers its slot onward):
     /// the call would report success with part of the series untouched (verify round 1, #326). The
-    /// series then stays not found, and the edited occurrence's own id is the way in.
+    /// series then stays not found (single occurrences can still be deleted or updated with span `this`).
     func testASeriesWithAnEditedOccurrenceBeforeTheStandInIsNotResolved() {
         let listed = [candidate("S", dayOffset: 14),
                       candidate("S/RID=5", detached: true, rules: false, dayOffset: 8, slotOffset: 7)]
@@ -82,7 +82,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     }
 
     /// A move changes the calendar of the whole series and a copy copies one occurrence, so neither
-    /// leaves an edited occurrence behind (device, iCloud, 2026-10-21: a move from the stand-in
+    /// leaves an edited occurrence behind (device, iCloud, 2026-10-20: a move from the stand-in
     /// with an edited occurrence before it moved all 16 events; a delete from it left that
     /// occurrence in place). They resolve the stand-in without the edited-before refusal
     /// (verify round 4); deletes and updates keep it.
@@ -112,7 +112,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     }
 
     /// An occurrence's own id is not a way round the refusal: updating the whole series from an
-    /// occurrence edited on its own splits it too (device, iCloud, 2026-10-21, on a series that
+    /// occurrence edited on its own splits it too (device, iCloud, 2026-10-20, on a series that
     /// had lost no occurrence), so the message does not recommend it.
     func testTheRefusalDoesNotRecommendAnOccurrencesOwnId() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -120,6 +120,46 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
         let line = try XCTUnwrap(source.components(separatedBy: "\n").first { $0.contains("static let standInSplitReason") })
         XCTAssertFalse(line.contains("own id"), line)
+    }
+
+    /// Which spans keep the refusal (verify round 5): a write that covers the rest of the series
+    /// (`.futureEvents`, and every whole-series write) leaves an earlier edited occurrence behind;
+    /// one occurrence (`.thisEvent`) cannot, so it is not refused. Without this a delete of one
+    /// occurrence was refused while a move of one occurrence was not.
+    func testOnlyWritesThatCoverTheRestOfTheSeriesKeepTheEditedBeforeRefusal() {
+        XCTAssertFalse(FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent))
+        XCTAssertTrue(FirstRemainingOccurrence.refusesEditedBefore(span: .futureEvents))
+        XCTAssertTrue(FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true))
+    }
+
+    /// A move across accounts is done by EventKit as a create plus a delete, and the delete from
+    /// the stand-in is the write that leaves an earlier edited occurrence behind (verify round 5);
+    /// the exemption was only shown within one iCloud account. Unknown sources count as different.
+    func testAMoveAcrossAccountsKeepsTheEditedBeforeRefusal() {
+        XCTAssertFalse(FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: "icloud", toSourceID: "icloud"))
+        XCTAssertTrue(FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: "icloud", toSourceID: "google"))
+        XCTAssertTrue(FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: nil, toSourceID: "icloud"))
+        XCTAssertTrue(FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: "icloud", toSourceID: nil))
+    }
+
+    func testMoveAndCopyAndSingleOccurrenceWritesWireTheNewRules() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        func body(_ name: String, _ length: Int = 1800) throws -> String {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            return String(source[from.upperBound...].prefix(length))
+        }
+        for name in ["func deleteEvent(identifier", "func deleteEventsBatch(", "func updateEvent("] {
+            XCTAssertTrue(try body(name).contains("refusesEditedBefore("), name)
+        }
+        for name in ["func deleteEventSeries(", "func deleteEventSeriesBatch("] {
+            XCTAssertFalse(try body(name).contains("refuseWhenEditedBefore: false"), name)
+        }
+        XCTAssertTrue(try body("func moveEvent(", 2600).contains("movesAcrossAccounts("), "a cross-account move keeps the refusal")
+        let copy = try body("func copyEvent(", 900)
+        XCTAssertTrue(copy.contains("copyOutAlarms(of: sourceEvent, isSplit: resolved.viaStandIn)"),
+                      "a copy from the stand-in moves absolute alarms to its start, like a split")
     }
 
     func testMoveAndCopyResolveWithoutTheEditedBeforeRefusal() throws {
@@ -182,7 +222,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
         let from = try XCTUnwrap(source.range(of: "func updateEvent("))
         let rest = source[from.upperBound...]
-        let lookup = try XCTUnwrap(rest.range(of: "freshEventWithOrigin(id: identifier)"))
+        let lookup = try XCTUnwrap(rest.range(of: "freshEventWithOrigin(\n            id: identifier,"))
         let wholeRefusal = try XCTUnwrap(rest.range(of: "applyToAll, resolved.viaStandIn"))
         let futureRefusal = try XCTUnwrap(rest.range(of: "FirstRemainingOccurrence.refusesFutureUpdate("))
         let firstWrite = try XCTUnwrap(rest.range(of: "event.title = "))
@@ -193,7 +233,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertLessThan(futureRefusal.lowerBound, save.lowerBound)
         XCTAssertFalse(rest.prefix(3000).contains("invalidTimeRange(\n                message: \"This series"), "own error, not a time range")
         let moveFrom = try XCTUnwrap(source.range(of: "func moveEvent("))
-        XCTAssertFalse(source[moveFrom.lowerBound...].prefix(1500).contains("viaStandIn"), "move is not refused")
+        XCTAssertFalse(source[moveFrom.lowerBound...].prefix(2600).contains("standInRefused"), "move is not refused as an update is")
     }
 
     func testTheStandInRefusalIsATrustedFixedMessage() {

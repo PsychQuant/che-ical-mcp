@@ -17,7 +17,9 @@ import Foundation
 /// One more refusal (verify round 1): an occurrence edited on its own whose slot is before the
 /// stand-in. A write from the stand-in with `.futureEvents` covers its slot onward, so that
 /// occurrence would stay behind while the call reported success. The series then stays not found,
-/// and the edited occurrence's own `<series>/RID=…` id is the way in.
+/// and single occurrences can still be deleted or updated with span `this`. (The edited
+/// occurrence's own id is not a way to the whole series: updating a whole series from it splits
+/// it too, #335.)
 enum FirstRemainingOccurrence {
     struct Candidate: Equatable {
         let eventIdentifier: String?
@@ -36,7 +38,7 @@ enum FirstRemainingOccurrence {
     ///
     /// `refuseWhenEditedBefore: false` skips that refusal, for the writes it does not apply to: a
     /// move changes the calendar of the whole series and a copy copies one occurrence, so neither
-    /// leaves an edited occurrence behind (device, iCloud, 2026-10-21), whereas a delete from the
+    /// leaves an edited occurrence behind (device, iCloud, 2026-10-20), whereas a delete from the
     /// stand-in does.
     static func pick(_ candidates: [Candidate], identifier: String, refuseWhenEditedBefore: Bool = true) -> Int? {
         var best: Int?
@@ -55,6 +57,22 @@ enum FirstRemainingOccurrence {
             return ofTheSeries && (candidate.slot ?? candidate.start) < standIn
         }
         return editedBefore ? nil : best
+    }
+
+    /// Whether a delete or update resolves the stand-in with the edited-before refusal (verify
+    /// round 5): a write that covers the rest of the series (`.futureEvents`, or a whole-series
+    /// write) leaves an earlier edited occurrence behind; one occurrence (`.thisEvent`) cannot.
+    static func refusesEditedBefore(span: EKSpan, wholeSeries: Bool = false) -> Bool {
+        wholeSeries || span != .thisEvent
+    }
+
+    /// Whether a move leaves the account. EventKit does a move across accounts as a create plus a
+    /// delete, and a delete from the stand-in is what leaves an earlier edited occurrence behind;
+    /// the move exemption was only shown within one iCloud account, so a move across accounts (or
+    /// with an unknown source) keeps the refusal.
+    static func movesAcrossAccounts(fromSourceID: String?, toSourceID: String?) -> Bool {
+        guard let fromSourceID, let toSourceID else { return true }
+        return fromSourceID != toSourceID
     }
 
     /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence

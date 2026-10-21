@@ -816,7 +816,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
         // that would write back over an edit made elsewhere before this call.
-        guard let resolved = freshEventWithOrigin(id: identifier) else {
+        guard let resolved = freshEventWithOrigin(
+            id: identifier,
+            refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: applyToAll)) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let masterEvent = resolved.event
@@ -1019,7 +1021,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = freshEvent(id: identifier) else {
+        guard let masterEvent = freshEventWithOrigin(
+            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let hadRules = masterEvent.hasRecurrenceRules
@@ -1278,7 +1281,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         for item in items {
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
-                guard let masterEvent = freshEvent(id: item.identifier) else {
+                guard let masterEvent = freshEventWithOrigin(
+                    id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
                     failures.append((item.identifier, "Event not found"))
                     continue
                 }
@@ -1425,11 +1429,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
+        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
+        let sourceEvent = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
-        let alarms = (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:))
+        // From the stand-in, an occurrence of the series: its absolute alarm dates are the series'
+        // (verify round 5), so they move to its start like a split occurrence's (#253 D2).
+        let alarms = Self.copyOutAlarms(of: sourceEvent, isSplit: resolved.viaStandIn).alarms
         let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
         // #261: no discard for a failed copy (see EventCopyOperation.saveCopy).
@@ -1479,11 +1486,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let master = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
+        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
+        let master = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
         let isRecurring = master.hasRecurrenceRules
+        // Across accounts the refusal stays (verify round 5): re-resolve with it.
+        if resolved.viaStandIn,
+           FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,
+                                                        toSourceID: targetCalendar.source?.sourceIdentifier),
+           freshEventWithOrigin(id: identifier) == nil {
+            throw EventKitError.eventNotFound(identifier: identifier)
+        }
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
