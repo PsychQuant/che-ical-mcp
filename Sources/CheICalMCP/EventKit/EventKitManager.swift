@@ -791,6 +791,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The fixed reason for refusing a whole-series save from the stand-in (#326).
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
+    /// The fixed reason for refusing a change of account through the stand-in (#326).
+    private static let standInAccountReason = "This series' first occurrence was deleted, so moving it to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence."
+
     func updateEvent(
         identifier: String,
         title: String? = nil,
@@ -907,7 +910,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         if let name = calendarName {
-            event.calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
+            let newCalendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
+            // A new calendar moves the whole series even with span this, so through the stand-in it
+            // is the cross-account move again (verify round 6).
+            if resolved.viaStandIn,
+               FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                            toSourceID: newCalendar.source?.sourceIdentifier) {
+                throw EventKitError.standInRefused(reason: Self.standInAccountReason)
+            }
+            event.calendar = newCalendar
         }
 
         // Update alarms
@@ -1492,12 +1503,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let master = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
         let isRecurring = master.hasRecurrenceRules
-        // Across accounts the refusal stays (verify round 5): re-resolve with it.
+        // Across accounts EventKit does a create plus a delete from a middle occurrence, which was
+        // only ever shown to be safe within one account: refused outright (verify rounds 5-6).
         if resolved.viaStandIn,
            FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,
-                                                        toSourceID: targetCalendar.source?.sourceIdentifier),
-           freshEventWithOrigin(id: identifier) == nil {
-            throw EventKitError.eventNotFound(identifier: identifier)
+                                                        toSourceID: targetCalendar.source?.sourceIdentifier) {
+            throw EventKitError.standInRefused(reason: Self.standInAccountReason)
         }
 
         var subject = master
