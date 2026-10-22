@@ -75,6 +75,22 @@ enum FirstRemainingOccurrence {
         return fromSourceID != toSourceID
     }
 
+    /// Whether a move through the stand-in is refused (verify rounds 6-7): the whole series to
+    /// another account. EventKit does that as a create plus a delete from a middle occurrence, and
+    /// it was only shown safe within one account. One occurrence moved with span this is a copy
+    /// plus a one-occurrence delete, as safe as deleting one, so it is not refused.
+    static func refusesMoveThroughStandIn(viaStandIn: Bool, wholeSeries: Bool, acrossAccounts: Bool) -> Bool {
+        viaStandIn && wholeSeries && acrossAccounts
+    }
+
+    /// Whether `update_event` through the stand-in is refused for a series-level property: a new
+    /// calendar of another account (it moves the whole series even with span this, device) or a
+    /// change of the recurrence rules (a series-level property like the calendar, so by the same
+    /// reasoning, not shown on device). Refused whatever the span.
+    static func refusesUpdateThroughStandIn(viaStandIn: Bool, changesAccount: Bool, changesRecurrence: Bool) -> Bool {
+        viaStandIn && (changesAccount || changesRecurrence)
+    }
+
     /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence
     /// found is the stand-in itself (or earlier), a whole-series save from a middle occurrence that
     /// splits the series into a new event id (verify rounds 3-4; `<=`, because the stand-in's own

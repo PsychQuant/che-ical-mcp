@@ -792,7 +792,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed reason for refusing a change of account through the stand-in (#326).
-    private static let standInAccountReason = "This series' first occurrence was deleted, so moving it to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence."
+    private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
+    /// The fixed reason for refusing a series-level update (calendar of another account,
+    /// recurrence rules) through the stand-in (#326).
+    private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
 
     func updateEvent(
         identifier: String,
@@ -863,6 +866,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             )
         }
 
+        // Series-level properties through the stand-in (verify rounds 6-7), decided before the
+        // first field of the event is assigned, so nothing is half-written when it throws. A new
+        // calendar moves the whole series even with span this (device), so one of another account
+        // is the cross-account move again; a change of the recurrence rules is series-level too.
+        let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        if FirstRemainingOccurrence.refusesUpdateThroughStandIn(
+            viaStandIn: resolved.viaStandIn,
+            changesAccount: newCalendar.map {
+                FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                             toSourceID: $0.source?.sourceIdentifier)
+            } ?? false,
+            changesRecurrence: clearRecurrence || recurrenceRule != nil) {
+            throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
+        }
+
         if let t = title { event.title = t }
 
         // Handle time updates carefully to prevent invalid state (startDate > endDate)
@@ -909,15 +927,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.timeZone = tz
         }
 
-        if let name = calendarName {
-            let newCalendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
-            // A new calendar moves the whole series even with span this, so through the stand-in it
-            // is the cross-account move again (verify round 6).
-            if resolved.viaStandIn,
-               FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
-                                                            toSourceID: newCalendar.source?.sourceIdentifier) {
-                throw EventKitError.standInRefused(reason: Self.standInAccountReason)
-            }
+        if let newCalendar = newCalendar {
             event.calendar = newCalendar
         }
 
@@ -1505,9 +1515,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let isRecurring = master.hasRecurrenceRules
         // Across accounts EventKit does a create plus a delete from a middle occurrence, which was
         // only ever shown to be safe within one account: refused outright (verify rounds 5-6).
-        if resolved.viaStandIn,
-           FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,
-                                                        toSourceID: targetCalendar.source?.sourceIdentifier) {
+        if FirstRemainingOccurrence.refusesMoveThroughStandIn(
+            viaStandIn: resolved.viaStandIn,
+            wholeSeries: !(isRecurring && span == .this && occurrenceDate != nil),
+            acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(
+                fromSourceID: master.calendar?.source?.sourceIdentifier,
+                toSourceID: targetCalendar.source?.sourceIdentifier)) {
             throw EventKitError.standInRefused(reason: Self.standInAccountReason)
         }
 
@@ -2532,8 +2545,10 @@ enum EventKitError: LocalizedError {
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
     /// #326: a write refused because the series resolved through its first remaining occurrence
-    /// (the stand-in), where saving it would split the series into a new one with a new event id.
-    /// `reason` is one of the fixed strings in `updateEvent` (no EventKit text, no user input).
+    /// (the stand-in): saving the whole series from it splits it into a new one with a new event
+    /// id, and changing its account or recurrence from it is not supported. `reason` is one of
+    /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
+    /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted

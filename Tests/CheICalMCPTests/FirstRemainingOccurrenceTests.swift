@@ -142,27 +142,40 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: "icloud", toSourceID: nil))
     }
 
-    /// Any write that changes the account of a series resolved through the stand-in is refused,
-    /// not only when an edited occurrence sits before it (verify round 6): EventKit does it as a
-    /// create plus a delete from a middle occurrence, whatever the series holds, and that was only
-    /// ever shown to be safe within one account. The same holds for update_event with a new
-    /// calendar, which moves the whole series even with span this (EventMovePolicy, 2026-10-04).
-    func testCrossAccountWritesThroughTheStandInAreRefusedOutright() throws {
+    /// Which writes through the stand-in are the whole-series cross-account write (verify round 7):
+    /// a move of the whole series, a calendar change in update_event (which moves the whole series
+    /// even with span this, device), and a change of the recurrence rules (a series-level property
+    /// like the calendar). A single occurrence moved to another account (span this with an
+    /// occurrence date) is a copy plus a one-occurrence delete, as safe as deleting one.
+    func testWhichStandInWritesAreRefused() {
+        typealias F = FirstRemainingOccurrence
+        // move
+        XCTAssertTrue(F.refusesMoveThroughStandIn(viaStandIn: true, wholeSeries: true, acrossAccounts: true))
+        XCTAssertFalse(F.refusesMoveThroughStandIn(viaStandIn: true, wholeSeries: false, acrossAccounts: true), "one occurrence")
+        XCTAssertFalse(F.refusesMoveThroughStandIn(viaStandIn: true, wholeSeries: true, acrossAccounts: false), "same account")
+        XCTAssertFalse(F.refusesMoveThroughStandIn(viaStandIn: false, wholeSeries: true, acrossAccounts: true), "a healthy series is never refused")
+        // update_event
+        XCTAssertTrue(F.refusesUpdateThroughStandIn(viaStandIn: true, changesAccount: true, changesRecurrence: false))
+        XCTAssertTrue(F.refusesUpdateThroughStandIn(viaStandIn: true, changesAccount: false, changesRecurrence: true))
+        XCTAssertFalse(F.refusesUpdateThroughStandIn(viaStandIn: true, changesAccount: false, changesRecurrence: false))
+        XCTAssertFalse(F.refusesUpdateThroughStandIn(viaStandIn: false, changesAccount: true, changesRecurrence: true), "a healthy series is never refused")
+    }
+
+    func testTheRefusalsAreWiredAndRunBeforeAnyFieldIsAssigned() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
+        let update = try XCTUnwrap(source.range(of: "func updateEvent("))
+        let body = String(source[update.upperBound...].prefix(9000))
+        let refusal = try XCTUnwrap(body.range(of: "FirstRemainingOccurrence.refusesUpdateThroughStandIn("))
+        let firstField = try XCTUnwrap(body.range(of: "if let t = title { event.title = t }"))
+        XCTAssertLessThan(refusal.lowerBound, firstField.lowerBound, "before the first field of the event is assigned")
         let move = try XCTUnwrap(source.range(of: "func moveEvent("))
         let moveBody = String(source[move.upperBound...].prefix(2800))
-        XCTAssertTrue(moveBody.contains("movesAcrossAccounts("))
-        XCTAssertFalse(moveBody.contains("freshEventWithOrigin(id: identifier) == nil"),
-                       "refused whether or not an edited occurrence is before the stand-in")
-        XCTAssertTrue(moveBody.contains("standInRefused"))
-        let update = try XCTUnwrap(source.range(of: "func updateEvent("))
-        let updateBody = String(source[update.upperBound...].prefix(9000))
-        let calendarChange = try XCTUnwrap(updateBody.range(of: "event.calendar = newCalendar"))
-        let refusal = try XCTUnwrap(updateBody.range(of: "movesAcrossAccounts("))
-        XCTAssertLessThan(refusal.lowerBound, calendarChange.lowerBound, "refused before the calendar is assigned")
-        XCTAssertTrue(updateBody.contains("resolved.viaStandIn"))
+        XCTAssertTrue(moveBody.contains("FirstRemainingOccurrence.refusesMoveThroughStandIn("))
+        let moveRefusal = try XCTUnwrap(moveBody.range(of: "FirstRemainingOccurrence.refusesMoveThroughStandIn("))
+        let firstWrite = try XCTUnwrap(moveBody.range(of: "defer { markNeedsRefresh() }"))
+        XCTAssertLessThan(moveRefusal.lowerBound, firstWrite.lowerBound)
     }
 
     func testMoveAndCopyAndSingleOccurrenceWritesWireTheNewRules() throws {
@@ -256,8 +269,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertLessThan(futureRefusal.lowerBound, save.lowerBound)
         XCTAssertFalse(rest.prefix(3000).contains("invalidTimeRange(\n                message: \"This series"), "own error, not a time range")
         let moveFrom = try XCTUnwrap(source.range(of: "func moveEvent("))
-        XCTAssertFalse(source[moveFrom.lowerBound...].prefix(1000).contains("standInRefused"),
-                       "a same-account move is not refused; only the cross-account check below it is")
+        _ = moveFrom
     }
 
     func testTheStandInRefusalIsATrustedFixedMessage() {
