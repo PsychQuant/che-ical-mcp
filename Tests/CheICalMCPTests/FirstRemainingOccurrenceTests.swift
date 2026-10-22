@@ -187,7 +187,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             return String(source[from.upperBound...].prefix(length))
         }
         for name in ["func deleteEvent(identifier", "func deleteEventsBatch(", "func updateEvent("] {
-            XCTAssertTrue(try body(name).contains("refusesEditedBefore("), name)
+            XCTAssertTrue(try body(name, 4200).contains("refusesEditedBefore("), name)
         }
         for name in ["func deleteEventSeries(", "func deleteEventSeriesBatch("] {
             XCTAssertFalse(try body(name).contains("refuseWhenEditedBefore: false"), name)

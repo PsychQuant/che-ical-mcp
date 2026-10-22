@@ -519,8 +519,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        return eventStore.events(matching: predicate)
+        return try events(from: startDate, to: endDate, calendars: calendars)
     }
 
     /// Validates that a timed event's start is strictly before its end.
@@ -1021,8 +1020,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
-    /// Returns the occurrence EKEvent (not the master event).
-    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil) -> EKEvent? {
+    /// Returns the occurrence EKEvent (not the master event). With `slot`, only the occurrence
+    /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
+    /// one series, and the first enumerated one is not necessarily the one asked for.
+    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
         var calendar = Calendar.current
         if let tz = timeZone { calendar.timeZone = tz }
         let dayStart = calendar.startOfDay(for: date)
@@ -1031,7 +1032,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in
-            if event.eventIdentifier == identifier {
+            if FutureDeletionCoverage.isRequested(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate,
+                                                  identifier: identifier, slot: slot) {
                 target = event
                 stop.pointee = true
             }
@@ -1191,8 +1193,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: searchStart, end: searchEnd, calendars: calendars)
-        let allEvents = eventStore.events(matching: predicate)
+        let allEvents = try events(from: searchStart, to: searchEnd, calendars: calendars)
 
         // Lowercase all keywords
         let lowercasedKeywords = keywords.map { $0.lowercased() }
@@ -1247,8 +1248,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let searchStart = Calendar.current.date(byAdding: .year, value: -2, to: now)!
         let searchEnd = Calendar.current.date(byAdding: .year, value: 2, to: now)!
 
-        let predicate = eventStore.predicateForEvents(withStart: searchStart, end: searchEnd, calendars: nil)
-        let allEvents = eventStore.events(matching: predicate)
+        let allEvents = try events(from: searchStart, to: searchEnd, calendars: nil)
 
         let lowercasedTitle = title.lowercased()
         // Split title into words for flexible matching
@@ -1283,7 +1283,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The same eventIdentifier can appear multiple times with different dates (multiple occurrences).
     func deleteEventsBatch(
         items: [(identifier: String, occurrenceDate: Date?)],
-        span: EKSpan = .thisEvent
+        span: EKSpan = .thisEvent,
+        slots: [Date?]? = nil
     ) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
@@ -1298,8 +1299,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // snapshots of one identifier would rebuild it twice; occurrence records are distinct items.
         var undoOperations: [UndoOperation] = []
         var undoSeenWholeIdentifiers = Set<String>()
+        // #325 verify rounds 3-4: occurrences an earlier span-future removal already reached.
+        var coverage = FutureDeletionCoverage()
+        var coveredCount = 0
 
-        for item in items {
+        for (index, item) in items.enumerated() {
+            // `slots` is index-aligned with `items` (the by-date-range handler); absent, nothing is skipped.
+            let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
+            if span == .futureEvents, coverage.covers(identifier: item.identifier, slot: slot) {
+                coveredCount += 1
+                continue
+            }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
                 guard let masterEvent = freshEventWithOrigin(
@@ -1311,19 +1321,31 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
                 let snapshots: DeletedEventSnapshots
                 if hadRules, let date = item.occurrenceDate {
-                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone) else {
+                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
                                                       seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
+                    let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
                     try eventStore.remove(occurrence, span: span)
+                    if span == .futureEvents, let removedStart {
+                        coverage.recordRemoval(identifier: item.identifier, requested: date, requestedSlot: slot,
+                                               removedStart: removedStart, removedSlot: removedSlot)
+                    }
                 } else if hadRules {
                     failures.append((item.identifier, "For recurring events, occurrence_date is required"))
                     continue
                 } else {
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+                    let removedStart = masterEvent.startDate, removedSlot = masterEvent.occurrenceDate
                     try eventStore.remove(masterEvent, span: span)
+                    // An occurrence edited on its own reads back without rules; with span future its
+                    // removal takes its series from its slot on (#325 verify round 6).
+                    if span == .futureEvents, let removedStart, item.identifier.contains("/RID=") {
+                        coverage.recordRemoval(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
+                                               removedStart: removedStart, removedSlot: removedSlot)
+                    }
                 }
                 successCount += 1
                 let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: item.identifier) })
@@ -1349,7 +1371,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,
-            failures: failures
+            failures: failures,
+            coveredCount: coveredCount
         )
     }
 
@@ -1370,42 +1393,30 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = allCalendars.filter { names.contains($0.title) }
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        let events = eventStore.events(matching: predicate)
+        let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
-        var duplicates: [DuplicatePair] = []
-        let tolerance = TimeInterval(toleranceMinutes * 60)
-
-        for i in 0..<events.count {
-            for j in (i + 1)..<events.count {
-                let e1 = events[i]
-                let e2 = events[j]
-
-                // Skip if same calendar
-                if e1.calendar.calendarIdentifier == e2.calendar.calendarIdentifier { continue }
-
-                // Compare titles (case-insensitive)
-                guard let t1 = e1.title?.lowercased(), let t2 = e2.title?.lowercased(),
-                      t1 == t2 else { continue }
-
-                // Compare times with tolerance
-                let startDiff = abs(e1.startDate.timeIntervalSince(e2.startDate))
-                let endDiff = abs(e1.endDate.timeIntervalSince(e2.endDate))
-
-                if startDiff <= tolerance && endDiff <= tolerance {
-                    duplicates.append(DuplicatePair(
-                        event1Id: e1.eventIdentifier ?? "",
-                        event1Title: e1.title ?? "",
-                        event1Calendar: e1.calendar.title,
-                        event1StartDate: e1.startDate,
-                        event2Id: e2.eventIdentifier ?? "",
-                        event2Title: e2.title ?? "",
-                        event2Calendar: e2.calendar.title,
-                        event2StartDate: e2.startDate,
-                        timeDifferenceSeconds: Int(startDiff)
-                    ))
-                }
-            }
+        // #325 verify round 1: pairs are found by title group and start order, not by comparing
+        // every pair (the range is no longer cut to four years, so n can be large).
+        let tolerance = TimeInterval(toleranceMinutes) * 60   // no Int overflow for a huge tolerance_minutes (verify round 2)
+        let pairs = try DuplicateMatcher.pairs(
+            count: events.count, tolerance: tolerance,
+            maxComparisons: EventRangeQuery.comparisonLimit(searched: EventRangeQuery.Span(start: startDate, end: endDate)),
+            title: { events[$0].title }, calendar: { events[$0].calendar.calendarIdentifier },
+            start: { events[$0].startDate }, end: { events[$0].endDate }
+        )
+        let duplicates = pairs.map { pair -> DuplicatePair in
+            let e1 = events[pair.first], e2 = events[pair.second]
+            return DuplicatePair(
+                event1Id: e1.eventIdentifier ?? "",
+                event1Title: e1.title ?? "",
+                event1Calendar: e1.calendar.title,
+                event1StartDate: e1.startDate,
+                event2Id: e2.eventIdentifier ?? "",
+                event2Title: e2.title ?? "",
+                event2Calendar: e2.calendar.title,
+                event2StartDate: e2.startDate,
+                timeDifferenceSeconds: Int(pair.startDifference)
+            )
         }
 
         return duplicates
@@ -1427,8 +1438,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
         }
 
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
-        let events = eventStore.events(matching: predicate)
+        let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
         // Filter out excluded event and check for actual overlap
         return events.filter { event in
@@ -2722,6 +2732,8 @@ struct BatchDeleteResult {
     let successCount: Int
     let failedCount: Int
     let failures: [(identifier: String, error: String)]
+    /// Span "future" items an earlier removal of their series already reached (#325).
+    var coveredCount: Int = 0
 }
 
 struct DuplicatePair {

@@ -1,0 +1,156 @@
+import XCTest
+@testable import CheICalMCP
+
+/// Pure-unit tests for skipping the listed occurrences a span "future" delete already removed
+/// (#325 verify rounds 3-4).
+///
+/// Removing an occurrence with `.futureEvents` removes the rest of its series, so each later
+/// listed occurrence used to cost one EventKit lookup and come back as a failure: about 36,500
+/// for a daily series over the 100-year one-sided horizon. Round 3 sent only the earliest
+/// occurrence of each series, which dropped the old fallback: when that one failed, or
+/// `findOccurrence` (which matches by day) removed a later occurrence of the same day, the rest
+/// was left while the call reported success. Every occurrence is sent again now; one is skipped
+/// only when a removal of exactly the requested occurrence already reached its slot.
+final class FutureDeletionCoverageTests: XCTestCase {
+
+    private let day: TimeInterval = 86_400
+    private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    func testNothingIsCoveredBeforeARemoval() {
+        let coverage = FutureDeletionCoverage()
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: nil))
+    }
+
+    func testRemovalOfTheRequestedOccurrenceCoversItsSlotAndLater() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "s", requested: start, requestedSlot: start, removedStart: start, removedSlot: start)
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start))
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(-day)), "an earlier slot is not removed")
+        XCTAssertFalse(coverage.covers(identifier: "other", slot: start.addingTimeInterval(day)), "another series is not removed")
+    }
+
+    /// `findOccurrence` matches by day: on a series with two occurrences that day it can return the
+    /// later one. Nothing is recorded then, so the earlier one is still tried.
+    func testRemovalOfAnotherOccurrenceThanRequestedCoversNothing() {
+        var coverage = FutureDeletionCoverage()
+        let later = start.addingTimeInterval(3600)
+        coverage.recordRemoval(identifier: "s", requested: start, requestedSlot: later, removedStart: later, removedSlot: later)
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: later))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
+    }
+
+    /// An occurrence moved earlier from a later slot (on a store that keeps the series identifier
+    /// for it): its removal reaches from its slot on, not from its new start, so the occurrences
+    /// listed between the two are still tried.
+    /// An occurrence whose slot is before the covered one but which was moved past it (a store that
+    /// keeps the series identifier for it) is not reached by the removal, and is tried (round 5).
+    func testAnOccurrenceMovedPastTheCoveredSlotIsJudgedByItsSlot() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "s", requested: start.addingTimeInterval(5 * day), requestedSlot: start.addingTimeInterval(5 * day),
+                               removedStart: start.addingTimeInterval(5 * day), removedSlot: start.addingTimeInterval(5 * day))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(3 * day)), "slot day 3, moved to day 20")
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(6 * day)))
+    }
+
+    func testAMovedOccurrenceCoversFromItsSlotNotItsStart() {
+        var coverage = FutureDeletionCoverage()
+        let movedTo = start, slot = start.addingTimeInterval(10 * day)
+        coverage.recordRemoval(identifier: "s", requested: movedTo, requestedSlot: slot, removedStart: movedTo, removedSlot: slot)
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(2 * day)))
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: slot))
+    }
+
+    /// An occurrence edited on its own (`<series>/RID=<slot seconds>` on iCloud) is removed with its
+    /// series when the series was removed from an earlier slot (device, 2026-10-20: it came back as
+    /// a failed "Event not found"). A slot before the covered one, or another series, is not.
+    func testAnOccurrenceEditedOnItsOwnIsCoveredByItsSeriesSlot() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "S", requested: start, requestedSlot: start, removedStart: start, removedSlot: start)
+        let later = Int(start.addingTimeInterval(7 * day).timeIntervalSinceReferenceDate)
+        let earlier = Int(start.addingTimeInterval(-7 * day).timeIntervalSinceReferenceDate)
+        XCTAssertTrue(coverage.covers(identifier: "S/RID=\(later)", slot: start.addingTimeInterval(-30 * day)),
+                      "the slot decides, not where the edited occurrence was moved")
+        XCTAssertFalse(coverage.covers(identifier: "S/RID=\(earlier)", slot: start.addingTimeInterval(day)))
+        XCTAssertFalse(coverage.covers(identifier: "T/RID=\(later)", slot: start.addingTimeInterval(7 * day)))
+        XCTAssertFalse(coverage.covers(identifier: "S/RID=x", slot: start.addingTimeInterval(7 * day)))
+    }
+
+    /// Same start, different slots (one occurrence moved onto another's start): a removal of another
+    /// slot than requested covers nothing (verify round 6).
+    func testRemovalOfAnotherSlotAtTheSameStartCoversNothing() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "s", requested: start, requestedSlot: start,
+                               removedStart: start, removedSlot: start.addingTimeInterval(7 * day))
+        XCTAssertFalse(coverage.covers(identifier: "s", slot: start.addingTimeInterval(8 * day)))
+    }
+
+    /// Removing an occurrence edited on its own with span future removes its series from that
+    /// occurrence's slot on (device, iCloud, 2026-10-20: the 47 later weekly occurrences then each
+    /// failed "No occurrence found"). The removal covers the series from the slot in its identifier.
+    func testRemovalOfAnEditedOccurrenceCoversItsSeriesFromItsSlot() {
+        var coverage = FutureDeletionCoverage()
+        let slot = start.addingTimeInterval(7 * day)
+        let rid = "S/RID=\(Int(slot.timeIntervalSinceReferenceDate))"
+        coverage.recordRemoval(identifier: rid, requested: start, requestedSlot: slot, removedStart: start, removedSlot: slot)
+        XCTAssertTrue(coverage.covers(identifier: "S", slot: start.addingTimeInterval(14 * day)))
+        XCTAssertTrue(coverage.covers(identifier: "S", slot: slot))
+        XCTAssertFalse(coverage.covers(identifier: "S", slot: start), "an earlier slot is kept")
+    }
+
+    /// The exact lookup of round 6: with a slot, only the occurrence at that slot is the requested
+    /// one, not the first occurrence of the series that day; without one, any of them is.
+    func testOccurrenceMatchingNeedsTheSlotWhenOneIsGiven() {
+        let slot = start.addingTimeInterval(7 * day)
+        XCTAssertTrue(FutureDeletionCoverage.isRequested(eventIdentifier: "s", occurrenceDate: slot, identifier: "s", slot: slot))
+        XCTAssertFalse(FutureDeletionCoverage.isRequested(eventIdentifier: "s", occurrenceDate: start, identifier: "s", slot: slot))
+        XCTAssertFalse(FutureDeletionCoverage.isRequested(eventIdentifier: "t", occurrenceDate: slot, identifier: "s", slot: slot))
+        XCTAssertTrue(FutureDeletionCoverage.isRequested(eventIdentifier: "s", occurrenceDate: start, identifier: "s", slot: nil))
+    }
+
+    /// An occurrence edited on its own is named by its identifier alone, so its removal is recorded
+    /// whatever `occurrenceDate` it reads back with (verify round 7). Its series is covered from
+    /// the slot in the identifier: removing one moved past two later slots also removed them
+    /// (device, iCloud, 2026-10-20: 02-01 moved to 02-20, and 02-08 / 02-15 went with it).
+    func testRemovalOfAnEditedOccurrenceIsRecordedWhateverSlotItReadsBackWith() {
+        var coverage = FutureDeletionCoverage()
+        let slot = start.addingTimeInterval(7 * day), movedTo = start.addingTimeInterval(26 * day)
+        let rid = "S/RID=\(Int(slot.timeIntervalSinceReferenceDate))"
+        coverage.recordRemoval(identifier: rid, requested: movedTo, requestedSlot: slot, removedStart: movedTo, removedSlot: movedTo)
+        XCTAssertTrue(coverage.covers(identifier: "S", slot: start.addingTimeInterval(14 * day)))
+    }
+
+    func testTheEarliestCoveredSlotIsKept() {
+        var coverage = FutureDeletionCoverage()
+        coverage.recordRemoval(identifier: "s", requested: start.addingTimeInterval(5 * day), requestedSlot: start.addingTimeInterval(5 * day),
+                               removedStart: start.addingTimeInterval(5 * day), removedSlot: start.addingTimeInterval(5 * day))
+        coverage.recordRemoval(identifier: "s", requested: start, requestedSlot: start, removedStart: start, removedSlot: start)
+        XCTAssertTrue(coverage.covers(identifier: "s", slot: start.addingTimeInterval(day)))
+    }
+
+    /// The span "future" path of deleteEventsBatch consults the coverage before any EventKit lookup
+    /// and records only after a successful removal.
+    func testDeleteEventsBatchSkipsCoveredItemsBeforeLookingThemUp() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func deleteEventsBatch("))
+        let to = try XCTUnwrap(source.range(of: "func findDuplicateEvents(", range: from.upperBound..<source.endIndex))
+        let body = String(source[from.lowerBound..<to.lowerBound])
+        let skip = try XCTUnwrap(body.range(of: "coverage.covers("))
+        let lookup = try XCTUnwrap(body.range(of: "freshEventWithOrigin("))
+        XCTAssertLessThan(skip.lowerBound, lookup.lowerBound)
+        let remove = try XCTUnwrap(body.range(of: "try eventStore.remove(occurrence, span: span)"))
+        let record = try XCTUnwrap(body.range(of: "coverage.recordRemoval("))
+        XCTAssertLessThan(remove.lowerBound, record.lowerBound)
+        // Verify round 6: with a slot, the occurrence is located exactly, never another one of that day.
+        XCTAssertTrue(body.contains("findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot)"))
+        // ...through the tested predicate (round 7: the filter itself was not pinned).
+        let lookup0 = try XCTUnwrap(source.range(of: "func findOccurrence(identifier: String, on date: Date"))
+        let lookupEnd = try XCTUnwrap(source.range(of: "return target", range: lookup0.upperBound..<source.endIndex))
+        XCTAssertTrue(source[lookup0.lowerBound..<lookupEnd.lowerBound].contains("FutureDeletionCoverage.isRequested("))
+        // ...and a removal of an occurrence edited on its own is recorded too (it has no rules).
+        XCTAssertEqual(body.components(separatedBy: "coverage.recordRemoval(").count - 1, 2)
+    }
+}

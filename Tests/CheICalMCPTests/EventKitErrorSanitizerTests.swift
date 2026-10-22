@@ -231,6 +231,9 @@ final class EventKitErrorSanitizerTests: XCTestCase {
         let partialErr: any Error = UndoBatchPartiallyUndoneError(remaining: [], restoredCount: 1, memberError: "eventkit_error_1")
         XCTAssertTrue(partialErr is TrustedErrorMessage, "UndoBatchPartiallyUndoneError must conform (#248: counts plus a sanitized code or a trusted member message)")
 
+        let rangeErr: any Error = EventRangeQuery.RangeError.tooWide(days: 1)
+        XCTAssertTrue(rangeErr is TrustedErrorMessage, "EventRangeQuery.RangeError must conform (#325: counts, fixed limits and server-formatted dates only)")
+
         // Negative: well-known Foundation types must NOT conform — their
         // localizedDescription sources Apple-framework strings that may
         // interpolate user-controlled content (#21 / #27 threat class).
