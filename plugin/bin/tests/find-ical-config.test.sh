@@ -34,6 +34,13 @@ cfg "$HOME_DIR/outer/repo2"
 : > "$HOME_DIR/outer/repo2/.git"
 cfg "$ROOT/other"
 ln -s "$HOME_DIR/Conf/2026" "$HOME_DIR/link"
+# A config whose .ical directory anyone can write to is not trusted (it could be swapped after the check).
+mkdir -p "$HOME_DIR/wide/x"
+cfg "$HOME_DIR/wide"
+chmod 777 "$HOME_DIR/wide/.claude/.ical"
+mkdir -p "$HOME_DIR/groupw/x"
+cfg "$HOME_DIR/groupw"
+chmod 775 "$HOME_DIR/groupw/.claude/.ical"
 
 pass=0
 fail=0
@@ -60,6 +67,8 @@ check "the repository root's own config is still found" "$HOME_DIR/outer/repo2/.
 check "a .git file (worktree or submodule) is a boundary too" "$HOME_DIR/outer/repo2/.claude/.ical/config.yaml" 0 "$HOME_DIR/outer/repo2"
 check "the walk stops before \$HOME, then the user-level config" "$USER_CFG" 0 "$HOME_DIR/empty/x"
 check "a symlinked start directory is resolved to its physical path" "$CONF" 0 "$HOME_DIR/link/sub"
+check "a config in a world-writable .ical directory is ignored" "$USER_CFG" 0 "$HOME_DIR/wide/x"
+check "a config in a group-writable .ical directory is ignored" "$USER_CFG" 0 "$HOME_DIR/groupw/x"
 check "a start directory outside \$HOME walks to the root" "$ROOT/other/.claude/.ical/config.yaml" 0 "$ROOT/other/deep"
 
 # Default start directory is the current directory.

@@ -30,10 +30,18 @@ fi
 
 # A config owned by someone else (planted in a shared directory such as /tmp) is skipped with a
 # warning on stderr, and the walk continues.
+# The .ical directory must be the user's own and not writable by group or others either, or the
+# file could be swapped after this check. -O follows symlinks, so a link is judged by its target.
 accept() {
   [ -f "$1" ] || return 1
-  if [ ! -O "$1" ]; then
+  local parent
+  parent="$(dirname "$1")"
+  if [ ! -O "$1" ] || [ ! -O "$parent" ]; then
     echo "find-ical-config.sh: ignoring $1 (not owned by the current user)" >&2
+    return 1
+  fi
+  if [ -n "$(find "$parent" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    echo "find-ical-config.sh: ignoring $1 (its directory is writable by group or others)" >&2
     return 1
   fi
 }

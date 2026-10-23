@@ -8,7 +8,7 @@ Every event-creating entry point (`archive-event`, `/quick-event`, the create wo
 bash "${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh"        # starts from the current directory
 ```
 
-It prints the path of the config that applies and exits 0, or prints nothing and exits 1. Order: the nearest `.claude/.ical/config.yaml` walking up from the working directory (closest wins; files are **never merged**; the walk ends at a git repository boundary, at `$HOME`, or at the filesystem root), then `~/.claude/.ical/config.yaml`. A config file not owned by the current user is skipped with a warning on stderr (a file planted in a shared directory such as `/tmp` must not redirect events); say so in the report. Exit 1 means no config: the entry point behaves as it did before routing (the caller names the calendar).
+It prints the path of the config that applies and exits 0, or prints nothing and exits 1. Order: the nearest `.claude/.ical/config.yaml` walking up from the working directory (closest wins; files are **never merged**; the walk ends at a git repository boundary, at `$HOME`, or at the filesystem root), then `~/.claude/.ical/config.yaml`. A config file is skipped with a warning on stderr when it or its `.claude/.ical` directory is not owned by the current user, or when that directory is writable by group or others (a file planted in or swapped within a shared directory such as `/tmp` must not redirect events); say so in the report. Exit 1 means no config: the entry point behaves as it did before routing (the caller names the calendar).
 
 Read the file with `Read`. A file that does not parse as YAML is reported (name the file) and treated as absent.
 
