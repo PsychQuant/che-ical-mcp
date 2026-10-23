@@ -178,6 +178,46 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertLessThan(moveRefusal.lowerBound, firstWrite.lowerBound)
     }
 
+    /// #335: a bare id that `list_events` lists, refused only because an occurrence edited on its
+    /// own sits before the stand-in, says so instead of "Event not found". Every other case stays
+    /// "Event not found": nothing stored, a series that refreshes (it was found), a series with no
+    /// stand-in even without the refusal (gone, or nothing left), and a stored object that is not
+    /// recurring.
+    func testTheEditedBeforeHintAppliesOnlyWhenTheRefusalAloneHidesTheSeries() {
+        typealias F = FirstRemainingOccurrence
+        XCTAssertTrue(F.hintsEditedBefore(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: true))
+        XCTAssertFalse(F.hintsEditedBefore(stored: false, refreshes: false, recurring: true, standInIgnoringTheRefusal: true))
+        XCTAssertFalse(F.hintsEditedBefore(stored: true, refreshes: true, recurring: true, standInIgnoringTheRefusal: true))
+        XCTAssertFalse(F.hintsEditedBefore(stored: true, refreshes: false, recurring: false, standInIgnoringTheRefusal: true))
+        XCTAssertFalse(F.hintsEditedBefore(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: false), "gone")
+    }
+
+    func testTheHintNamesWhatWorksAndIsFixedText() throws {
+        let reason = EventKitManager.standInEditedBeforeReason
+        for word in ["occurrence_date", "span 'this'", "move", "copy"] {
+            XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
+        }
+        XCTAssertFalse(reason.contains("RID"), "an occurrence's own id is not a way to the whole series")
+        XCTAssertFalse(reason.contains("own id"))
+    }
+
+    func testEveryRefusalSiteReportsTheHintThroughOneHelper() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        // The sites that resolve with the edited-before refusal on: update, delete (single, series,
+        // series batch, batch), and the dry-run preview. Move and copy resolve without it.
+        for name in ["func updateEvent(", "func deleteEvent(identifier", "func deleteEventSeries(", "func getEvent("] {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            let body = String(source[from.upperBound...].prefix(3600))
+            XCTAssertTrue(body.contains("notFoundError(id: "), name)
+        }
+        for name in ["func deleteEventSeriesBatch(", "func deleteEventsBatch("] {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            XCTAssertTrue(source[from.upperBound...].prefix(4200).contains("notFoundReason(id: "), name)
+        }
+    }
+
     func testMoveAndCopyAndSingleOccurrenceWritesWireTheNewRules() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")

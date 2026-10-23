@@ -91,6 +91,14 @@ enum FirstRemainingOccurrence {
         viaStandIn && (changesAccount || changesRecurrence)
     }
 
+    /// #335: whether a bare id that did not resolve should say so instead of "Event not found": the
+    /// series is stored and recurring, its object fails to refresh, and a stand-in exists once the
+    /// edited-before refusal is ignored, so that refusal alone hides it. Anything else (nothing
+    /// stored, a series that refreshes, one with nothing left, a one-off) stays "Event not found".
+    static func hintsEditedBefore(stored: Bool, refreshes: Bool, recurring: Bool, standInIgnoringTheRefusal: Bool) -> Bool {
+        stored && !refreshes && recurring && standInIgnoringTheRefusal
+    }
+
     /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence
     /// found is the stand-in itself (or earlier), a whole-series save from a middle occurrence that
     /// splits the series into a new event id (verify rounds 3-4; `<=`, because the stand-in's own
