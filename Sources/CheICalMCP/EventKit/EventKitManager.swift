@@ -787,6 +787,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
+    /// The fixed reason for refusing a whole-series save from the stand-in (#326).
+    private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
+
+    /// The fixed reason for refusing a change of account through the stand-in (#326).
+    private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
+    /// The fixed reason for refusing a series-level update (calendar of another account,
+    /// recurrence rules) through the stand-in (#326).
+    private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
+
     func updateEvent(
         identifier: String,
         title: String? = nil,
@@ -812,8 +821,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
         // that would write back over an edit made elsewhere before this call.
-        guard let masterEvent = freshEvent(id: identifier) else {
+        guard let resolved = freshEventWithOrigin(
+            id: identifier,
+            refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: applyToAll)) else {
             throw EventKitError.eventNotFound(identifier: identifier)
+        }
+        let masterEvent = resolved.event
+        // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
+        // occurrence, and saving the whole series from it splits it into a new series with a new
+        // identifier (device, iCloud). Refused rather than done silently; the other writes
+        // (move, copy, delete) keep the identifier.
+        if applyToAll, resolved.viaStandIn {
+            throw EventKitError.standInRefused(reason: Self.standInSplitReason)
         }
 
         // Snapshot before update for undo
@@ -833,11 +852,32 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
+            // Span future at the stand-in itself is the same whole-series save (verify round 3).
+            if FirstRemainingOccurrence.refusesFutureUpdate(
+                viaStandIn: resolved.viaStandIn, isFutureSpan: span == .futureEvents,
+                occurrenceStart: occurrence.startDate, standInStart: masterEvent.startDate) {
+                throw EventKitError.standInRefused(reason: Self.standInSplitReason)
+            }
             event = occurrence
         } else {
             throw EventKitError.invalidTimeRange(
                 message: "For recurring events, occurrence_date is required to identify which occurrence to modify."
             )
+        }
+
+        // Series-level properties through the stand-in (verify rounds 6-7), decided before the
+        // first field of the event is assigned, so nothing is half-written when it throws. A new
+        // calendar moves the whole series even with span this (device), so one of another account
+        // is the cross-account move again; a change of the recurrence rules is series-level too.
+        let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        if FirstRemainingOccurrence.refusesUpdateThroughStandIn(
+            viaStandIn: resolved.viaStandIn,
+            changesAccount: newCalendar.map {
+                FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                             toSourceID: $0.source?.sourceIdentifier)
+            } ?? false,
+            changesRecurrence: clearRecurrence || recurrenceRule != nil) {
+            throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
         }
 
         if let t = title { event.title = t }
@@ -886,8 +926,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.timeZone = tz
         }
 
-        if let name = calendarName {
-            event.calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
+        if let newCalendar = newCalendar {
+            event.calendar = newCalendar
         }
 
         // Update alarms
@@ -1004,7 +1044,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = freshEvent(id: identifier) else {
+        guard let masterEvent = freshEventWithOrigin(
+            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         let hadRules = masterEvent.hasRecurrenceRules
@@ -1112,7 +1153,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Get a single event by identifier
     func getEvent(identifier: String) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let event = storedEvent(id: identifier) else {
+        // Refreshed, like the writes the dry-run preview describes (#326): a series whose first
+        // occurrence was deleted shows its first remaining occurrence, not the deleted one.
+        guard let event = freshEvent(id: identifier) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         return event
@@ -1269,7 +1312,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
-                guard let masterEvent = freshEvent(id: item.identifier) else {
+                guard let masterEvent = freshEventWithOrigin(
+                    id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
                     failures.append((item.identifier, "Event not found"))
                     continue
                 }
@@ -1416,11 +1460,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> EKEvent {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEvent(id: identifier) else {
+        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
+        let sourceEvent = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
-        let alarms = (sourceEvent.alarms ?? []).map(AlarmSnapshot.init(from:))
+        // From the stand-in, an occurrence of the series: its absolute alarm dates are the series'
+        // (verify round 5), so they move to its start like a split occurrence's (#253 D2).
+        let alarms = Self.copyOutAlarms(of: sourceEvent, isSplit: resolved.viaStandIn).alarms
         let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
         // #261: no discard for a failed copy (see EventCopyOperation.saveCopy).
@@ -1449,7 +1496,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEvent(id: identifier) else {
+        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
         if sourceEvent.hasRecurrenceRules {
@@ -1470,11 +1517,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let master = freshEvent(id: identifier) else {
+        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw EventKitError.eventNotFound(identifier: identifier)
         }
+        let master = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
         let isRecurring = master.hasRecurrenceRules
+        // Across accounts EventKit does a create plus a delete from a middle occurrence, which was
+        // only ever shown to be safe within one account: refused outright (verify rounds 5-6).
+        if FirstRemainingOccurrence.refusesMoveThroughStandIn(
+            viaStandIn: resolved.viaStandIn,
+            wholeSeries: !(isRecurring && span == .this && occurrenceDate != nil),
+            acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(
+                fromSourceID: master.calendar?.source?.sourceIdentifier,
+                toSourceID: targetCalendar.source?.sourceIdentifier)) {
+            throw EventKitError.standInRefused(reason: Self.standInAccountReason)
+        }
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
@@ -2496,6 +2554,12 @@ enum EventKitError: LocalizedError {
     /// #226: a move the policy refuses. `reason` is one of `EventMovePolicy`'s fixed strings
     /// (no EventKit text, no user input), so it is safe to return verbatim.
     case moveRefused(reason: String)
+    /// #326: a write refused because the series resolved through its first remaining occurrence
+    /// (the stand-in): saving the whole series from it splits it into a new one with a new event
+    /// id, and changing its account or recurrence from it is not supported. `reason` is one of
+    /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
+    /// `standInSeriesPropertyReason`): no EventKit text, no user input.
+    case standInRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -2597,6 +2661,8 @@ enum EventKitError: LocalizedError {
         case .allDayTimezoneConflict:
             return "all_day events are floating calendar days — timezone does not apply. Omit timezone, or set all_day to false for a timed event."
         case .moveRefused(let reason):
+            return reason
+        case .standInRefused(let reason):
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason

@@ -272,6 +272,9 @@ final class EventRangeQueryTests: XCTestCase {
             "EventKit/EventRangeQuery.swift": ["events"],
             "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence"],
             "EventKit/EventKitManager+SeriesExceptions.swift": ["captureSeriesExceptions", "restoreSeriesExceptions", "seriesHoldsSlot"],
+            // #326: the stand-in search lists the series' own scan window and a year each side, a
+            // range the server derives from the series, not one a caller gave.
+            "EventKit/FirstRemainingOccurrence.swift": ["firstRemainingOccurrence"],
             "EventKit/UndoPostStateGuard.swift": ["modifiedOccurrenceCount"],
         ]
         let sources = repoRoot.appendingPathComponent("Sources/CheICalMCP")

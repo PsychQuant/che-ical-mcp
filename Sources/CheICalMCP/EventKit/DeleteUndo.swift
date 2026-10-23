@@ -58,10 +58,12 @@ struct DeletedEventSnapshots {
     let isDetached: Bool
     /// The removed occurrence is the series' first: its slot is the series object's. On iCloud the
     /// series object keeps its original first slot after that occurrence was deleted on its own
-    /// (checked 2026-10-07), so the first remaining occurrence does not count as the first. Today
-    /// that delete fails earlier on iCloud, as "Event not found" (#284); on a store where the
-    /// series object still refreshes, or once #284 is fixed, this path is live and its premise has
-    /// to be checked there on device. Both objects report the slot as
+    /// (checked 2026-10-07), so the first remaining occurrence does not count as the first. Since
+    /// #326 `freshEvent` hands such a series' first remaining occurrence in as `series`, so that
+    /// occurrence now counts as the first and a span future delete from it is recorded whole (the
+    /// remaining occurrences are all that is removed, and `seriesResolves` is false afterwards).
+    /// That recorded undo has not been checked on device: undo is stateful, which `--cli` cannot
+    /// show (tracked in #335). Both objects report the slot as
     /// `occurrenceDate` equal to `startDate` for a timed, an all-day and a New York series
     /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool

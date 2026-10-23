@@ -29,12 +29,25 @@ extension EventKitManager {
     /// The event under `id`, refreshed, or nil when it is not there. `refresh()` because a
     /// long-lived store can return stale fields after an edit made elsewhere until the object is
     /// refreshed (diagnosis evidence 2, confirmed on device); `false` from it means the event is
-    /// gone. Used where undo state is captured (PR #259 verify #5) and where undo reads. A
-    /// reminder's id is not found (#260, `storedEvent(id:)`).
+    /// gone, except for a series whose first occurrence was deleted (#326, below), which fails to
+    /// refresh while its other occurrences remain. Used where undo state is captured (PR #259
+    /// verify #5) and where undo reads. A reminder's id is not found (#260, `storedEvent(id:)`).
+    ///
+    /// A series whose first occurrence was deleted resolves, but its object does not refresh
+    /// (#326, root cause #284); the earliest remaining occurrence stands in for it
+    /// (`FirstRemainingOccurrence`), and a series with none left stays not found.
     func freshEvent(id: String) -> EKEvent? {
+        freshEventWithOrigin(id: id)?.event
+    }
+
+    /// `freshEvent(id:)` and whether the event is the stand-in for the series (#326): a caller
+    /// that writes to the whole series needs to know, because that write is a `.futureEvents`
+    /// save on a middle occurrence.
+    func freshEventWithOrigin(id: String, refuseWhenEditedBefore: Bool = true) -> (event: EKEvent, viaStandIn: Bool)? {
         refreshIfNeeded()
-        guard let event = storedEvent(id: id), event.refresh() else { return nil }
-        return event
+        return FirstRemainingOccurrence.resolve(
+            stored: storedEvent(id: id), refresh: { $0.refresh() },
+            standIn: { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: refuseWhenEditedBefore) })
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.
