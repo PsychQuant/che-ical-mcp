@@ -87,8 +87,10 @@ list_reminders          → See tasks by list or completion status
 
 ### Schedule a Meeting
 ```
-1. check_conflicts(start_time, end_time)  → Ensure no overlap
-2. create_event(title, start_time, end_time, calendar_name, location?, alarms_minutes_offsets?)
+1. Resolve calendar_name  → name from the user, else the folder's calendar_routing rules (rules/calendar-routing.md), else ask
+2. check_conflicts(start_time, end_time)  → Ensure no overlap
+3. create_event(title, start_time, end_time, calendar_name, location?, alarms_minutes_offsets?)
+4. Report how the calendar was decided (the `Routed to …` / `Not routed: …` line)
 ```
 
 ### Recurring Series with Excluded Dates (#182)
@@ -143,7 +145,7 @@ Available sources: "iCloud", "Google", "Exchange", "CalDAV", "Local"
 
 ## Best Practices
 
-1. **Always specify calendar_name** for create operations (v0.8.0+)
+1. **Always specify calendar_name** for create operations (v0.8.0+) — resolve it through `rules/calendar-routing.md` first; ask only when no rule applies
 2. **Use batch operations** for multiple similar actions
 3. **Check conflicts** before scheduling important events
 4. **Use search** instead of listing all events when looking for specific items

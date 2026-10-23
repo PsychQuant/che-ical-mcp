@@ -14,9 +14,10 @@ Parse the user's natural language input and create a calendar event.
 ## Process
 
 1. **Parse input**: Extract title, date, time, duration, location from user's request
-2. **List calendars**: Show available calendars if not specified
+2. **Choose the calendar**: if the user named one, use it. Otherwise resolve it as [`rules/calendar-routing.md`](../rules/calendar-routing.md) says (a folder's `calendar_routing` rules); when no rule applies, show the available calendars and ask. This command does not read `default_calendar`.
 3. **Check conflicts**: Verify the time slot is available
 4. **Create event**: Use `create_event` with proper ISO8601 datetime format
+5. **Report** how the calendar was decided (the `Routed to …` or `Not routed: …` line from the rule)
 
 ## Examples
 
