@@ -6,7 +6,7 @@ Defines how the che-ical-mcp plugin decides which calendar an event is created i
 
 ### Requirement: Config lookup walks up and the closest file wins
 
-The plugin SHALL look for `.claude/.ical/config.yaml` starting in the current working directory and moving to each parent directory in turn, and SHALL use the first file found. It SHALL NOT merge the contents of more than one config file. The walk SHALL stop at the user's home directory, at the filesystem root, or at a git repository boundary, whichever comes first, where a directory holding a `.git` entry is the last directory searched. If no file is found, the plugin SHALL look for `~/.claude/.ical/config.yaml`. If that is also absent, the plugin SHALL keep today's behavior, in which the caller names the calendar.
+The plugin SHALL look for `.claude/.ical/config.yaml` starting in the current working directory and moving to each parent directory in turn, and SHALL use the first file found. It SHALL NOT merge the contents of more than one config file. The walk SHALL stop at the user's home directory, at the filesystem root, or at a git repository boundary, whichever comes first, where a directory holding a `.git` entry is the last directory searched. A config file that is not owned by the current user SHALL be ignored with a warning, and the walk SHALL continue, so that a file planted in a shared directory cannot redirect events. If no file is found, the plugin SHALL look for `~/.claude/.ical/config.yaml`. If that is also absent, the plugin SHALL keep today's behavior, in which the caller names the calendar.
 
 #### Scenario: A parent folder's config covers a subfolder
 
@@ -25,6 +25,12 @@ The plugin SHALL look for `.claude/.ical/config.yaml` starting in the current wo
 - **GIVEN** the working directory is inside a git repository whose root has no `.claude/.ical/config.yaml`, and a parent of that repository has one
 - **WHEN** an event is created
 - **THEN** the parent's config is not used, and the lookup continues with `~/.claude/.ical/config.yaml`
+
+#### Scenario: A config owned by another user is ignored
+
+- **GIVEN** the nearest `.claude/.ical/config.yaml` is owned by a different user, and a parent directory has one owned by the current user
+- **WHEN** an event is created
+- **THEN** the foreign file is ignored with a warning naming it, and the parent's file is used
 
 #### Scenario: The user-level config is the fallback
 

@@ -12,7 +12,8 @@
 #
 # stdout: the absolute (physical) path of the config, then a newline. Exit codes:
 #   0 found    1 none applies (stdout empty)    2 start_dir is not a directory (message on stderr)
-# Only paths are looked up; the file's content is never read.
+# Only paths are looked up; the file's content is never read. A config not owned by the current
+# user is ignored (stderr warning) so a file planted in a shared directory cannot redirect events.
 set -u
 
 start="${1:-$PWD}"
@@ -27,9 +28,19 @@ if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
   home="$(cd "$HOME" && pwd -P)"
 fi
 
+# A config owned by someone else (planted in a shared directory such as /tmp) is skipped with a
+# warning on stderr, and the walk continues.
+accept() {
+  [ -f "$1" ] || return 1
+  if [ ! -O "$1" ]; then
+    echo "find-ical-config.sh: ignoring $1 (not owned by the current user)" >&2
+    return 1
+  fi
+}
+
 while [ "$dir" != "$home" ]; do
   candidate="$dir/.claude/.ical/config.yaml"
-  if [ -f "$candidate" ]; then
+  if accept "$candidate"; then
     printf '%s\n' "$candidate"
     exit 0
   fi
@@ -39,7 +50,7 @@ while [ "$dir" != "$home" ]; do
   dir="$(dirname "$dir")"
 done
 
-if [ -n "$home" ] && [ -f "$home/.claude/.ical/config.yaml" ]; then
+if [ -n "$home" ] && accept "$home/.claude/.ical/config.yaml"; then
   printf '%s\n' "$home/.claude/.ical/config.yaml"
   exit 0
 fi
