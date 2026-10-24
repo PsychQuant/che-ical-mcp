@@ -113,6 +113,47 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(msg.contains(hint))
     }
 
+    // MARK: - #343: the generic branch names the process macOS checks
+
+    private func generic(_ attribution: ResponsibleHostKind?) -> String {
+        EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: false, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: attribution)
+    }
+
+    func testGenericBranch_withoutAttribution_doesNotBlameTerminal() {
+        // The old line "Enable access for the MCP server or Terminal" named neither of the
+        // processes macOS checked under the Claude Code daemon (#343).
+        let msg = generic(nil)
+        XCTAssertFalse(msg.contains("for the MCP server or Terminal"))
+        XCTAssertTrue(msg.contains("--print-tcc-path"), "point at the tool that shows which process macOS checks")
+    }
+
+    func testSelfAttribution_leadsWithItsOwnGrantAndSetup() {
+        let msg = generic(.selfBinary)
+        XCTAssertTrue(msg.contains("CheICalMCP's own grant"))
+        XCTAssertTrue(msg.contains("1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(hint)"))
+    }
+
+    func testClaudeCodeAttribution_explainsItCannotBePrompted_withoutSetup() {
+        let msg = generic(.claudeCode(version: "2.1.309"))
+        XCTAssertTrue(msg.contains("no Calendar or Reminders purpose string"))
+        XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertFalse(msg.contains(hint), "--setup grants CheICalMCP's own identity, which this process does not use")
+    }
+
+    func testAppAttribution_namesTheApp() {
+        let msg = generic(.appBundle(name: "Visual Studio Code"))
+        XCTAssertTrue(msg.contains("enable Visual Studio Code"))
+    }
+
+    func testAttribution_doesNotOverrideTheSSHBranch() {
+        let msg = EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: true, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: .selfBinary)
+        XCTAssertTrue(msg.contains("SSH session detected"))
+    }
+
     // SSH takes precedence over deniedByStatus (an SSH denial is not the #154 signature).
     func testSSHPrecedesDeniedByStatus() {
         let msg = EventKitManager.accessDeniedMessage(
