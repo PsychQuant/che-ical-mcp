@@ -468,6 +468,8 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 
 ### Claude Code updates rotate the host-side grant (#170)
 
+> **Fixed in v1.21.0 ([#343](https://github.com/PsychQuant/che-ical-mcp/issues/343))**: the binary re-execs in place as its own responsible process, so macOS checks the `CheICalMCP` grant under every host and Claude Code updates no longer affect it. After upgrading, allow the CheICalMCP prompt once (or run `~/bin/CheICalMCP --setup`). The rest of this section applies to v1.20.0 and earlier, or with `CHE_ICAL_MCP_NO_DISCLAIM=1`.
+
 Under a Claude Code **native install**, the real executable lives at a **versioned path** (`~/.local/share/claude/versions/<version>`; `~/.local/bin/claude` is just a symlink), and macOS TCC keys the host-side Calendar/Reminders grant to that path. **Every Claude Code auto-update rotates the path and silently invalidates the grant** — the classic symptom is "worked yesterday, broken right after an update", with System Settings accumulating stale bare-version-number entries (`2.1.202`, `2.1.203`, …).
 
 **Fix**: trigger any calendar tool call from Claude Code so macOS re-prompts (or re-creates the entry), then toggle the **newest** version-number entry ON in System Settings → Privacy & Security → Calendars / Reminders. Full checklist: the `troubleshoot-tcc` skill (`/che-ical-mcp:check-tcc`). Root cause is upstream (tracked in [#170](https://github.com/PsychQuant/che-ical-mcp/issues/170) — Claude Code would need a stable TCC identity); this repo can only detect and document it.

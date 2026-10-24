@@ -10,7 +10,14 @@ allowed-tools:
 
 This skill is the **first thing to try** when calendar / reminder tools fail. Most "calendar tools don't work" reports are TCC (Transparency, Consent & Control) state issues rather than code bugs.
 
-## The two-layer authorization model (read this first, #168)
+## v1.21.0+: CheICalMCP is its own responsible process (#343) — read this first
+
+- **TCC checks only the responsible process.** Measured in #343 with one variable changed: the same `~/bin/CheICalMCP --print-tcc-path` read `fullAccess` when spawned under VS Code, although CheICalMCP's own grant was empty at the time, and `notDetermined` when spawned disclaimed (CheICalMCP responsible for itself). The host's grant alone decided the first result; CheICalMCP's own grant alone decided the second.
+- **From v1.21.0 the binary re-execs in place as its own responsible process** before doing anything else (`posix_spawn` + `POSIX_SPAWN_SETEXEC` + disclaim, the same call Claude Desktop's `disclaimer` makes; pid and stdio unchanged). Under every host — Claude Code foreground or background, Terminal, VS Code — only the **`CheICalMCP`** entry matters. Host-layer entries (version numbers, Terminal, VS Code) apply only with `CHE_ICAL_MCP_NO_DISCLAIM=1` or on v1.20.0 and earlier.
+- **First run after upgrading**: the CheICalMCP grant starts as `notDetermined`. Allow the macOS prompt for CheICalMCP (it appears even from a background Claude Code session; verified in #343), or run `~/bin/CheICalMCP --setup`, which now prints `Authorization target: CheICalMCP (...)` before asking.
+- **To see which process macOS checks**, run `--print-tcc-path` and read the `TCC attribution` line. Do not infer it from `ps` ancestry: under the Claude Code daemon the parent chain does not show it. A spare-claimed session inherits the app that launched the daemon (e.g. VS Code), while a worker the daemon launches through `ClaudeCode.app` is its own responsible process, and the two chains look alike.
+
+## The two-layer authorization model (#168; applies to v1.20.0 and earlier, or with `CHE_ICAL_MCP_NO_DISCLAIM=1`)
 
 macOS TCC may attribute a Calendar/Reminders access check to the **responsible process** — the host app that (transitively) spawned the binary — not only to the binary itself. Two independent layers can therefore appear in System Settings → Privacy & Security → Calendar / Reminders:
 
@@ -27,7 +34,7 @@ Host-layer entry names:
 | **Terminal.app / iTerm2 / VS Code** | The app's own name | Applies when you run the binary (or claude) from that app's shell |
 | **Claude Desktop** | *(no host entry needed)* | Desktop spawns `.mcpb` servers via `/Applications/Claude.app/Contents/Helpers/disclaimer`, which makes the child its **own** responsible process — the `.mcpb` `CheICalMCP` entry is self-contained. (The disclaimer shim `exec`-replaces itself, so it usually won't show up in a live `ps` ancestry trace — identify Desktop context by the *absence* of a `claude/versions/…` ancestor, not by finding the disclaimer.) |
 
-**Operative rule**: for the host you actually use, make sure **both** the `CheICalMCP` entry and the host-layer entry are toggled ON. (Whether tccd requires both — AND — or only the responsible one is not yet conclusively established; both-ON is a sufficient condition either way. See "Verifying which entry gates your context" below.)
+**Operative rule**: for the host you actually use, make sure **both** the `CheICalMCP` entry and the host-layer entry are toggled ON. (#343 settled the AND/OR question: only the responsible process's entry is checked. Both-ON still works, but only one of them is doing anything.)
 
 ## When to invoke
 
@@ -94,7 +101,9 @@ Open **System Settings → Privacy & Security → Calendar** (then repeat for **
 - Terminal / VS Code → the app's name — toggle **ON** if you run tools through it.
 - Claude Desktop → no host entry needed (disclaimer isolation).
 
-To confirm **which host context** a running server actually belongs to, trace its ancestry:
+On v1.21.0+, `--print-tcc-path` prints the responsible process directly (the `TCC attribution` line) — use that. The ancestry trace below is the fallback for v1.20.0 and earlier, and it can mislead under the Claude Code daemon (#343).
+
+To approximate **which host context** a running server belongs to on v1.20.0 and earlier, trace its ancestry:
 
 ```bash
 # Set P to a CheICalMCP pid from: pgrep -fl CheICalMCP
@@ -140,6 +149,8 @@ Restart Claude Desktop (Cmd+Q, not just window close) after granting.
 The complete "what to click" list, per host:
 
 **Claude Code (wrapper install, `~/bin/CheICalMCP`)**
+
+> v1.21.0+ (#343): step 1 alone is enough — `--setup` re-execs as its own responsible process, so the grant lands on CheICalMCP even from Terminal, and every Claude Code session uses it. Steps 3–5 apply only with `CHE_ICAL_MCP_NO_DISCLAIM=1` or on v1.20.0 and earlier.
 
 1. In Terminal.app, run `~/bin/CheICalMCP --setup` → click **Allow** on both dialogs (Calendar + Reminders). This creates the `CheICalMCP` binary-layer grant. ⚠️ Note the attribution nuance: because you launched it from Terminal, the *responsible process* for this grant is Terminal, not Claude Code — so this step is mainly to (a) get the `CheICalMCP` entry created and (b) prove the binary itself can prompt. The host-layer grant that actually gates Claude Code's tool calls is created in step 3, from a Claude Code session.
 2. System Settings → Privacy & Security → **Calendar**: confirm `CheICalMCP` toggle **ON**; repeat under **Reminders**

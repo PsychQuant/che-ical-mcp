@@ -75,7 +75,7 @@ A **SessionStart hook** checks if the MCP is properly installed and shows setup 
 | Skill | Description |
 |-------|-------------|
 | `calendar-management` | Comprehensive guide for calendar operations |
-| `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer) |
+| `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer; self-responsible from v1.21.0, #343) |
 | `archive-event` | Archive an event from a narrative source (meeting notice, announcement, mail thread) with correction tracking and source citation |
 
 ### Commands
