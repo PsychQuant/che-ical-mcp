@@ -53,6 +53,38 @@ enum SelfDisclaim {
         }
     }
 
+    private typealias SetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>?, Int32) -> Int32
+
+    /// Replace this process image with itself, disclaimed, keeping pid, argv and every
+    /// open fd (the MCP stdio pipes included). Does not return on success; on failure it
+    /// returns the reason and the caller carries on under the host's attribution.
+    ///
+    /// `responsibility_spawnattrs_setdisclaim` is private libSystem API — the same call
+    /// Claude Desktop's `disclaimer` shim makes — so it is looked up with `dlsym`.
+    static func reexecAsOwnResponsibleProcess(arguments: [String]) -> String {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else {
+            return "responsibility_spawnattrs_setdisclaim not found in this macOS"
+        }
+        guard let executable = LiveResponsibleProcessSource.executablePath(of: getpid()) else {
+            return "could not resolve this binary's path"
+        }
+        var attributes: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attributes) == 0 else { return "posix_spawnattr_init failed" }
+        defer { posix_spawnattr_destroy(&attributes) }
+        guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETEXEC)) == 0 else {
+            return "posix_spawnattr_setflags(SETEXEC) failed"
+        }
+        let setDisclaim = unsafeBitCast(symbol, to: SetDisclaim.self)
+        guard setDisclaim(&attributes, 1) == 0 else { return "responsibility_spawnattrs_setdisclaim failed" }
+
+        let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) } }
+        setenv(disclaimedSentinel, "1", 1)
+        let status = posix_spawn(nil, executable, nil, &attributes, argv, environ)
+        unsetenv(disclaimedSentinel)
+        return "posix_spawn(SETEXEC) failed: \(String(cString: strerror(status)))"
+    }
+
     /// Same convention as `CHE_ICAL_MCP_NO_BANNER`: exported-but-empty counts as unset.
     private static func isSet(_ value: String?) -> Bool {
         guard let value else { return false }

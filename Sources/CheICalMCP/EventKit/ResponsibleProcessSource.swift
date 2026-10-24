@@ -77,6 +77,48 @@ enum ResponsibleHostClassifier {
     }
 }
 
+/// Display layer for the responsible process (#343): the `--print-tcc-path` attribution
+/// block, and the per-kind advice that the banner and the access-denied message reuse so
+/// all three name the same client.
+enum ResponsibleProcessFormatter {
+    static func advice(for kind: ResponsibleHostKind) -> String {
+        switch kind {
+        case .selfBinary:
+            return "macOS checks CheICalMCP's own grant: System Settings → Privacy & Security → "
+                + "Calendar / Reminders → CheICalMCP."
+        case .claudeCode(let version):
+            let name = version.map { "Claude Code \($0)" } ?? "Claude Code"
+            return "macOS checks \(name), which has no Calendar or Reminders purpose string, so it "
+                + "can never be prompted. Unset CHE_ICAL_MCP_NO_DISCLAIM so CheICalMCP requests "
+                + "access under its own name (#343)."
+        case .appBundle(let name):
+            return "macOS checks \(name)'s grant: System Settings → Privacy & Security → "
+                + "Calendar / Reminders → \(name)."
+        case .otherExecutable(let path):
+            return "macOS checks the grant of \(path)."
+        case .unknown:
+            return "macOS did not report which process it checks."
+        }
+    }
+
+    static func attributionSection(selfPid: Int32, result: ResponsibleProcessResult) -> String {
+        // The path comes from the kernel but names a file anyone can create — escape it
+        // like every other interpolated field on this output (CWE-150/117, #169).
+        let escape = EventKitErrorSanitizer.escapeForStderr
+        var lines = ["TCC attribution (the process macOS checks for Calendar and Reminders):"]
+        switch result {
+        case .unavailable(let reason):
+            lines.append("  (responsible process unavailable: \(escape(reason)))")
+        case .resolved(let process):
+            let path = process.path.map(escape) ?? "(no path reported)"
+            let marker = process.isSelf ? "  (this binary)" : ""
+            lines.append("  \(process.pid)  \(path)\(marker)")
+            lines.append("  \(escape(advice(for: process.kind)))")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
 /// Production implementation over the kernel's responsibility SPI.
 ///
 /// `responsibility_get_pid_responsible_for_pid` is private libSystem API, so it is looked

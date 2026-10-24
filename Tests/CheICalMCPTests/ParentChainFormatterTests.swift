@@ -20,7 +20,7 @@ final class ParentChainFormatterTests: XCTestCase {
             failureReason: nil
         )
         let s = ParentChainFormatter.executionContextSection(selfPid: 500, selfPath: selfPath, result: result)
-        XCTAssertTrue(s.contains("Execution context (parent process chain):"))
+        XCTAssertTrue(s.contains("Process tree (parent chain — not what TCC checks):"))
         XCTAssertTrue(s.contains("500  \(selfPath)  (this binary)"))
         XCTAssertTrue(s.contains("400  /bin/zsh"))
         XCTAssertTrue(s.contains("1  /sbin/launchd"))
@@ -41,8 +41,7 @@ final class ParentChainFormatterTests: XCTestCase {
             selfPid: 500, selfPath: selfPath,
             result: ParentChainResult(hops: [], failureReason: "ps not at /bin/ps"))
         for s in [ok, failed] {
-            XCTAssertTrue(s.contains("NOTE: the authorization status above reflects the CURRENT execution context"))
-            XCTAssertTrue(s.contains("run this command from within that host's environment"))
+            XCTAssertTrue(s.contains("NOTE: macOS checks the process under \"TCC attribution\" above, not this chain"))
         }
     }
 
@@ -71,15 +70,17 @@ final class ParentChainFormatterTests: XCTestCase {
 
     // MARK: - NOTE wording precision (#173, DA-2/DA-3)
 
-    func testNote_usesApproximationWording_notResponsibleProcessClaim() {
-        // macOS's responsible process is not guaranteed to sit on the getppid chain —
-        // the NOTE must not flatten "parent chain" into "responsible process" (#168's
-        // own nuance). It describes the chain as an approximation instead.
+    func testNote_saysTheChainIsNotWhatTCCChecks() {
+        // #343: the old NOTE told users the status "reflects the execution context
+        // approximated by the parent chain" — that framing sent the diagnosis to the
+        // wrong process (a daemon-launched worker and a spare-claimed one have the same
+        // chain shape and different grants). The chain is orientation only now.
         let s = ParentChainFormatter.executionContextSection(
             selfPid: 500, selfPath: selfPath,
             result: ParentChainResult(hops: [.init(pid: 1, command: "/sbin/launchd")], failureReason: nil))
+        XCTAssertFalse(s.contains("reflects the CURRENT execution context"))
         XCTAssertFalse(s.contains("the responsible process in this chain"))
-        XCTAssertTrue(s.contains("approximated by the parent chain"))
+        XCTAssertTrue(s.contains("supplies the grant only when it is the responsible process"))
     }
 
     func testNote_pointsClaudeDesktopUsersAtTccDbQuery() {
@@ -99,6 +100,6 @@ final class ParentChainFormatterTests: XCTestCase {
             selfPid: 500, selfPath: selfPath,
             result: ParentChainResult(hops: [], failureReason: nil))
         XCTAssertTrue(s.contains("(this binary)"))
-        XCTAssertTrue(s.contains("NOTE: the authorization status above reflects the CURRENT execution context"))
+        XCTAssertTrue(s.contains("NOTE: macOS checks the process under \"TCC attribution\" above, not this chain"))
     }
 }

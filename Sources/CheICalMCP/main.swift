@@ -3,6 +3,32 @@ import CheMCPKit
 import Foundation
 import MCP
 
+// #343 — before any dispatch, re-exec in place as our own responsible process, so macOS
+// charges Calendar and Reminders access to CheICalMCP (which carries the purpose strings)
+// instead of to the host. Under the Claude Code daemon the host is either the app that
+// launched the daemon or Claude Code's own binary, which can never be prompted. The skip
+// reasons are a closed set (SelfDisclaimSkipReason); any failure is fail-open.
+switch SelfDisclaim.decide(
+    arguments: CommandLine.arguments,
+    environment: ProcessInfo.processInfo.environment,
+    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid())
+) {
+case .reexec:
+    let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments)
+    let message = "[che-ical-mcp] could not re-exec as its own responsible process "
+        + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+case .skip(.alreadyDisclaimed):
+    // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
+    unsetenv(SelfDisclaim.disclaimedSentinel)
+case .skip(.responsibilityUnavailable(let reason)):
+    let message = "[che-ical-mcp] responsible process unavailable "
+        + "(\(EventKitErrorSanitizer.escapeForStderr(reason))); continuing under the host's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+case .skip:
+    break
+}
+
 // Handle command line arguments
 if CommandLine.arguments.contains("--version") || CommandLine.arguments.contains("-v") {
     print(AppVersion.versionString)
@@ -48,6 +74,12 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     let remStatus = EKEventStore.authorizationStatus(for: .reminder)
     let statusString = TCCStatusFormatter.describe
 
+    // #343: the status below belongs to whichever process macOS charges the access to —
+    // print it first, from the kernel, so nobody has to infer it from the parent chain.
+    let attribution = ResponsibleProcessFormatter.attributionSection(
+        selfPid: ProcessInfo.processInfo.processIdentifier,
+        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()))
+
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
 
@@ -56,6 +88,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 
         Bundle identifier:
           \(bundleID)
+
+        \(attribution)
 
         Current EventKit authorization status:
           Calendar:   \(statusString(calStatus))
