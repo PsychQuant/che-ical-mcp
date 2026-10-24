@@ -144,7 +144,9 @@ if CommandLine.arguments.contains("--setup") {
     }
 
     print("CheICalMCP Setup — Requesting Calendar & Reminders permissions...")
-    print("(This triggers macOS TCC permission dialogs for this binary)\n")
+    print("(This triggers macOS TCC permission dialogs for this binary)")
+    print(ResponsibleProcessFormatter.setupTargetLine(
+        LiveResponsibleProcessSource().responsibleProcess(for: getpid())) + "\n")
 
     // The interactive requests must run inside a foreground NSApplication so EventKit's TCC
     // dialogs can present. A bare CLI async request has no foreground-app context or running

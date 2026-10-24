@@ -45,6 +45,28 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(s.contains("77  (no path reported)"))
     }
 
+    // MARK: - --setup authorization target (#343)
+
+    func testSetupTarget_self_namesCheICalMCPAndThePath() {
+        let line = ResponsibleProcessFormatter.setupTargetLine(
+            .resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true)))
+        XCTAssertTrue(line.hasPrefix("Authorization target: CheICalMCP (/Users/u/bin/CheICalMCP)"))
+        XCTAssertFalse(line.contains("WARNING"))
+    }
+
+    func testSetupTarget_host_warnsTheGrantGoesElsewhere() {
+        let line = ResponsibleProcessFormatter.setupTargetLine(
+            .resolved(ResponsibleProcess(pid: 3599, path: "/Applications/Terminal.app/Contents/MacOS/Terminal", isSelf: false)))
+        XCTAssertTrue(line.contains("WARNING"))
+        XCTAssertTrue(line.contains("Terminal"))
+        XCTAssertTrue(line.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+    }
+
+    func testSetupTarget_unavailable_rendersTheReason() {
+        let line = ResponsibleProcessFormatter.setupTargetLine(.unavailable(reason: "responsibility SPI not found in this macOS"))
+        XCTAssertTrue(line.contains("Authorization target: unknown (responsibility SPI not found in this macOS)"))
+    }
+
     func testControlCharactersInThePath_areEscaped() {
         let s = ResponsibleProcessFormatter.attributionSection(
             selfPid: 500,

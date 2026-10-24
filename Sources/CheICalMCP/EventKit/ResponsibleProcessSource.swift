@@ -101,6 +101,28 @@ enum ResponsibleProcessFormatter {
         }
     }
 
+    /// The line `--setup` prints before requesting access: whose grant the dialogs create.
+    static func setupTargetLine(_ result: ResponsibleProcessResult) -> String {
+        let escape = EventKitErrorSanitizer.escapeForStderr
+        switch result {
+        case .unavailable(let reason):
+            return "Authorization target: unknown (\(escape(reason)))"
+        case .resolved(let process) where process.isSelf:
+            let path = process.path.map(escape) ?? "(no path reported)"
+            return "Authorization target: CheICalMCP (\(path)) — every host that launches this binary uses this grant (#343)"
+        case .resolved(let process):
+            let host: String
+            switch process.kind {
+            case .appBundle(let name): host = name
+            case .claudeCode(let version): host = version.map { "Claude Code \($0)" } ?? "Claude Code"
+            case .otherExecutable(let path): host = path
+            case .selfBinary, .unknown: host = process.path ?? "an unknown process"
+            }
+            return "WARNING: macOS will record this grant for \(escape(host)), not CheICalMCP "
+                + "(CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed — #343)"
+        }
+    }
+
     static func attributionSection(selfPid: Int32, result: ResponsibleProcessResult) -> String {
         // The path comes from the kernel but names a file anyone can create — escape it
         // like every other interpolated field on this output (CWE-150/117, #169).
