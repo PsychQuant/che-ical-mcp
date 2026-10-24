@@ -52,17 +52,17 @@ Numbers refer to the sections below (ordered by topic, not execution): calendar 
 
 ## Configuration and state
 
-Two optional files under the project's `.claude/.ical/` steer this skill. Both may be absent — absence is never an error.
+Two optional files under `.claude/.ical/` steer this skill. Both may be absent — absence is never an error.
 
-**`config.yaml`** — human-authored; comments record the reasoning behind each setting. The only v1 field:
+**`config.yaml`** — human-authored; comments record the reasoning behind each setting. Found by the lookup in [`rules/calendar-routing.md`](../../rules/calendar-routing.md) (nearest one walking up from the working directory, then `~/.claude/.ical/`), which also defines its `calendar_routing` block. Besides that block, this skill reads one field:
 
 ```yaml
-# Which calendar archived events land in by default.
+# Which calendar archived events land in when no routing rule matched.
 # Reason recorded here, e.g.: 系上行政活動一律進「行政」，家庭行程勿混入.
 default_calendar: "行政"
 ```
 
-**`state/archives.json`** — machine-queried map from source identifier to the archived event. Written by this skill after every successful archive; never hand-edited:
+**`state/archives.json`** — always in the working directory's own project (`.claude/.ical/state/`), even when `config.yaml` came from a parent directory. Machine-queried map from source identifier to the archived event. Written by this skill after every successful archive; never hand-edited:
 
 ```json
 {
@@ -208,13 +208,14 @@ Had the notice stated both start and end times, the notes would carry the source
 
 ## 4. Which calendar
 
-Three tiers, first hit wins:
+Four tiers, first hit wins:
 
-1. **`config.yaml` → `default_calendar`** — if the project sets one, use it without asking.
-2. **Derivation** — look up where activities of this kind were filed previously, and follow that.
-3. **Ask** — nothing comparable found: ask the operator.
+1. **Routing** — a `calendar_routing` rule that matches the event, resolved as [`rules/calendar-routing.md`](../../rules/calendar-routing.md) says (including asking when two rules match, and the `Routed to …` report line).
+2. **`config.yaml` → `default_calendar`** — if the config sets one, use it without asking. Only this skill reads it.
+3. **Derivation** — look up where activities of this kind were filed previously, and follow that.
+4. **Ask** — nothing comparable found: ask the operator.
 
-Derivation matches its accuracy from the second occurrence onward; the config tier removes even the first-occurrence question for projects that declared their intent.
+Derivation matches its accuracy from the second occurrence onward; the config tiers remove even the first-occurrence question for projects that declared their intent.
 
 ---
 
@@ -234,6 +235,7 @@ After creating or updating the event, check for other deadlines on the same day 
 After archiving, report:
 
 - the event created or updated, with its final time and calendar
+- how the calendar was decided: the `Routed to …` or `Not routed: …` line from [`rules/calendar-routing.md`](../../rules/calendar-routing.md)
 - which message the time came from, when the source was a thread
 - any estimated field and its basis
 - whether correction tracking is available for this source

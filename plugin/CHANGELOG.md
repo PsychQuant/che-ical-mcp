@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Per-folder calendar routing (#337)** — *plugin shell only*: a folder's `.claude/.ical/config.yaml` can route events to calendars by kind with a `calendar_routing` block (`kind`, `calendar`, non-empty `includes`, optional `source`). The config is the nearest one walking up from the working directory (closest wins, never merged; the walk stops at a git repository boundary or `$HOME`), then `~/.claude/.ical/config.yaml`. `archive-event`, `/quick-event` and `calendar-management` resolve the calendar through one shared rule, `rules/calendar-routing.md`, and every creation reports `Routed to <calendar> by rule '<kind>' from <config path>` or why it was not routed. An event that matches no rule keeps today's calendar choice; one that matches two rules asks you. `default_calendar` keeps its meaning (`archive-event` only, not a routing fallback), and a config with only `default_calendar` behaves as before. New helper `bin/find-ical-config.sh` with shell tests in `bin/tests/`. No binary change.
+
 - **Undo of a whole-series delete restores the series' exceptions inside the scan window (#285)**: an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event; the series' first occurrence is always kept from the rule, and exceptions outside the window still come back from the rules; the undo text says which. Binary change; the plugin shell is unchanged.
 
 ## [1.20.0] - 2026-10-10
