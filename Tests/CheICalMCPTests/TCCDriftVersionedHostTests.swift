@@ -1,18 +1,27 @@
 import XCTest
 @testable import CheICalMCP
 
-/// Coverage for the #175 versioned-host signal: when the MCP server starts under a
-/// Claude Code **versioned** host binary (`~/.local/share/claude/versions/<v>` — the
-/// path rotates on every update, #170) AND EventKit isn't granted in this context,
-/// the banner must say so proactively instead of letting the user discover it as a
+/// Coverage for the host-attribution signal (#175, reworked in #343). When EventKit is not
+/// granted and macOS charges the access to a host instead of CheICalMCP, the banner must
+/// name that host and what to do about it, instead of letting the user discover it as a
 /// silent `access denied` on their first tool call.
+///
+/// #343: the host is the *responsible process* the kernel reports, not a `versions/` path
+/// found on the parent chain. A daemon-launched worker (responsible = Claude Code) and a
+/// spare-claimed session (responsible = the app that launched the daemon) have the same
+/// chain shape, so the chain-based check named the wrong client.
 final class TCCDriftVersionedHostTests: XCTestCase {
 
     private let runningPath = "/Users/test/bin/CheICalMCP"
     private let versionedHostPath = "/Users/test/.local/share/claude/versions/2.1.206"
+    private let vsCodePath = "/Applications/Visual Studio Code.app/Contents/MacOS/Electron"
+
+    private func resolved(_ path: String, isSelf: Bool = false) -> ResponsibleProcessResult {
+        .resolved(ResponsibleProcess(pid: 300, path: path, isSelf: isSelf))
+    }
 
     private func makeDetector(
-        chain: FakeParentChainSource,
+        responsible: ResponsibleProcessResult,
         eventKitAccessGranted: Bool
     ) -> TCCDriftDetector {
         TCCDriftDetector(
@@ -20,139 +29,128 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             processes: FakeProcessInventorySource(processes: []),
             runningBinaryPath: runningPath,
             diskBinaryMtime: nil,
-            parentChain: chain,
+            responsibleProcess: FakeResponsibleProcessSource(result: responsible),
             eventKitAccessGranted: eventKitAccessGranted
         )
     }
 
-    func testSignal_whenVersionedClaudeHostAndCalendarUngranted() {
-        let chain = FakeParentChainSource(hops: [
-            .init(pid: 400, command: "/bin/zsh"),
-            .init(pid: 300, command: versionedHostPath),
-            .init(pid: 1, command: "/sbin/launchd"),
-        ])
-        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
-        XCTAssertTrue(report.signals.contains(.versionedClaudeHostUngranted(hostPath: versionedHostPath)))
-    }
-
-    func testNoSignal_whenCalendarGranted() {
-        // Granted users must see zero extra noise, even under a versioned host.
-        let chain = FakeParentChainSource(hops: [
-            .init(pid: 300, command: versionedHostPath)
-        ])
-        let report = makeDetector(chain: chain, eventKitAccessGranted: true).detect()
-        XCTAssertFalse(report.signals.contains { signal in
-            if case .versionedClaudeHostUngranted = signal { return true }
+    private func hasHostSignal(_ report: DriftReport) -> Bool {
+        report.signals.contains { signal in
+            if case .hostAttributedUngranted = signal { return true }
             return false
-        })
+        }
     }
 
-    func testNoSignal_whenChainLacksVersionedClaudePath() {
-        // Plain Terminal chain, ungranted: the existing #163 --setup banner line covers
-        // this; the #175 signal is specifically about the rotating-host explanation.
-        let chain = FakeParentChainSource(hops: [
-            .init(pid: 400, command: "/bin/zsh"),
-            .init(pid: 1, command: "/sbin/launchd"),
-        ])
-        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
-        XCTAssertFalse(report.signals.contains { signal in
-            if case .versionedClaudeHostUngranted = signal { return true }
-            return false
-        })
-        XCTAssertFalse(report.skipReasons.contains { $0.contains("versioned-host") },
-                       "a successful capture with no versioned host is a clean miss, not a skip")
+    // MARK: - Detection
+
+    func testSignal_whenClaudeCodeIsResponsibleAndUngranted() {
+        let report = makeDetector(responsible: resolved(versionedHostPath), eventKitAccessGranted: false).detect()
+        XCTAssertTrue(report.signals.contains(
+            .hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)))
     }
 
-    func testSkipReason_whenChainCaptureFails() {
-        let chain = FakeParentChainSource(failureReason: "ps timed out after 500ms")
-        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
-        XCTAssertFalse(report.signals.contains { signal in
-            if case .versionedClaudeHostUngranted = signal { return true }
-            return false
-        })
-        XCTAssertTrue(report.skipReasons.contains { $0.contains("versioned-host check skipped") },
-                      "capture failure must degrade visibly, not silently (#122 advisory contract)")
+    func testSignal_whenAnAppIsResponsibleAndUngranted() {
+        // The opt-out case: CHE_ICAL_MCP_NO_DISCLAIM under a daemon launched from VS Code.
+        let report = makeDetector(responsible: resolved(vsCodePath), eventKitAccessGranted: false).detect()
+        XCTAssertTrue(report.signals.contains(
+            .hostAttributedUngranted(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)))
     }
 
-    // MARK: - Banner rendering
-
-    func testBanner_rendersHostPathRotationExplanationAndAction() {
-        let report = DriftReport(
-            signals: [.versionedClaudeHostUngranted(hostPath: versionedHostPath)],
-            skipReasons: []
-        )
-        let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.14.2", runningBinaryPath: runningPath,
-            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
-        XCTAssertTrue(banner.contains(versionedHostPath))
-        XCTAssertTrue(banner.contains("#170"), "the rotation phenomenon has a tracking issue — cite it")
-        XCTAssertTrue(banner.contains("System Settings"), "the fix path must be actionable")
-        XCTAssertTrue(banner.contains("rotates"), "explain WHY the grant broke (update rotated the path)")
+    func testNoSignal_whenSelfResponsible_evenUnderAClaudeCodeParent() {
+        // #343 regression: after the re-exec CheICalMCP is its own responsible process
+        // while its parent is still Claude Code. The old check found `versions/` on the
+        // chain and blamed the host; the right advice here is the existing --setup line.
+        let report = makeDetector(
+            responsible: resolved(runningPath, isSelf: true), eventKitAccessGranted: false).detect()
+        XCTAssertFalse(hasHostSignal(report))
+        XCTAssertFalse(report.skipReasons.contains { $0.contains("TCC attribution") },
+                       "a resolved self attribution is a clean miss, not a skip")
     }
 
-    // MARK: - verify in-scope fixes (DA-1 / DA-2 / Codex spy)
-
-    func testDetector_gateCountsRemindersOnlyBreakage() {
-        // DA-1: the issue's scope is EventKit (Calendar AND Reminders). The detector
-        // gate takes a combined eventKitAccessGranted flag — false when EITHER service
-        // is ungranted — so a Reminders-only breakage under a versioned host still
-        // gets the rotation explanation instead of total silence.
-        let chain = FakeParentChainSource(hops: [.init(pid: 300, command: versionedHostPath)])
-        let report = makeDetector(chain: chain, eventKitAccessGranted: false).detect()
-        XCTAssertTrue(report.signals.contains(.versionedClaudeHostUngranted(hostPath: versionedHostPath)))
+    func testNoSignal_whenGranted() {
+        let report = makeDetector(responsible: resolved(versionedHostPath), eventKitAccessGranted: true).detect()
+        XCTAssertFalse(hasHostSignal(report))
     }
 
-    func testDetector_grantedPath_neverSpawnsChainCapture() {
-        // Codex cross-model suggestion: the "granted users pay zero subprocess cost"
-        // promise is observable, not just structural — assert the seam is never called.
-        let spy = SpyParentChainSource(hops: [.init(pid: 300, command: versionedHostPath)])
+    func testSkipReason_whenResponsibilityUnavailable() {
+        let report = makeDetector(
+            responsible: .unavailable(reason: "responsibility SPI not found in this macOS"),
+            eventKitAccessGranted: false).detect()
+        XCTAssertFalse(hasHostSignal(report))
+        XCTAssertTrue(report.skipReasons.contains { $0.contains("TCC attribution check skipped") },
+                      "lookup failure must degrade visibly, not silently (#122 advisory contract)")
+    }
+
+    func testDetector_grantedPath_neverQueriesTheKernel() {
+        // Granted users pay nothing for this check — observable, not just structural.
+        let spy = SpyResponsibleProcessSource(result: resolved(versionedHostPath))
         let detector = TCCDriftDetector(
             tcc: FakeTCCDatabaseSource(entries: []),
             processes: FakeProcessInventorySource(processes: []),
             runningBinaryPath: runningPath,
             diskBinaryMtime: nil,
-            parentChain: spy,
+            responsibleProcess: spy,
             eventKitAccessGranted: true
         )
         _ = detector.detect()
-        XCTAssertEqual(spy.captureCallCount, 0)
+        XCTAssertEqual(spy.callCount, 0)
     }
 
-    func testBanner_suppressesSetupLineWhenVersionedHostSignalPresent() {
-        // DA-2: `--setup` grants CheICalMCP-as-foreground-app's OWN attribution — the
-        // wrong identity for the versioned-host case, where the HOST's grant is what
-        // rotated away (#168/#170). When the #175 signal fires, the #163 --setup line
-        // must yield to it instead of pointing users into a dead end.
+    // MARK: - Banner rendering
+
+    func testBanner_claudeCodeHost_explainsItCannotBePrompted() {
         let report = DriftReport(
-            signals: [.versionedClaudeHostUngranted(hostPath: versionedHostPath)],
-            skipReasons: []
-        )
+            signals: [.hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
+            skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.14.2", runningBinaryPath: runningPath,
+            report: report, version: "1.21.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
-        XCTAssertFalse(banner.contains("--setup"),
-                       "contradictory remediation: --setup targets the wrong attribution identity here")
+        XCTAssertTrue(banner.contains(versionedHostPath))
+        XCTAssertTrue(banner.contains("no Calendar or Reminders purpose string"))
+        XCTAssertTrue(banner.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(banner.contains("#343"))
     }
 
-    func testBanner_keepsSetupLineWithoutVersionedHostSignal() {
-        // Control for the suppression: the #163 line is unchanged when the #175 signal
-        // is absent (plain ungranted case, e.g. Terminal host).
+    func testBanner_appHost_namesTheAppsGrant() {
+        let report = DriftReport(
+            signals: [.hostAttributedUngranted(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains("Visual Studio Code's grant"))
+    }
+
+    func testBanner_suppressesSetupLineWhenAHostIsResponsible() {
+        // `--setup` grants CheICalMCP's own attribution, which a host-attributed process
+        // does not use — printing it alongside the host advice would contradict it.
+        let report = DriftReport(
+            signals: [.hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertFalse(banner.contains("--setup"))
+    }
+
+    func testBanner_keepsSetupLineWithoutAHostSignal() {
+        // Self-attributed and ungranted (the #343 default after an upgrade): --setup is the fix.
         let report = DriftReport(signals: [], skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.14.2", runningBinaryPath: runningPath,
+            report: report, version: "1.21.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertTrue(banner.contains("--setup"))
     }
 
     func testBanner_escapesHostileHostPath() {
         let report = DriftReport(
-            signals: [.versionedClaudeHostUngranted(hostPath: "/tmp/\u{1B}[2J/versions/2.1.206")],
-            skipReasons: []
-        )
+            signals: [.hostAttributedUngranted(
+                host: .otherExecutable(path: "/tmp/\u{1B}[2J/x"), hostPath: "/tmp/\u{1B}[2J/x")],
+            skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.14.2", runningBinaryPath: runningPath,
+            report: report, version: "1.21.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertFalse(banner.unicodeScalars.contains { $0.value == 0x1B },
-                       "host path comes from ps comm — same CWE-117 stderr discipline as every banner field")
+                       "the host path names a file anyone can create — same CWE-117 stderr discipline")
     }
 }

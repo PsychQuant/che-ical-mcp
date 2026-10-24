@@ -214,9 +214,9 @@ func emitStartupBanner() {
     // #163: cheap status reads (never trigger a dialog) so the banner can surface the
     // `--setup` command when Calendar isn't granted for this binary. Reuses the same
     // probe the authorization gate uses. Read BEFORE detector construction (#175): both
-    // services gate the versioned-host check — a Reminders-only breakage under a
-    // versioned host deserves the rotation explanation too (verify DA-1) — and the
-    // extra `ps` spawn only happens on the ungranted path.
+    // services gate the host-attribution check (#343) — a Reminders-only breakage deserves
+    // the explanation too (verify DA-1) — and the kernel lookup only happens on the
+    // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
     let calendarGranted = statusSource.authorizationStatus(for: .event) == .fullAccess
     let remindersGranted = statusSource.authorizationStatus(for: .reminder) == .fullAccess
