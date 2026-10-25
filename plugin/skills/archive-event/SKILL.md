@@ -54,7 +54,7 @@ Numbers refer to the sections below (ordered by topic, not execution): calendar 
 
 Two optional files under `.claude/.ical/` steer this skill. Both may be absent — absence is never an error.
 
-**`config.yaml`** — human-authored; comments record the reasoning behind each setting. Found by the lookup in [`rules/calendar-routing.md`](../../rules/calendar-routing.md) (nearest one walking up from the working directory, then `~/.claude/.ical/`), which also defines its `calendar_routing` block. Besides that block, this skill reads one field:
+**`config.yaml`** — human-authored; comments record the reasoning behind each setting. Found by the lookup in [`rules/calendar-routing.md`](../../rules/calendar-routing.md) (nearest one walking up from the working directory, then `~/.claude/.ical/`), which also defines its `calendar_routing` block. Besides that block and the module switches of [`rules/event-modules.md`](../../rules/event-modules.md) (`conference_module`), this skill reads one field:
 
 ```yaml
 # Which calendar archived events land in when no routing rule matched.
@@ -77,6 +77,8 @@ default_calendar: "行政"
 If either file fails to parse, say so explicitly in the report and proceed as if it were absent — a malformed config must never silently change behavior.
 
 ---
+
+> **An input that matches a module's trigger** in [`rules/event-modules.md`](../../rules/event-modules.md) (today: a conference program), when that module is on, is built as the module says; otherwise carry on below. For such a source the module replaces §2's create/update of one event and its search by source identifier; §4 stays as the module's calendar fallback. Judge the trigger on the program the thread holds, not on the newest message alone. Still apply: §1 (the authoritative message; a newest message that corrects only some items is a partial correction, applied to the existing set as the module's section 6 says); §2's `state/archives.json` lookup and its write-back, which maps the source identifier to the umbrella event. When the lookup maps the source to an event, read that event's notes: if they carry the module's `conference-module-item: umbrella` marker, that marker finds the set; if not, it is a single event archived before the module, so tell the user and ask before building the program. §3 (the source line and any estimate line, placed in each event's notes above the module's marker lines; a session without an end time uses the module's estimate instead of asking); and §5 over the program's days, leaving out the program's own events. The report says corrections are tracked by the module's marker lines. Normative: the `event-source-archiving` requirement "A conference program is archived through the conference module".
 
 ## 1. Authoritative time: sender identity + parsable time
 

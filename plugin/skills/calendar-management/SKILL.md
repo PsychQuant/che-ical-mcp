@@ -36,7 +36,7 @@ This skill guides you through effective use of che-ical-mcp for calendar and tas
 2026-01-18 14:00           (wrong - will fail)
 ```
 
-Use the user's local timezone. For Taiwan: `+08:00`
+Use the user's local timezone. For Taiwan: `+08:00`. An event module's events follow the module (a conference's sessions use the conference's zone; its all-day umbrella takes date-only values).
 
 ## Tool Categories
 
@@ -78,7 +78,7 @@ list_reminders          → See tasks by list or completion status
 ### 4. Batch Operations (Efficiency)
 | Task | Tool | When to Use |
 |------|------|-------------|
-| Create multiple | `create_events_batch` | Recurring meetings, series |
+| Create multiple | `create_events_batch` | Recurring meetings, series (it cannot set reminders: an event module creates its events one by one with `create_event`) |
 | Move multiple | `move_events_batch` | Calendar migration |
 | Delete multiple | `delete_events_batch` | Cleanup old events |
 | Find duplicates | `find_duplicate_events` | Before merging calendars |
@@ -86,6 +86,8 @@ list_reminders          → See tasks by list or completion status
 ## Common Workflows
 
 ### Schedule a Meeting
+If the input matches a module's trigger in `rules/event-modules.md` (today: a conference program) and that module is on, build it as the module says instead of the steps below; otherwise carry on below.
+
 ```
 1. Resolve calendar_name  → name from the user, else the folder's calendar_routing rules (rules/calendar-routing.md), else ask
 2. check_conflicts(start_time, end_time)  → Ensure no overlap
