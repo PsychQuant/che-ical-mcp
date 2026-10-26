@@ -790,6 +790,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The fixed reason for refusing a whole-series save from the stand-in (#326).
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
+    /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
+    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series)."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
     /// The fixed reason for refusing a series-level update (calendar of another account,
@@ -824,7 +826,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let resolved = freshEventWithOrigin(
             id: identifier,
             refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: applyToAll)) else {
-            throw EventKitError.eventNotFound(identifier: identifier)
+            throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
@@ -1046,7 +1048,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         guard let masterEvent = freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
-            throw EventKitError.eventNotFound(identifier: identifier)
+            throw notFoundError(id: identifier)
         }
         let hadRules = masterEvent.hasRecurrenceRules
 
@@ -1080,7 +1082,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         try await ensureCalendarAccess()
 
         guard let event = freshEvent(id: identifier) else {
-            throw EventKitError.eventNotFound(identifier: identifier)
+            throw notFoundError(id: identifier)
         }
 
         // If the event has recurrence rules, it is (or belongs to) a recurring series.
@@ -1117,7 +1119,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = freshEvent(id: id) else {
-                    failures.append((id, "Event not found"))
+                    failures.append((id, notFoundReason(id: id)))
                     continue
                 }
                 let snapshot = EventSnapshot(from: event)
@@ -1156,7 +1158,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Refreshed, like the writes the dry-run preview describes (#326): a series whose first
         // occurrence was deleted shows its first remaining occurrence, not the deleted one.
         guard let event = freshEvent(id: identifier) else {
-            throw EventKitError.eventNotFound(identifier: identifier)
+            throw notFoundError(id: identifier)
         }
         return event
     }
@@ -1314,7 +1316,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
                 guard let masterEvent = freshEventWithOrigin(
                     id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
-                    failures.append((item.identifier, "Event not found"))
+                    failures.append((item.identifier, notFoundReason(id: item.identifier)))
                     continue
                 }
                 let hadRules = masterEvent.hasRecurrenceRules
