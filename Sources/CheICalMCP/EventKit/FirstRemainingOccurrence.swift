@@ -109,9 +109,17 @@ enum FirstRemainingOccurrence {
         stored && !refreshes && recurring && !standInIgnoringTheRefusal && editedOccurrences
     }
 
-    /// Whether the listed occurrences of the series include one edited on its own.
+    /// Whether the listed occurrences of the series include one edited on its own. The candidates
+    /// come from `seriesOccurrences`, which keeps only occurrences of the one series
+    /// (`UndoPostState.isOccurrence`), so a detached event of another series is never in them.
     static func hasEditedOccurrence(_ candidates: [Candidate]) -> Bool {
         candidates.contains { $0.isDetached }
+    }
+
+    /// Whether any candidate could stand in for the series (`pick` without the edited-before
+    /// refusal): the same test as `firstRemainingOccurrence`, before its refresh.
+    static func hasStandInCandidate(_ candidates: [Candidate], identifier: String) -> Bool {
+        pick(candidates, identifier: identifier, refuseWhenEditedBefore: false) != nil
     }
 
     /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence
@@ -175,10 +183,13 @@ extension EventKitManager {
         return (listed, candidates)
     }
 
-    /// #335 item 1: whether the series `stale` has an occurrence edited on its own in the scan window.
-    func hasEditedOccurrence(of stale: EKEvent, id: String) -> Bool {
-        guard let (_, candidates) = seriesOccurrences(of: stale, id: id) else { return false }
-        return FirstRemainingOccurrence.hasEditedOccurrence(candidates)
+    /// #335 item 1: from one listing of the series `stale` in the scan window, whether a stand-in
+    /// candidate exists (before its refresh) and whether an occurrence edited on its own exists.
+    /// Both facts come from the same candidates, so they cannot disagree.
+    func standInAndEditedFacts(of stale: EKEvent, id: String) -> (hasStandInCandidate: Bool, hasEdited: Bool) {
+        guard let (_, candidates) = seriesOccurrences(of: stale, id: id) else { return (false, false) }
+        return (FirstRemainingOccurrence.hasStandInCandidate(candidates, identifier: id),
+                FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
     /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`

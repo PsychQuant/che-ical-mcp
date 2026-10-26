@@ -206,6 +206,18 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertFalse(F.hintsAllEdited(stored: true, refreshes: false, recurring: false, standInIgnoringTheRefusal: false, editedOccurrences: true))
     }
 
+    /// A stand-in candidate that exists keeps the all-edited hint off even when it failed to
+    /// refresh later (the facts come from the candidates, not from a refresh).
+    func testAStandInCandidateIsCountedBeforeItsRefresh() {
+        typealias C = FirstRemainingOccurrence.Candidate
+        let d = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let plain = C(eventIdentifier: "S", isDetached: false, hasRecurrenceRules: true, start: d)
+        let edited = C(eventIdentifier: "S/RID=1", isDetached: true, hasRecurrenceRules: false, start: d)
+        XCTAssertTrue(FirstRemainingOccurrence.hasStandInCandidate([plain, edited], identifier: "S"))
+        XCTAssertFalse(FirstRemainingOccurrence.hasStandInCandidate([edited], identifier: "S"), "an edited occurrence is never a stand-in")
+        XCTAssertFalse(FirstRemainingOccurrence.hasStandInCandidate([], identifier: "S"))
+    }
+
     func testAnEditedOccurrenceIsADetachedCandidate() {
         typealias C = FirstRemainingOccurrence.Candidate
         let d = Date(timeIntervalSinceReferenceDate: 800_000_000)
@@ -221,9 +233,10 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
     /// each occurrence (ending `/RID=…`) updates that one occurrence. The text says only that.
     func testTheAllEditedHintPointsAtTheOccurrenceIdsFromTheListing() {
         let reason = EventKitManager.standInAllEditedReason
-        for word in ["list_events", "RID", "every remaining occurrence"] {
+        for word in ["list_events", "RID", "found for it"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
+        XCTAssertFalse(reason.contains("every remaining occurrence"), "the scan is bounded: it cannot claim every occurrence")
         XCTAssertFalse(reason.contains("move"), "no stand-in exists, so a move cannot work")
         XCTAssertFalse(reason.contains("copy"))
     }
