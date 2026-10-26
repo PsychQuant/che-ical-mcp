@@ -29,30 +29,26 @@ struct FakeProcessInventorySource: ProcessInventorySource {
     func enumerateCheICalMCPProcesses() -> ProcessInventoryResult { result }
 }
 
-/// Fake parent-chain source for the #175 versioned-host signal. Returns a fixed chain
-/// (or failure reason) regardless of the requested start pid.
-struct FakeParentChainSource: ParentChainSource {
-    let result: ParentChainResult
+/// Fake responsible-process source for the host-attribution signal (#175, #343). Returns
+/// a fixed result regardless of the requested pid.
+struct FakeResponsibleProcessSource: ResponsibleProcessSource {
+    let result: ResponsibleProcessResult
 
-    init(hops: [ParentChainWalker.ChainHop] = [], failureReason: String? = nil) {
-        self.result = ParentChainResult(hops: hops, failureReason: failureReason)
-    }
-
-    func captureChain(from startPid: Int32) -> ParentChainResult { result }
+    func responsibleProcess(for pid: Int32) -> ResponsibleProcessResult { result }
 }
 
-/// Call-counting parent-chain spy: proves the "granted users pay zero subprocess
-/// cost" gate observably (#175 verify, Codex suggestion), not just structurally.
-final class SpyParentChainSource: ParentChainSource, @unchecked Sendable {
-    private let result: ParentChainResult
-    private(set) var captureCallCount = 0
+/// Call-counting spy: proves the "granted users pay nothing" gate observably, not just
+/// structurally (#175 verify, Codex suggestion).
+final class SpyResponsibleProcessSource: ResponsibleProcessSource, @unchecked Sendable {
+    private let result: ResponsibleProcessResult
+    private(set) var callCount = 0
 
-    init(hops: [ParentChainWalker.ChainHop] = [], failureReason: String? = nil) {
-        self.result = ParentChainResult(hops: hops, failureReason: failureReason)
+    init(result: ResponsibleProcessResult) {
+        self.result = result
     }
 
-    func captureChain(from startPid: Int32) -> ParentChainResult {
-        captureCallCount += 1
+    func responsibleProcess(for pid: Int32) -> ResponsibleProcessResult {
+        callCount += 1
         return result
     }
 }

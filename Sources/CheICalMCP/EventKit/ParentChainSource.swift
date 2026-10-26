@@ -116,7 +116,7 @@ enum ParentChainFormatter {
         // interactive terminal — route through the same escaper as the EventKit stderr
         // paths (CWE-150/117 discipline, #37/#73/#150).
         let escape = EventKitErrorSanitizer.escapeForStderr
-        var lines: [String] = ["Execution context (parent process chain):"]
+        var lines: [String] = ["Process tree (parent chain — not what TCC checks):"]
         lines.append("  \(selfPid)  \(escape(selfPath))  (this binary)")
         if let reason = result.failureReason {
             lines.append("  (parent chain unavailable: \(escape(reason)))")
@@ -126,19 +126,17 @@ enum ParentChainFormatter {
             }
         }
         lines.append("")
-        // Wording precision (#173): the responsible process is assigned at spawn time and
-        // is NOT guaranteed to sit on the getppid chain — describe the chain as an
-        // approximation. And since this flag is shell-invoked, the chain can never show
-        // the Claude Desktop MCP context; route Desktop diagnosis to the sqlite3 query
-        // printed earlier in the same output.
+        // #343: TCC checks the responsible process, which the kernel assigns at spawn time
+        // and which need not sit on this chain (#173). A daemon-launched worker and a
+        // spare-claimed one show the same chain shape with different grants, so the chain
+        // is orientation only; the attribution block printed above is the answer. Since
+        // this flag is shell-invoked, the chain can never show the Claude Desktop MCP
+        // context; route Desktop diagnosis to the sqlite3 query printed earlier.
         lines.append("""
-            NOTE: the authorization status above reflects the CURRENT execution context
-            (the execution context this query ran under, approximated by the parent chain
-            above), not an absolute property of this binary. Two different binaries under
-            the same host see the same status; the same binary under different hosts can
-            see different statuses (#168).
-            To diagnose a specific host (Claude Code / Terminal),
-            run this command from within that host's environment.
+            NOTE: macOS checks the process under "TCC attribution" above, not this chain (#343).
+            A host on this chain (Terminal, VS Code, Claude Code)
+            supplies the grant only when it is the responsible process.
+            The chain shows how this binary was launched.
             For Claude Desktop, this shell-invoked chain cannot show its MCP context —
             inspect the TCC database directly instead (sqlite3 command above).
             """)

@@ -132,13 +132,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// path-derived static that a test cannot flip). `deniedByStatus` selects the #154 dead-end
     /// variant that must NOT lead with `--setup`, because a bare `--setup` cannot re-prompt a
     /// status that is already `.denied` (the status-first check only requests on `.notDetermined`). (#158)
+    /// `attribution` is the kind of process macOS checks (#343); it only shapes the generic
+    /// branch, and `nil` means the kernel lookup was unavailable.
     static func accessDeniedMessage(
         type: String,
         isSSH: Bool,
         isNonInteractive: Bool,
         isMCPB: Bool,
         deniedByStatus: Bool,
-        setupHint: String
+        setupHint: String,
+        attribution: ResponsibleHostKind? = nil
     ) -> String {
         if isSSH && isNonInteractive {
             return """
@@ -220,14 +223,64 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             anthropics/claude-code#58239 (https://github.com/anthropics/claude-code/issues/58239)
             """
         }
-        return """
-        \(type) access denied. Please grant permission:
-        1. Open System Settings → Privacy & Security → \(type)
-        2. Enable access for the MCP server or Terminal
-        3. Or grant this exact binary access by running its setup from Terminal: \
-        \(setupHint)
-        4. Restart Claude Desktop/Code
-        """
+        // #343: name the process macOS actually checks. The old step "Enable access for the
+        // MCP server or Terminal" named neither of them under the Claude Code daemon.
+        switch attribution {
+        case .selfBinary?:
+            if deniedByStatus {
+                // macOS already recorded "Don't Allow": no prompt will appear and --setup cannot
+                // re-prompt (the #154 / #158 dead end), so do not promise one.
+                return """
+                \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
+                macOS already has a "Don't Allow" recorded for CheICalMCP, so no prompt will appear.
+                1. Switch CheICalMCP on in System Settings → Privacy & Security → \(type)
+                2. Or clear the recorded answer so the prompt can appear once more: \
+                `tccutil reset \(type) com.checheng.CheICalMCP`, then run \(setupHint) from Terminal
+                3. Restart Claude Desktop/Code
+                """
+            }
+            return """
+            \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
+            1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(setupHint)
+            2. Or enable CheICalMCP in System Settings → Privacy & Security → \(type)
+            3. Restart Claude Desktop/Code
+            """
+        case .claudeCode(let version)?:
+            return """
+            \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .claudeCode(version: version)))
+            1. Find out why this server was not re-executed: CHE_ICAL_MCP_NO_DISCLAIM in the MCP \
+            server's environment, an inherited CHE_ICAL_MCP_DISCLAIMED, or a "could not re-exec" \
+            line on stderr at start-up
+            2. Restart Claude Code, then allow the macOS prompt for CheICalMCP
+            """
+        case .appBundle(let name)?:
+            let safeName = EventKitErrorSanitizer.escapeForStderr(name)
+            return """
+            \(type) access denied. macOS checks \(safeName)'s grant here, not CheICalMCP's.
+            1. Open System Settings → Privacy & Security → \(type) and enable \(safeName)
+            2. Or let CheICalMCP use its own grant by running its setup from Terminal: \(setupHint)
+            3. Restart Claude Desktop/Code
+            """
+        case .otherExecutable?, .unknown?, nil:
+            return """
+            \(type) access denied. Please grant permission:
+            1. Open System Settings → Privacy & Security → \(type)
+            2. Enable access for CheICalMCP, or for the process macOS checks here \
+            (run `CheICalMCP --print-tcc-path` to see which one)
+            3. Or grant this exact binary access by running its setup from Terminal: \
+            \(setupHint)
+            4. Restart Claude Desktop/Code
+            """
+        }
+    }
+
+    /// The kind of process macOS checks for this server (#343), or `nil` when the kernel
+    /// lookup is unavailable. Read at message time — cheap, and it reflects the re-exec.
+    static func currentAttribution() -> ResponsibleHostKind? {
+        guard case .resolved(let process) = LiveResponsibleProcessSource().responsibleProcess(for: getpid()) else {
+            return nil
+        }
+        return process.kind
     }
 
     /// Per-call TCC status check for Calendar. Replaces legacy `requestCalendarAccess()`
@@ -2596,7 +2649,8 @@ enum EventKitError: LocalizedError {
                 isNonInteractive: isNonInteractive,
                 isMCPB: EventKitManager.isMCPBClaudeDesktopInstall,
                 deniedByStatus: deniedByStatus,
-                setupHint: EventKitManager.resolvedSetupCommandHint()
+                setupHint: EventKitManager.resolvedSetupCommandHint(),
+                attribution: EventKitManager.currentAttribution()
             )
         case .insufficientAccess(let type):
             return """

@@ -366,6 +366,23 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 
+    /// #343: server mode re-execs itself (POSIX_SPAWN_SETEXEC + disclaim) before any
+    /// dispatch, so the banner is written by the re-exec'd image only. Guards against a
+    /// future change that moves the banner, or the re-exec, and prints it from both images.
+    func testBannerIsEmittedExactlyOnceAfterTheReexec() throws {
+        let binary = try locateBuiltBinary()
+        let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+
+        let run = try spawnAndCaptureStderr(binary: binary, environment: env)
+
+        XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF")
+        let headers = run.stderr.components(separatedBy: "[banner] che-ical-mcp ").count - 1
+        XCTAssertEqual(headers, 1, "Expected exactly one banner header. Got stderr: \(run.stderr.prefix(400))")
+        XCTAssertFalse(
+            run.stderr.contains("could not re-exec as its own responsible process"),
+            "The re-exec should succeed on a supported macOS. Got stderr: \(run.stderr.prefix(400))")
+    }
+
     /// Setting `CHE_ICAL_MCP_NO_BANNER=1` must completely suppress banner output.
     func testBannerSuppressedByEnvironmentVariable() throws {
         let binary = try locateBuiltBinary()

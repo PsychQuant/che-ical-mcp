@@ -113,6 +113,65 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(msg.contains(hint))
     }
 
+    // MARK: - #343: the generic branch names the process macOS checks
+
+    private func generic(_ attribution: ResponsibleHostKind?) -> String {
+        EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: false, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: attribution)
+    }
+
+    func testGenericBranch_withoutAttribution_doesNotBlameTerminal() {
+        // The old line "Enable access for the MCP server or Terminal" named neither of the
+        // processes macOS checked under the Claude Code daemon (#343).
+        let msg = generic(nil)
+        XCTAssertFalse(msg.contains("for the MCP server or Terminal"))
+        XCTAssertTrue(msg.contains("--print-tcc-path"), "point at the tool that shows which process macOS checks")
+    }
+
+    func testSelfAttribution_leadsWithItsOwnGrantAndSetup() {
+        let msg = generic(.selfBinary)
+        XCTAssertTrue(msg.contains("CheICalMCP's own grant"))
+        XCTAssertTrue(msg.contains("1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(hint)"))
+    }
+
+    func testClaudeCodeAttribution_explainsItCannotBePrompted_withoutSetup() {
+        let msg = generic(.claudeCode(version: "2.1.309"))
+        XCTAssertTrue(msg.contains("no Calendar or Reminders purpose string"))
+        XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(msg.contains("CHE_ICAL_MCP_DISCLAIMED"))
+        XCTAssertFalse(msg.contains("Remove CHE_ICAL_MCP_NO_DISCLAIM"),
+                       "the opt-out may never have been set: the re-exec can also have failed or been skipped")
+        XCTAssertFalse(msg.contains(hint), "--setup grants CheICalMCP's own identity, which this process does not use")
+    }
+
+    func testAppAttribution_namesTheApp() {
+        let msg = generic(.appBundle(name: "Visual Studio Code"))
+        XCTAssertTrue(msg.contains("enable Visual Studio Code"))
+        // Hosts other than Claude Code are not re-executed, so there is nothing to "unset".
+        XCTAssertFalse(msg.contains("unset CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(msg.contains(hint), "--setup is how CheICalMCP gets its own grant under any host")
+    }
+
+    func testSelfAttributionAlreadyDenied_doesNotPromiseAPrompt() {
+        // Once the user pressed "Don't Allow" the status is .denied: no prompt will appear
+        // and --setup cannot re-prompt (the #154 / #158 dead end), so the first step must
+        // be the System Settings switch, not "allow the prompt".
+        let msg = EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: false, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: true, setupHint: hint, attribution: .selfBinary)
+        XCTAssertFalse(msg.contains("Allow the macOS prompt"))
+        XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"))
+        XCTAssertTrue(msg.contains("tccutil reset"))
+    }
+
+    func testAttribution_doesNotOverrideTheSSHBranch() {
+        let msg = EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: true, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: .selfBinary)
+        XCTAssertTrue(msg.contains("SSH session detected"))
+    }
+
     // SSH takes precedence over deniedByStatus (an SSH denial is not the #154 signature).
     func testSSHPrecedesDeniedByStatus() {
         let msg = EventKitManager.accessDeniedMessage(

@@ -3,6 +3,42 @@ import CheMCPKit
 import Foundation
 import MCP
 
+// #343 — before any dispatch, re-exec in place as our own responsible process, so macOS
+// charges Calendar and Reminders access to CheICalMCP (which carries the purpose strings)
+// instead of to the host. Under the Claude Code daemon the host is either the app that
+// launched the daemon or Claude Code's own binary, which can never be prompted. Only that
+// case (and `--setup`, or an explicit CHE_ICAL_MCP_FORCE_DISCLAIM) re-execs; every other host
+// keeps its own grant. The skip reasons are a closed set (SelfDisclaimSkipReason); any
+// failure is fail-open.
+switch SelfDisclaim.decide(
+    arguments: CommandLine.arguments,
+    environment: ProcessInfo.processInfo.environment,
+    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid())
+) {
+case .reexec:
+    let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments)
+    let message = "[che-ical-mcp] could not re-exec as its own responsible process "
+        + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+case .skip(.alreadyDisclaimed):
+    // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
+    unsetenv(SelfDisclaim.disclaimedSentinel)
+case .skip(.disclaimIneffective):
+    // The sentinel is set but Claude Code still owns the attribution: the re-exec did not take
+    // effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
+    unsetenv(SelfDisclaim.disclaimedSentinel)
+    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but Claude Code is still the "
+        + "responsible process (the re-exec did not take effect, or the variable was inherited); "
+        + "continuing under Claude Code's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+case .skip(.responsibilityUnavailable(let reason)):
+    let message = "[che-ical-mcp] responsible process unavailable "
+        + "(\(EventKitErrorSanitizer.escapeForStderr(reason))); continuing under the host's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+case .skip:
+    break
+}
+
 // Handle command line arguments
 if CommandLine.arguments.contains("--version") || CommandLine.arguments.contains("-v") {
     print(AppVersion.versionString)
@@ -48,6 +84,12 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     let remStatus = EKEventStore.authorizationStatus(for: .reminder)
     let statusString = TCCStatusFormatter.describe
 
+    // #343: the status below belongs to whichever process macOS charges the access to —
+    // print it first, from the kernel, so nobody has to infer it from the parent chain.
+    let attribution = ResponsibleProcessFormatter.attributionSection(
+        selfPid: ProcessInfo.processInfo.processIdentifier,
+        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()))
+
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
 
@@ -56,6 +98,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 
         Bundle identifier:
           \(bundleID)
+
+        \(attribution)
 
         Current EventKit authorization status:
           Calendar:   \(statusString(calStatus))
@@ -110,7 +154,9 @@ if CommandLine.arguments.contains("--setup") {
     }
 
     print("CheICalMCP Setup — Requesting Calendar & Reminders permissions...")
-    print("(This triggers macOS TCC permission dialogs for this binary)\n")
+    print("(This triggers macOS TCC permission dialogs for this binary)")
+    print(ResponsibleProcessFormatter.setupTargetLine(
+        LiveResponsibleProcessSource().responsibleProcess(for: getpid())) + "\n")
 
     // The interactive requests must run inside a foreground NSApplication so EventKit's TCC
     // dialogs can present. A bare CLI async request has no foreground-app context or running
@@ -180,9 +226,9 @@ func emitStartupBanner() {
     // #163: cheap status reads (never trigger a dialog) so the banner can surface the
     // `--setup` command when Calendar isn't granted for this binary. Reuses the same
     // probe the authorization gate uses. Read BEFORE detector construction (#175): both
-    // services gate the versioned-host check — a Reminders-only breakage under a
-    // versioned host deserves the rotation explanation too (verify DA-1) — and the
-    // extra `ps` spawn only happens on the ungranted path.
+    // services gate the host-attribution check (#343) — a Reminders-only breakage deserves
+    // the explanation too (verify DA-1) — and the kernel lookup only happens on the
+    // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
     let calendarGranted = statusSource.authorizationStatus(for: .event) == .fullAccess
     let remindersGranted = statusSource.authorizationStatus(for: .reminder) == .fullAccess
