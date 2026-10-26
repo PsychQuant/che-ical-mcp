@@ -791,7 +791,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
-    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy it."
+    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series)."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
     /// The fixed reason for refusing a series-level update (calendar of another account,
