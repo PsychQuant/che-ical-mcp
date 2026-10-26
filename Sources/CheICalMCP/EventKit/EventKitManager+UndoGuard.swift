@@ -61,8 +61,18 @@ extension EventKitManager {
             refreshes: stored.map { $0.refresh() } ?? false,
             recurring: stored?.hasRecurrenceRules ?? false,
             standInIgnoringTheRefusal: stored.map { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: false) != nil } ?? false)
-        return hint ? EventKitError.standInRefused(reason: Self.standInEditedBeforeReason)
-                    : EventKitError.eventNotFound(identifier: id)
+        if hint { return EventKitError.standInRefused(reason: Self.standInEditedBeforeReason) }
+        // One listing gives both facts. A stand-in candidate that exists but failed to refresh is
+        // not "all edited": the hint is for a series with no unedited occurrence in the scan.
+        let facts = stored.map { standInAndEditedFacts(of: $0, id: id) } ?? (hasStandInCandidate: false, hasEdited: false)
+        let allEdited = FirstRemainingOccurrence.hintsAllEdited(
+            stored: stored != nil,
+            refreshes: stored.map { $0.refresh() } ?? false,
+            recurring: stored?.hasRecurrenceRules ?? false,
+            standInIgnoringTheRefusal: facts.hasStandInCandidate,
+            editedOccurrences: facts.hasEdited)
+        return allEdited ? EventKitError.standInRefused(reason: Self.standInAllEditedReason)
+                         : EventKitError.eventNotFound(identifier: id)
     }
 
     /// `notFoundError(id:)` as the short reason a batch row reports.

@@ -192,6 +192,55 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertFalse(F.hintsEditedBefore(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: false), "gone")
     }
 
+    /// #335 item 1: a series whose first occurrence was deleted and whose remaining occurrences were
+    /// all edited on their own has no stand-in even without the refusal (an edited occurrence is
+    /// never one). `list_events` still lists it, so it gets its own explanation, only when edited
+    /// occurrences really exist; a series with nothing left stays "Event not found".
+    func testTheAllEditedHintNeedsEditedOccurrencesAndNoStandIn() {
+        typealias F = FirstRemainingOccurrence
+        XCTAssertTrue(F.hintsAllEdited(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: false, editedOccurrences: true))
+        XCTAssertFalse(F.hintsAllEdited(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: false, editedOccurrences: false), "nothing left")
+        XCTAssertFalse(F.hintsAllEdited(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: true, editedOccurrences: true), "a stand-in exists: the edited-before hint applies, not this one")
+        XCTAssertFalse(F.hintsAllEdited(stored: false, refreshes: false, recurring: true, standInIgnoringTheRefusal: false, editedOccurrences: true))
+        XCTAssertFalse(F.hintsAllEdited(stored: true, refreshes: true, recurring: true, standInIgnoringTheRefusal: false, editedOccurrences: true))
+        XCTAssertFalse(F.hintsAllEdited(stored: true, refreshes: false, recurring: false, standInIgnoringTheRefusal: false, editedOccurrences: true))
+    }
+
+    /// A stand-in candidate that exists keeps the all-edited hint off even when it failed to
+    /// refresh later (the facts come from the candidates, not from a refresh).
+    func testAStandInCandidateIsCountedBeforeItsRefresh() {
+        typealias C = FirstRemainingOccurrence.Candidate
+        let d = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let plain = C(eventIdentifier: "S", isDetached: false, hasRecurrenceRules: true, start: d)
+        let edited = C(eventIdentifier: "S/RID=1", isDetached: true, hasRecurrenceRules: false, start: d)
+        XCTAssertTrue(FirstRemainingOccurrence.hasStandInCandidate([plain, edited], identifier: "S"))
+        XCTAssertFalse(FirstRemainingOccurrence.hasStandInCandidate([edited], identifier: "S"), "an edited occurrence is never a stand-in")
+        XCTAssertFalse(FirstRemainingOccurrence.hasStandInCandidate([], identifier: "S"))
+    }
+
+    func testAnEditedOccurrenceIsADetachedCandidate() {
+        typealias C = FirstRemainingOccurrence.Candidate
+        let d = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let edited = C(eventIdentifier: "S/RID=1", isDetached: true, hasRecurrenceRules: false, start: d)
+        let plain = C(eventIdentifier: "S", isDetached: false, hasRecurrenceRules: true, start: d)
+        XCTAssertTrue(FirstRemainingOccurrence.hasEditedOccurrence([plain, edited]))
+        XCTAssertFalse(FirstRemainingOccurrence.hasEditedOccurrence([plain]))
+        XCTAssertFalse(FirstRemainingOccurrence.hasEditedOccurrence([]))
+    }
+
+    /// Device (iCloud, 2026-10-26): with every remaining occurrence edited on its own, the bare id
+    /// is not found even with `occurrence_date` and span `this`, while the id `list_events` gives
+    /// each occurrence (ending `/RID=…`) updates that one occurrence. The text says only that.
+    func testTheAllEditedHintPointsAtTheOccurrenceIdsFromTheListing() {
+        let reason = EventKitManager.standInAllEditedReason
+        for word in ["list_events", "RID", "found for it"] {
+            XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
+        }
+        XCTAssertFalse(reason.contains("every remaining occurrence"), "the scan is bounded: it cannot claim every occurrence")
+        XCTAssertFalse(reason.contains("move"), "no stand-in exists, so a move cannot work")
+        XCTAssertFalse(reason.contains("copy"))
+    }
+
     func testTheHintNamesWhatWorksAndIsFixedText() throws {
         let reason = EventKitManager.standInEditedBeforeReason
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
@@ -215,6 +264,21 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for name in ["func deleteEventSeriesBatch(", "func deleteEventsBatch("] {
             let from = try XCTUnwrap(source.range(of: name), name)
             XCTAssertTrue(source[from.upperBound...].prefix(4200).contains("notFoundReason(id: "), name)
+        }
+    }
+
+    /// #335 item 1: copy and the two move entry points resolve with the refusal off, so the
+    /// edited-before hint never applies to them, but a series whose occurrences were all edited
+    /// has no stand-in for them either; they report through the same helper.
+    func testCopyAndMoveReportNotFoundThroughTheSameHelper() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        for name in ["func copyEvent(", "func moveEventForCopyTool(", "func moveEvent("] {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            let body = String(source[from.upperBound...].prefix(1500))
+            XCTAssertTrue(body.contains("notFoundError(id: identifier)"), name)
+            XCTAssertFalse(body.contains("throw EventKitError.eventNotFound(identifier: identifier)"), name)
         }
     }
 
