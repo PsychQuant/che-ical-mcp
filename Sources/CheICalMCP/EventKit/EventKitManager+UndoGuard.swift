@@ -61,8 +61,15 @@ extension EventKitManager {
             refreshes: stored.map { $0.refresh() } ?? false,
             recurring: stored?.hasRecurrenceRules ?? false,
             standInIgnoringTheRefusal: stored.map { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: false) != nil } ?? false)
-        return hint ? EventKitError.standInRefused(reason: Self.standInEditedBeforeReason)
-                    : EventKitError.eventNotFound(identifier: id)
+        if hint { return EventKitError.standInRefused(reason: Self.standInEditedBeforeReason) }
+        let allEdited = FirstRemainingOccurrence.hintsAllEdited(
+            stored: stored != nil,
+            refreshes: stored.map { $0.refresh() } ?? false,
+            recurring: stored?.hasRecurrenceRules ?? false,
+            standInIgnoringTheRefusal: false,
+            editedOccurrences: stored.map { hasEditedOccurrence(of: $0, id: id) } ?? false)
+        return allEdited ? EventKitError.standInRefused(reason: Self.standInAllEditedReason)
+                         : EventKitError.eventNotFound(identifier: id)
     }
 
     /// `notFoundError(id:)` as the short reason a batch row reports.

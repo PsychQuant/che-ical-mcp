@@ -274,7 +274,7 @@ final class EventRangeQueryTests: XCTestCase {
             "EventKit/EventKitManager+SeriesExceptions.swift": ["captureSeriesExceptions", "restoreSeriesExceptions", "seriesHoldsSlot"],
             // #326: the stand-in search lists the series' own scan window and a year each side, a
             // range the server derives from the series, not one a caller gave.
-            "EventKit/FirstRemainingOccurrence.swift": ["firstRemainingOccurrence"],
+            "EventKit/FirstRemainingOccurrence.swift": ["seriesOccurrences"],
             "EventKit/UndoPostStateGuard.swift": ["modifiedOccurrenceCount"],
         ]
         let sources = repoRoot.appendingPathComponent("Sources/CheICalMCP")
