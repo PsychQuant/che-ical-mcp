@@ -6,8 +6,10 @@ import MCP
 // #343 — before any dispatch, re-exec in place as our own responsible process, so macOS
 // charges Calendar and Reminders access to CheICalMCP (which carries the purpose strings)
 // instead of to the host. Under the Claude Code daemon the host is either the app that
-// launched the daemon or Claude Code's own binary, which can never be prompted. The skip
-// reasons are a closed set (SelfDisclaimSkipReason); any failure is fail-open.
+// launched the daemon or Claude Code's own binary, which can never be prompted. Only that
+// case (and `--setup`, or an explicit CHE_ICAL_MCP_FORCE_DISCLAIM) re-execs; every other host
+// keeps its own grant. The skip reasons are a closed set (SelfDisclaimSkipReason); any
+// failure is fail-open.
 switch SelfDisclaim.decide(
     arguments: CommandLine.arguments,
     environment: ProcessInfo.processInfo.environment,
@@ -21,6 +23,14 @@ case .reexec:
 case .skip(.alreadyDisclaimed):
     // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
     unsetenv(SelfDisclaim.disclaimedSentinel)
+case .skip(.disclaimIneffective):
+    // The sentinel is set but Claude Code still owns the attribution: the re-exec did not take
+    // effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
+    unsetenv(SelfDisclaim.disclaimedSentinel)
+    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but Claude Code is still the "
+        + "responsible process (the re-exec did not take effect, or the variable was inherited); "
+        + "continuing under Claude Code's TCC attribution (#343)\n"
+    FileHandle.standardError.write(Data(message.utf8))
 case .skip(.responsibilityUnavailable(let reason)):
     let message = "[che-ical-mcp] responsible process unavailable "
         + "(\(EventKitErrorSanitizer.escapeForStderr(reason))); continuing under the host's TCC attribution (#343)\n"

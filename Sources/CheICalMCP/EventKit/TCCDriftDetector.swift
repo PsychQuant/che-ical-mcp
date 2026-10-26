@@ -455,9 +455,11 @@ enum DriftSignal: Sendable, Equatable {
     case csreqMismatch(service: String, hasEntitlement: Bool?)
 
     /// EventKit is NOT granted and the kernel's responsible process is a host rather than
-    /// CheICalMCP (#175, reworked in #343). Since #343 CheICalMCP re-execs as its own
-    /// responsible process, so this fires only under `CHE_ICAL_MCP_NO_DISCLAIM` or when
-    /// the re-exec failed. `host` drives the advice: Claude Code can never be prompted
-    /// (no purpose string); an app's grant lives under that app's name.
+    /// CheICalMCP (#175, reworked in #343). Under Claude Code, CheICalMCP re-execs as its own
+    /// responsible process, so there this fires only under `CHE_ICAL_MCP_NO_DISCLAIM`, with an
+    /// inherited `CHE_ICAL_MCP_DISCLAIMED`, or when the re-exec failed. Under any other host
+    /// (Terminal, VS Code, ...) the host is responsible by design and this is the ordinary
+    /// "that app has no grant yet" case. `host` drives the advice: Claude Code can never be
+    /// prompted (no purpose string); an app's grant lives under that app's name.
     case hostAttributedUngranted(host: ResponsibleHostKind, hostPath: String?)
 }

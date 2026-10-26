@@ -54,12 +54,24 @@ enum ResponsibleHostClassifier {
     static let claudeCodeAppFragment = "/.local/share/claude/ClaudeCode.app/"
     private static let appExecutableMarker = ".app/Contents/MacOS/"
 
+    private static let versionCharacters = CharacterSet(
+        charactersIn: "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+-")
+
+    private static func sanitizedVersion(_ raw: String) -> String? {
+        guard !raw.isEmpty, raw.count <= 32,
+              raw.unicodeScalars.allSatisfy(versionCharacters.contains) else { return nil }
+        return raw
+    }
+
     static func classify(path: String?, isSelf: Bool) -> ResponsibleHostKind {
         if isSelf { return .selfBinary }
         guard let path, !path.isEmpty else { return .unknown }
 
         if let range = path.range(of: claudeCodeVersionsFragment) {
-            let version = path[range.upperBound...].split(separator: "/").first.map(String.init)
+            // The component is a name anyone can give a file, and it is printed into messages an
+            // MCP client reads: keep it only if it looks like a version.
+            let version = path[range.upperBound...].split(separator: "/").first
+                .map(String.init).flatMap(sanitizedVersion)
             return .claudeCode(version: version)
         }
         if path.contains(claudeCodeAppFragment) {
@@ -89,8 +101,10 @@ enum ResponsibleProcessFormatter {
         case .claudeCode(let version):
             let name = version.map { "Claude Code \($0)" } ?? "Claude Code"
             return "macOS checks \(name), which has no Calendar or Reminders purpose string, so it "
-                + "can never be prompted. Unset CHE_ICAL_MCP_NO_DISCLAIM so CheICalMCP requests "
-                + "access under its own name (#343)."
+                + "can never be prompted. CheICalMCP normally re-executes itself so that it is "
+                + "checked under its own name, and this process was not re-executed: "
+                + "CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED was inherited, or the "
+                + "re-exec failed (see the start-up line on stderr) (#343)."
         case .appBundle(let name):
             return "macOS checks \(name)'s grant: System Settings → Privacy & Security → "
                 + "Calendar / Reminders → \(name)."

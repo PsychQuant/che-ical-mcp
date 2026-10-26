@@ -227,6 +227,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // MCP server or Terminal" named neither of them under the Claude Code daemon.
         switch attribution {
         case .selfBinary?:
+            if deniedByStatus {
+                // macOS already recorded "Don't Allow": no prompt will appear and --setup cannot
+                // re-prompt (the #154 / #158 dead end), so do not promise one.
+                return """
+                \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
+                macOS already has a "Don't Allow" recorded for CheICalMCP, so no prompt will appear.
+                1. Switch CheICalMCP on in System Settings → Privacy & Security → \(type)
+                2. Or clear the recorded answer so the prompt can appear once more: \
+                `tccutil reset \(type) com.checheng.CheICalMCP`, then run \(setupHint) from Terminal
+                3. Restart Claude Desktop/Code
+                """
+            }
             return """
             \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
             1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(setupHint)
@@ -236,7 +248,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .claudeCode(let version)?:
             return """
             \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .claudeCode(version: version)))
-            1. Remove CHE_ICAL_MCP_NO_DISCLAIM from the MCP server's environment
+            1. Find out why this server was not re-executed: CHE_ICAL_MCP_NO_DISCLAIM in the MCP \
+            server's environment, an inherited CHE_ICAL_MCP_DISCLAIMED, or a "could not re-exec" \
+            line on stderr at start-up
             2. Restart Claude Code, then allow the macOS prompt for CheICalMCP
             """
         case .appBundle(let name)?:
@@ -244,7 +258,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return """
             \(type) access denied. macOS checks \(safeName)'s grant here, not CheICalMCP's.
             1. Open System Settings → Privacy & Security → \(type) and enable \(safeName)
-            2. Or let CheICalMCP use its own grant (unset CHE_ICAL_MCP_NO_DISCLAIM if it is set): \(setupHint)
+            2. Or let CheICalMCP use its own grant by running its setup from Terminal: \(setupHint)
             3. Restart Claude Desktop/Code
             """
         case .otherExecutable?, .unknown?, nil:

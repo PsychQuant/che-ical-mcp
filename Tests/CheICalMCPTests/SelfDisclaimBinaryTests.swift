@@ -9,12 +9,19 @@ import Darwin
 /// The load-bearing assertion is the attribution line `<pid>  <path>  (this binary)` where
 /// `<pid>` equals the pid `Process` spawned: it proves both that the re-exec kept the pid
 /// (POSIX_SPAWN_SETEXEC) and that the new image is its own responsible process.
+///
+/// Whether the *default* run re-execs depends on who the test runner's own responsible
+/// process is (Claude Code: yes; Terminal, Xcode, CI: no, by design), and a spawned child
+/// inherits it. The tests therefore either force the re-exec with
+/// `CHE_ICAL_MCP_FORCE_DISCLAIM` (deterministic on every host) or compute the expectation
+/// from the runner's own responsible process.
 final class SelfDisclaimBinaryTests: XCTestCase {
 
     private struct Run {
         let pid: Int32
         let stdout: String
         let status: Int32
+        let timedOut: Bool
     }
 
     private func locateBuiltBinary() throws -> URL {
@@ -33,7 +40,10 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         return env
     }
 
-    private func runPrintTCCPath(extraEnvironment: [String: String] = [:]) throws -> Run {
+    /// Runs `--print-tcc-path` with a hard bound: stdout is drained on a background queue so a
+    /// child that hangs without closing it still reaches the timeout below and is killed,
+    /// instead of blocking this thread inside `readDataToEndOfFile` (verify of PR #347).
+    private func runPrintTCCPath(extraEnvironment: [String: String] = [:], timeout: TimeInterval = 15) throws -> Run {
         let process = Process()
         process.executableURL = try locateBuiltBinary()
         process.arguments = ["--print-tcc-path"]
@@ -47,13 +57,32 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
         let pid = process.processIdentifier
-        // Drain before waiting so a full pipe can never stall the child.
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        if exited.wait(timeout: .now() + 15) == .timedOut {
-            kill(pid, SIGKILL)
-            XCTFail("--print-tcc-path did not exit within 15s")
+
+        let drained = DispatchSemaphore(value: 0)
+        let collected = LockedData()
+        DispatchQueue.global().async {
+            collected.set(stdout.fileHandleForReading.readDataToEndOfFile())
+            drained.signal()
         }
-        return Run(pid: pid, stdout: String(decoding: output, as: UTF8.self), status: process.terminationStatus)
+
+        var timedOut = false
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            timedOut = true
+            kill(pid, SIGKILL)
+            _ = exited.wait(timeout: .now() + 5)
+        }
+        // The pipe closes once the child (or its kill) is gone; bound this wait too.
+        _ = drained.wait(timeout: .now() + 5)
+        return Run(
+            pid: pid, stdout: String(decoding: collected.get(), as: UTF8.self),
+            status: process.terminationStatus, timedOut: timedOut)
+    }
+
+    private final class LockedData: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func set(_ value: Data) { lock.lock(); data = value; lock.unlock() }
+        func get() -> Data { lock.lock(); defer { lock.unlock() }; return data }
     }
 
     /// The first line under the "TCC attribution" heading.
@@ -64,16 +93,39 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         return lines[heading + 1]
     }
 
-    func testDefault_reexecsAsItsOwnResponsibleProcessKeepingThePid() throws {
-        let run = try runPrintTCCPath()
+    func testForcedDisclaim_reexecsAsItsOwnResponsibleProcessKeepingThePid() throws {
+        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
+        XCTAssertFalse(run.timedOut, "--print-tcc-path did not exit within the bound")
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout), "no TCC attribution block in:\n\(run.stdout)")
         XCTAssertTrue(line.hasPrefix("  \(run.pid)  "), "pid must survive the re-exec; got \(line)")
         XCTAssertTrue(line.hasSuffix("(this binary)"), "the re-exec'd image must be self-responsible; got \(line)")
     }
 
+    func testDefault_followsTheKindOfTheRunnersResponsibleProcess() throws {
+        // Claude Code can never be prompted, so a child of it re-execs; any other host keeps
+        // its own grant and is left alone. The child inherits the runner's responsible
+        // process, so the runner's own kind is the expectation.
+        let runner = LiveResponsibleProcessSource().responsibleProcess(for: getpid())
+        guard case .resolved(let process) = runner else { throw XCTSkip("responsibility SPI unavailable here") }
+        var expectsReexec = false
+        if case .claudeCode = process.kind { expectsReexec = true }
+        if process.isSelf { throw XCTSkip("the test runner is its own responsible process") }
+
+        let run = try runPrintTCCPath()
+        XCTAssertFalse(run.timedOut)
+        XCTAssertEqual(run.status, 0)
+        let line = try XCTUnwrap(attributionLine(run.stdout))
+        XCTAssertEqual(
+            line.hasSuffix("(this binary)"), expectsReexec,
+            "runner's responsible process is \(process.kind); got \(line)")
+    }
+
     func testOptOut_keepsTheHostAsTheResponsibleProcess() throws {
-        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
+        let run = try runPrintTCCPath(extraEnvironment: [
+            "CHE_ICAL_MCP_NO_DISCLAIM": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
+        ])
+        XCTAssertFalse(run.timedOut)
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "opt-out must leave the host responsible; got \(line)")
@@ -81,10 +133,39 @@ final class SelfDisclaimBinaryTests: XCTestCase {
 
     func testSentinelAlreadySet_doesNotReexecAgain() throws {
         // The loop guard: a process that believes it is the re-exec'd image must not
-        // re-exec, even though (here) it is not actually self-responsible.
-        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_DISCLAIMED": "1"])
+        // re-exec, even though (here) it is not actually self-responsible and a re-exec is forced.
+        let run = try runPrintTCCPath(extraEnvironment: [
+            "CHE_ICAL_MCP_DISCLAIMED": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
+        ])
+        XCTAssertFalse(run.timedOut)
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "sentinel must skip the re-exec; got \(line)")
+    }
+
+    func testAHungChildIsKilledAtTheBound_notWaitedOnForever() throws {
+        // The bound has to be reachable: a child that never closes stdout must fail the
+        // test within the timeout instead of hanging the job. `sleep` stands in for it.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        try process.run()
+        let pid = process.processIdentifier
+
+        let drained = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = stdout.fileHandleForReading.readDataToEndOfFile()
+            drained.signal()
+        }
+        let started = Date()
+        XCTAssertEqual(exited.wait(timeout: .now() + 1), .timedOut)
+        kill(pid, SIGKILL)
+        XCTAssertEqual(exited.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(drained.wait(timeout: .now() + 5), .success)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
     }
 }

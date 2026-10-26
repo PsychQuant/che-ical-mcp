@@ -139,12 +139,30 @@ final class AccessDeniedMessageTests: XCTestCase {
         let msg = generic(.claudeCode(version: "2.1.309"))
         XCTAssertTrue(msg.contains("no Calendar or Reminders purpose string"))
         XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(msg.contains("CHE_ICAL_MCP_DISCLAIMED"))
+        XCTAssertFalse(msg.contains("Remove CHE_ICAL_MCP_NO_DISCLAIM"),
+                       "the opt-out may never have been set: the re-exec can also have failed or been skipped")
         XCTAssertFalse(msg.contains(hint), "--setup grants CheICalMCP's own identity, which this process does not use")
     }
 
     func testAppAttribution_namesTheApp() {
         let msg = generic(.appBundle(name: "Visual Studio Code"))
         XCTAssertTrue(msg.contains("enable Visual Studio Code"))
+        // Hosts other than Claude Code are not re-executed, so there is nothing to "unset".
+        XCTAssertFalse(msg.contains("unset CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(msg.contains(hint), "--setup is how CheICalMCP gets its own grant under any host")
+    }
+
+    func testSelfAttributionAlreadyDenied_doesNotPromiseAPrompt() {
+        // Once the user pressed "Don't Allow" the status is .denied: no prompt will appear
+        // and --setup cannot re-prompt (the #154 / #158 dead end), so the first step must
+        // be the System Settings switch, not "allow the prompt".
+        let msg = EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: false, isNonInteractive: false,
+            isMCPB: false, deniedByStatus: true, setupHint: hint, attribution: .selfBinary)
+        XCTAssertFalse(msg.contains("Allow the macOS prompt"))
+        XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"))
+        XCTAssertTrue(msg.contains("tccutil reset"))
     }
 
     func testAttribution_doesNotOverrideTheSSHBranch() {

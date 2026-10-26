@@ -2,12 +2,17 @@ import Foundation
 
 /// Why CheICalMCP did not re-exec itself as its own responsible process (#343).
 ///
-/// Closed set — exactly these five. A new reason means a new case here and a new test in
+/// Closed set — exactly these seven. A new reason means a new case here and a new test in
 /// `SelfDisclaimDecisionTests`; do not fold one into an existing case by similarity.
 enum SelfDisclaimSkipReason: Equatable, Sendable {
     /// `CHE_ICAL_MCP_DISCLAIMED` is set: this process is the re-exec'd image. Loop guard,
     /// independent of the responsibility lookup.
     case alreadyDisclaimed
+    /// `CHE_ICAL_MCP_DISCLAIMED` is set but Claude Code is still the responsible process:
+    /// the re-exec did not take effect, or the variable was inherited from an earlier run.
+    /// It still must not loop, but unlike `alreadyDisclaimed` it is worth a stderr line,
+    /// because the sentinel is an unauthenticated environment variable.
+    case disclaimIneffective
     /// `CHE_ICAL_MCP_NO_DISCLAIM` is set: the user wants the host's grant (pre-#343 behavior).
     case optedOut
     /// Already its own responsible process — the Claude Desktop `.mcpb` server under
@@ -17,6 +22,10 @@ enum SelfDisclaimSkipReason: Equatable, Sendable {
     case noTCCAccessNeeded
     /// The responsibility SPI is missing or the lookup failed; run as before.
     case responsibilityUnavailable(String)
+    /// The responsible process is an ordinary host (Terminal, VS Code, launchd, a process
+    /// with no path): its own grant keeps working and CheICalMCP's own may still be empty,
+    /// so swapping one for the other could only break a setup that works today.
+    case hostGrantIsUsable
 }
 
 enum SelfDisclaimDecision: Equatable, Sendable {
@@ -28,9 +37,18 @@ enum SelfDisclaimDecision: Equatable, Sendable {
 /// Reminders access to CheICalMCP — which carries the purpose strings — instead of to the
 /// host. Under the Claude Code daemon the host is either the app that launched the daemon
 /// or Claude Code's own binary, and the latter can never be prompted (#343).
+///
+/// The rule is narrow on purpose. It re-execs when the responsible process is Claude Code
+/// (nothing can be prompted there), for `--setup` under any host (a deliberate foreground
+/// request for CheICalMCP's own grant), and when the user forces it. Every other host keeps
+/// the grant it has: the verify of PR #347 measured a VS Code host that was `fullAccess`
+/// while CheICalMCP's own grant was empty, so re-execing everywhere would break it.
 enum SelfDisclaim {
     static let disclaimedSentinel = "CHE_ICAL_MCP_DISCLAIMED"
     static let optOutVariable = "CHE_ICAL_MCP_NO_DISCLAIM"
+    /// Re-exec under any host, for a user who wants CheICalMCP's own grant everywhere.
+    /// `optOutVariable` wins over it.
+    static let forceVariable = "CHE_ICAL_MCP_FORCE_DISCLAIM"
     static let flagsWithoutTCCAccess: Set<String> = ["--version", "-v", "--help", "-h", "--self-update"]
 
     static func decide(
@@ -38,7 +56,9 @@ enum SelfDisclaim {
         environment: [String: String],
         responsible: ResponsibleProcessResult
     ) -> SelfDisclaimDecision {
-        if isSet(environment[disclaimedSentinel]) { return .skip(.alreadyDisclaimed) }
+        if isSet(environment[disclaimedSentinel]) {
+            return .skip(isClaudeCode(responsible) ? .disclaimIneffective : .alreadyDisclaimed)
+        }
         if arguments.dropFirst().contains(where: flagsWithoutTCCAccess.contains) {
             return .skip(.noTCCAccessNeeded)
         }
@@ -48,9 +68,17 @@ enum SelfDisclaim {
             return .skip(.responsibilityUnavailable(reason))
         case .resolved(let process) where process.isSelf:
             return .skip(.alreadySelfResponsible)
-        case .resolved:
-            return .reexec
+        case .resolved(let process):
+            if case .claudeCode = process.kind { return .reexec }
+            if arguments.dropFirst().contains("--setup") { return .reexec }
+            if isSet(environment[forceVariable]) { return .reexec }
+            return .skip(.hostGrantIsUsable)
         }
+    }
+
+    private static func isClaudeCode(_ responsible: ResponsibleProcessResult) -> Bool {
+        guard case .resolved(let process) = responsible, case .claudeCode = process.kind else { return false }
+        return true
     }
 
     private typealias SetDisclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>?, Int32) -> Int32

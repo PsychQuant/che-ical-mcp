@@ -59,4 +59,20 @@ final class ResponsibleHostClassifierTests: XCTestCase {
         XCTAssertEqual(ResponsibleHostClassifier.classify(path: nil, isSelf: false), .unknown)
         XCTAssertEqual(ResponsibleHostClassifier.classify(path: "", isSelf: false), .unknown)
     }
+
+    func testClaudeCodeVersion_acceptsOnlyAVersionToken() {
+        // The version is a path component anyone can name, and it is printed into messages an
+        // MCP client reads (verify of PR #347) — a hostile or malformed component is dropped.
+        XCTAssertEqual(
+            ResponsibleHostClassifier.classify(
+                path: "/Users/u/.local/share/claude/versions/2.1.309-rc.1+build5", isSelf: false),
+            .claudeCode(version: "2.1.309-rc.1+build5"))
+        for hostile in ["$(whoami)", "2.1\u{1B}[31m", "a b", "", String(repeating: "9", count: 80)] {
+            XCTAssertEqual(
+                ResponsibleHostClassifier.classify(
+                    path: "/Users/u/.local/share/claude/versions/\(hostile)", isSelf: false),
+                .claudeCode(version: nil),
+                "hostile version component \(hostile.debugDescription)")
+        }
+    }
 }

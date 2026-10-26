@@ -30,7 +30,12 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         let advice = ResponsibleProcessFormatter.advice(for: .claudeCode(version: "2.1.309"))
         XCTAssertTrue(advice.contains("Claude Code 2.1.309"))
         XCTAssertTrue(advice.contains("no Calendar or Reminders purpose string"))
+        // Under Claude Code the process was NOT re-executed — the opt-out is one of three
+        // causes, and the advice must not blame it when it was never set (verify of PR #347).
         XCTAssertTrue(advice.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(advice.contains("CHE_ICAL_MCP_DISCLAIMED"))
+        XCTAssertTrue(advice.contains("re-exec failed"))
+        XCTAssertFalse(advice.contains("Unset CHE_ICAL_MCP_NO_DISCLAIM"))
     }
 
     func testUnavailable_rendersTheReason() {

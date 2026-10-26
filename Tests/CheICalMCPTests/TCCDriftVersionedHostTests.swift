@@ -103,7 +103,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             signals: [.hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
             skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertTrue(banner.contains(versionedHostPath))
         XCTAssertTrue(banner.contains("no Calendar or Reminders purpose string"))
@@ -116,7 +116,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             signals: [.hostAttributedUngranted(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)],
             skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertTrue(banner.contains("Visual Studio Code's grant"))
     }
@@ -128,7 +128,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             signals: [.hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
             skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertFalse(banner.contains("--setup"))
     }
@@ -137,7 +137,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         // Self-attributed and ungranted (the #343 default after an upgrade): --setup is the fix.
         let report = DriftReport(signals: [], skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertTrue(banner.contains("--setup"))
     }
@@ -148,7 +148,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
                 host: .otherExecutable(path: "/tmp/\u{1B}[2J/x"), hostPath: "/tmp/\u{1B}[2J/x")],
             skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
-            report: report, version: "1.21.0", runningBinaryPath: runningPath,
+            report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertFalse(banner.unicodeScalars.contains { $0.value == 0x1B },
                        "the host path names a file anyone can create — same CWE-117 stderr discipline")
