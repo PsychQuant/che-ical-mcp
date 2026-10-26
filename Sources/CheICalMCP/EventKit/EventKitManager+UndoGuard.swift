@@ -50,6 +50,37 @@ extension EventKitManager {
             standIn: { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: refuseWhenEditedBefore) })
     }
 
+    /// The error for an id that did not resolve (#335): `eventNotFound`, or, when only the
+    /// edited-before refusal hides a series that `list_events` lists, `standInRefused` with the
+    /// hint. A scan on the failure path only.
+    func notFoundError(id: String) -> Error {
+        refreshIfNeeded()
+        let stored = storedEvent(id: id)
+        let hint = FirstRemainingOccurrence.hintsEditedBefore(
+            stored: stored != nil,
+            refreshes: stored.map { $0.refresh() } ?? false,
+            recurring: stored?.hasRecurrenceRules ?? false,
+            standInIgnoringTheRefusal: stored.map { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: false) != nil } ?? false)
+        if hint { return EventKitError.standInRefused(reason: Self.standInEditedBeforeReason) }
+        // One listing gives both facts. A stand-in candidate that exists but failed to refresh is
+        // not "all edited": the hint is for a series with no unedited occurrence in the scan.
+        let facts = stored.map { standInAndEditedFacts(of: $0, id: id) } ?? (hasStandInCandidate: false, hasEdited: false)
+        let allEdited = FirstRemainingOccurrence.hintsAllEdited(
+            stored: stored != nil,
+            refreshes: stored.map { $0.refresh() } ?? false,
+            recurring: stored?.hasRecurrenceRules ?? false,
+            standInIgnoringTheRefusal: facts.hasStandInCandidate,
+            editedOccurrences: facts.hasEdited)
+        return allEdited ? EventKitError.standInRefused(reason: Self.standInAllEditedReason)
+                         : EventKitError.eventNotFound(identifier: id)
+    }
+
+    /// `notFoundError(id:)` as the short reason a batch row reports.
+    func notFoundReason(id: String) -> String {
+        if case EventKitError.standInRefused(let reason) = notFoundError(id: id) { return reason }
+        return "Event not found"
+    }
+
     /// Reminder counterpart of `freshEvent(id:)`.
     func freshReminder(id: String) -> EKReminder? {
         refreshIfNeeded()

@@ -91,6 +91,37 @@ enum FirstRemainingOccurrence {
         viaStandIn && (changesAccount || changesRecurrence)
     }
 
+    /// #335: whether a bare id that did not resolve should say so instead of "Event not found": the
+    /// series is stored and recurring, its object fails to refresh, and a stand-in exists once the
+    /// edited-before refusal is ignored, so that refusal alone hides it. Anything else (nothing
+    /// stored, a series that refreshes, one with nothing left, a one-off) stays "Event not found".
+    static func hintsEditedBefore(stored: Bool, refreshes: Bool, recurring: Bool, standInIgnoringTheRefusal: Bool) -> Bool {
+        stored && !refreshes && recurring && standInIgnoringTheRefusal
+    }
+
+    /// #335 item 1: whether a bare id that did not resolve should say that every remaining
+    /// occurrence was edited on its own. The series is stored, recurring and fails to refresh, no
+    /// stand-in exists even without the edited-before refusal (an edited occurrence is never
+    /// one), and the listing holds at least one edited occurrence of it. A series with nothing
+    /// left has none, and stays "Event not found".
+    static func hintsAllEdited(stored: Bool, refreshes: Bool, recurring: Bool,
+                               standInIgnoringTheRefusal: Bool, editedOccurrences: Bool) -> Bool {
+        stored && !refreshes && recurring && !standInIgnoringTheRefusal && editedOccurrences
+    }
+
+    /// Whether the listed occurrences of the series include one edited on its own. The candidates
+    /// come from `seriesOccurrences`, which keeps only occurrences of the one series
+    /// (`UndoPostState.isOccurrence`), so a detached event of another series is never in them.
+    static func hasEditedOccurrence(_ candidates: [Candidate]) -> Bool {
+        candidates.contains { $0.isDetached }
+    }
+
+    /// Whether any candidate could stand in for the series (`pick` without the edited-before
+    /// refusal): the same test as `firstRemainingOccurrence`, before its refresh.
+    static func hasStandInCandidate(_ candidates: [Candidate], identifier: String) -> Bool {
+        pick(candidates, identifier: identifier, refuseWhenEditedBefore: false) != nil
+    }
+
     /// Whether `update_event` with span future and an `occurrence_date` is refused: the occurrence
     /// found is the stand-in itself (or earlier), a whole-series save from a middle occurrence that
     /// splits the series into a new event id (verify rounds 3-4; `<=`, because the stand-in's own
@@ -112,16 +143,10 @@ enum FirstRemainingOccurrence {
 }
 
 extension EventKitManager {
-    /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`
-    /// failed), refreshed, or nil when the series has none (`FirstRemainingOccurrence.pick`) in
-    /// the scan window (`UndoPostState.seriesScanWindow`: from a day before the series' first
-    /// start, at most 1460 days) or the occurrence does not refresh either.
-    ///
-    /// The object failed to refresh, so its fields are read with care (verify round 1): only a
-    /// series with rules is searched (a one-off or a deleted event is not, which also spares the
-    /// scan), `startDate` is optional-checked, and the series' own calendar is required, never
-    /// widened to all calendars.
-    func firstRemainingOccurrence(of stale: EKEvent, id: String, refuseWhenEditedBefore: Bool = true) -> EKEvent? {
+    /// The occurrences of the series `stale` that the scan window lists (see
+    /// `firstRemainingOccurrence`), with the candidate facts `FirstRemainingOccurrence` judges, or
+    /// nil when the series has no rules or no readable calendar or start.
+    private func seriesOccurrences(of stale: EKEvent, id: String) -> ([EKEvent], [FirstRemainingOccurrence.Candidate])? {
         guard stale.hasRecurrenceRules, let calendar = stale.calendar else { return nil }
         let firstStart: Date? = stale.startDate
         guard let firstStart else { return nil }
@@ -155,6 +180,29 @@ extension EventKitManager {
                                                  occurrenceDate: event.occurrenceDate),
                 sameSeriesByExternalID: external)
         }
+        return (listed, candidates)
+    }
+
+    /// #335 item 1: from one listing of the series `stale` in the scan window, whether a stand-in
+    /// candidate exists (before its refresh) and whether an occurrence edited on its own exists.
+    /// Both facts come from the same candidates, so they cannot disagree.
+    func standInAndEditedFacts(of stale: EKEvent, id: String) -> (hasStandInCandidate: Bool, hasEdited: Bool) {
+        guard let (_, candidates) = seriesOccurrences(of: stale, id: id) else { return (false, false) }
+        return (FirstRemainingOccurrence.hasStandInCandidate(candidates, identifier: id),
+                FirstRemainingOccurrence.hasEditedOccurrence(candidates))
+    }
+
+    /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`
+    /// failed), refreshed, or nil when the series has none (`FirstRemainingOccurrence.pick`) in
+    /// the scan window (`UndoPostState.seriesScanWindow`: from a day before the series' first
+    /// start, at most 1460 days) or the occurrence does not refresh either.
+    ///
+    /// The object failed to refresh, so its fields are read with care (verify round 1): only a
+    /// series with rules is searched (a one-off or a deleted event is not, which also spares the
+    /// scan), `startDate` is optional-checked, and the series' own calendar is required, never
+    /// widened to all calendars.
+    func firstRemainingOccurrence(of stale: EKEvent, id: String, refuseWhenEditedBefore: Bool = true) -> EKEvent? {
+        guard let (listed, candidates) = seriesOccurrences(of: stale, id: id) else { return nil }
         guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore),
               listed[index].refresh() else { return nil }
         return listed[index]
