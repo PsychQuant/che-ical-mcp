@@ -73,3 +73,7 @@ A config problem is always said out loud; it never changes behavior silently. Wh
 ## 6. `default_calendar` and archive state
 
 `default_calendar` keeps its meaning: `archive-event` reads it as the first tier of calendar choice, after routing. `/quick-event` and `calendar-management` do not read it. A config with only `default_calendar` behaves exactly as before routing existed. `archive-event`'s `state/archives.json` stays in the working directory's own `.claude/.ical/state/`, even when the config came from a parent directory.
+
+## 7. Inputs that become several events
+
+When an [event module](event-modules.md) turns one input into several events (for example a conference program), resolve the calendar **once for the whole input** and use it for every event the module creates. Do not classify the events one by one: a rule's `includes` text is written for the events it names, and a module's umbrella (an all-day event) may not fit it.

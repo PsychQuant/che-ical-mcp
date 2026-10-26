@@ -5,6 +5,8 @@ allowed-tools:
   - mcp__che-ical-mcp__list_calendars
   - mcp__che-ical-mcp__check_conflicts
   - mcp__che-ical-mcp__create_event
+  - mcp__che-ical-mcp__search_events
+  - mcp__che-ical-mcp__list_events
 ---
 
 # Quick Event Creation
@@ -12,6 +14,8 @@ allowed-tools:
 Parse the user's natural language input and create a calendar event.
 
 ## Process
+
+If the input matches a module's trigger in [`rules/event-modules.md`](../rules/event-modules.md) (today: a conference program) and that module is on, build it as the module says and skip the steps below for the program (private items in the same message, such as a flight, still go through them); if the module is off or no trigger matches, carry on below. (`search_events` and `list_events` in `allowed-tools` are there for the module's dedup; its updates ask for permission, because this command's own steps only create.)
 
 1. **Parse input**: Extract title, date, time, duration, location from user's request
 2. **Choose the calendar**: if the user named one, use it. Otherwise resolve it as [`rules/calendar-routing.md`](../rules/calendar-routing.md) says (a folder's `calendar_routing` rules); when no rule applies, show the available calendars and ask. This command does not read `default_calendar`.
@@ -33,4 +37,4 @@ User: "Dentist on Friday 10am at 123 Main St"
 
 - Always confirm the calendar to use if user hasn't specified
 - Default event duration: 1 hour if not specified
-- Always use local timezone (e.g., +08:00 for Taiwan)
+- Always use local timezone (e.g., +08:00 for Taiwan); a module's events follow the module (a conference's sessions use the conference's zone)
