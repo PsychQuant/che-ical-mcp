@@ -10,7 +10,7 @@ allowed-tools:
 
 This skill is the **first thing to try** when calendar / reminder tools fail. Most "calendar tools don't work" reports are TCC (Transparency, Consent & Control) state issues rather than code bugs.
 
-## v1.22.0+ (planned): under Claude Code, CheICalMCP is its own responsible process (#343) — read this first
+## v1.22.0+: under Claude Code, CheICalMCP is its own responsible process (#343) — read this first
 
 - **TCC checks only the responsible process.** Measured in #343 with one variable changed: the same `~/bin/CheICalMCP --print-tcc-path` read `fullAccess` when spawned under VS Code, although CheICalMCP's own grant was empty at the time, and `notDetermined` when spawned disclaimed (CheICalMCP responsible for itself). The host's grant alone decided the first result; CheICalMCP's own grant alone decided the second.
 - **From v1.22.0 the binary re-execs in place as its own responsible process only when the process macOS reports as responsible is Claude Code** (its native executable under `~/.local/share/claude/versions/<ver>`, or `ClaudeCode.app`): `posix_spawn` + `POSIX_SPAWN_SETEXEC` + disclaim, the same call Claude Desktop's `disclaimer` makes; pid and stdio unchanged. This covers the MCP server, `--cli`, `--print-tcc-path` and `--setup`; `--setup` also re-execs under any host, because it is the foreground action that creates CheICalMCP's own grant. Under Claude Code only the **`CheICalMCP`** entry matters. Every other host (Terminal, VS Code, Ghostty, ssh, cron, CI) keeps the behavior of v1.21.0 and earlier: no re-exec, the host's grant is checked, so the host-layer entry still applies there. Host-layer entries (version numbers, Terminal, VS Code) also apply with `CHE_ICAL_MCP_NO_DISCLAIM=1` or on v1.21.0 and earlier.
@@ -102,7 +102,7 @@ Open **System Settings → Privacy & Security → Calendar** (then repeat for **
 - Terminal / VS Code → the app's name — toggle **ON** if you run tools through it.
 - Claude Desktop → no host entry needed (disclaimer isolation).
 
-On v1.22.0+ (planned), `--print-tcc-path` prints the responsible process directly (the `TCC attribution` line) — use that. The ancestry trace below is the fallback for v1.21.0 and earlier, and it can mislead under the Claude Code daemon (#343).
+On v1.22.0+, `--print-tcc-path` prints the responsible process directly (the `TCC attribution` line) — use that. The ancestry trace below is the fallback for v1.21.0 and earlier, and it can mislead under the Claude Code daemon (#343).
 
 To approximate **which host context** a running server belongs to on v1.21.0 and earlier, trace its ancestry:
 
@@ -151,7 +151,7 @@ The complete "what to click" list, per host:
 
 **Claude Code (wrapper install, `~/bin/CheICalMCP`)**
 
-> v1.22.0+ (planned, #343): step 1 alone is enough under Claude Code — `--setup` re-execs as its own responsible process under any host, so the grant lands on CheICalMCP even from Terminal, and Claude Code sessions whose responsible process is Claude Code use it. Steps 3–5 apply only with `CHE_ICAL_MCP_NO_DISCLAIM=1`, on v1.21.0 and earlier, or when the responsible process is not Claude Code.
+> v1.22.0+ (#343): step 1 alone is enough under Claude Code — `--setup` re-execs as its own responsible process under any host, so the grant lands on CheICalMCP even from Terminal, and Claude Code sessions whose responsible process is Claude Code use it. Steps 3–5 apply only with `CHE_ICAL_MCP_NO_DISCLAIM=1`, on v1.21.0 and earlier, or when the responsible process is not Claude Code.
 
 1. In Terminal.app, run `~/bin/CheICalMCP --setup` → click **Allow** on both dialogs (Calendar + Reminders). This creates the `CheICalMCP` binary-layer grant. ⚠️ Note the attribution nuance: because you launched it from Terminal, the *responsible process* for this grant is Terminal, not Claude Code — so this step is mainly to (a) get the `CheICalMCP` entry created and (b) prove the binary itself can prompt. The host-layer grant that actually gates Claude Code's tool calls is created in step 3, from a Claude Code session.
 2. System Settings → Privacy & Security → **Calendar**: confirm `CheICalMCP` toggle **ON**; repeat under **Reminders**

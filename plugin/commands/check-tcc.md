@@ -37,7 +37,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
-4. **v1.22.0+ (planned, #343)**: when Claude Code is the responsible process, the server re-execs as its own responsible process, so only the `CheICalMCP` entry matters; the `TCC attribution` line in the output names the process macOS checks. The host table below applies with `CHE_ICAL_MCP_NO_DISCLAIM=1`, on v1.21.0 and earlier, and to other hosts (Terminal, VS Code, Ghostty), which are never re-exec'd.
+4. **v1.22.0+ (#343)**: when Claude Code is the responsible process, the server re-execs as its own responsible process, so only the `CheICalMCP` entry matters; the `TCC attribution` line in the output names the process macOS checks. The host table below applies with `CHE_ICAL_MCP_NO_DISCLAIM=1`, on v1.21.0 and earlier, and to other hosts (Terminal, VS Code, Ghostty), which are never re-exec'd.
 
    **Remind about the two TCC layers (#168)**: the status above is **context-dependent** — it reflects the attribution of the context this command ran in (for a Claude Code session's Bash tool, that's the Claude Code side), not an absolute property of the binary. Besides the `CheICalMCP` entry, System Settings → Privacy & Security → Calendar / Reminders may need a **host-layer entry** toggled ON:
 
