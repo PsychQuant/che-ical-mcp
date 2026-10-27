@@ -469,7 +469,7 @@ macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**�
 
 ## 技術細節
 
-- **目前版本**：v1.21.0
+- **目前版本**：v1.22.0
 - **框架**：[MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) v0.12.0
 - **行事曆 API**：EventKit（原生 macOS 框架）
 - **傳輸**：stdio
@@ -482,6 +482,7 @@ macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**�
 
 | 版本 | 變更 |
 |------|------|
+| v1.22.0 | **Claude Code 下 CheICalMCP 成為自己的 responsible process**（#343）：當 macOS 回報的 responsible process 是 Claude Code，二進位以 disclaim 屬性原地 re-exec，改由 `CheICalMCP` 的授權被檢查（Claude Code 更新也不再使它失效）；`--setup` 在任何主機都會 re-exec；其他主機維持自己的授權。`--print-tcc-path`、啟動橫幅與拒絕訊息會指出 macOS 實際檢查的 process。尚未驗證：Claude Code 為主機時經 re-exec 真的讀到行事曆。遷移步驟與同一使用者的取捨見 CHANGELOG。 |
 | v1.21.0 | **跨多年的行事曆列表完整、無法使用的系列 id 會說明原因、會議模組與資料夾行事曆分流**（#285/#310/#325/#326/#335/#337/#338）：超過四年的事件列表不再被截在約 1461 天；首場被刪除的系列可再移動、複製、刪除並更新單一場次，無法使用的系列 id 會說明原因（較早的場次被單獨編輯過，或其餘場次全都被單獨編輯過）；整個系列刪除的 undo 會還原掃描範圍內的例外場次；`make verify-release-ready` 改與最新 release tag 比對。Plugin 外殼：會議議程建成一個整天總覽加每個時段一個事件，資料夾的 `calendar_routing` 規則決定行事曆。 |
 | v1.20.0 | **純日期提醒事項、不覆蓋他人改動的 undo、讀取附 start date 與鬧鐘**（#231/#235/#236/#243/#247/#262/#267/#297/#299/#301/#311）：`YYYY-MM-DD` 的 `due_date` 會建立純日期提醒，純日期提醒要到當天結束才算逾期；`create_reminder` / `update_reminder` 回報 `date_sync`（含 `aligned`），`update_reminder` 新增 `realign_to_due`；`list_reminders` / `search_reminders` 回傳 `start` 與 `alarms`；提醒事項日期不論地區設定一律用西曆讀寫；`undo` / `redo` 遇到操作之後在別處改過的內容會拒絕覆蓋，動過循環事件的 `update_event` 不再 undo，場次被單獨編輯過（含改時間）的建立系列不會被刪；undo 保留位置／email／絕對時間鬧鐘、循環規則、URL、忙閒狀態與清單；批次刪除會記錄 undo。**BREAKING（行為）**：純日期 `due_date`、逾期規則、undo / redo 的拒絕、`redo` 除完成以外不寫入。 |
 | v1.19.0 | **原地搬移事件、提醒事項日期同步、經驗證的 self-update**（#223/#225/#226/#227）：`move_events_batch` 改成直接換事件的日曆，不再複製再刪除，循環規則、與會者等所有欄位都保留（只有跨帳號時 ID 才改變；循環事件用 `span` / `occurrence_dates`；每筆回報 `method` / `id_changed` / `not_carried_over`；複製再刪除只作為有條件的後備）；`update_reminder` 改到期日時，start date 與絕對時間鬧鐘一起移動（Reminders.app 顯示的是鬧鐘日期），回應附 `date_sync`，`clear_due_date` 一併清掉，undo 可還原；`--self-update` 只安裝 Developer ID 簽章並經公證的 binary，共用骨架改用 `che-mcp-kit-swift` 0.2.x。**BREAKING（行為）**：循環事件沒給 `occurrence_date` 會被拒絕；`copy_event` 不再搬移循環事件；`event_ids` 中的非字串項目會被拒絕。 |
