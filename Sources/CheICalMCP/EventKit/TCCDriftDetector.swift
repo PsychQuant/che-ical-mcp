@@ -156,10 +156,10 @@ struct TCCDriftDetector {
         //
         // Only checked when EventKit is NOT fully granted in this context, so granted
         // users see zero added noise. `authorizationStatus` follows the responsible
-        // process (#168), so ask the kernel which process that is: a host (Claude Code,
-        // or the app that launched its daemon) means CheICalMCP's own grant — and the
-        // --setup line that creates it — does not apply here. Self-attributed and
-        // ungranted is the plain case the --setup line already covers.
+        // process (#168), so ask the kernel which process that is: a host means this
+        // process was not re-executed although the host has no grant, and the banner
+        // gives the shared remedy for it. Self-attributed and ungranted is the plain case
+        // the --setup line already covers.
         if !eventKitAccessGranted {
             switch responsibleProcess.responsibleProcess(for: getpid()) {
             case .unavailable(let reason):
@@ -227,9 +227,9 @@ struct TCCDriftDetector {
         // emit a copy-paste command only when the path is clean, else a safe-display hint.
         //
         // Suppressed when the host-attribution signal is present (#175 verify DA-2, #343):
-        // `--setup` grants CheICalMCP's OWN attribution identity, but that signal says
-        // macOS checks a host's grant here — printing both would offer contradictory
-        // remediation, and `--setup` is the dead end in that scenario.
+        // that signal prints the shared remedy, which already carries the `--setup` command
+        // (after a restart, a host without a grant re-execs into the grant it creates), so
+        // printing this line too would repeat it.
         let hostSignalPresent = report.signals.contains {
             if case .hostAttributedUngranted = $0 { return true }
             return false
@@ -322,6 +322,14 @@ struct TCCDriftDetector {
                 lines.append("[drift] EventKit not granted, and macOS checks a host instead of CheICalMCP (#343)")
                 lines.append("[drift]   responsible process: \(safeHost)")
                 lines.append("[drift]   → \(advice)")
+                // Same steps as the access-denied message (verify round 2 row 1). A path with
+                // control characters gets no copy-paste command, as on the --setup line above.
+                let setupCommand = pathHasControlChars(runningBinaryPath)
+                    ? "run the binary at \(safePath) with --setup (its path has control characters, so no command is printed)"
+                    : "\(shellSingleQuote(runningBinaryPath)) --setup"
+                for step in ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupCommand) {
+                    lines.append("[drift]   → \(EventKitErrorSanitizer.escapeForStderr(step))")
+                }
             }
         }
 
@@ -455,11 +463,10 @@ enum DriftSignal: Sendable, Equatable {
     case csreqMismatch(service: String, hasEntitlement: Bool?)
 
     /// EventKit is NOT granted and the kernel's responsible process is a host rather than
-    /// CheICalMCP (#175, reworked in #343). Under Claude Code, CheICalMCP re-execs as its own
-    /// responsible process, so there this fires only under `CHE_ICAL_MCP_NO_DISCLAIM`, with an
-    /// inherited `CHE_ICAL_MCP_DISCLAIMED`, or when the re-exec failed. Under any other host
-    /// (Terminal, VS Code, ...) the host is responsible by design and this is the ordinary
-    /// "that app has no grant yet" case. `host` drives the advice: Claude Code can never be
-    /// prompted (no purpose string); an app's grant lives under that app's name.
+    /// CheICalMCP (#175, reworked in #343). A host without full access at start-up makes
+    /// CheICalMCP re-exec as its own responsible process, so this fires only when that did
+    /// not happen: `CHE_ICAL_MCP_NO_DISCLAIM`, an inherited `CHE_ICAL_MCP_DISCLAIMED`, a failed
+    /// re-exec, or a host grant lost after start-up. `host` drives the advice: Claude Code can
+    /// never be prompted (no purpose string); an app's grant lives under that app's name.
     case hostAttributedUngranted(host: ResponsibleHostKind, hostPath: String?)
 }
