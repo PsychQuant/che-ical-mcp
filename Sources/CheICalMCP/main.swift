@@ -6,16 +6,27 @@ import MCP
 // #343 — before any dispatch, re-exec in place as our own responsible process, so macOS
 // charges Calendar and Reminders access to CheICalMCP (which carries the purpose strings)
 // instead of to the host. Under the Claude Code daemon the host is either the app that
-// launched the daemon or Claude Code's own binary, which can never be prompted. Only that
-// case (and `--setup`, or an explicit CHE_ICAL_MCP_FORCE_DISCLAIM) re-execs; every other host
-// keeps its own grant. The skip reasons are a closed set (SelfDisclaimSkipReason); any
-// failure is fail-open.
+// launched the daemon or Claude Code's own binary, which can never be prompted. The rule
+// reads the host context's status and is the same for every host: full Calendar and
+// Reminders access keeps the host's grant, anything else re-execs (as do `--setup` and an
+// explicit CHE_ICAL_MCP_FORCE_DISCLAIM). Both reason sets are closed (SelfDisclaimSkipReason,
+// SelfDisclaimReexecReason); any failure is fail-open.
 switch SelfDisclaim.decide(
     arguments: CommandLine.arguments,
     environment: ProcessInfo.processInfo.environment,
-    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid())
+    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
+    hostHasUsableGrant: {
+        let status = LiveAuthorizationStatusSource()
+        return status.authorizationStatus(for: .event) == .fullAccess
+            && status.authorizationStatus(for: .reminder) == .fullAccess
+    }
 ) {
-case .reexec:
+case .reexec(let reason):
+    if reason == .forced {
+        let notice = "[che-ical-mcp] \(SelfDisclaim.forceVariable) is set: re-executing so macOS checks "
+            + "CheICalMCP's own Calendar and Reminders grant instead of the host's (#343)\n"
+        FileHandle.standardError.write(Data(notice.utf8))
+    }
     let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments)
     let message = "[che-ical-mcp] could not re-exec as its own responsible process "
         + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
@@ -24,12 +35,12 @@ case .skip(.alreadyDisclaimed):
     // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
     unsetenv(SelfDisclaim.disclaimedSentinel)
 case .skip(.disclaimIneffective):
-    // The sentinel is set but Claude Code still owns the attribution: the re-exec did not take
-    // effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
+    // The sentinel is set but another process still owns the attribution: the re-exec did not
+    // take effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
     unsetenv(SelfDisclaim.disclaimedSentinel)
-    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but Claude Code is still the "
-        + "responsible process (the re-exec did not take effect, or the variable was inherited); "
-        + "continuing under Claude Code's TCC attribution (#343)\n"
+    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but another process is still "
+        + "responsible for this one (the re-exec did not take effect, or the variable was inherited); "
+        + "continuing under the host's TCC attribution (#343)\n"
     FileHandle.standardError.write(Data(message.utf8))
 case .skip(.responsibilityUnavailable(let reason)):
     let message = "[che-ical-mcp] responsible process unavailable "
