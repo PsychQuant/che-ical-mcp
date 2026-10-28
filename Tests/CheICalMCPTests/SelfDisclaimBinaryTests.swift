@@ -1,6 +1,5 @@
 import XCTest
 import Darwin
-import EventKit
 @testable import CheICalMCP
 
 /// Binary-spawn coverage for the #343 re-exec: the built `CheICalMCP` is launched the way
@@ -12,10 +11,10 @@ import EventKit
 /// (POSIX_SPAWN_SETEXEC) and that the new image is its own responsible process.
 ///
 /// Whether the *default* run re-execs depends on the authorization status of the test
-/// runner's own responsible process, which a spawned child inherits: full Calendar and
+/// runner's responsible process, which a spawned child inherits: full Calendar and
 /// Reminders access keeps the host's grant, anything else re-execs. The tests therefore
 /// either force the re-exec with `CHE_ICAL_MCP_FORCE_DISCLAIM` (deterministic on every host)
-/// or compute the expectation from the runner's own status.
+/// or read the expectation from an opted-out child under the same host.
 final class SelfDisclaimBinaryTests: XCTestCase {
 
     struct Run {
@@ -140,13 +139,20 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
     }
 
-    func testDefault_followsTheRunnersAuthorizationStatus() throws {
+    func testDefault_followsTheHostsAuthorizationStatus() throws {
         // A host whose context already has full Calendar and Reminders access keeps it; any
-        // other re-execs. The child inherits the runner's responsible process, and with it the
-        // runner's status, so the runner's own status is the expectation.
+        // other re-execs. The oracle is a fresh opted-out child under the same host: it reports
+        // the host's status as the server's pre-exec read sees it. Reading the status in the
+        // test runner instead was flaky in the full suite (2026-10-28: the runner read "not
+        // usable" while both fresh children read fullAccess), after a thousand in-process tests.
         _ = try runnersHost()
-        let usable = EKEventStore.authorizationStatus(for: .event) == .fullAccess
-            && EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
+        let host = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
+        XCTAssertFalse(host.timedOut)
+        let usable = ["Calendar", "Reminders"].allSatisfy { service in
+            host.stdout.components(separatedBy: "\n").contains {
+                $0.hasPrefix("  \(service):") && $0.contains(" fullAccess")
+            }
+        }
 
         let run = try runPrintTCCPath()
         XCTAssertFalse(run.timedOut)
@@ -154,7 +160,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertEqual(
             line.hasSuffix("(this binary)"), !usable,
-            "runner's host grant usable: \(usable); got \(line)")
+            "host grant usable: \(usable); got \(line)")
     }
 
     func testOptOut_keepsTheHostAsTheResponsibleProcess() throws {
