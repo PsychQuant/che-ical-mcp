@@ -371,11 +371,18 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// future change that moves the banner, or the re-exec, and prints it from both images.
     func testBannerIsEmittedExactlyOnceAfterTheReexec() throws {
         let binary = try locateBuiltBinary()
-        let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+        // FORCE, so the re-exec happens on every host: whether a plain run re-execs depends on
+        // the runner's own grant (status-aware rule), and Terminal / Xcode / CI may have one.
+        var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+        env["CHE_ICAL_MCP_FORCE_DISCLAIM"] = "1"
 
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
         XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF")
+        // The run must actually go through the re-exec, or this test checks a single image
+        // and proves nothing (verify round 2 row 6).
+        XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"),
+                      "the spawn did not re-exec. Got stderr: \(run.stderr.prefix(400))")
         let headers = run.stderr.components(separatedBy: "[banner] che-ical-mcp ").count - 1
         XCTAssertEqual(headers, 1, "Expected exactly one banner header. Got stderr: \(run.stderr.prefix(400))")
         XCTAssertFalse(
