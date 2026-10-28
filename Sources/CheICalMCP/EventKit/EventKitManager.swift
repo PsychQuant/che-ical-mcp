@@ -109,10 +109,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
     /// The path is injected (not read from globals) so denial-message wiring is
     /// unit-testable deterministically; control chars in the path are escaped so the
-    /// hint is safe to surface in a response or a terminal.
+    /// hint is safe to surface in a response or a terminal, and the path is single-quoted
+    /// so a pasted hint expands nothing — inside double quotes `$(…)` and backticks still
+    /// run (#343 verify round 2, row 9).
     static func setupCommandHint(binaryPath: String) -> String {
         let safe = EventKitErrorSanitizer.escapeForStderr(binaryPath)
-        return "\"\(safe)\" --setup"
+        return "\(TCCDriftDetector.shellSingleQuote(safe)) --setup"
     }
 
     /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the
@@ -133,7 +135,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// variant that must NOT lead with `--setup`, because a bare `--setup` cannot re-prompt a
     /// status that is already `.denied` (the status-first check only requests on `.notDetermined`). (#158)
     /// `attribution` is the kind of process macOS checks (#343); it only shapes the generic
-    /// branch, and `nil` means the kernel lookup was unavailable.
+    /// branch, and `nil` means the kernel lookup was unavailable. `restrictedByPolicy` is a
+    /// `.restricted` status (a configuration profile or Screen Time), which no prompt, switch
+    /// or `--setup` can change, so it takes precedence over every other branch.
     static func accessDeniedMessage(
         type: String,
         isSSH: Bool,
@@ -141,8 +145,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         isMCPB: Bool,
         deniedByStatus: Bool,
         setupHint: String,
-        attribution: ResponsibleHostKind? = nil
+        attribution: ResponsibleHostKind? = nil,
+        restrictedByPolicy: Bool = false
     ) -> String {
+        if restrictedByPolicy {
+            return """
+            \(type) access is restricted on this Mac (TCC status `restricted`): a configuration \
+            profile (MDM) or a Screen Time restriction controls it, so no prompt will appear and \
+            the System Settings switch cannot change it. Ask whoever manages this Mac to allow \
+            \(type) access for CheICalMCP.
+            """
+        }
         if isSSH && isNonInteractive {
             return """
             \(type) access denied (SSH + non-interactive session detected). \
@@ -230,13 +243,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             if deniedByStatus {
                 // macOS already recorded "Don't Allow": no prompt will appear and --setup cannot
                 // re-prompt (the #154 / #158 dead end), so do not promise one.
+                // `tccutil reset <service> com.checheng.CheICalMCP` is not offered: for a bare
+                // binary it fails with -10814 (no LaunchServices registration; README erratum).
                 return """
                 \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
                 macOS already has a "Don't Allow" recorded for CheICalMCP, so no prompt will appear.
                 1. Switch CheICalMCP on in System Settings → Privacy & Security → \(type)
-                2. Or clear the recorded answer so the prompt can appear once more: \
-                `tccutil reset \(type) com.checheng.CheICalMCP`, then run \(setupHint) from Terminal
-                3. Restart Claude Desktop/Code
+                2. Restart Claude Desktop/Code
                 """
             }
             return """
@@ -245,23 +258,33 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             2. Or enable CheICalMCP in System Settings → Privacy & Security → \(type)
             3. Restart Claude Desktop/Code
             """
+        // A host is checked and has no grant: the steps are the same ones the banner prints
+        // (#343 verify round 2, row 1), so the two cannot contradict each other.
         case .claudeCode(let version)?:
-            return """
-            \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .claudeCode(version: version)))
-            1. Find out why this server was not re-executed: CHE_ICAL_MCP_NO_DISCLAIM in the MCP \
-            server's environment, an inherited CHE_ICAL_MCP_DISCLAIMED, or a "could not re-exec" \
-            line on stderr at start-up
-            2. Restart Claude Code, then allow the macOS prompt for CheICalMCP
-            """
+            return ([
+                "\(type) access denied. \(ResponsibleProcessFormatter.advice(for: .claudeCode(version: version)))",
+            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
+                + [settingsStep(type: type, alsoEnable: nil)]))
+                .joined(separator: "\n")
         case .appBundle(let name)?:
-            let safeName = EventKitErrorSanitizer.escapeForStderr(name)
-            return """
-            \(type) access denied. macOS checks \(safeName)'s grant here, not CheICalMCP's.
-            1. Open System Settings → Privacy & Security → \(type) and enable \(safeName)
-            2. Or let CheICalMCP use its own grant by running its setup from Terminal: \(setupHint)
-            3. Restart Claude Desktop/Code
-            """
-        case .otherExecutable?, .unknown?, nil:
+            // The name comes from a path anyone can create and is returned to an MCP client, so
+            // only a plain name is echoed (round 2, row 9).
+            let app = ResponsibleProcessFormatter.responseSafeAppName(name)
+            let checked = app.map { "\($0)'s grant" } ?? "the grant of the app that launched this server"
+            let toggle = app.map { "enable \($0)" }
+                ?? "enable the app that launched this server (`CheICalMCP --print-tcc-path` shows its name)"
+            let steps = ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
+                + [settingsStep(type: type, alsoEnable: toggle)]
+            return (["\(type) access denied. macOS checks \(checked) here, not CheICalMCP's."] + numbered(steps))
+                .joined(separator: "\n")
+        case .otherExecutable?, .unknown?:
+            return ([
+                "\(type) access denied. macOS checks another process here, not CheICalMCP "
+                    + "(run `CheICalMCP --print-tcc-path` to see which one).",
+            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
+                + [settingsStep(type: type, alsoEnable: nil)]))
+                .joined(separator: "\n")
+        case nil:
             return """
             \(type) access denied. Please grant permission:
             1. Open System Settings → Privacy & Security → \(type)
@@ -272,6 +295,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             4. Restart Claude Desktop/Code
             """
         }
+    }
+
+    /// The System Settings step of a host-attributed denial. A "Don't Allow" recorded for
+    /// CheICalMCP is never asked again (`--setup` cannot re-prompt it), so the switch is the
+    /// way back; `alsoEnable` offers keeping the host's own grant instead, for an app host.
+    private static func settingsStep(type: String, alsoEnable: String?) -> String {
+        let base = "Open System Settings → Privacy & Security → \(type) and switch CheICalMCP on if it "
+            + "is listed as off (a recorded \"Don't Allow\" is not asked again)"
+        guard let alsoEnable else { return base }
+        return base + ", or \(alsoEnable) to keep using its grant"
+    }
+
+    private static func numbered(_ steps: [String]) -> [String] {
+        steps.enumerated().map { "\($0.offset + 1). \($0.element)" }
+    }
+
+    /// Whether the current status of `typeName`'s service is `.restricted` (#343 verify
+    /// round 2, row 9). The gate reports `.denied` and `.restricted` alike as `deniedByStatus`;
+    /// the message reads which one at message time, the same way it reads the attribution.
+    static func currentStatusIsRestricted(typeName: String) -> Bool {
+        let entity: EKEntityType = typeName == "Reminders" ? .reminder : .event
+        return EKEventStore.authorizationStatus(for: entity) == .restricted
     }
 
     /// The kind of process macOS checks for this server (#343), or `nil` when the kernel
@@ -2650,7 +2695,8 @@ enum EventKitError: LocalizedError {
                 isMCPB: EventKitManager.isMCPBClaudeDesktopInstall,
                 deniedByStatus: deniedByStatus,
                 setupHint: EventKitManager.resolvedSetupCommandHint(),
-                attribution: EventKitManager.currentAttribution()
+                attribution: EventKitManager.currentAttribution(),
+                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type)
             )
         case .insufficientAccess(let type):
             return """

@@ -92,10 +92,21 @@ final class SetupCommandTests: XCTestCase {
 
     // MARK: - #163 — binary-specific `--setup` remediation hint
 
-    /// The pure hint formatter wraps the injected path in quotes and appends `--setup`.
+    /// The pure hint formatter single-quotes the injected path and appends `--setup`.
     func testSetupCommandHint_formatsQuotedPathWithFlag() {
         let hint = EventKitManager.setupCommandHint(binaryPath: "/Users/x/bin/CheICalMCP")
-        XCTAssertEqual(hint, "\"/Users/x/bin/CheICalMCP\" --setup")
+        XCTAssertEqual(hint, "'/Users/x/bin/CheICalMCP' --setup")
+    }
+
+    /// Round 2 row 9: inside double quotes the shell still expands `$(…)` and backticks, so a
+    /// pasted hint could run part of its own path. Single quotes expand nothing.
+    func testSetupCommandHint_singleQuotesShellMetacharacters() {
+        XCTAssertEqual(
+            EventKitManager.setupCommandHint(binaryPath: "/Users/x/$(touch p)/`id`/CheICalMCP"),
+            "'/Users/x/$(touch p)/`id`/CheICalMCP' --setup")
+        XCTAssertEqual(
+            EventKitManager.setupCommandHint(binaryPath: "/Users/o'neil/bin/CheICalMCP"),
+            "'/Users/o'\\''neil/bin/CheICalMCP' --setup")
     }
 
     /// Control chars in the path must be escaped (the hint can land in a terminal / response).
@@ -109,7 +120,7 @@ final class SetupCommandTests: XCTestCase {
     func testResolvedSetupCommandHint_containsSetupFlag() {
         let hint = EventKitManager.resolvedSetupCommandHint()
         XCTAssertTrue(hint.contains("--setup"), "resolved hint must contain the --setup flag")
-        XCTAssertTrue(hint.hasPrefix("\""), "resolved hint must quote the binary path")
+        XCTAssertTrue(hint.hasPrefix("'"), "resolved hint must quote the binary path")
     }
 
     /// The generic (no-context) denial message now includes the resolved `--setup` command,

@@ -135,22 +135,62 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(msg.contains("1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(hint)"))
     }
 
-    func testClaudeCodeAttribution_explainsItCannotBePrompted_withoutSetup() {
+    func testClaudeCodeAttribution_explainsItCannotBePrompted_andGivesTheSharedRemedy() {
         let msg = generic(.claudeCode(version: "2.1.309"))
         XCTAssertTrue(msg.contains("no Calendar or Reminders purpose string"))
         XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
         XCTAssertTrue(msg.contains("CHE_ICAL_MCP_DISCLAIMED"))
         XCTAssertFalse(msg.contains("Remove CHE_ICAL_MCP_NO_DISCLAIM"),
                        "the opt-out may never have been set: the re-exec can also have failed or been skipped")
-        XCTAssertFalse(msg.contains(hint), "--setup grants CheICalMCP's own identity, which this process does not use")
+        // Status-aware rule: after a restart a host without access re-execs, so the grant
+        // `--setup` creates is the one that serves it.
+        XCTAssertTrue(msg.contains("Restart the MCP client"))
+        XCTAssertTrue(msg.contains(hint))
     }
 
     func testAppAttribution_namesTheApp() {
         let msg = generic(.appBundle(name: "Visual Studio Code"))
         XCTAssertTrue(msg.contains("enable Visual Studio Code"))
-        // Hosts other than Claude Code are not re-executed, so there is nothing to "unset".
         XCTAssertFalse(msg.contains("unset CHE_ICAL_MCP_NO_DISCLAIM"))
+        // Round 2 row 1: `--setup` alone did not help a host that was never re-executed. With
+        // the status-aware rule it does, after a restart — the message has to say so.
+        XCTAssertTrue(msg.contains("Restart the MCP client"))
         XCTAssertTrue(msg.contains(hint), "--setup is how CheICalMCP gets its own grant under any host")
+    }
+
+    func testOtherExecutableAttribution_givesTheSharedRemedy() {
+        let msg = generic(.otherExecutable(path: "/sbin/launchd"))
+        XCTAssertTrue(msg.contains("Restart the MCP client"))
+        XCTAssertTrue(msg.contains(hint))
+        XCTAssertTrue(msg.contains("--print-tcc-path"))
+    }
+
+    func testAppNameOutsideTheSafeSet_isNotEchoedIntoTheResponse() {
+        // The bundle name comes from a path anyone can create, and this message is returned to
+        // an MCP client. Round 2 row 9: escaping control characters alone let any text through.
+        let long = String(repeating: "A", count: 200)
+        for name in [long, "Evil`whoami`", "Tool\"; rm -rf ~; \""] {
+            let msg = generic(.appBundle(name: name))
+            XCTAssertFalse(msg.contains(name), "name \(name.prefix(20))")
+            XCTAssertTrue(msg.contains("the app that launched this server"))
+        }
+        XCTAssertTrue(generic(.appBundle(name: "ターミナル")).contains("enable ターミナル"))
+    }
+
+    func testRestrictedByPolicy_namesThePolicyAndOffersNoPromptOrSwitch() {
+        // `.restricted` is a configuration profile or Screen Time, not a recorded "Don't Allow":
+        // neither a prompt nor the System Settings switch can change it (round 2 row 9).
+        for mcpb in [false, true] {
+            let msg = EventKitManager.accessDeniedMessage(
+                type: "Calendar", isSSH: false, isNonInteractive: false,
+                isMCPB: mcpb, deniedByStatus: true, setupHint: hint, attribution: .selfBinary,
+                restrictedByPolicy: true)
+            XCTAssertTrue(msg.contains("restricted"))
+            XCTAssertTrue(msg.contains("configuration profile"))
+            XCTAssertFalse(msg.contains("Allow the macOS prompt"))
+            XCTAssertFalse(msg.contains(hint))
+            XCTAssertFalse(msg.contains("tccutil"))
+        }
     }
 
     func testSelfAttributionAlreadyDenied_doesNotPromiseAPrompt() {
@@ -162,7 +202,9 @@ final class AccessDeniedMessageTests: XCTestCase {
             isMCPB: false, deniedByStatus: true, setupHint: hint, attribution: .selfBinary)
         XCTAssertFalse(msg.contains("Allow the macOS prompt"))
         XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"))
-        XCTAssertTrue(msg.contains("tccutil reset"))
+        // Round 2 row 9: `tccutil reset … com.checheng.CheICalMCP` fails with -10814 for a bare
+        // binary (README erratum), so it is not offered as a fix.
+        XCTAssertFalse(msg.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
     }
 
     func testAttribution_doesNotOverrideTheSSHBranch() {

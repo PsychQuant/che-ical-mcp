@@ -130,6 +130,18 @@ enum ResponsibleProcessFormatter {
         ]
     }
 
+    private static let appNameCharacters = CharacterSet.letters
+        .union(.decimalDigits).union(.nonBaseCharacters).union(CharacterSet(charactersIn: " .-_()+"))
+
+    /// An app bundle name fit to go into a message returned to an MCP client, or `nil`. The
+    /// name is a path component anyone can choose, so only a short plain name passes:
+    /// letters, digits, spaces and `.-_()+`, at most 64 characters (#343 verify round 2, row 9).
+    static func responseSafeAppName(_ name: String) -> String? {
+        guard !name.isEmpty, name.count <= 64,
+              name.unicodeScalars.allSatisfy(appNameCharacters.contains) else { return nil }
+        return name
+    }
+
     /// The line `--setup` prints before requesting access: whose grant the dialogs create.
     static func setupTargetLine(_ result: ResponsibleProcessResult) -> String {
         let escape = EventKitErrorSanitizer.escapeForStderr
