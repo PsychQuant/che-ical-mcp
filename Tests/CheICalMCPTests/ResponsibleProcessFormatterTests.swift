@@ -36,6 +36,9 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(advice.contains("CHE_ICAL_MCP_DISCLAIMED"))
         XCTAssertTrue(advice.contains("re-exec failed"))
         XCTAssertFalse(advice.contains("Unset CHE_ICAL_MCP_NO_DISCLAIM"))
+        // Status-aware rule: a Claude Code host with full access is kept, so a host-attributed
+        // denial can also mean the grant changed after start-up.
+        XCTAssertTrue(advice.contains("lost it since"))
     }
 
     func testUnavailable_rendersTheReason() {
@@ -57,6 +60,26 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
             .resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true)))
         XCTAssertTrue(line.hasPrefix("Authorization target: CheICalMCP (/Users/u/bin/CheICalMCP)"))
         XCTAssertFalse(line.contains("WARNING"))
+    }
+
+    func testSetupTarget_self_saysWhichHostsUseTheGrant() {
+        // Round 2 row 3: "every host that launches this binary uses this grant" was false —
+        // a host with full access of its own keeps it.
+        let line = ResponsibleProcessFormatter.setupTargetLine(
+            .resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true)))
+        XCTAssertFalse(line.contains("every host"))
+        XCTAssertTrue(line.contains("has no full Calendar and Reminders access of its own"))
+    }
+
+    // MARK: - Shared remedy for a host-attributed denial (#343 verify round 2, row 1)
+
+    func testHostAttributedRemedy_restartsAndPointsAtCheICalMCPsOwnGrant() {
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: "'/Users/u/bin/CheICalMCP' --setup")
+        XCTAssertEqual(steps.count, 2)
+        XCTAssertTrue(steps[0].contains("Restart the MCP client"))
+        XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(steps[1].contains("'/Users/u/bin/CheICalMCP' --setup"))
+        XCTAssertTrue(steps[1].contains("CheICalMCP's own grant"))
     }
 
     func testSetupTarget_host_warnsTheGrantGoesElsewhere() {
