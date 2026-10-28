@@ -274,7 +274,7 @@ echo '{"tool":"list_calendars","arguments":{}}' | CheICalMCP --cli
 claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 ```
 
-Handy for launchd jobs, shell scripts, CI pipelines, and agents that prefer a subprocess over the MCP protocol. TCC permissions still apply — run `CheICalMCP --setup` first if needed.
+Handy for launchd jobs, shell scripts, CI pipelines, and agents that prefer a subprocess over the MCP protocol. TCC permissions still apply — run `CheICalMCP --setup` first if needed: from v1.23.0 a context without a Calendar and Reminders grant of its own uses the grant `--setup` creates ([#343](https://github.com/PsychQuant/che-ical-mcp/issues/343)).
 
 ---
 
@@ -468,13 +468,15 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 
 ### Claude Code updates rotate the host-side grant (#170)
 
-> **Changed in v1.22.0 ([#343](https://github.com/PsychQuant/che-ical-mcp/issues/343))**: when the responsible process macOS reports is Claude Code (its native executable under `~/.local/share/claude/versions/<ver>`, or `ClaudeCode.app`), the binary re-execs in place as its own responsible process, so macOS checks the `CheICalMCP` grant and Claude Code updates no longer affect it. This covers the MCP server, `--cli`, `--print-tcc-path` and `--setup`; `--setup` re-execs under any host. Every other host (Terminal, VS Code, Ghostty, ssh, cron, CI) keeps the behavior before v1.22.0: the host's grant is checked and nothing is re-exec'd. Under Claude Code, allow the CheICalMCP prompt once after upgrading, or run `~/bin/CheICalMCP --setup` in the foreground; a background session without a GUI cannot show the prompt.
+> **Changed in v1.22.0, and again in v1.23.0 ([#343](https://github.com/PsychQuant/che-ical-mcp/issues/343))**: From v1.23.0 the rule depends on the grant of the context the binary was launched in, and it is the same for every host: before any dispatch the binary reads that context's authorization status. If it already has full Calendar and Reminders access (Terminal, VS Code, a Claude Code version-number entry, any host), that grant is kept and nothing is re-exec'd. Otherwise the binary re-execs in place as its own responsible process (`posix_spawn` + `POSIX_SPAWN_SETEXEC` + disclaim, the call Claude Desktop's `disclaimer` makes; pid and stdio unchanged), so macOS checks the `CheICalMCP` grant, the one `--setup` creates. This covers the MCP server, `--cli`, `--print-tcc-path` and `--setup`; `--setup` re-execs under any host, because it is the action that creates CheICalMCP's own grant. (v1.22.0 re-exec'd only when Claude Code was the responsible process.) A rotated Claude Code path has no grant, so after an update the binary re-execs and uses CheICalMCP's own grant instead of going stale.
 >
-> **Trade-off**: where the re-exec happens, macOS checks CheICalMCP's grant, so once it is allowed, any process Claude Code launches that execs this binary (including `--cli`) reads Calendar and Reminders under that grant without a separate consent, the same property Claude Desktop's `.mcpb` has through `disclaimer`. `CHE_ICAL_MCP_NO_DISCLAIM=1` restores host attribution; `CHE_ICAL_MCP_FORCE_DISCLAIM=1` re-execs under any host (the opt-out wins).
+> **Migration from v1.22.0**: a host without full access used to keep its own (missing or partial) grant and now uses CheICalMCP's; if that is not granted yet, run `~/bin/CheICalMCP --setup` once in the foreground and restart the client. A host with full access, a working Claude Code version-number entry included, is unaffected.
 >
-> **Not verified**: CI does not cover reading the calendar through the new path, and only `--setup` has been seen to show a prompt; server mode and `--cli` are unconfirmed.
+> **Trade-off**: once CheICalMCP's own grant is allowed, any process that runs this binary from a context without full access of its own (another app, a script, a launchd or cron job, a Claude Code session, `--cli` included) reads Calendar and Reminders under that grant without a separate consent; in v1.22.0 this applied under Claude Code only. Set `CHE_ICAL_MCP_NO_DISCLAIM=1` where that is not wanted: it keeps host attribution. `CHE_ICAL_MCP_FORCE_DISCLAIM=1` re-execs even under a host with a grant of its own (the opt-out wins; a forced re-exec prints one stderr line).
 >
-> The rest of this section applies to v1.21.0 and earlier, to hosts other than Claude Code, and with `CHE_ICAL_MCP_NO_DISCLAIM=1`.
+> **Not verified**: CI does not cover reading the calendar through the re-exec. On 2026-10-28 v1.22.0 read the calendar through a forced re-exec with `--cli`; a re-exec that a Claude Code worker launched through `ClaudeCode.app` triggers by itself, and server mode after the re-exec, have not been observed yet.
+>
+> The rest of this section applies to v1.21.0 and earlier, to a host that has full access of its own (its grant is kept), and with `CHE_ICAL_MCP_NO_DISCLAIM=1`.
 
 Under a Claude Code **native install**, the real executable lives at a **versioned path** (`~/.local/share/claude/versions/<version>`; `~/.local/bin/claude` is just a symlink), and macOS TCC keys the host-side Calendar/Reminders grant to that path. **Every Claude Code auto-update rotates the path and silently invalidates the grant** — the classic symptom is "worked yesterday, broken right after an update", with System Settings accumulating stale bare-version-number entries (`2.1.202`, `2.1.203`, …).
 

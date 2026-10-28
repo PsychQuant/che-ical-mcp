@@ -56,8 +56,9 @@ enum SelfDisclaimDecision: Equatable, Sendable {
 /// The rule depends on the host's authorization status and is the same for every host
 /// (decision after verify round 2): a host whose context already has full Calendar and
 /// Reminders access keeps that grant, and any other host re-execs, so the grant `--setup`
-/// creates is the one that serves it. A fresh install's own grant is empty (measured on
-/// 2026-10-23), which is why a host grant that works is never traded for it. `--setup` and
+/// creates is the one that serves it. CheICalMCP's own grant can be empty while a host's
+/// works (2026-10-23: `notDetermined` for both services under disclaim, `fullAccess` under
+/// VS Code), which is why a host grant that works is never traded for it. `--setup` and
 /// `CHE_ICAL_MCP_FORCE_DISCLAIM` re-exec under any host; `CHE_ICAL_MCP_NO_DISCLAIM` wins over
 /// both.
 enum SelfDisclaim {
