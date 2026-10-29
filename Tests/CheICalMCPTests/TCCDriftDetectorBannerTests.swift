@@ -370,6 +370,8 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// dispatch, so the banner is written by the re-exec'd image only. Guards against a
     /// future change that moves the banner, or the re-exec, and prints it from both images.
     func testBannerIsEmittedExactlyOnceAfterTheReexec() throws {
+        // Without the responsibility SPI nothing re-execs, and no FORCE notice is printed.
+        guard LiveResponsibleProcessSource.isAvailable else { throw XCTSkip("responsibility SPI unavailable here") }
         let binary = try locateBuiltBinary()
         // FORCE, so the re-exec happens on every host: whether a plain run re-execs depends on
         // the runner's own grant (status-aware rule), and Terminal / Xcode / CI may have one.
@@ -383,6 +385,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // and proves nothing (verify round 2 row 6).
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"),
                       "the spawn did not re-exec. Got stderr: \(run.stderr.prefix(400))")
+        // The notice is printed before the exec is attempted, so it shows the decision, not
+        // that the exec happened; a failed exec says so on the next line (verify round 3 row 5).
+        XCTAssertFalse(run.stderr.contains("could not re-exec"),
+                       "the re-exec failed. Got stderr: \(run.stderr.prefix(400))")
         let headers = run.stderr.components(separatedBy: "[banner] che-ical-mcp ").count - 1
         XCTAssertEqual(headers, 1, "Expected exactly one banner header. Got stderr: \(run.stderr.prefix(400))")
         XCTAssertFalse(
