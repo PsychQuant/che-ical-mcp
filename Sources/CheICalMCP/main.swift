@@ -101,7 +101,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     // print it first, from the kernel, so nobody has to infer it from the parent chain.
     let attribution = ResponsibleProcessFormatter.attributionSection(
         selfPid: ProcessInfo.processInfo.processIdentifier,
-        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()))
+        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
+        hostGrantUsable: SelfDisclaim.hostGrantIsUsable(calendar: calStatus, reminders: remStatus))
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))

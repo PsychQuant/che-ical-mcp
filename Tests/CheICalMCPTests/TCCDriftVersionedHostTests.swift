@@ -132,6 +132,7 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
         XCTAssertTrue(banner.contains("Restart the MCP client"))
+        XCTAssertTrue(banner.contains("Open System Settings → Privacy & Security → Calendar / Reminders"))
         XCTAssertTrue(banner.contains("'\(runningPath)' --setup"))
         XCTAssertEqual(banner.components(separatedBy: "--setup").count - 1, 1, banner)
     }

@@ -269,8 +269,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .claudeCode(let version)?:
             return ([
                 "\(type) access denied. \(ResponsibleProcessFormatter.advice(for: .claudeCode(version: version)))",
-            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
-                + [settingsStep(type: type, alsoEnable: nil)]))
+            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(
+                setupCommand: setupHint, settingsPane: type, alsoEnable: nil)))
                 .joined(separator: "\n")
         case .appBundle(let name)?:
             // The name comes from a path anyone can create and is returned to an MCP client, so
@@ -279,16 +279,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let checked = app.map { "\($0)'s grant" } ?? "the grant of the app that launched this server"
             let toggle = app.map { "enable \($0)" }
                 ?? "enable the app that launched this server (`CheICalMCP --print-tcc-path` shows its name)"
-            let steps = ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
-                + [settingsStep(type: type, alsoEnable: toggle)]
+            let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+                setupCommand: setupHint, settingsPane: type, alsoEnable: toggle)
             return (["\(type) access denied. macOS checks \(checked) here, not CheICalMCP's."] + numbered(steps))
                 .joined(separator: "\n")
         case .otherExecutable?, .unknown?:
             return ([
                 "\(type) access denied. macOS checks another process here, not CheICalMCP "
                     + "(run `CheICalMCP --print-tcc-path` to see which one).",
-            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupHint)
-                + [settingsStep(type: type, alsoEnable: nil)]))
+            ] + numbered(ResponsibleProcessFormatter.hostAttributedRemedy(
+                setupCommand: setupHint, settingsPane: type, alsoEnable: nil)))
                 .joined(separator: "\n")
         case nil:
             return """
@@ -301,16 +301,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             4. Restart Claude Desktop/Code
             """
         }
-    }
-
-    /// The System Settings step of a host-attributed denial. A "Don't Allow" recorded for
-    /// CheICalMCP is never asked again (`--setup` cannot re-prompt it), so the switch is the
-    /// way back; `alsoEnable` offers keeping the host's own grant instead, for an app host.
-    private static func settingsStep(type: String, alsoEnable: String?) -> String {
-        let base = "Open System Settings → Privacy & Security → \(type) and switch CheICalMCP on if it "
-            + "is listed as off (a recorded \"Don't Allow\" is not asked again)"
-        guard let alsoEnable else { return base }
-        return base + ", or \(alsoEnable) to keep using its grant"
     }
 
     private static func numbered(_ steps: [String]) -> [String] {

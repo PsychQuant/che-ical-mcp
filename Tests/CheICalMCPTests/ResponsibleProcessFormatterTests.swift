@@ -69,17 +69,54 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
             .resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true)))
         XCTAssertFalse(line.contains("every host"))
         XCTAssertTrue(line.contains("has no full Calendar and Reminders access of its own"))
+        // Verify round 3 row 19: the criterion is the responsible process, not the launcher.
+        XCTAssertTrue(line.contains("responsible process"))
+        XCTAssertFalse(line.contains("the process that launches"))
     }
 
     // MARK: - Shared remedy for a host-attributed denial (#343 verify round 2, row 1)
 
     func testHostAttributedRemedy_restartsAndPointsAtCheICalMCPsOwnGrant() {
-        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: "'/Users/u/bin/CheICalMCP' --setup")
-        XCTAssertEqual(steps.count, 2)
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'/Users/u/bin/CheICalMCP' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertEqual(steps.count, 3)
         XCTAssertTrue(steps[0].contains("Restart the MCP client"))
         XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_NO_DISCLAIM"))
         XCTAssertTrue(steps[1].contains("'/Users/u/bin/CheICalMCP' --setup"))
         XCTAssertTrue(steps[1].contains("CheICalMCP's own grant"))
+    }
+
+    func testHostAttributedRemedy_namesEveryReasonTheReexecDidNotHappen() {
+        // Verify round 3 row 8: only NO_DISCLAIM was named, but an inherited sentinel and a
+        // failed re-exec leave the same state, and a restart fixes neither.
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_DISCLAIMED"))
+        XCTAssertTrue(steps[0].contains("could not re-exec"))
+    }
+
+    func testHostAttributedRemedy_includesTheSystemSettingsStep() {
+        // Verify round 3 row 11: the banner had no System Settings step, so for a recorded
+        // "Don't Allow" its only advice was a --setup that cannot re-prompt.
+        let plain = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar / Reminders", alsoEnable: nil)
+        XCTAssertTrue(plain[2].contains("Open System Settings → Privacy & Security → Calendar / Reminders"))
+        XCTAssertTrue(plain[2].contains("Don't Allow"))
+        let app = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: "enable Terminal")
+        XCTAssertTrue(app[2].contains("enable Terminal to keep using its grant"))
+    }
+
+    func testAttribution_hostWithFullAccess_saysTheGrantIsKept_notThatTheReexecFailed() {
+        // Verify round 3 row 3: under the status-aware rule a Claude Code host with full access
+        // is the normal, intended state, and the failure causes did not apply.
+        let host = ResponsibleProcessResult.resolved(ResponsibleProcess(
+            pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+        let kept = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: host, hostGrantUsable: true)
+        XCTAssertFalse(kept.contains("was not re-executed"), kept)
+        XCTAssertTrue(kept.contains("keeps"), kept)
+        let failed = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: host, hostGrantUsable: false)
+        XCTAssertTrue(failed.contains("was not re-executed"), failed)
     }
 
     func testSetupTarget_host_warnsTheGrantGoesElsewhere() {
@@ -88,6 +125,7 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(line.contains("WARNING"))
         XCTAssertTrue(line.contains("Terminal"))
         XCTAssertTrue(line.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(line.contains("CHE_ICAL_MCP_DISCLAIMED"), "verify round 3 row 8")
     }
 
     func testSetupTarget_unavailable_rendersTheReason() {

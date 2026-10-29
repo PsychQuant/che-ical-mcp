@@ -327,7 +327,8 @@ struct TCCDriftDetector {
                 // print (quoted clean path, or an escaped description): escaping the line again
                 // doubled the backslashes of `'\''` and broke the quoting (verify round 3 row 2).
                 let setupCommand = EventKitManager.setupCommandHint(binaryPath: runningBinaryPath)
-                for step in ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupCommand) {
+                for step in ResponsibleProcessFormatter.hostAttributedRemedy(
+                    setupCommand: setupCommand, settingsPane: "Calendar / Reminders", alsoEnable: nil) {
                     lines.append("[drift]   → \(step)")
                 }
             }
