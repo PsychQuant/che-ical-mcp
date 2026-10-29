@@ -177,6 +177,13 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(generic(.appBundle(name: "ターミナル")).contains("enable ターミナル"))
     }
 
+    func testAppNameLength_isCountedInScalars() {
+        // Verify round 3 row 22: 40 "e + combining acute" pairs are 40 characters but 80 scalars;
+        // counting characters let combining marks stretch a name past the bound.
+        XCTAssertNil(ResponsibleProcessFormatter.responseSafeAppName(String(repeating: "e\u{0301}", count: 40)))
+        XCTAssertEqual(ResponsibleProcessFormatter.responseSafeAppName("Visual Studio Code"), "Visual Studio Code")
+    }
+
     func testRestrictedByPolicy_namesThePolicyAndOffersNoPromptOrSwitch() {
         // `.restricted` is a configuration profile or Screen Time, not a recorded "Don't Allow":
         // neither a prompt nor the System Settings switch can change it (round 2 row 9).

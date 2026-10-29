@@ -158,9 +158,10 @@ enum ResponsibleProcessFormatter {
 
     /// An app bundle name fit to go into a message returned to an MCP client, or `nil`. The
     /// name is a path component anyone can choose, so only a short plain name passes:
-    /// letters, digits, spaces and `.-_()+`, at most 64 characters (#343 verify round 2, row 9).
+    /// letters, digits, spaces and `.-_()+`, at most 64 unicode scalars (#343 verify round 2, row 9;
+    /// scalars rather than characters since verify round 3, row 22).
     static func responseSafeAppName(_ name: String) -> String? {
-        guard !name.isEmpty, name.count <= 64,
+        guard !name.isEmpty, name.unicodeScalars.count <= 64,   // scalars: combining marks count too
               name.unicodeScalars.allSatisfy(appNameCharacters.contains) else { return nil }
         return name
     }
