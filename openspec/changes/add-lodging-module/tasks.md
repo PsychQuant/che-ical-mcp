@@ -1,14 +1,14 @@
 ## 1. 契約檔與共用規則
 
-- [x] 1.1（實測 2026-10-29，iCloud，host `+09:00`：create 的純日期結束日為排他、update 的純日期結束日包含該日，契約分開寫）在名稱含 `#342` 的拋棄式日曆上建一個全天事件（起 `2026-11-10`、迄 `2026-11-13`，無時間、無 offset）並讀回。驗證：記錄 `start_date_local` / `end_date_local`，讀回為 11/10 到 11/12，與會議總覽已實測的邊界一致，結果寫進契約檔實例；結束後依 id 刪除日曆並用 `list_calendars` 確認清乾淨。
+- [x] 1.1（實測 2026-10-29，iCloud，host `+09:00`：create 與定時轉全天的 update，純日期結束日為排他；已是全天的事件 update，純日期結束日包含該日；一夜的住宿 update 起訖同日可行；契約據此分開寫並要求每次寫入後讀回）在名稱含 `#342` 的拋棄式日曆上建一個全天事件（起 `2026-11-10`、迄 `2026-11-13`，無時間、無 offset）並讀回。驗證：記錄 `start_date_local` / `end_date_local`，讀回為 11/10 到 11/12，與會議總覽已實測的邊界一致，結果寫進契約檔實例；結束後依 id 刪除日曆並用 `list_calendars` 確認清乾淨。
 - [x] 1.2 寫 `plugin/rules/modules/lodging.md`（設計：住宿模組是第二個契約檔，沿用四部分；requirement：The module applies to a booking for a stay and can be turned off；A stay is one all-day event over the nights stayed；The reservation number is the key and the event carries a marker line；A stay without a confirmation is created only from stated dates and a place；Several rooms are one event；A cancellation is confirmed with the user before the event is deleted；Nights without a booking are reported, not created）：依 `event-modules.md` 的四部分定義觸發條件、版面（一個全天事件、標題、地址、notes 欄位順序、不抄卡號、不設提醒）、去重鍵（訂房編號標記行、`search_events` 的找法與範圍）、報告行，並含未確認住宿、多房間、取消先問再刪、未訂房夜晚、`lodging_module: off`，另有一個虛構的實例。驗證：對照 `specs/lodging-module/spec.md` 的每一條 requirement 與每個 scenario，契約檔都有對應段落，且標記行、欄位順序、取消流程的文字與 spec、design 一致（content review）。
 - [x] 1.3 改 `plugin/rules/event-modules.md`：索引表加住宿一列（觸發條件一句、指向契約檔）、「Turning a module off」補 `lodging_module`、「Common to every module」加三條（requirement：A module deletes only an event it created, only with the user's yes；只刪自己建立且經使用者同意的事件、且模組自己宣告採用；多模組同時符合時各建各的、各自解析日曆；以識別碼為鍵的來源以最新一則為準）。驗證：三條文字與 spec 的 "A module deletes only an event it created" requirement 逐句一致，且會議模組的「不刪除」規則文字沒有被改動（`git diff` 只增不減會議相關行）。
 - [x] 1.4 在 `plugin/rules/calendar-routing.md` 加一句（requirement：The calendar is resolved separately for each module）：路由規則的 `includes` 可以寫住宿，模組對整份輸入解析一次路由。驗證：審閱該句與 spec 的 "The calendar is resolved separately for each module" 一致，且 `calendar-routing` 既有的 `find-ical-config.test.sh` 18 個案例全過（`bash plugin/bin/tests/find-ical-config.test.sh`）。
 
 ## 2. 入口與歸檔
 
-- [x] 2.1 確認三個入口（`archive-event`、`/quick-event`、`calendar-management`）的「符合索引裡某個模組的觸發條件就照模組做」文字不需要改，並在 `archive-event` 的設定段落補一句 `lodging_module`。驗證：`grep -n 'conference' plugin/skills plugin/commands` 顯示入口文字只指向索引而不寫模組名，新增的一句與 `event-source-archiving` spec 的新 requirement 一致。
-- [x] 2.2 `archive-event` 對訂房確認信的例外（requirement：A booking confirmation is archived through the lodging module；設計：與 `archive-event` 的邊界）：來源行與 `state/archives.json` 照舊，鍵改為訂房編號、權威訊息是最新一則帶該編號的、缺退房日就問、不寫估計行。驗證：審閱 `plugin/skills/archive-event/SKILL.md` 的例外段落與 spec 的三個 scenario（變更通知在不同訊息、缺退房日、報告行）逐一對應。
+- [x] 2.1 三個入口的「符合索引裡某個模組的觸發條件就照模組做」文字照舊，只把各入口「（today: …）」的舉例補上住宿（`archive-event`、`/quick-event`、`calendar-management`），並在 `archive-event` 的設定段落補 `lodging_module`。驗證：`grep -n 'today:' plugin/skills plugin/commands` 三處都含住宿；`delete_event` 只在 `calendar-management` 的 `allowed-tools`，`archive-event` 與 `/quick-event` 沒有。
+- [x] 2.2 `archive-event` 對訂房確認信的例外（requirement：A booking confirmation is archived through the lodging module；設計：與 `archive-event` 的邊界）：來源行與 `state/archives.json` 照舊，鍵改為訂房編號、權威訊息是最新一則帶該編號的（取代 §1 的寄件者與時間規則）、state 用 `<message-id>#lodging`、缺退房日就問、不寫估計行。驗證：審閱 `plugin/skills/archive-event/SKILL.md` 的例外段落與 spec 的三個 scenario（變更通知在不同訊息、缺退房日、報告行）逐一對應。獨立讀者（不看對話脈絡）核對契約與 spec 一致性已做一輪，發現的高嚴重度項目已改。
 
 ## 3. 實機驗證
 
