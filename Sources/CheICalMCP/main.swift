@@ -16,9 +16,11 @@ switch SelfDisclaim.decide(
     environment: ProcessInfo.processInfo.environment,
     responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
     hostHasUsableGrant: {
-        let status = LiveAuthorizationStatusSource()
-        return status.authorizationStatus(for: .event) == .fullAccess
-            && status.authorizationStatus(for: .reminder) == .fullAccess
+        // Class methods only: this image is about to be replaced, so no EKEventStore is built
+        // here (verify round 3, row 15).
+        SelfDisclaim.hostGrantIsUsable(
+            calendar: EKEventStore.authorizationStatus(for: .event),
+            reminders: EKEventStore.authorizationStatus(for: .reminder))
     }
 ) {
 case .reexec(let reason):

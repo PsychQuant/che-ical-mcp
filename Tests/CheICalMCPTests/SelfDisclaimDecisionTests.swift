@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -132,6 +133,23 @@ final class SelfDisclaimDecisionTests: XCTestCase {
                     .skip(.hostGrantIsUsable), "host \(host), mode \(mode)")
             }
         }
+    }
+
+    // MARK: - The criterion the closure applies (verify round 3, row 12)
+
+    func testHostGrantIsUsable_onlyWhenBothServicesHaveFullAccess() {
+        XCTAssertTrue(SelfDisclaim.hostGrantIsUsable(calendar: .fullAccess, reminders: .fullAccess))
+        for other: EKAuthorizationStatus in [.notDetermined, .denied, .restricted, .writeOnly] {
+            XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: .fullAccess, reminders: other), "reminders \(other.rawValue)")
+            XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: other, reminders: .fullAccess), "calendar \(other.rawValue)")
+            XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: other, reminders: other), "both \(other.rawValue)")
+        }
+    }
+
+    func testHostGrantIsUsable_theIssuesOwnStateIsNotUsable() {
+        // #343's resumed session: the version-number entry had Reminders and not Calendar. The
+        // working service moves to CheICalMCP's grant too — the trade-off the user chose.
+        XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: .notDetermined, reminders: .fullAccess))
     }
 
     // MARK: - The three re-exec reasons

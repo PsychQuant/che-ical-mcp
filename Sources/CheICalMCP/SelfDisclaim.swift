@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 
 /// Why CheICalMCP did not re-exec itself as its own responsible process (#343).
@@ -58,7 +59,9 @@ enum SelfDisclaimDecision: Equatable, Sendable {
 /// Reminders access keeps that grant, and any other host re-execs, so the grant `--setup`
 /// creates is the one that serves it. CheICalMCP's own grant can be empty while a host's
 /// works (2026-10-23: `notDetermined` for both services under disclaim, `fullAccess` under
-/// VS Code), which is why a host grant that works is never traded for it. `--setup` and
+/// VS Code), which is why a host grant that works for both services is never traded for it.
+/// One that works for a single service is (`hostGrantIsUsable`), as is a denied or restricted
+/// host: those re-exec onto CheICalMCP's grant like any host without full access. `--setup` and
 /// `CHE_ICAL_MCP_FORCE_DISCLAIM` re-exec under any host; `CHE_ICAL_MCP_NO_DISCLAIM` wins over
 /// both.
 enum SelfDisclaim {
@@ -68,6 +71,14 @@ enum SelfDisclaim {
     /// `optOutVariable` wins over it.
     static let forceVariable = "CHE_ICAL_MCP_FORCE_DISCLAIM"
     static let flagsWithoutTCCAccess: Set<String> = ["--version", "-v", "--help", "-h", "--self-update"]
+
+    /// The criterion the user chose after verify round 2: the host's grant is kept only when
+    /// BOTH services have full access. Any other combination re-execs — including a host with one
+    /// working service, whose working service then moves to CheICalMCP's grant as well, and a
+    /// host the user denied or a policy restricts.
+    static func hostGrantIsUsable(calendar: EKAuthorizationStatus, reminders: EKAuthorizationStatus) -> Bool {
+        calendar == .fullAccess && reminders == .fullAccess
+    }
 
     /// `hostHasUsableGrant` reads the host context's authorization status. It is called only
     /// when the decision depends on it, so flags that never touch EventKit do not either.
