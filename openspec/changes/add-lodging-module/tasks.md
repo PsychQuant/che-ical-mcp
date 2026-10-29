@@ -2,8 +2,9 @@
 
 - [x] 1.1（實測 2026-10-29，iCloud，host `+09:00`：create 與定時轉全天的 update，純日期結束日為排他；已是全天的事件 update，純日期結束日包含該日；一夜的住宿 update 起訖同日可行；契約據此分開寫並要求每次寫入後讀回）在名稱含 `#342` 的拋棄式日曆上建一個全天事件（起 `2026-11-10`、迄 `2026-11-13`，無時間、無 offset）並讀回。驗證：記錄 `start_date_local` / `end_date_local`，讀回為 11/10 到 11/12，與會議總覽已實測的邊界一致，結果寫進契約檔實例；結束後依 id 刪除日曆並用 `list_calendars` 確認清乾淨。
 - [x] 1.2 寫 `plugin/rules/modules/lodging.md`（設計：住宿模組是第二個契約檔，沿用四部分；requirement：The module applies to a booking for a stay and can be turned off；A stay is one all-day event over the nights stayed；The reservation number is the key and the event carries a marker line；A stay without a confirmation is created only from stated dates and a place；Several rooms are one event；A cancellation is confirmed with the user before the event is deleted；Nights without a booking are reported, not created）：依 `event-modules.md` 的四部分定義觸發條件、版面（一個全天事件、標題、地址、notes 欄位順序、不抄卡號、不設提醒）、去重鍵（訂房編號標記行、`search_events` 的找法與範圍）、報告行，並含未確認住宿、多房間、取消先問再刪、未訂房夜晚、`lodging_module: off`，另有一個虛構的實例。驗證：對照 `specs/lodging-module/spec.md` 的每一條 requirement 與每個 scenario，契約檔都有對應段落，且標記行、欄位順序、取消流程的文字與 spec、design 一致（content review）。
-- [x] 1.3 改 `plugin/rules/event-modules.md`：索引表加住宿一列（觸發條件一句、指向契約檔）、「Turning a module off」補 `lodging_module`、「Common to every module」加三條（requirement：A module deletes only an event it created, only with the user's yes；只刪自己建立且經使用者同意的事件、且模組自己宣告採用；多模組同時符合時各建各的、各自解析日曆；以識別碼為鍵的來源以最新一則為準）。驗證：三條文字與 spec 的 "A module deletes only an event it created" requirement 逐句一致，且會議模組的「不刪除」規則文字沒有被改動（`git diff` 只增不減會議相關行）。
+- [x] 1.3 改 `plugin/rules/event-modules.md`：索引表加住宿一列（觸發條件一句、指向契約檔）、「Turning a module off」補 `lodging_module`、「Common to every module」加四條（requirement：A module deletes only an event it created, only with the user's yes；多模組同時符合時各建各的、各自解析日曆，見 The calendar is resolved separately for each module；A module does nothing on a point where nobody can answer；以識別碼為鍵的來源以最新一則為準）。驗證：Deleting 與 Nobody to ask 兩條與各自 requirement 逐句一致；多模組一條與 The calendar is resolved separately for each module 一致；會議模組的「不刪除」規則文字沒有被改動（`git diff` 中會議相關行只有 `event-modules.md` 的「resolves the calendar once…」一行與「Turning a module off」一行被改寫，其餘只增）。
 - [x] 1.4 在 `plugin/rules/calendar-routing.md` 加一句（requirement：The calendar is resolved separately for each module）：路由規則的 `includes` 可以寫住宿，模組對整份輸入解析一次路由。驗證：審閱該句與 spec 的 "The calendar is resolved separately for each module" 一致，且 `calendar-routing` 既有的 `find-ical-config.test.sh` 18 個案例全過（`bash plugin/bin/tests/find-ical-config.test.sh`）。
+- [x] 1.5 把第二輪 verify 的行為類 findings 寫進契約、spec 與入口（設計：變更逐欄套用、誰有資格改事件、取消紀錄；requirement：A module does nothing on a point where nobody can answer；The reservation number is the key and the event carries a marker line 的搜尋、資格、訊息順序、取消紀錄與採納各句）：契約第 3–7 節、`conference.md` 對住宿的交接句、`archive-event` 住宿段落的 state 鍵與取消紀錄。驗證：`spectra validate` 與 `spectra analyze` 無 Warning；第三輪 `/idd-verify` 的 requirements 與 logic lens 逐項核對契約與 spec 一致。
 
 ## 2. 入口與歸檔
 
@@ -12,10 +13,10 @@
 
 ## 3. 實機驗證
 
-- [ ] 3.1 在名稱含 `#342` 的拋棄式日曆與拋棄式資料夾（含專案層 `.claude/.ical/config.yaml`）上，依契約跑：確認信建立一個事件、改期通知更新同一事件、取消通知列出事件並詢問後刪除、取消通知找不到事件。驗證：逐項記錄實際輸出與日曆狀態，事件起訖讀回正確、標記行恰好一行、取消詢問前事件仍在；結束後依 id 刪除日曆並用 `list_calendars` 確認清乾淨。
-- [ ] 3.2 同一環境驗證（設計：未確認的住宿、取消先問說好才刪、沒訂房的夜晚只在回報說）：沒有確認信但有日期與地點（建出帶「（未確認）」的事件）、缺日期（不建）、確認信到時的對照表升級、兩間房一間取消（只改 notes）、各房夜數不同（問一次）、`lodging_module: off`。驗證：逐項記錄輸出，報告行與 spec 的 scenario 一致。
+- [ ] 3.1（尚未執行；需要一個真的照契約做完整流程的 session，而不是只呼叫工具） 在名稱含 `#342` 的拋棄式日曆與拋棄式資料夾（含專案層 `.claude/.ical/config.yaml`）上，依契約跑：確認信建立一個事件、改期通知更新同一事件、取消通知列出事件並詢問後刪除、取消通知找不到事件。驗證：逐項記錄實際輸出與日曆狀態，事件起訖讀回正確、標記行恰好一行、取消詢問前事件仍在；結束後依 id 刪除日曆並用 `list_calendars` 確認清乾淨。
+- [ ] 3.2（尚未執行；同 3.1） 同一環境驗證（設計：未確認的住宿、取消先問說好才刪、沒訂房的夜晚只在回報說）：沒有確認信但有日期與地點（建出帶「（未確認）」的事件）、缺日期（不建）、確認信到時的對照表升級、兩間房一間取消（只改 notes）、各房夜數不同（問一次）、`lodging_module: off`。驗證：逐項記錄輸出，報告行與 spec 的 scenario 一致。
 
 ## 4. 發布準備
 
-- [x] 4.1 更新 `plugin/CHANGELOG.md` 的 `[Unreleased]` 與 `plugin/CLAUDE.md` 的元件說明；`plugin.json` 版號不動。驗證：CHANGELOG 條目說明一個全天事件、訂房編號鍵、取消先問再刪、三條共用規則、`lodging_module: off`、純 plugin 變更。
+- [x] 4.1 更新 `plugin/CHANGELOG.md` 的 `[Unreleased]` 與 `plugin/CLAUDE.md` 的元件說明；`plugin.json` 版號不動。驗證：CHANGELOG 條目說明一個全天事件、訂房編號鍵、取消先問再刪、四條共用規則、`lodging_module: off`、純 plugin 變更。
 - [x] 4.2 跑 `spectra validate add-lodging-module` 與 `spectra analyze add-lodging-module`。驗證：無 Critical 與 Warning。

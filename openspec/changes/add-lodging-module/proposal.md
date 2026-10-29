@@ -9,9 +9,11 @@
   - **去重鍵**：訂房編號，寫成 notes 裡的一行標記，用 `search_events`（關鍵字為標記前綴、明確範圍）找。改日期的訂單因此更新原事件，不會變成新住宿。
   - **未確認的住宿**：沒有確認信時，只有輸入明確給了日期與地點才建，標題前加「（未確認）」，不替使用者猜；暫時以「旅館名加入住日」為鍵，確認信到時經對照表問一次再升級成訂房編號。
   - **多房間**：一張訂單一個事件，房間寫在 notes；部分取消或變更只更新 notes，不拆事件；各房入住夜數不同時寫明並問使用者。
+  - **變更**：變更通知逐欄套用，只覆寫通知寫明的欄位，其餘（地址、入住要求、金額、取消條件、房間）保留；只有訂房方（旅館或訂房平台）陳述「已變更／已取消」的訊息算變更或取消通知，旅客的回信、請求、「已收到申請」都不算；寄件網域與事件來源行不同時先給前後對照並問一次。
+  - **找事件**：每一則帶訂房編號的訊息都先在路由日曆搜尋（±60 天），找不到再放寬到所有日曆（±1 年）；在路由日曆以外找到的要先問，唯讀日曆不寫；變更與取消通知找不到時不建事件、問是否另有編號；取消後留下取消紀錄，舊確認信不會把已取消的住宿建回來。
   - **取消**：先問使用者，說好才刪除模組自己建立（靠標記認）的事件，不改成「（已取消）」；yes 必須是對這個事件、這一次執行的問題的回答；沒有人能回答的執行只列為待處理；回報點名被刪的事件。
   - **沒訂房的夜晚**：只在回報裡說（輸入或使用者的話給了行程的起訖時才說），不在行事曆建「未訂房」事件。
-- **共用規則新增三條**（`plugin/rules/event-modules.md` 的「Common to every module」）：模組只能刪自己建立、且經使用者同意的事件；一則輸入同時符合多個模組時，各模組只建自己的事件、各自解析日曆；以訂房編號為鍵的來源，以最新一則帶該編號的訊息為準，順序不明就問。
+- **共用規則新增四條**（`plugin/rules/event-modules.md` 的「Common to every module」）：模組只能刪自己建立、且經使用者同意的事件；一則輸入同時符合多個模組時，各模組只建自己的事件、各自解析日曆；沒有人能回答時（排程或無人值守）模組在該點什麼都不做、列為待處理，沉默不算「否」；以訂房編號為鍵的來源，以最新一則帶該編號的訊息為準，順序不明就問。
 - 日曆選擇疊在 #337 的路由上：路由規則的 `includes` 若寫了住宿，就選該日曆。
 - 住宿模組可用 `lodging_module: off` 關閉（沿用 `<module>_module` 命名）。
 - `archive-event` 對訂房確認信的例外（有自己的一段，不借用會議那一段；不列 `delete_event` 於 `allowed-tools`）寫成 `event-source-archiving` 的一條 ADDED requirement，與會議議程那條平行：來源行與 `state/archives.json` 的寫入照舊，模組取代它的時間判斷、建立或更新的選擇、與估計行（住宿沒有估計的結束時間，缺退房日就問）。
@@ -31,7 +33,7 @@
 
 ### New Capabilities
 
-- `lodging-module`: 住宿確認信到單一全天事件的版面、去重標記、未確認住宿、多房間、取消時先問再刪、未訂房夜晚的回報、套用與關閉條件，以及三條共用規則（刪除、多模組、以最新訊息為準）。
+- `lodging-module`: 住宿確認信到單一全天事件的版面、去重標記、未確認住宿、多房間、取消時先問再刪、未訂房夜晚的回報、套用與關閉條件，以及四條共用規則（刪除、多模組、沒有人能回答時列為待處理、以最新訊息為準）。
 
 ### Modified Capabilities
 
@@ -42,7 +44,7 @@
 - Affected specs: 新增 `lodging-module`；`event-source-archiving` 加一條 requirement。
 - Affected code（皆為 markdown）：
   - `plugin/rules/modules/lodging.md`（新）
-  - `plugin/rules/event-modules.md`（索引加一列、「Turning a module off」補 `lodging_module`、「Common to every module」加三條）
+  - `plugin/rules/event-modules.md`（索引加一列、「Turning a module off」補 `lodging_module`、「Common to every module」加四條）
   - `plugin/rules/calendar-routing.md`（一句：路由規則可以用住宿類別）
   - `plugin/CLAUDE.md`、`plugin/CHANGELOG.md` `[Unreleased]`
 - 沒有 Swift 變更；沒有新的 MCP tool。

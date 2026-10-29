@@ -16,7 +16,7 @@ A module never chooses a calendar. It resolves the calendar **once for the whole
 | Module | Trigger | Contract |
 |---|---|---|
 | Conference | one named occasion on consecutive days (at most seven) with at least two separately scheduled timed items set by its organizer; not a single meeting's agenda | [`modules/conference.md`](modules/conference.md) |
-| Lodging | a booking confirmation, change notice or cancellation notice for a stay at one property, or a stay the user states with dates and a place; not a hotel named as a suggestion | [`modules/lodging.md`](modules/lodging.md) |
+| Lodging | a booking confirmation, change notice or cancellation notice for a stay at one property, or a stay the user states at a place (dates and place are asked for when missing); not a hotel named as a suggestion | [`modules/lodging.md`](modules/lodging.md) |
 
 ## Turning a module off
 
