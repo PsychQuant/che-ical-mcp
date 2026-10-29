@@ -15,7 +15,7 @@ Parse the user's natural language input and create a calendar event.
 
 ## Process
 
-If the input matches a module's trigger in [`rules/event-modules.md`](../rules/event-modules.md) (today: a conference program or a booking for a stay) and that module is on, build it as the module says and skip the steps below for what the module handles (a program, a stay); other private items in the same message, such as a flight, still go through them; if the module is off or no trigger matches, carry on below. (`search_events` and `list_events` in `allowed-tools` are there for the module's dedup; its updates ask for permission, because this command's own steps only create.)
+If the input matches a module's trigger in [`rules/event-modules.md`](../rules/event-modules.md) (today: a conference program or a booking for a stay) and that module is on, build it as the module says and skip the steps below for what the module handles (a program, a stay); other private items in the same message, such as a flight, still go through them; if the module is off or no trigger matches, carry on below. (`search_events` and `list_events` in `allowed-tools` are there for the module's dedup; its updates and deletions ask for permission, because this command's own steps only create; when nobody can answer, a stay's change or cancellation is reported as pending, and this command keeps no cancellation record.)
 
 1. **Parse input**: Extract title, date, time, duration, location from user's request
 2. **Choose the calendar**: if the user named one, use it. Otherwise resolve it as [`rules/calendar-routing.md`](../rules/calendar-routing.md) says (a folder's `calendar_routing` rules); when no rule applies, show the available calendars and ask. This command does not read `default_calendar`.

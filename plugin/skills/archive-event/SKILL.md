@@ -70,9 +70,21 @@ default_calendar: "行政"
     "event_id": "…",
     "calendar": "行政",
     "archived_at": "2026-08-31T14:00:00+08:00"
+  },
+  "<message-id>#lodging:<reservation>": {
+    "event_id": "…",
+    "calendar": "旅遊",
+    "archived_at": "2026-10-29T14:00:00+09:00",
+    "reservation": "123456"
+  },
+  "<cancelling-message-id>#lodging:<reservation>": {
+    "reservation": "123456",
+    "cancelled_at": "2026-11-02T09:30:00+09:00"
   }
 }
 ```
+
+The second entry is a stay (`reservation` is its number). The third is a cancellation record written when the lodging module deletes a stay: it has no `event_id`, because the event is gone.
 
 If either file fails to parse, say so explicitly in the report and proceed as if it were absent — a malformed config must never silently change behavior.
 
@@ -82,10 +94,10 @@ If either file fails to parse, say so explicitly in the report and proceed as if
 
 > **A booking confirmation, change notice or cancellation notice for a stay** is archived through the lodging module ([`rules/modules/lodging.md`](../../rules/modules/lodging.md)). The conference paragraph's umbrella lookup, its `conference-module` marker lines and its estimated session end do not apply to a stay. What applies:
 >
-> - **§1 is replaced**: the sender-and-time rule does not fit a stay (a change notice can come from another address, a cancellation usually states no time), and its From comparison could be forged anyway. The authoritative message is the latest one carrying the **reservation number** that is a notice from the booking party (the module's "Who may change the event"), ordered by each message's own `Date` and time (the original's for a forwarded one), and the order is asked when unclear.
-> - **§2's `state/archives.json`**: the stay is stored under the key `<message-id>#lodging` with its `reservation` number, so a source that also built a conference (key `<message-id>`) does not overwrite or get mistaken for it. The mapping is only a hint, because a change or cancellation arrives as a different message: the reservation number in the `lodging-module:` marker line finds the stay, by the module's section 4. When a mapping names an event, read its notes; if it holds the marker with the same reservation number it is the stay, and if it holds no marker it is a hand-built event, so show a mapping table and ask before touching it. The bare `<message-id>` key is read the same way for a booking archived before the module existed: an event it maps to that holds neither a stay nor a conference marker is shown in a mapping table and adopted only after the user's yes. After a deletion, keep the entry and add `cancelled_at` (the date and time of the cancelling message), which is the module's cancellation record; a cancellation left pending writes nothing.
+> - **§1 is replaced**: the sender-and-time rule does not fit a stay (a change notice can come from another address, a cancellation usually states no time), and its From comparison could be forged anyway. The authoritative message is the latest **booking-party** message (confirmation, change or cancellation) carrying the **reservation number** (the module's "Who may change the event"), ordered by each message's own `Date` and time (the original's for a forwarded one), and the order is asked when unclear.
+> - **§2's `state/archives.json`**: the stay is stored under the key `<message-id>#lodging:<reservation>` (one entry per reservation, because one message can confirm several) with its `reservation` number, so a source that also built a conference (key `<message-id>`) does not overwrite or get mistaken for it. The mapping is only a hint, because a change or cancellation arrives as a different message: the reservation number in the `lodging-module:` marker line finds the stay, by the module's section 4. When a mapping names an event, read its notes; if it holds the marker with the same reservation number it is the stay, and if it holds no marker it is a hand-built event, so show a mapping table and ask before touching it. The bare `<message-id>` key is read the same way for a booking archived before the module existed: an event it maps to that holds neither a stay nor a conference marker is shown in a mapping table and adopted only after the user's yes. After a deletion, write the cancellation record: an entry keyed by the cancelling message `<message-id>#lodging:<reservation>` with `reservation` and `cancelled_at` (the date and time of the cancelling message), and remove the mapping that names the deleted event; a cancellation left pending writes nothing.
 > - **§3** keeps the source line and writes **no estimate line**: when the check-out day is missing, ask.
-> - **§4** (calendar fallback) and **§5** (same-day deadlines, leaving out the stay event) apply as written.
+> - **§4** (calendar fallback) and **§5** (same-day deadlines, leaving out the events every module built from this source) apply as written.
 > - **A cancellation notice** follows the module's section 7. This skill does not list `delete_event` in `allowed-tools`, so the delete asks for permission on top of the module's own question, and in a run nobody can answer the cancellation is only reported as pending.
 >
 > The report says corrections are tracked by the module's marker line. Normative: the `event-source-archiving` requirement "A booking confirmation is archived through the lodging module".

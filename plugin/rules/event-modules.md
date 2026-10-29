@@ -24,7 +24,7 @@ A config found by the lookup of `calendar-routing.md` can set `conference_module
 
 ## Adding a module
 
-Write `modules/<name>.md` with the four parts above, add one row to the table, and add the `<name>_module: off` key. Entry points need no change to pick up the new trigger: each one says "if the input matches a module's trigger in this index", not a module's name. An entry point that keeps its own state (`archive-event`) records how a module changes that state in its own spec; for the conference module that is the `event-source-archiving` requirement "A conference program is archived through the conference module", for the lodging module "A booking confirmation is archived through the lodging module".
+Write `modules/<name>.md` with the four parts above, add one row to the table, and add the `<name>_module: off` key. A module's trigger needs no change in an entry point: each one says "if the input matches a module's trigger in this index", not a module's name. An entry point that keeps its own state (`archive-event`) records how a module changes that state in its own spec; for the conference module that is the `event-source-archiving` requirement "A conference program is archived through the conference module", for the lodging module "A booking confirmation is archived through the lodging module".
 
 ## Common to every module
 
@@ -33,5 +33,6 @@ Write `modules/<name>.md` with the four parts above, add one row to the table, a
 - Never write to an event the module did not create until the user agrees to adopt it.
 - **Deleting.** A module deletes an event only if its own contract declares this rule, only if the module created or adopted that event (found by its marker line; an adopted event is named as such in the question, because its old notes go with it), and only after the user said yes for that event, to a question about that event asked in this run (an earlier yes for another notice or event does not carry over); when nobody can answer, the module lists the deletion as pending and deletes nothing; the report names every deleted event. A module that does not declare it deletes nothing: the conference module does not, and lists outdated-looking events instead. The lodging module declares it.
 - **One input, several modules.** When an input matches more than one module's trigger (a conference registration that also books a room), each matching module builds only its own events and resolves its calendar separately; a routing rule that applies to one module does not change the other's calendar.
+- **Whose event it is.** An event that carries any module's marker line belongs to that module; another module never adopts it as a hand-built event.
 - **Nobody to ask.** When a module needs the user's answer (an adoption, a deletion, an unclear order) and nobody can answer, it does nothing on that point and lists it as pending in the report; silence is never a no, and never a reason to create a duplicate.
 - **A source keyed by an identifier** (a reservation number): the authoritative message is the latest one that carries the identifier. When the order of the messages cannot be told, ask.
