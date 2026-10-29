@@ -109,6 +109,21 @@ final class SetupCommandTests: XCTestCase {
             "'/Users/o'\\''neil/bin/CheICalMCP' --setup")
     }
 
+    /// Verify round 3 row 10: escaping before quoting doubled every backslash, so the quoted
+    /// path named a different file. Inside single quotes a backslash is literal.
+    func testSetupCommandHint_keepsABackslashAsIs() {
+        XCTAssertEqual(
+            EventKitManager.setupCommandHint(binaryPath: "/Users/x/a\\b/CheICalMCP"),
+            "'/Users/x/a\\b/CheICalMCP' --setup")
+    }
+
+    /// A path with control characters gets no runnable command, only a visible description.
+    func testSetupCommandHint_printsNoCommandForAControlCharacterPath() {
+        let hint = EventKitManager.setupCommandHint(binaryPath: "/bin/ev\u{07}il")
+        XCTAssertFalse(hint.contains("' --setup"), hint)
+        XCTAssertTrue(hint.contains("control characters"), hint)
+    }
+
     /// Control chars in the path must be escaped (the hint can land in a terminal / response).
     func testSetupCommandHint_escapesControlChars() {
         let hint = EventKitManager.setupCommandHint(binaryPath: "/bin/ev\u{07}il")

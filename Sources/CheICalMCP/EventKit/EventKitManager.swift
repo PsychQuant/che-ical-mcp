@@ -108,13 +108,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
     /// The path is injected (not read from globals) so denial-message wiring is
-    /// unit-testable deterministically; control chars in the path are escaped so the
-    /// hint is safe to surface in a response or a terminal, and the path is single-quoted
-    /// so a pasted hint expands nothing — inside double quotes `$(…)` and backticks still
-    /// run (#343 verify round 2, row 9).
+    /// unit-testable deterministically. A clean path is single-quoted, so a pasted hint
+    /// expands nothing — inside double quotes `$(…)` and backticks still run (#343 verify
+    /// round 2, row 9) — and nothing else is done to it: escaping first doubled every
+    /// backslash, so the quoted path named another file (verify round 3, row 10). A path with
+    /// control characters gets no runnable command, only its escaped form to read. This is
+    /// the one place the paste-ready command is built: the access-denied message, the banner
+    /// and `--print-tcc-path` all use it.
     static func setupCommandHint(binaryPath: String) -> String {
-        let safe = EventKitErrorSanitizer.escapeForStderr(binaryPath)
-        return "\(TCCDriftDetector.shellSingleQuote(safe)) --setup"
+        guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
+            return "run the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --setup "
+                + "(its path has control characters, so no command is printed)"
+        }
+        return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
     /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the

@@ -190,6 +190,17 @@ final class SelfDisclaimBinaryTests: XCTestCase {
             "the message must not assume Claude Code is the host; stderr: \(run.stderr)")
     }
 
+    func testPrintTCCPath_singleQuotesItsCommands() throws {
+        // Verify round 3 row 10: the --setup and codesign commands were double-quoted, where
+        // `$(…)` and backticks in a path still expand when pasted.
+        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
+        XCTAssertFalse(run.timedOut)
+        let lines = run.stdout.components(separatedBy: "\n")
+        XCTAssertTrue(lines.contains { $0.hasPrefix("  '") && $0.hasSuffix("' --setup") }, run.stdout)
+        XCTAssertTrue(lines.contains { $0.hasPrefix("  codesign -dv '") && $0.hasSuffix("'") }, run.stdout)
+        XCTAssertFalse(run.stdout.contains("\" --setup"), run.stdout)
+    }
+
     func testAHungChildIsKilledAtTheBound_notWaitedOnForever() throws {
         // The bound has to be reachable: a child that never exits or closes its pipes must end
         // the run at the timeout instead of hanging the job. `sleep` stands in for it, run

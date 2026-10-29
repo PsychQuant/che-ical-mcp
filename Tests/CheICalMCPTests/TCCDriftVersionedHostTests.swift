@@ -136,6 +136,20 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         XCTAssertEqual(banner.components(separatedBy: "--setup").count - 1, 1, banner)
     }
 
+    func testBanner_hostSignal_quotesAnApostropheOnce() {
+        // Verify round 3 row 2: the step was escaped after quoting, so `'\''` became `'\\''`
+        // and the pasted command left the quotes.
+        let path = "/Users/o'neil/bin/CheICalMCP"
+        let report = DriftReport(
+            signals: [.hostAttributedUngranted(host: .appBundle(name: "Terminal"), hostPath: "/x")],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.22.0", runningBinaryPath: path,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains("'/Users/o'\\''neil/bin/CheICalMCP' --setup"), banner)
+        XCTAssertFalse(banner.contains("'\\\\''"), banner)
+    }
+
     func testBanner_hostSignal_withAControlCharacterPath_printsNoCopyPasteCommand() {
         let hostile = "/tmp/\u{1B}[2J/CheICalMCP"
         let report = DriftReport(

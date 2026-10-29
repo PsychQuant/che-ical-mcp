@@ -322,13 +322,13 @@ struct TCCDriftDetector {
                 lines.append("[drift] EventKit not granted, and macOS checks a host instead of CheICalMCP (#343)")
                 lines.append("[drift]   responsible process: \(safeHost)")
                 lines.append("[drift]   → \(advice)")
-                // Same steps as the access-denied message (verify round 2 row 1). A path with
-                // control characters gets no copy-paste command, as on the --setup line above.
-                let setupCommand = pathHasControlChars(runningBinaryPath)
-                    ? "run the binary at \(safePath) with --setup (its path has control characters, so no command is printed)"
-                    : "\(shellSingleQuote(runningBinaryPath)) --setup"
+                // Same steps as the access-denied message (verify round 2 row 1). The steps are
+                // constant prose plus the command from setupCommandHint, which is already safe to
+                // print (quoted clean path, or an escaped description): escaping the line again
+                // doubled the backslashes of `'\''` and broke the quoting (verify round 3 row 2).
+                let setupCommand = EventKitManager.setupCommandHint(binaryPath: runningBinaryPath)
                 for step in ResponsibleProcessFormatter.hostAttributedRemedy(setupCommand: setupCommand) {
-                    lines.append("[drift]   → \(EventKitErrorSanitizer.escapeForStderr(step))")
+                    lines.append("[drift]   → \(step)")
                 }
             }
         }

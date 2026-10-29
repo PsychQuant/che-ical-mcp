@@ -107,7 +107,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
 
         Binary path:
-          \(absolute)
+          \(EventKitErrorSanitizer.escapeForStderr(absolute))
 
         Bundle identifier:
           \(bundleID)
@@ -121,7 +121,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
         Reset TCC + re-prompt (run from Terminal, NOT over SSH):
           tccutil reset Calendar \(bundleID)
           tccutil reset Reminders \(bundleID)
-          "\(absolute)" --setup
+          \(EventKitManager.setupCommandHint(binaryPath: absolute))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -133,7 +133,9 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           System Settings → Privacy & Security → Reminders
 
         Additional signing info:
-          codesign -dv "\(absolute)"
+          \(TCCDriftDetector.pathHasControlChars(absolute)
+            ? "(binary path has control characters; run codesign -dv on it by hand)"
+            : "codesign -dv \(TCCDriftDetector.shellSingleQuote(absolute))")
         """)
 
     // #169: the EventKit status above is context-dependent (attribution follows the
