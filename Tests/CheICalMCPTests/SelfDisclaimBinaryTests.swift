@@ -17,7 +17,7 @@ import Darwin
 /// or read the expectation from an opted-out child under the same host.
 final class SelfDisclaimBinaryTests: XCTestCase {
 
-    struct Run {
+    private struct Run {
         let pid: Int32
         let stdout: String
         let stderr: String
@@ -46,7 +46,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
     /// a child that hangs without closing them still reaches the timeout below and is killed,
     /// instead of blocking this thread inside `readDataToEndOfFile` (verify of PR #347). The
     /// hang test drives this same function, so the bound it checks is the one every test uses.
-    static func runBounded(
+    private static func runBounded(
         executable: URL, arguments: [String], environment: [String: String]?, timeout: TimeInterval
     ) throws -> Run {
         let process = Process()
@@ -96,7 +96,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
             environment: environment(extraEnvironment), timeout: timeout)
     }
 
-    final class LockedData: @unchecked Sendable {
+    private final class LockedData: @unchecked Sendable {
         private let lock = NSLock()
         private var data = Data()
         func set(_ value: Data) { lock.lock(); data = value; lock.unlock() }
@@ -111,14 +111,18 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         return lines[heading + 1]
     }
 
-    /// The runner's responsible process, or a skip when the runner is its own (then a child
-    /// cannot show the difference between the host's grant and CheICalMCP's).
-    private func runnersHost() throws -> ResponsibleProcess {
-        guard case .resolved(let process) = LiveResponsibleProcessSource().responsibleProcess(for: getpid()) else {
-            throw XCTSkip("responsibility SPI unavailable here")
+    /// Skips unless a child of this runner inherits a host to be responsible for it. Asked of
+    /// a child directly, not of the runner: under some launchers every process is its own
+    /// responsible process (2026-10-29, a Claude Code 2.1.312 background session: the shell,
+    /// its children and an opted-out CheICalMCP were all self-responsible), and then there is
+    /// no host attribution to observe or to keep.
+    private func requireHostAttributedChild() throws {
+        guard LiveResponsibleProcessSource.isAvailable else { throw XCTSkip("responsibility SPI unavailable here") }
+        let probe = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
+        let line = try XCTUnwrap(attributionLine(probe.stdout), "no TCC attribution block in:\n\(probe.stdout)")
+        if line.hasSuffix("(this binary)") {
+            throw XCTSkip("a child of this runner is already its own responsible process, so host attribution cannot be observed")
         }
-        if process.isSelf { throw XCTSkip("the test runner is its own responsible process") }
-        return process
     }
 
     func testForcedDisclaim_reexecsAsItsOwnResponsibleProcessKeepingThePid() throws {
@@ -133,7 +137,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
     func testForcedDisclaim_saysSoOnStderr() throws {
         // Round 2 row 7: FORCE is an environment variable a parent can set unnoticed, and the
         // re-exec it causes used to be silent.
-        _ = try runnersHost()
+        try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
         XCTAssertFalse(run.timedOut)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
@@ -145,7 +149,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // the host's status as the server's pre-exec read sees it. Reading the status in the
         // test runner instead was flaky in the full suite (2026-10-28: the runner read "not
         // usable" while both fresh children read fullAccess), after a thousand in-process tests.
-        _ = try runnersHost()
+        try requireHostAttributedChild()
         let host = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
         XCTAssertFalse(host.timedOut)
         let usable = ["Calendar", "Reminders"].allSatisfy { service in
@@ -164,6 +168,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
     }
 
     func testOptOut_keepsTheHostAsTheResponsibleProcess() throws {
+        try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_NO_DISCLAIM": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])
@@ -177,7 +182,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // The loop guard: a process that believes it is the re-exec'd image must not re-exec,
         // even though (here) it is not actually self-responsible and a re-exec is forced. With
         // some other process still responsible, the sentinel is stale — reported for any host.
-        _ = try runnersHost()
+        try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_DISCLAIMED": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])

@@ -261,7 +261,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return """
             \(type) access denied. \(ResponsibleProcessFormatter.advice(for: .selfBinary))
             1. Allow the macOS prompt for CheICalMCP, or run its setup from Terminal: \(setupHint)
-            2. Or enable CheICalMCP in System Settings → Privacy & Security → \(type)
+            2. Open System Settings → Privacy & Security → \(type) and switch CheICalMCP on (instead of step 1)
             3. Restart Claude Desktop/Code
             """
         // A host is checked and has no grant: the steps are the same ones the banner prints

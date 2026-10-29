@@ -37,6 +37,28 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// Locate the built binary. SwiftPM tests run from the package root, so debug
     /// builds live at `.build/debug/CheICalMCP`. Release builds at `.build/release/`.
     /// We prefer debug since `swift test` always builds debug.
+    /// Whether an opted-out child of this runner reports itself as its own responsible process.
+    private func childIsSelfResponsible(_ binary: URL) throws -> Bool {
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = ["--print-tcc-path"]
+        var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+        env["CHE_ICAL_MCP_NO_DISCLAIM"] = "1"
+        process.environment = env
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = Pipe()
+        process.standardInput = Pipe()
+        try process.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let lines = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+        guard let heading = lines.firstIndex(where: { $0.hasPrefix("TCC attribution") }), heading + 1 < lines.count else {
+            return false
+        }
+        return lines[heading + 1].hasSuffix("(this binary)")
+    }
+
     private func locateBuiltBinary() throws -> URL {
         let cwd = FileManager.default.currentDirectoryPath
         let candidates = [
@@ -373,6 +395,11 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // Without the responsibility SPI nothing re-execs, and no FORCE notice is printed.
         guard LiveResponsibleProcessSource.isAvailable else { throw XCTSkip("responsibility SPI unavailable here") }
         let binary = try locateBuiltBinary()
+        // Under a launcher that makes every child its own responsible process, the child is
+        // already self-responsible, decides `alreadySelfResponsible`, and never re-execs.
+        if try childIsSelfResponsible(binary) {
+            throw XCTSkip("a child of this runner is already its own responsible process, so no re-exec happens")
+        }
         // FORCE, so the re-exec happens on every host: whether a plain run re-execs depends on
         // the runner's own grant (status-aware rule), and Terminal / Xcode / CI may have one.
         var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
