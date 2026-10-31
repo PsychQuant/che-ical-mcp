@@ -8,21 +8,22 @@ import MCP
 // instead of to the host. Under the Claude Code daemon the host is either the app that
 // launched the daemon or Claude Code's own binary, which can never be prompted. The rule
 // reads the host context's status and is the same for every host: full Calendar and
-// Reminders access keeps the host's grant, anything else re-execs (as do `--setup` and an
-// explicit CHE_ICAL_MCP_FORCE_DISCLAIM). Both reason sets are closed (SelfDisclaimSkipReason,
+// Reminders access keeps the host's grant, as does a policy restriction on either service
+// (#367); anything else re-execs (as do `--setup` and an explicit CHE_ICAL_MCP_FORCE_DISCLAIM,
+// which yields to a restriction). Both reason sets are closed (SelfDisclaimSkipReason,
 // SelfDisclaimReexecReason); any failure is fail-open.
-switch SelfDisclaim.decide(
+let startupDecision = SelfDisclaim.decide(
     arguments: CommandLine.arguments,
     environment: ProcessInfo.processInfo.environment,
     responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
-    hostHasUsableGrant: {
+    hostAuthorization: {
         // Class methods only: this image is about to be replaced, so no EKEventStore is built
         // here (verify round 3, row 15).
-        SelfDisclaim.hostGrantIsUsable(
+        HostAuthorization(
             calendar: EKEventStore.authorizationStatus(for: .event),
             reminders: EKEventStore.authorizationStatus(for: .reminder))
-    }
-) {
+    })
+switch startupDecision {
 case .reexec(let reason):
     if reason == .forced {
         let notice = "[che-ical-mcp] \(SelfDisclaim.forceVariable) is set: re-executing so macOS checks "
@@ -102,7 +103,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     let attribution = ResponsibleProcessFormatter.attributionSection(
         selfPid: ProcessInfo.processInfo.processIdentifier,
         result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
-        hostGrantUsable: SelfDisclaim.hostGrantIsUsable(calendar: calStatus, reminders: remStatus))
+        startupDecision: startupDecision)
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
@@ -246,15 +247,18 @@ func emitStartupBanner() {
     // the explanation too (verify DA-1) — and the kernel lookup only happens on the
     // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
-    let calendarGranted = statusSource.authorizationStatus(for: .event) == .fullAccess
-    let remindersGranted = statusSource.authorizationStatus(for: .reminder) == .fullAccess
+    let calendarStatus = statusSource.authorizationStatus(for: .event)
+    let remindersStatus = statusSource.authorizationStatus(for: .reminder)
+    let calendarGranted = calendarStatus == .fullAccess
+    let remindersGranted = remindersStatus == .fullAccess
 
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
         diskBinaryMtime: mtime,
-        eventKitAccessGranted: calendarGranted && remindersGranted
+        eventKitAccessGranted: calendarGranted && remindersGranted,
+        eventKitRestricted: SelfDisclaim.hostIsRestricted(calendar: calendarStatus, reminders: remindersStatus)
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"

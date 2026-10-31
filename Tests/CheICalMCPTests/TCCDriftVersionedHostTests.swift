@@ -22,7 +22,8 @@ final class TCCDriftVersionedHostTests: XCTestCase {
 
     private func makeDetector(
         responsible: ResponsibleProcessResult,
-        eventKitAccessGranted: Bool
+        eventKitAccessGranted: Bool,
+        eventKitRestricted: Bool = false
     ) -> TCCDriftDetector {
         TCCDriftDetector(
             tcc: FakeTCCDatabaseSource(entries: []),
@@ -30,7 +31,8 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             runningBinaryPath: runningPath,
             diskBinaryMtime: nil,
             responsibleProcess: FakeResponsibleProcessSource(result: responsible),
-            eventKitAccessGranted: eventKitAccessGranted
+            eventKitAccessGranted: eventKitAccessGranted,
+            eventKitRestricted: eventKitRestricted
         )
     }
 
@@ -54,6 +56,32 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         let report = makeDetector(responsible: resolved(vsCodePath), eventKitAccessGranted: false).detect()
         XCTAssertTrue(report.signals.contains(
             .hostAttributedUngranted(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)))
+    }
+
+    func testRestrictedHost_getsThePolicySignal_notTheUngrantedOne() {
+        // #367: a host a policy restricts keeps its attribution on purpose; the ungranted
+        // signal's remedy (restart, --setup, the System Settings switch) cannot change a policy.
+        let report = makeDetector(
+            responsible: resolved(vsCodePath), eventKitAccessGranted: false, eventKitRestricted: true).detect()
+        XCTAssertEqual(report.signals, [.hostRestrictedByPolicy(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)])
+        // Self-attributed and restricted is the access-denied message's case, not a host signal.
+        let me = makeDetector(
+            responsible: resolved(runningPath, isSelf: true), eventKitAccessGranted: false, eventKitRestricted: true).detect()
+        XCTAssertTrue(me.signals.isEmpty)
+    }
+
+    func testBanner_restrictedHost_namesThePolicyAndPrintsNoRemedyCommand() {
+        let report = DriftReport(
+            signals: [.hostRestrictedByPolicy(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.23.0", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains(versionedHostPath), banner)
+        XCTAssertTrue(banner.contains("configuration profile"), banner)
+        XCTAssertTrue(banner.contains("#367"), banner)
+        XCTAssertFalse(banner.contains("--setup"), banner)
+        XCTAssertFalse(banner.contains("Restart the MCP client"), banner)
     }
 
     func testNoSignal_whenSelfResponsible_evenUnderAClaudeCodeParent() {

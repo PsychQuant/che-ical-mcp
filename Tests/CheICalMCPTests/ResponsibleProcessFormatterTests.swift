@@ -107,16 +107,51 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(app[2].contains("enable Terminal to keep using its grant"))
     }
 
+    private let claudeCodeHost = ResponsibleProcessResult.resolved(ResponsibleProcess(
+        pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+
     func testAttribution_hostWithFullAccess_saysTheGrantIsKept_notThatTheReexecFailed() {
         // Verify round 3 row 3: under the status-aware rule a Claude Code host with full access
         // is the normal, intended state, and the failure causes did not apply.
-        let host = ResponsibleProcessResult.resolved(ResponsibleProcess(
-            pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
-        let kept = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: host, hostGrantUsable: true)
+        let kept = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .skip(.hostGrantIsUsable))
         XCTAssertFalse(kept.contains("was not re-executed"), kept)
         XCTAssertTrue(kept.contains("keeps"), kept)
-        let failed = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: host, hostGrantUsable: false)
+        let failed = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .reexec(.hostGrantUnusable))
         XCTAssertTrue(failed.contains("was not re-executed"), failed)
+    }
+
+    func testAttribution_keptOnlyWhenTheStartupDecisionKeptIt() {
+        // Verify round 3b row 5: reading the status alone said "kept on purpose" when a FORCE
+        // re-exec had failed or an inherited sentinel stopped it, contradicting the stderr line.
+        for decision: SelfDisclaimDecision? in [
+            .reexec(.forced), .reexec(.setup), .skip(.disclaimIneffective), .skip(.optedOut),
+            .skip(.responsibilityUnavailable("x")), nil,
+        ] {
+            let s = ResponsibleProcessFormatter.attributionSection(
+                selfPid: 500, result: claudeCodeHost, startupDecision: decision)
+            XCTAssertFalse(s.contains("keeps"), "\(String(describing: decision)): \(s)")
+            XCTAssertTrue(s.contains("was not re-executed"), "\(String(describing: decision)): \(s)")
+        }
+    }
+
+    func testAttribution_restrictedHost_saysThePolicyKeepsIt() {
+        // #367: a host a policy restricts keeps its attribution on purpose.
+        let s = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .skip(.hostRestrictedByPolicy))
+        XCTAssertTrue(s.contains("restricts"), s)
+        XCTAssertTrue(s.contains("#367"), s)
+        XCTAssertFalse(s.contains("was not re-executed"), s)
+        XCTAssertFalse(s.contains("full Calendar and Reminders access"), s)
+    }
+
+    func testAttribution_selfIsNeverDescribedAsKept() {
+        let me = ResponsibleProcessResult.resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true))
+        for decision: SelfDisclaimDecision in [.skip(.hostGrantIsUsable), .skip(.hostRestrictedByPolicy)] {
+            let s = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: me, startupDecision: decision)
+            XCTAssertTrue(s.contains("CheICalMCP's own grant"), s)
+        }
     }
 
     func testSetupTarget_host_warnsTheGrantGoesElsewhere() {

@@ -39,6 +39,10 @@ struct TCCDriftDetector {
     /// explanation too (#175 verify DA-1: Calendar-only gating would leave that user
     /// doubly silent).
     let eventKitAccessGranted: Bool
+    /// Whether either service is `.restricted` in the current attribution context. A host a
+    /// policy restricts keeps its attribution (#367), so it gets its own signal instead of the
+    /// ungranted one, whose remedy cannot change a policy.
+    let eventKitRestricted: Bool
 
     init(
         tcc: TCCDatabaseSource,
@@ -48,7 +52,8 @@ struct TCCDriftDetector {
         stalePIDListLimit: Int = 5,
         codeSignature: CodeSignatureSource = LiveCodeSignatureSource(),
         responsibleProcess: ResponsibleProcessSource = LiveResponsibleProcessSource(),
-        eventKitAccessGranted: Bool = true
+        eventKitAccessGranted: Bool = true,
+        eventKitRestricted: Bool = false
     ) {
         self.tcc = tcc
         self.processes = processes
@@ -58,6 +63,7 @@ struct TCCDriftDetector {
         self.stalePIDListLimit = stalePIDListLimit
         self.responsibleProcess = responsibleProcess
         self.eventKitAccessGranted = eventKitAccessGranted
+        self.eventKitRestricted = eventKitRestricted
     }
 
     // MARK: - Detect
@@ -165,7 +171,9 @@ struct TCCDriftDetector {
             case .unavailable(let reason):
                 skipReasons.append("TCC attribution check skipped: \(reason)")
             case .resolved(let process) where !process.isSelf:
-                signals.append(.hostAttributedUngranted(host: process.kind, hostPath: process.path))
+                signals.append(eventKitRestricted
+                    ? .hostRestrictedByPolicy(host: process.kind, hostPath: process.path)
+                    : .hostAttributedUngranted(host: process.kind, hostPath: process.path))
             case .resolved:
                 break
             }
@@ -229,10 +237,13 @@ struct TCCDriftDetector {
         // Suppressed when the host-attribution signal is present (#175 verify DA-2, #343):
         // that signal prints the shared remedy, which already carries the `--setup` command
         // (after a restart, a host without a grant re-execs into the grant it creates), so
-        // printing this line too would repeat it.
+        // printing this line too would repeat it. The restricted-host signal suppresses it too:
+        // `--setup` cannot change a policy (#367).
         let hostSignalPresent = report.signals.contains {
-            if case .hostAttributedUngranted = $0 { return true }
-            return false
+            switch $0 {
+            case .hostAttributedUngranted, .hostRestrictedByPolicy: return true
+            default: return false
+            }
         }
         if !calendarAccessGranted, !hostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
@@ -331,6 +342,13 @@ struct TCCDriftDetector {
                     setupCommand: setupCommand, settingsPane: "Calendar / Reminders", alsoEnable: nil) {
                     lines.append("[drift]   → \(step)")
                 }
+
+            case .hostRestrictedByPolicy(let host, let hostPath):
+                let safeHost = EventKitErrorSanitizer.escapeForStderr(hostPath ?? "(no path reported)")
+                let line = EventKitErrorSanitizer.escapeForStderr(ResponsibleProcessFormatter.restrictedHostLine(for: host))
+                lines.append("[drift] EventKit access is restricted by a policy, and macOS checks a host instead of CheICalMCP (#367)")
+                lines.append("[drift]   responsible process: \(safeHost)")
+                lines.append("[drift]   → \(line)")
             }
         }
 
@@ -470,4 +488,9 @@ enum DriftSignal: Sendable, Equatable {
     /// re-exec, or a host grant lost after start-up. `host` drives the advice: Claude Code can
     /// never be prompted (no purpose string); an app's grant lives under that app's name.
     case hostAttributedUngranted(host: ResponsibleHostKind, hostPath: String?)
+
+    /// EventKit is NOT granted, a policy (configuration profile or Screen Time) restricts
+    /// either service, and the responsible process is a host. The host keeps its attribution
+    /// on purpose (#367), so no restart, `--setup` or System Settings switch is suggested.
+    case hostRestrictedByPolicy(host: ResponsibleHostKind, hostPath: String?)
 }

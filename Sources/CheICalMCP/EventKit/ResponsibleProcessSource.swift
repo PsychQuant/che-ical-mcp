@@ -141,16 +141,26 @@ enum ResponsibleProcessFormatter {
     /// access: under the status-aware rule its grant is kept on purpose, so the failure causes
     /// in `advice(for:)` do not apply (verify round 3 row 3).
     static func keptHostLine(for kind: ResponsibleHostKind) -> String {
-        let name: String
-        switch kind {
-        case .claudeCode(let version): name = version.map { "Claude Code \($0)" } ?? "Claude Code"
-        case .appBundle(let app): name = app
-        case .otherExecutable(let path): name = path
-        case .selfBinary: name = "CheICalMCP"
-        case .unknown: name = "the responsible process"
-        }
-        return "macOS checks \(name)'s grant, which has full Calendar and Reminders access, so CheICalMCP "
+        "macOS checks \(hostName(kind))'s grant, which has full Calendar and Reminders access, so CheICalMCP "
             + "keeps it and does not re-execute itself (#343)."
+    }
+
+    /// The attribution line for a host a policy restricts: its attribution is kept on purpose,
+    /// because CheICalMCP's own grant is not what that policy covers (#367).
+    static func restrictedHostLine(for kind: ResponsibleHostKind) -> String {
+        "macOS checks \(hostName(kind)), and a configuration profile (MDM) or Screen Time restricts its "
+            + "Calendar or Reminders access, so CheICalMCP keeps it and does not re-execute itself onto its "
+            + "own grant (#367). Only whoever manages this Mac can lift the restriction."
+    }
+
+    private static func hostName(_ kind: ResponsibleHostKind) -> String {
+        switch kind {
+        case .claudeCode(let version): return version.map { "Claude Code \($0)" } ?? "Claude Code"
+        case .appBundle(let app): return app
+        case .otherExecutable(let path): return path
+        case .selfBinary: return "CheICalMCP"
+        case .unknown: return "the responsible process"
+        }
     }
 
     private static let appNameCharacters = CharacterSet.letters
@@ -190,7 +200,12 @@ enum ResponsibleProcessFormatter {
         }
     }
 
-    static func attributionSection(selfPid: Int32, result: ResponsibleProcessResult, hostGrantUsable: Bool = false) -> String {
+    /// `startupDecision` is the decision this process made at start-up. Only a host it kept on
+    /// purpose is described as kept: a status read alone said so after a failed FORCE re-exec
+    /// or an inherited sentinel too, contradicting the stderr line (verify round 3b row 5).
+    static func attributionSection(
+        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil
+    ) -> String {
         // The path comes from the kernel but names a file anyone can create — escape it
         // like every other interpolated field on this output (CWE-150/117, #169).
         let escape = EventKitErrorSanitizer.escapeForStderr
@@ -202,7 +217,12 @@ enum ResponsibleProcessFormatter {
             let path = process.path.map(escape) ?? "(no path reported)"
             let marker = process.isSelf ? "  (this binary)" : ""
             lines.append("  \(process.pid)  \(path)\(marker)")
-            let line = (!process.isSelf && hostGrantUsable) ? keptHostLine(for: process.kind) : advice(for: process.kind)
+            let line: String
+            switch startupDecision {
+            case .skip(.hostGrantIsUsable)? where !process.isSelf: line = keptHostLine(for: process.kind)
+            case .skip(.hostRestrictedByPolicy)? where !process.isSelf: line = restrictedHostLine(for: process.kind)
+            default: line = advice(for: process.kind)
+            }
             lines.append("  \(escape(line))")
         }
         return lines.joined(separator: "\n")

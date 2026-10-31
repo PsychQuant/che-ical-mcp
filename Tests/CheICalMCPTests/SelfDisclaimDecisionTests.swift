@@ -3,15 +3,16 @@ import XCTest
 @testable import CheICalMCP
 
 /// Coverage for `SelfDisclaim.decide` (#343) — whether CheICalMCP re-execs itself as its
-/// own responsible process before any dispatch. The skip reasons are a closed set of seven
+/// own responsible process before any dispatch. The skip reasons are a closed set of eight
 /// and the re-exec reasons a closed set of three; each has a test.
 ///
 /// The rule after verify round 2 is status-aware, and the same for every host: a host whose
 /// context already has full Calendar and Reminders access keeps that grant (a working
 /// version-number grant under Claude Code included), and any other host re-execs so macOS
-/// checks CheICalMCP's own grant — the one `--setup` creates. `--setup` and
-/// `CHE_ICAL_MCP_FORCE_DISCLAIM` re-exec under any host; `CHE_ICAL_MCP_NO_DISCLAIM` wins over
-/// everything except the loop guard.
+/// checks CheICalMCP's own grant — the one `--setup` creates. A host a policy restricts for
+/// either service keeps its attribution (#367), and `CHE_ICAL_MCP_FORCE_DISCLAIM` yields to
+/// that; `--setup` re-execs under any host; `CHE_ICAL_MCP_NO_DISCLAIM` wins over everything
+/// except the loop guard.
 final class SelfDisclaimDecisionTests: XCTestCase {
 
     private let binary = "/Users/u/bin/CheICalMCP"
@@ -37,11 +38,22 @@ final class SelfDisclaimDecisionTests: XCTestCase {
     /// Counts reads of the host's authorization status, so a test can say a path never
     /// touches EventKit.
     private final class GrantProbe {
-        let usable: Bool
+        let status: HostAuthorization
         private(set) var reads = 0
-        init(usable: Bool) { self.usable = usable }
-        func read() -> Bool { reads += 1; return usable }
+        init(_ calendar: EKAuthorizationStatus, _ reminders: EKAuthorizationStatus) {
+            status = HostAuthorization(calendar: calendar, reminders: reminders)
+        }
+        convenience init(usable: Bool) {
+            self.init(usable ? .fullAccess : .notDetermined, usable ? .fullAccess : .notDetermined)
+        }
+        func read() -> HostAuthorization { reads += 1; return status }
     }
+
+    /// Every combination with `.restricted` on at least one service (#367).
+    private let restrictedCombinations: [(EKAuthorizationStatus, EKAuthorizationStatus)] = [
+        (.restricted, .fullAccess), (.fullAccess, .restricted), (.restricted, .restricted),
+        (.restricted, .denied), (.notDetermined, .restricted), (.writeOnly, .restricted),
+    ]
 
     private func decide(
         _ extraArgs: [String] = [],
@@ -53,10 +65,10 @@ final class SelfDisclaimDecisionTests: XCTestCase {
             arguments: [binary] + extraArgs,
             environment: env,
             responsible: responsible ?? vsCode,
-            hostHasUsableGrant: probe.read)
+            hostAuthorization: probe.read)
     }
 
-    // MARK: - The seven skip reasons
+    // MARK: - The eight skip reasons
 
     func testAlreadyDisclaimedSentinel_skipsSoItCannotLoop() {
         // Self-responsible after the re-exec: the normal, healthy second image.
@@ -135,7 +147,22 @@ final class SelfDisclaimDecisionTests: XCTestCase {
         }
     }
 
-    // MARK: - The criterion the closure applies (verify round 3, row 12)
+    func testHostRestrictedByPolicy_keepsTheHost_onEveryHost() {
+        // #367: re-executing would trade a policy-restricted host's attribution for CheICalMCP's
+        // grant, which the policy does not cover. The host keeps it, whatever the other service is.
+        for host in everyOtherHost {
+            for (calendar, reminders) in restrictedCombinations {
+                for mode in [[], ["--print-tcc-path"], ["--cli", "list_calendars"]] {
+                    XCTAssertEqual(
+                        decide(mode, responsible: host, probe: GrantProbe(calendar, reminders)),
+                        .skip(.hostRestrictedByPolicy),
+                        "host \(host), calendar \(calendar.rawValue), reminders \(reminders.rawValue), mode \(mode)")
+                }
+            }
+        }
+    }
+
+    // MARK: - The criteria the closure's statuses are judged by (verify round 3, row 12; #367)
 
     func testHostGrantIsUsable_onlyWhenBothServicesHaveFullAccess() {
         XCTAssertTrue(SelfDisclaim.hostGrantIsUsable(calendar: .fullAccess, reminders: .fullAccess))
@@ -143,6 +170,19 @@ final class SelfDisclaimDecisionTests: XCTestCase {
             XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: .fullAccess, reminders: other), "reminders \(other.rawValue)")
             XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: other, reminders: .fullAccess), "calendar \(other.rawValue)")
             XCTAssertFalse(SelfDisclaim.hostGrantIsUsable(calendar: other, reminders: other), "both \(other.rawValue)")
+        }
+    }
+
+    func testHostIsRestricted_whenEitherServiceIsRestricted() {
+        for (calendar, reminders) in restrictedCombinations {
+            XCTAssertTrue(
+                SelfDisclaim.hostIsRestricted(calendar: calendar, reminders: reminders),
+                "calendar \(calendar.rawValue), reminders \(reminders.rawValue)")
+        }
+        for other: EKAuthorizationStatus in [.notDetermined, .denied, .fullAccess, .writeOnly] {
+            for second: EKAuthorizationStatus in [.notDetermined, .denied, .fullAccess, .writeOnly] {
+                XCTAssertFalse(SelfDisclaim.hostIsRestricted(calendar: other, reminders: second))
+            }
         }
     }
 
@@ -176,6 +216,14 @@ final class SelfDisclaimDecisionTests: XCTestCase {
         }
     }
 
+    func testSetup_stillReexecsUnderARestrictedHost() {
+        // #367: `--setup` only creates CheICalMCP's own grant; it does not move a restricted host's
+        // server onto it, because that server never re-execs.
+        let probe = GrantProbe(.restricted, .restricted)
+        XCTAssertEqual(decide(["--setup"], responsible: claudeCode, probe: probe), .reexec(.setup))
+        XCTAssertEqual(probe.reads, 0)
+    }
+
     func testSetupAlongsidePrintTCCPath_followsTheDispatchOrder() {
         // main.swift runs `--print-tcc-path` before `--setup`, so that is the mode that runs.
         XCTAssertEqual(
@@ -186,18 +234,31 @@ final class SelfDisclaimDecisionTests: XCTestCase {
             .reexec(.hostGrantUnusable))
     }
 
-    func testForce_reexecsUnderAnyHost_withoutReadingTheHostGrant() {
+    func testForce_reexecsUnderAnyHostThatIsNotRestricted() {
         for host in everyOtherHost {
-            let probe = GrantProbe(usable: true)
-            XCTAssertEqual(
-                decide(env: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"], responsible: host, probe: probe),
-                .reexec(.forced))
-            XCTAssertEqual(probe.reads, 0)
+            for usable in [true, false] {
+                let probe = GrantProbe(usable: usable)
+                XCTAssertEqual(
+                    decide(env: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"], responsible: host, probe: probe),
+                    .reexec(.forced), "host \(host), usable \(usable)")
+                // #367: FORCE reads the status now, to yield to a restricted host.
+                XCTAssertEqual(probe.reads, 1)
+            }
         }
         // An exported-but-empty variable is unset, like the others.
         XCTAssertEqual(
             decide(env: ["CHE_ICAL_MCP_FORCE_DISCLAIM": ""], probe: GrantProbe(usable: true)),
             .skip(.hostGrantIsUsable))
+    }
+
+    func testForce_yieldsToARestrictedHost() {
+        // #367: the variable is set by whoever starts the server, and a policy outranks it.
+        for (calendar, reminders) in restrictedCombinations {
+            XCTAssertEqual(
+                decide(env: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"], responsible: claudeCode,
+                       probe: GrantProbe(calendar, reminders)),
+                .skip(.hostRestrictedByPolicy))
+        }
     }
 
     func testForce_stillNeverLoopsAndStillSkipsFlagsThatNeedNoTCC() {

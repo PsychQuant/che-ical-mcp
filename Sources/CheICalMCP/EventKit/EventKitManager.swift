@@ -143,7 +143,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `attribution` is the kind of process macOS checks (#343); it only shapes the generic
     /// branch, and `nil` means the kernel lookup was unavailable. `restrictedByPolicy` is a
     /// `.restricted` status (a configuration profile or Screen Time), which no prompt, switch
-    /// or `--setup` can change, so it takes precedence over every other branch.
+    /// or `--setup` can change, so it takes precedence over every other branch. It names the
+    /// process macOS checks, because a restricted host keeps its attribution (#367).
     static func accessDeniedMessage(
         type: String,
         isSSH: Bool,
@@ -155,11 +156,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         restrictedByPolicy: Bool = false
     ) -> String {
         if restrictedByPolicy {
+            let checked: String
+            switch attribution {
+            case .selfBinary?: checked = "CheICalMCP"
+            case .claudeCode?: checked = "Claude Code"
+            case .appBundle(let name)? where ResponsibleProcessFormatter.responseSafeAppName(name) != nil: checked = name
+            default: checked = "the process macOS checks for this server (`CheICalMCP --print-tcc-path` shows which one)"
+            }
             return """
             \(type) access is restricted on this Mac (TCC status `restricted`): a configuration \
             profile (MDM) or a Screen Time restriction controls it, so no prompt will appear and \
             the System Settings switch cannot change it. Ask whoever manages this Mac to allow \
-            \(type) access for CheICalMCP.
+            \(type) access for \(checked).
             """
         }
         if isSSH && isNonInteractive {

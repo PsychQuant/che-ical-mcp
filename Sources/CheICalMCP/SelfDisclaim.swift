@@ -3,7 +3,7 @@ import Foundation
 
 /// Why CheICalMCP did not re-exec itself as its own responsible process (#343).
 ///
-/// Closed set — exactly these seven. A new reason means a new case here and a new test in
+/// Closed set — exactly these eight. A new reason means a new case here and a new test in
 /// `SelfDisclaimDecisionTests`; do not fold one into an existing case by similarity.
 enum SelfDisclaimSkipReason: Equatable, Sendable {
     /// `CHE_ICAL_MCP_DISCLAIMED` is set and this process is its own responsible process (or
@@ -28,6 +28,11 @@ enum SelfDisclaimSkipReason: Equatable, Sendable {
     /// Claude Code's version-number grant included — keeps a grant that works, rather than
     /// trading it for CheICalMCP's own, which may still be empty.
     case hostGrantIsUsable
+    /// A policy (MDM or Screen Time) restricts the host's access to Calendar, Reminders, or
+    /// both. Re-executing would move this server onto CheICalMCP's own grant, which that
+    /// policy does not name, so the host keeps its attribution (#367).
+    /// `CHE_ICAL_MCP_FORCE_DISCLAIM` yields to it.
+    case hostRestrictedByPolicy
 }
 
 /// Why CheICalMCP re-execs itself as its own responsible process (#343).
@@ -49,6 +54,12 @@ enum SelfDisclaimDecision: Equatable, Sendable {
     case skip(SelfDisclaimSkipReason)
 }
 
+/// The host context's Calendar and Reminders authorization, read once for the decision.
+struct HostAuthorization: Equatable {
+    let calendar: EKAuthorizationStatus
+    let reminders: EKAuthorizationStatus
+}
+
 /// Re-exec in place as our own responsible process, so macOS charges Calendar and
 /// Reminders access to CheICalMCP — which carries the purpose strings — instead of to the
 /// host. Under the Claude Code daemon the host is either the app that launched the daemon
@@ -60,10 +71,11 @@ enum SelfDisclaimDecision: Equatable, Sendable {
 /// creates is the one that serves it. CheICalMCP's own grant can be empty while a host's
 /// works (2026-10-23: `notDetermined` for both services under disclaim, `fullAccess` under
 /// VS Code), which is why a host grant that works for both services is never traded for it.
-/// One that works for a single service is (`hostGrantIsUsable`), as is a denied or restricted
-/// host: those re-exec onto CheICalMCP's grant like any host without full access. `--setup` and
-/// `CHE_ICAL_MCP_FORCE_DISCLAIM` re-exec under any host; `CHE_ICAL_MCP_NO_DISCLAIM` wins over
-/// both.
+/// One that works for a single service is (`hostGrantIsUsable`), as is a denied host: those
+/// re-exec onto CheICalMCP's grant like any host without full access. A host that a policy
+/// restricts for either service is the exception and keeps its attribution (#367). `--setup`
+/// re-execs under any host, `CHE_ICAL_MCP_FORCE_DISCLAIM` under any host but a restricted one,
+/// and `CHE_ICAL_MCP_NO_DISCLAIM` wins over both.
 enum SelfDisclaim {
     static let disclaimedSentinel = "CHE_ICAL_MCP_DISCLAIMED"
     static let optOutVariable = "CHE_ICAL_MCP_NO_DISCLAIM"
@@ -75,18 +87,24 @@ enum SelfDisclaim {
     /// The criterion the user chose after verify round 2: the host's grant is kept only when
     /// BOTH services have full access. Any other combination re-execs — including a host with one
     /// working service, whose working service then moves to CheICalMCP's grant as well, and a
-    /// host the user denied or a policy restricts.
+    /// host the user denied. A restricted host is checked first (`hostIsRestricted`).
     static func hostGrantIsUsable(calendar: EKAuthorizationStatus, reminders: EKAuthorizationStatus) -> Bool {
         calendar == .fullAccess && reminders == .fullAccess
     }
 
-    /// `hostHasUsableGrant` reads the host context's authorization status. It is called only
+    /// The decision after verify round 3b (#367): a policy restriction on either service keeps
+    /// the host's attribution, whatever the other service's status is.
+    static func hostIsRestricted(calendar: EKAuthorizationStatus, reminders: EKAuthorizationStatus) -> Bool {
+        calendar == .restricted || reminders == .restricted
+    }
+
+    /// `hostAuthorization` reads the host context's authorization status. It is called only
     /// when the decision depends on it, so flags that never touch EventKit do not either.
     static func decide(
         arguments: [String],
         environment: [String: String],
         responsible: ResponsibleProcessResult,
-        hostHasUsableGrant: () -> Bool
+        hostAuthorization: () -> HostAuthorization
     ) -> SelfDisclaimDecision {
         let flags = arguments.dropFirst()
         if isSet(environment[disclaimedSentinel]) {
@@ -107,8 +125,13 @@ enum SelfDisclaim {
         case .resolved:
             // main.swift dispatches `--print-tcc-path` before `--setup`; follow the same order.
             if flags.contains("--setup"), !flags.contains("--print-tcc-path") { return .reexec(.setup) }
+            let host = hostAuthorization()
+            if hostIsRestricted(calendar: host.calendar, reminders: host.reminders) {
+                return .skip(.hostRestrictedByPolicy)
+            }
             if isSet(environment[forceVariable]) { return .reexec(.forced) }
-            return hostHasUsableGrant() ? .skip(.hostGrantIsUsable) : .reexec(.hostGrantUnusable)
+            return hostGrantIsUsable(calendar: host.calendar, reminders: host.reminders)
+                ? .skip(.hostGrantIsUsable) : .reexec(.hostGrantUnusable)
         }
     }
 

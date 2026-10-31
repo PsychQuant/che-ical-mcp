@@ -200,6 +200,28 @@ final class AccessDeniedMessageTests: XCTestCase {
         }
     }
 
+    func testRestrictedByPolicy_asksForAccessForTheProcessMacOSChecks() {
+        // #367: a restricted host keeps its attribution, so the policy has to allow the host;
+        // allowing CheICalMCP would not change what macOS checks.
+        func msg(_ attribution: ResponsibleHostKind?) -> String {
+            EventKitManager.accessDeniedMessage(
+                type: "Calendar", isSSH: false, isNonInteractive: false, isMCPB: false,
+                deniedByStatus: true, setupHint: hint, attribution: attribution, restrictedByPolicy: true)
+        }
+        XCTAssertTrue(msg(.selfBinary).contains("Calendar access for CheICalMCP"))
+        let app = msg(.appBundle(name: "Visual Studio Code"))
+        XCTAssertTrue(app.contains("Calendar access for Visual Studio Code"), app)
+        XCTAssertFalse(app.contains("access for CheICalMCP"), app)
+        XCTAssertTrue(msg(.claudeCode(version: "2.1.309")).contains("Calendar access for Claude Code"))
+        for unnamed: ResponsibleHostKind? in [.otherExecutable(path: "/tmp/x"), .unknown, nil,
+                                             .appBundle(name: "bad\u{1B}name")] {
+            let m = msg(unnamed)
+            XCTAssertTrue(m.contains("--print-tcc-path"), m)
+            XCTAssertFalse(m.contains("/tmp/x"), "a path is not echoed to the client")
+            XCTAssertFalse(m.unicodeScalars.contains { $0.value == 0x1B })
+        }
+    }
+
     func testSelfAttributionAlreadyDenied_doesNotPromiseAPrompt() {
         // Once the user pressed "Don't Allow" the status is .denied: no prompt will appear
         // and --setup cannot re-prompt (the #154 / #158 dead end), so the first step must
