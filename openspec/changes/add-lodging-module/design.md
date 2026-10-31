@@ -66,7 +66,7 @@ notes 內一行整行標記 `lodging-module: <訂房編號>`（編號中的 `|`�
 
 ### 與 `archive-event` 的邊界
 
-跟會議議程同一個寫法，作為 `event-source-archiving` 的 ADDED requirement：`archive-event` 仍是入口，保留來源行（寄件人、日期、主旨、Message-ID）與 `state/archives.json` 的寫入（來源識別碼對到住宿事件），但訂房確認信由模組取代它的第 1 節（權威時間）、第 2 節的建立或更新選擇、與第 3 節的估計行（住宿沒有估計的結束，退房日缺就問）。會議模組的 umbrella 查找與標記行不適用於住宿：狀態對到的事件，只有 notes 含 `lodging-module:` 標記行才算模組事件，否則是手建事件、經對照表與 yes 才採納。`archive-event` SKILL.md 為此有自己的一段，不借用會議那一段：§1 的寄件者加可解析時間規則被取代（變更通知可能來自別的地址、取消通知常沒有時間），權威訊息按訊息自己的 Date 取最新一則帶該編號的；state 用 `<message-id>#lodging` 為鍵，以免與同一來源的會議 umbrella 互蓋，且只當提示，找事件靠編號。理由：`archive-event` 以原始通知的 Message-ID 為鍵，變更與取消通知是不同的信、不同的 Message-ID，鍵必須是訂房編號。
+跟會議議程同一個寫法，作為 `event-source-archiving` 的 ADDED requirement：`archive-event` 仍是入口，保留來源行（寄件人、日期、主旨、Message-ID）與 `state/archives.json` 的寫入（來源識別碼對到住宿事件），但訂房確認信由模組取代它的第 1 節（權威時間）、第 2 節的建立或更新選擇、與第 3 節的估計行（住宿沒有估計的結束，退房日缺就問）。會議模組的 umbrella 查找與標記行不適用於住宿：狀態對到的事件，只有 notes 含 `lodging-module:` 標記行才算模組事件，否則是手建事件、經對照表與 yes 才採納。`archive-event` SKILL.md 為此有自己的一段，不借用會議那一段：§1 的寄件者加可解析時間規則被取代（變更通知可能來自別的地址、取消通知常沒有時間），權威訊息按訊息自己的 Date 取最新一則帶該編號的；state 用 `<message-id>#lodging:<reservation>` 為鍵，以免與同一來源的會議 umbrella 互蓋，且只當提示，找事件靠編號。理由：`archive-event` 以原始通知的 Message-ID 為鍵，變更與取消通知是不同的信、不同的 Message-ID，鍵必須是訂房編號。
 
 ## Implementation Contract
 

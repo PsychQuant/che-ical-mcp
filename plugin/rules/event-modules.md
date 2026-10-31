@@ -16,7 +16,7 @@ A module never chooses a calendar. It resolves the calendar **once for the whole
 | Module | Trigger | Contract |
 |---|---|---|
 | Conference | one named occasion on consecutive days (at most seven) with at least two separately scheduled timed items set by its organizer; not a single meeting's agenda | [`modules/conference.md`](modules/conference.md) |
-| Lodging | a booking confirmation, change notice or cancellation notice for a stay at one property, or a stay the user states at a place (dates and place are asked for when missing); not a hotel named as a suggestion | [`modules/lodging.md`](modules/lodging.md) |
+| Lodging | a booking confirmation, change notice or cancellation notice for a stay at one property, or a stay the user states at a place (dates and place are asked for when missing), **or any message that carries the reservation number of a stay already on the calendar, or that sits in a thread which already produced a stay** (a guest's reply or an acknowledgement included: the module then decides it changes nothing); not a hotel named as a suggestion | [`modules/lodging.md`](modules/lodging.md) |
 
 ## Turning a module off
 
@@ -35,4 +35,4 @@ Write `modules/<name>.md` with the four parts above, add one row to the table, a
 - **One input, several modules.** When an input matches more than one module's trigger (a conference registration that also books a room), each matching module builds only its own events and resolves its calendar separately; a routing rule that applies to one module does not change the other's calendar.
 - **Whose event it is.** An event that carries any module's marker line belongs to that module; another module never adopts it as a hand-built event.
 - **Nobody to ask.** When a module needs the user's answer (an adoption, a deletion, an unclear order) and nobody can answer, it does nothing on that point and lists it as pending in the report; silence is never a no, and never a reason to create a duplicate.
-- **A source keyed by an identifier** (a reservation number): the authoritative message is the latest one that carries the identifier. When the order of the messages cannot be told, ask.
+- **A source keyed by an identifier** (a reservation number): the authoritative message is the latest one that carries the identifier **and counts under that module's contract** (the lodging contract: only a message from the booking party). When the order of the messages cannot be told, ask.

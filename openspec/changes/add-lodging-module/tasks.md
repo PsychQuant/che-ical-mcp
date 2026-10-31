@@ -9,7 +9,7 @@
 ## 2. 入口與歸檔
 
 - [x] 2.1 三個入口的「符合索引裡某個模組的觸發條件就照模組做」文字照舊，只把各入口「（today: …）」的舉例補上住宿（`archive-event`、`/quick-event`、`calendar-management`），並在 `archive-event` 的設定段落補 `lodging_module`。驗證：`grep -n 'today:' plugin/skills plugin/commands` 三處都含住宿；`delete_event` 只在 `calendar-management` 的 `allowed-tools`，`archive-event` 與 `/quick-event` 沒有。
-- [x] 2.2 `archive-event` 對訂房確認信的例外（requirement：A booking confirmation is archived through the lodging module；設計：與 `archive-event` 的邊界）：來源行與 `state/archives.json` 照舊，鍵改為訂房編號、權威訊息是最新一則帶該編號的（取代 §1 的寄件者與時間規則）、state 用 `<message-id>#lodging`、缺退房日就問、不寫估計行。驗證：審閱 `plugin/skills/archive-event/SKILL.md` 的例外段落與 spec 的三個 scenario（變更通知在不同訊息、缺退房日、報告行）逐一對應。獨立讀者（不看對話脈絡）核對契約與 spec 一致性已做一輪，發現的高嚴重度項目已改。
+- [x] 2.2 `archive-event` 對訂房確認信的例外（requirement：A booking confirmation is archived through the lodging module；設計：與 `archive-event` 的邊界）：來源行與 `state/archives.json` 照舊，鍵改為訂房編號、權威訊息是最新一則帶該編號的（取代 §1 的寄件者與時間規則）、state 用 `<message-id>#lodging:<reservation>`、缺退房日就問、不寫估計行。驗證：審閱 `plugin/skills/archive-event/SKILL.md` 的例外段落與 spec 的三個 scenario（變更通知在不同訊息、缺退房日、報告行）逐一對應。獨立讀者（不看對話脈絡）核對契約與 spec 一致性已做一輪，發現的高嚴重度項目已改。
 
 ## 3. 實機驗證
 
