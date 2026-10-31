@@ -37,7 +37,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
-4. **v1.23.0+ (#343)**: the server reads the host context's status first. With full Calendar and Reminders access the host's grant is kept; otherwise the server re-execs as its own responsible process and only the `CheICalMCP` entry matters. The `TCC attribution` line in the output names the process macOS checks. The host table below applies to a host with full access of its own, with `CHE_ICAL_MCP_NO_DISCLAIM=1`, and on v1.21.0 and earlier (v1.22.0 re-exec'd only under Claude Code).
+4. **v1.23.0+ (#343)**: the server reads the host context's status first. With full Calendar and Reminders access the host's grant is kept, and a host a policy restricts keeps its attribution too (#367); otherwise the server re-execs as its own responsible process and only the `CheICalMCP` entry matters. The `TCC attribution` line in the output names the process macOS checks. The host table below applies to a host with full access of its own, to one a policy restricts, with `CHE_ICAL_MCP_NO_DISCLAIM=1`, and on v1.21.0 and earlier (v1.22.0 re-exec'd by default only under Claude Code, and under any host with `CHE_ICAL_MCP_FORCE_DISCLAIM`).
 
    **Remind about the two TCC layers (#168)**: the status above is **context-dependent** — it reflects the attribution of the context this command ran in (for a Claude Code session's Bash tool, that's the Claude Code side), not an absolute property of the binary. Besides the `CheICalMCP` entry, System Settings → Privacy & Security → Calendar / Reminders may need a **host-layer entry** toggled ON:
 
