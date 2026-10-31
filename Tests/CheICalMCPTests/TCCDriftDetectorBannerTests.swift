@@ -370,17 +370,32 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// dispatch, so the banner is written by the re-exec'd image only. Guards against a
     /// future change that moves the banner, or the re-exec, and prints it from both images.
     func testBannerIsEmittedExactlyOnceAfterTheReexec() throws {
+        // Without the responsibility SPI nothing re-execs, and no FORCE notice is printed.
+        // Under a launcher that makes every child its own responsible process, the child is
+        // already self-responsible, decides `alreadySelfResponsible`, and never re-execs.
+        try ChildAttribution.requireHostAttributedChild()
         let binary = try locateBuiltBinary()
-        let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+        // FORCE, so the re-exec happens on every host: whether a plain run re-execs depends on
+        // the runner's own grant (status-aware rule), and Terminal / Xcode / CI may have one.
+        var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
+        env["CHE_ICAL_MCP_FORCE_DISCLAIM"] = "1"
 
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
         XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF")
+        if run.stderr.contains("restricted by a policy") {
+            throw XCTSkip("the host is restricted by a policy, and CHE_ICAL_MCP_FORCE_DISCLAIM yields to that (#367)")
+        }
+        // The run must actually go through the re-exec, or this test checks a single image
+        // and proves nothing (verify round 2 row 6).
+        XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"),
+                      "the spawn did not re-exec. Got stderr: \(run.stderr.prefix(400))")
+        // The notice is printed before the exec is attempted, so it shows the decision, not
+        // that the exec happened; a failed exec says so on the next line (verify round 3 row 5).
+        XCTAssertFalse(run.stderr.contains("could not re-exec"),
+                       "the re-exec failed. Got stderr: \(run.stderr.prefix(400))")
         let headers = run.stderr.components(separatedBy: "[banner] che-ical-mcp ").count - 1
         XCTAssertEqual(headers, 1, "Expected exactly one banner header. Got stderr: \(run.stderr.prefix(400))")
-        XCTAssertFalse(
-            run.stderr.contains("could not re-exec as its own responsible process"),
-            "The re-exec should succeed on a supported macOS. Got stderr: \(run.stderr.prefix(400))")
     }
 
     /// Setting `CHE_ICAL_MCP_NO_BANNER=1` must completely suppress banner output.
