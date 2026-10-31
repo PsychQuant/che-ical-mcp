@@ -93,6 +93,32 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
             setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: nil)
         XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_DISCLAIMED"))
         XCTAssertTrue(steps[0].contains("could not re-exec"))
+        // Verify round 3b row 6: the ineffective-sentinel line is the other stderr line that
+        // explains why a restart did not re-execute, and a spawn failure can be transient.
+        XCTAssertTrue(steps[0].contains("is set but another process is still responsible"))
+        XCTAssertFalse(steps[0].contains("a restart does not help"))
+    }
+
+    func testHostAttributedRemedy_treatsTheOptOutAsADeliberateSetting() {
+        // Verify round 3b row 7: the docs describe CHE_ICAL_MCP_NO_DISCLAIM as the user's way to
+        // keep the host's grant, so the remedy must not tell the client to drop it unconditionally.
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertTrue(steps[0].contains("to keep the host's grant"), steps[0])
+        XCTAssertTrue(steps[0].contains("only if you want CheICalMCP's own grant instead"), steps[0])
+    }
+
+    func testHostAttributedRemedy_hasNoControlCharacters_evenForAHostilePath() {
+        // Verify round 3b row 17: the banner prints these steps unescaped, which is safe only
+        // because they are constant prose plus setupCommandHint's output. Pin that premise.
+        for path in ["/tmp/\u{1B}[2J/CheICalMCP", "/tmp/a\u{7F}b/CheICalMCP", "/tmp/c\u{85}d/CheICalMCP", "/Users/o'neil/bin/CheICalMCP"] {
+            let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+                setupCommand: EventKitManager.setupCommandHint(binaryPath: path),
+                settingsPane: "Calendar / Reminders", alsoEnable: "enable Terminal")
+            for step in steps {
+                XCTAssertFalse(TCCDriftDetector.pathHasControlChars(step), step)
+            }
+        }
     }
 
     func testHostAttributedRemedy_includesTheSystemSettingsStep() {
@@ -104,7 +130,8 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(plain[2].contains("Don't Allow"))
         let app = ResponsibleProcessFormatter.hostAttributedRemedy(
             setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: "enable Terminal")
-        XCTAssertTrue(app[2].contains("enable Terminal to keep using its grant"))
+        // Verify round 3b row 15: the host's grant is kept only with full access to both.
+        XCTAssertTrue(app[2].contains("enable Terminal for both Calendar and Reminders to keep using its grant"), app[2])
     }
 
     private let claudeCodeHost = ResponsibleProcessResult.resolved(ResponsibleProcess(

@@ -124,16 +124,23 @@ enum ResponsibleProcessFormatter {
     /// the re-exec is in the way (verify round 3 row 8). `setupCommand` is a ready-to-paste
     /// command from `EventKitManager.setupCommandHint`; `settingsPane` is the System Settings
     /// pane to name; `alsoEnable` offers keeping an app host's own grant instead.
+    ///
+    /// The steps are printed unescaped on the banner, which is safe because they are constant
+    /// prose plus `setupCommand` and `alsoEnable`, both already fit to print (verify round 3b
+    /// row 17; `ResponsibleProcessFormatterTests` pins it).
     static func hostAttributedRemedy(setupCommand: String, settingsPane: String, alsoEnable: String?) -> [String] {
         let settings = "Open System Settings → Privacy & Security → \(settingsPane) and switch CheICalMCP on "
             + "if it is listed as off (a recorded \"Don't Allow\" is not asked again)"
         return [
             "Restart the MCP client. When the host has no full Calendar and Reminders access, CheICalMCP "
-                + "re-executes itself and macOS checks CheICalMCP's own grant. If CHE_ICAL_MCP_NO_DISCLAIM, or an "
-                + "inherited CHE_ICAL_MCP_DISCLAIMED, is set in the server's environment, remove it first; "
-                + "if the server's stderr has a \"could not re-exec\" line, a restart does not help — see that line.",
+                + "re-executes itself and macOS checks CheICalMCP's own grant. A restart does not re-execute it "
+                + "while CHE_ICAL_MCP_NO_DISCLAIM is set in the server's environment (set to keep the host's grant; "
+                + "remove it only if you want CheICalMCP's own grant instead) or while an inherited "
+                + "CHE_ICAL_MCP_DISCLAIMED is (remove it). If the server's stderr has a \"could not re-exec\" line, "
+                + "or a \"CHE_ICAL_MCP_DISCLAIMED is set but another process is still responsible\" line, read it "
+                + "first: a restart may not be enough.",
             "If CheICalMCP's own grant is not set up yet, create it once from Terminal: \(setupCommand)",
-            alsoEnable.map { settings + ", or \($0) to keep using its grant" } ?? settings,
+            alsoEnable.map { settings + ", or \($0) for both Calendar and Reminders to keep using its grant" } ?? settings,
         ]
     }
 

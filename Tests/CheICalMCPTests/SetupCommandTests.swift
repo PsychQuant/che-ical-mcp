@@ -5,6 +5,22 @@ import XCTest
 
 final class SetupCommandTests: XCTestCase {
 
+    // MARK: - --print-tcc-path's Binary path line (#343 verify round 3b, row 11)
+
+    func testBinaryPathForDisplay_cleanPath_isPrintedAsIs_soItNamesTheSameFileAsTheSetupCommand() {
+        // Escaping a clean path doubled its backslashes, so the Binary path line and the
+        // single-quoted --setup line beneath it named different files.
+        let path = "/Users/u/odd\\dir/CheICalMCP"
+        XCTAssertEqual(EventKitManager.binaryPathForDisplay(path), path)
+        XCTAssertEqual(EventKitManager.setupCommandHint(binaryPath: path), "'\(path)' --setup")
+    }
+
+    func testBinaryPathForDisplay_controlCharacters_areEscapedAndSaidSo() {
+        let shown = EventKitManager.binaryPathForDisplay("/tmp/\u{1B}[2J/CheICalMCP")
+        XCTAssertFalse(TCCDriftDetector.pathHasControlChars(shown), shown)
+        XCTAssertTrue(shown.contains("control characters"), shown)
+    }
+
     // MARK: - Setup Access Decision (#143)
 
     /// The `--setup` path must check `authorizationStatus` BEFORE calling the

@@ -112,15 +112,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// expands nothing — inside double quotes `$(…)` and backticks still run (#343 verify
     /// round 2, row 9) — and nothing else is done to it: escaping first doubled every
     /// backslash, so the quoted path named another file (verify round 3, row 10). A path with
-    /// control characters gets no runnable command, only its escaped form to read. This is
-    /// the one place the paste-ready command is built: the access-denied message, the banner
-    /// and `--print-tcc-path` all use it.
+    /// control characters gets no runnable command, only its escaped form to read. The
+    /// access-denied message, the banner's host remedy and `--print-tcc-path` use it; the
+    /// banner's other `--setup` lines quote with the same `shellSingleQuote` (verify round 3b
+    /// row 14).
     static func setupCommandHint(binaryPath: String) -> String {
         guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
             return "run the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --setup "
                 + "(its path has control characters, so no command is printed)"
         }
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
+    }
+
+    /// The binary path as `--print-tcc-path` shows it: as is, so it names the same file as the
+    /// `--setup` command beneath it, unless it has control characters, which are escaped and
+    /// said so (verify round 3b row 11: escaping a clean path doubled its backslashes).
+    static func binaryPathForDisplay(_ path: String) -> String {
+        guard TCCDriftDetector.pathHasControlChars(path) else { return path }
+        return "\(EventKitErrorSanitizer.escapeForStderr(path))  (escaped: the path has control characters)"
     }
 
     /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the

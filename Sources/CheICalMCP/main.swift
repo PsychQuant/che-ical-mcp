@@ -109,7 +109,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
 
         Binary path:
-          \(EventKitErrorSanitizer.escapeForStderr(absolute))
+          \(EventKitManager.binaryPathForDisplay(absolute))
 
         Bundle identifier:
           \(bundleID)
