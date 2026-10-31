@@ -54,7 +54,7 @@ Numbers refer to the sections below (ordered by topic, not execution): calendar 
 
 Two optional files under `.claude/.ical/` steer this skill. Both may be absent — absence is never an error.
 
-**`config.yaml`** — human-authored; comments record the reasoning behind each setting. Found by the lookup in [`rules/calendar-routing.md`](../../rules/calendar-routing.md) (nearest one walking up from the working directory, then `~/.claude/.ical/`), which also defines its `calendar_routing` block. Besides that block and the module switches of [`rules/event-modules.md`](../../rules/event-modules.md) (`conference_module`), this skill reads one field:
+**`config.yaml`** — human-authored; comments record the reasoning behind each setting. Found by the lookup in [`rules/calendar-routing.md`](../../rules/calendar-routing.md) (nearest one walking up from the working directory, then `~/.claude/.ical/`), which also defines its `calendar_routing` block. Besides that block and the module switches of [`rules/event-modules.md`](../../rules/event-modules.md) (`conference_module`, `lodging_module`), this skill reads one field:
 
 ```yaml
 # Which calendar archived events land in when no routing rule matched.
@@ -70,15 +70,39 @@ default_calendar: "行政"
     "event_id": "…",
     "calendar": "行政",
     "archived_at": "2026-08-31T14:00:00+08:00"
+  },
+  "<message-id>#lodging:<reservation>": {
+    "event_id": "…",
+    "calendar": "旅遊",
+    "archived_at": "2026-10-29T14:00:00+09:00",
+    "reservation": "123456"
+  },
+  "<cancelling-message-id>#lodging:<reservation>": {
+    "reservation": "123456",
+    "cancelled_at": "2026-11-02T09:30:00+09:00"
   }
 }
 ```
+
+The second entry is a stay (`reservation` is its number). The third is a cancellation record written when the lodging module deletes a stay: it has no `event_id`, because the event is gone.
 
 If either file fails to parse, say so explicitly in the report and proceed as if it were absent — a malformed config must never silently change behavior.
 
 ---
 
-> **An input that matches a module's trigger** in [`rules/event-modules.md`](../../rules/event-modules.md) (today: a conference program), when that module is on, is built as the module says; otherwise carry on below. For such a source the module replaces §2's create/update of one event and its search by source identifier; §4 stays as the module's calendar fallback. Judge the trigger on the program the thread holds, not on the newest message alone. Still apply: §1 (the authoritative message; a newest message that corrects only some items is a partial correction, applied to the existing set as the module's section 6 says, or, when nothing was archived yet, folded into the thread's full program before the program is built); §2's `state/archives.json` lookup and its write-back, which maps the source identifier to the umbrella event. When the lookup maps the source to an event, read that event's notes (`search_events` in the calendar the state names, keyword `conference-module-item: umbrella`, and take the hit with the mapped id; no hit means it has no umbrella marker): if they carry the module's `conference-module-item: umbrella` marker, that marker finds the set; if not, it is a single event archived before the module, so tell the user and ask before building the program. §3 (the source line and any estimate line, placed in each event's notes above the module's marker lines; a session without an end time uses the module's estimate instead of asking); and §5 over the program's days, leaving out the program's own events. The report says corrections are tracked by the module's marker lines. Normative: the `event-source-archiving` requirement "A conference program is archived through the conference module".
+> **An input that matches a module's trigger** in [`rules/event-modules.md`](../../rules/event-modules.md) (today: a conference program or a booking for a stay), when that module is on, is built as the module says; otherwise carry on below. This paragraph is for a conference program; a booking for a stay is covered by the next paragraph and none of this paragraph's "Still apply" list applies to it. For a conference program the module replaces §2's create/update of one event and its search by source identifier; §4 stays as the module's calendar fallback. Judge the trigger on the program the thread holds, not on the newest message alone. Still apply: §1 (the authoritative message; a newest message that corrects only some items is a partial correction, applied to the existing set as the module's section 6 says, or, when nothing was archived yet, folded into the thread's full program before the program is built); §2's `state/archives.json` lookup and its write-back, which maps the source identifier to the umbrella event. When the lookup maps the source to an event, read that event's notes (`search_events` in the calendar the state names, keyword `conference-module-item: umbrella`, and take the hit with the mapped id; no hit means it has no umbrella marker): if they carry the module's `conference-module-item: umbrella` marker, that marker finds the set; if not, it is a single event archived before the module, so tell the user and ask before building the program. §3 (the source line and any estimate line, placed in each event's notes above the module's marker lines; a session without an end time uses the module's estimate instead of asking); and §5 over the program's days, leaving out the program's own events. The report says corrections are tracked by the module's marker lines. Normative: the `event-source-archiving` requirement "A conference program is archived through the conference module".
+
+> **A booking confirmation, change notice or cancellation notice for a stay** is archived through the lodging module ([`rules/modules/lodging.md`](../../rules/modules/lodging.md)). The conference paragraph's umbrella lookup, its `conference-module` marker lines and its estimated session end do not apply to a stay. What applies:
+>
+> - **The thread-root rules do not apply to a stay.** §2's "resolve the thread's first message and use its Message-ID" and §3's "Message-ID of the thread's original notice" are for the single-event path. For a stay, the source line, the state keys and the cancellation record use the Message-ID of the message actually reflected, so a later change or cancellation in the same thread is a different message and is not reported as unchanged. §2's notes search never updates, as a single event, an event that holds a `lodging-module:` marker line; such a message goes to the module whatever its content, and the module's eligibility check decides.
+> - This paragraph applies when the lodging module is on and triggered; otherwise carry on with the steps below. Other items in the same message (a flight) still go through §2 to §5.
+> - **§1 is replaced**: the sender-and-time rule does not fit a stay (a change notice can come from another address, a cancellation usually states no time), and its From comparison could be forged anyway. The authoritative message is the latest **booking-party** message (confirmation, change or cancellation) carrying the **reservation number** (the module's "Who may change the event"), ordered by each message's own `Date` and time (the original's for a forwarded one), and the order is asked when unclear.
+> - **§2's `state/archives.json`**: the stay is stored under the key `<message-id>#lodging:<reservation>` (one entry per reservation, because one message can confirm several) with its `reservation` number, so a source that also built a conference (key `<message-id>`) does not overwrite or get mistaken for it. The mapping is only a hint, because a change or cancellation arrives as a different message: the reservation number in the `lodging-module:` marker line finds the stay, by the module's section 4. When a mapping names an event, read its notes; if it holds the marker with the same reservation number it is the stay, and if it holds no marker it is a hand-built event, so show a mapping table and ask before touching it. The bare `<message-id>` key is read the same way for a booking archived before the module existed: an event it maps to that holds neither a stay nor a conference marker is shown in a mapping table and adopted only after the user's yes. After a deletion, write the cancellation record: an entry keyed by the cancelling message `<message-id>#lodging:<reservation>` with `reservation` and `cancelled_at` (the date and time of the cancelling message), and remove the mapping that names the deleted event; a cancellation left pending writes nothing.
+> - **§3** keeps the source line and writes **no estimate line**: when the check-out day is missing, ask.
+> - **§4** (calendar fallback) and **§5** (same-day deadlines, leaving out the events every module built from this source) apply as written.
+> - **A cancellation notice** follows the module's section 7. This skill does not list `delete_event` in `allowed-tools`, so the delete asks for permission on top of the module's own question, and in a run nobody can answer the cancellation is only reported as pending.
+>
+> The report says corrections are tracked by the module's marker line. Normative: the `event-source-archiving` requirement "A booking confirmation is archived through the lodging module".
 
 ## 1. Authoritative time: sender identity + parsable time
 

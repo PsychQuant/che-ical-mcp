@@ -76,4 +76,4 @@ A config problem is always said out loud; it never changes behavior silently. Wh
 
 ## 7. Inputs that become several events
 
-When an [event module](event-modules.md) turns one input into several events (for example a conference program), resolve the calendar **once for the whole input** and use it for every event the module creates. Do not classify the events one by one: a rule's `includes` text is written for the events it names, and a module's umbrella (an all-day event) may not fit it.
+When an [event module](event-modules.md) turns one input into several events (for example a conference program), resolve the calendar **once for the whole input** and use it for every event the module creates. Do not classify the events one by one: a rule's `includes` text is written for the events it names, and a module's umbrella (an all-day event) may not fit it. A rule's kind may be a lodging one (`includes: "hotel stay"`): the lodging module classifies its one event against the rules once. When one input also matches another module, each module resolves its own calendar separately; a rule that applies to one does not change the other's.
