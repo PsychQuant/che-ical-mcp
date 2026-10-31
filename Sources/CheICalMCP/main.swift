@@ -6,16 +6,30 @@ import MCP
 // #343 — before any dispatch, re-exec in place as our own responsible process, so macOS
 // charges Calendar and Reminders access to CheICalMCP (which carries the purpose strings)
 // instead of to the host. Under the Claude Code daemon the host is either the app that
-// launched the daemon or Claude Code's own binary, which can never be prompted. Only that
-// case (and `--setup`, or an explicit CHE_ICAL_MCP_FORCE_DISCLAIM) re-execs; every other host
-// keeps its own grant. The skip reasons are a closed set (SelfDisclaimSkipReason); any
-// failure is fail-open.
-switch SelfDisclaim.decide(
+// launched the daemon or Claude Code's own binary, which can never be prompted. The rule
+// reads the host context's status and is the same for every host: full Calendar and
+// Reminders access keeps the host's grant, as does a policy restriction on either service
+// (#367); anything else re-execs (as do `--setup` and an explicit CHE_ICAL_MCP_FORCE_DISCLAIM,
+// which yields to a restriction). Both reason sets are closed (SelfDisclaimSkipReason,
+// SelfDisclaimReexecReason); any failure is fail-open.
+let startupDecision = SelfDisclaim.decide(
     arguments: CommandLine.arguments,
     environment: ProcessInfo.processInfo.environment,
-    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid())
-) {
-case .reexec:
+    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
+    hostAuthorization: {
+        // Class methods only: this image is about to be replaced, so no EKEventStore is built
+        // here (verify round 3, row 15).
+        HostAuthorization(
+            calendar: EKEventStore.authorizationStatus(for: .event),
+            reminders: EKEventStore.authorizationStatus(for: .reminder))
+    })
+switch startupDecision {
+case .reexec(let reason):
+    if reason == .forced {
+        let notice = "[che-ical-mcp] \(SelfDisclaim.forceVariable) is set: re-executing so macOS checks "
+            + "CheICalMCP's own Calendar and Reminders grant instead of the host's (#343)\n"
+        FileHandle.standardError.write(Data(notice.utf8))
+    }
     let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments)
     let message = "[che-ical-mcp] could not re-exec as its own responsible process "
         + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
@@ -24,12 +38,12 @@ case .skip(.alreadyDisclaimed):
     // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
     unsetenv(SelfDisclaim.disclaimedSentinel)
 case .skip(.disclaimIneffective):
-    // The sentinel is set but Claude Code still owns the attribution: the re-exec did not take
-    // effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
+    // The sentinel is set but another process still owns the attribution: the re-exec did not
+    // take effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
     unsetenv(SelfDisclaim.disclaimedSentinel)
-    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but Claude Code is still the "
-        + "responsible process (the re-exec did not take effect, or the variable was inherited); "
-        + "continuing under Claude Code's TCC attribution (#343)\n"
+    let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but another process is still "
+        + "responsible for this one (the re-exec did not take effect, or the variable was inherited); "
+        + "continuing under the host's TCC attribution (#343)\n"
     FileHandle.standardError.write(Data(message.utf8))
 case .skip(.responsibilityUnavailable(let reason)):
     let message = "[che-ical-mcp] responsible process unavailable "
@@ -88,13 +102,14 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     // print it first, from the kernel, so nobody has to infer it from the parent chain.
     let attribution = ResponsibleProcessFormatter.attributionSection(
         selfPid: ProcessInfo.processInfo.processIdentifier,
-        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()))
+        result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
+        startupDecision: startupDecision)
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))
 
         Binary path:
-          \(absolute)
+          \(EventKitManager.binaryPathForDisplay(absolute))
 
         Bundle identifier:
           \(bundleID)
@@ -108,7 +123,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
         Reset TCC + re-prompt (run from Terminal, NOT over SSH):
           tccutil reset Calendar \(bundleID)
           tccutil reset Reminders \(bundleID)
-          "\(absolute)" --setup
+          \(EventKitManager.setupCommandHint(binaryPath: absolute))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -120,7 +135,9 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           System Settings → Privacy & Security → Reminders
 
         Additional signing info:
-          codesign -dv "\(absolute)"
+          \(TCCDriftDetector.pathHasControlChars(absolute)
+            ? "(binary path has control characters; run codesign -dv on it by hand)"
+            : "codesign -dv \(TCCDriftDetector.shellSingleQuote(absolute))")
         """)
 
     // #169: the EventKit status above is context-dependent (attribution follows the
@@ -230,15 +247,18 @@ func emitStartupBanner() {
     // the explanation too (verify DA-1) — and the kernel lookup only happens on the
     // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
-    let calendarGranted = statusSource.authorizationStatus(for: .event) == .fullAccess
-    let remindersGranted = statusSource.authorizationStatus(for: .reminder) == .fullAccess
+    let calendarStatus = statusSource.authorizationStatus(for: .event)
+    let remindersStatus = statusSource.authorizationStatus(for: .reminder)
+    let calendarGranted = calendarStatus == .fullAccess
+    let remindersGranted = remindersStatus == .fullAccess
 
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
         diskBinaryMtime: mtime,
-        eventKitAccessGranted: calendarGranted && remindersGranted
+        eventKitAccessGranted: calendarGranted && remindersGranted,
+        eventKitRestricted: SelfDisclaim.hostIsRestricted(calendar: calendarStatus, reminders: remindersStatus)
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"

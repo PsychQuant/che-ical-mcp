@@ -75,7 +75,7 @@ A **SessionStart hook** checks if the MCP is properly installed and shows setup 
 | Skill | Description |
 |-------|-------------|
 | `calendar-management` | Comprehensive guide for calendar operations |
-| `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer; self-responsible under Claude Code from v1.22.0, #343) |
+| `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer; from v1.23.0 the server uses CheICalMCP's own grant whenever the host has no full Calendar and Reminders access of its own, #343) |
 | `archive-event` | Archive an event from a narrative source (meeting notice, announcement, mail thread) with correction tracking and source citation |
 
 ### Commands
@@ -140,6 +140,9 @@ This plugin requires macOS permissions:
 Plugin version: 1.22.0 (matches MCP server version)
 
 ### Changelog
+
+**Unreleased**
+- **The skill, `/check-tcc` and the plugin docs describe the status-aware self-disclaim rule (#343)**: the server keeps the host's grant only when it has full access to both Calendar and Reminders, or when a policy restricts the host (#367); any other host, Claude Code included, re-execs onto CheICalMCP's own grant, which `--setup` creates. After upgrading, run `~/bin/CheICalMCP --setup` once in the foreground if CheICalMCP is not granted yet, then restart the client.
 
 **1.22.0** (2026-10-27)
 - **Under Claude Code, the `troubleshoot-tcc` skill, `/check-tcc` and the plugin docs describe the new attribution (#343)**: when Claude Code is the responsible process the server re-execs as its own responsible process, so only the `CheICalMCP` entry is checked; other hosts keep host attribution. After upgrading, allow the macOS prompt for CheICalMCP once, or run `~/bin/CheICalMCP --setup` in the foreground. `CHE_ICAL_MCP_NO_DISCLAIM=1` restores host attribution; `CHE_ICAL_MCP_FORCE_DISCLAIM=1` re-execs under any host. Not verified: reading the calendar through the re-exec under a Claude Code host.

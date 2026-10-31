@@ -101,10 +101,11 @@ enum ResponsibleProcessFormatter {
         case .claudeCode(let version):
             let name = version.map { "Claude Code \($0)" } ?? "Claude Code"
             return "macOS checks \(name), which has no Calendar or Reminders purpose string, so it "
-                + "can never be prompted. CheICalMCP normally re-executes itself so that it is "
-                + "checked under its own name, and this process was not re-executed: "
-                + "CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED was inherited, or the "
-                + "re-exec failed (see the start-up line on stderr) (#343)."
+                + "can never be prompted. When the host has no full Calendar and Reminders access, "
+                + "CheICalMCP re-executes itself so that it is checked under its own name, and this "
+                + "process was not re-executed: CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED "
+                + "was inherited, the re-exec failed (see the start-up line on stderr), or \(name) had "
+                + "full access when this server started and has lost it since (#343)."
         case .appBundle(let name):
             return "macOS checks \(name)'s grant: System Settings → Privacy & Security → "
                 + "Calendar / Reminders → \(name)."
@@ -115,6 +116,73 @@ enum ResponsibleProcessFormatter {
         }
     }
 
+    /// What to do when macOS checks a host and the host has no grant (#343, verify round 2
+    /// row 1). The banner and the access-denied message both print these steps, so they give
+    /// the same advice (verify round 3 row 11). Under the status-aware rule a host without full
+    /// access at start-up makes CheICalMCP re-exec, so a restart is what moves this server onto
+    /// CheICalMCP's own grant — the one `--setup` creates — unless one of the things that stops
+    /// the re-exec is in the way (verify round 3 row 8). `setupCommand` is a ready-to-paste
+    /// command from `EventKitManager.setupCommandHint`; `settingsPane` is the System Settings
+    /// pane to name; `alsoEnable` offers keeping an app host's own grant instead.
+    ///
+    /// The steps are printed unescaped on the banner, which is safe because they are constant
+    /// prose plus `setupCommand` and `alsoEnable`, both already fit to print (verify round 3b
+    /// row 17; `ResponsibleProcessFormatterTests` pins it).
+    static func hostAttributedRemedy(setupCommand: String, settingsPane: String, alsoEnable: String?) -> [String] {
+        let settings = "Open System Settings → Privacy & Security → \(settingsPane) and switch CheICalMCP on "
+            + "if it is listed as off (a recorded \"Don't Allow\" is not asked again)"
+        return [
+            "Restart the MCP client. When the host has no full Calendar and Reminders access, CheICalMCP "
+                + "re-executes itself and macOS checks CheICalMCP's own grant. A restart does not re-execute it "
+                + "while CHE_ICAL_MCP_NO_DISCLAIM is set in the server's environment (set to keep the host's grant; "
+                + "remove it only if you want CheICalMCP's own grant instead) or while an inherited "
+                + "CHE_ICAL_MCP_DISCLAIMED is (remove it). If the server's stderr has a \"could not re-exec\" line, "
+                + "or a \"CHE_ICAL_MCP_DISCLAIMED is set but another process is still responsible\" line, read it "
+                + "first: a restart may not be enough.",
+            "If CheICalMCP's own grant is not set up yet, create it once from Terminal: \(setupCommand)",
+            alsoEnable.map { settings + ", or \($0) for both Calendar and Reminders to keep using its grant" } ?? settings,
+        ]
+    }
+
+    /// The attribution line for a host whose context already has full Calendar and Reminders
+    /// access: under the status-aware rule its grant is kept on purpose, so the failure causes
+    /// in `advice(for:)` do not apply (verify round 3 row 3).
+    static func keptHostLine(for kind: ResponsibleHostKind) -> String {
+        "macOS checks \(hostName(kind))'s grant, which has full Calendar and Reminders access, so CheICalMCP "
+            + "keeps it and does not re-execute itself (#343)."
+    }
+
+    /// The attribution line for a host a policy restricts: its attribution is kept on purpose,
+    /// because CheICalMCP's own grant is not what that policy covers (#367).
+    static func restrictedHostLine(for kind: ResponsibleHostKind) -> String {
+        "macOS checks \(hostName(kind)), and a configuration profile (MDM) or Screen Time restricts its "
+            + "Calendar or Reminders access, so CheICalMCP keeps it and does not re-execute itself onto its "
+            + "own grant (#367). Only whoever manages this Mac can lift the restriction."
+    }
+
+    private static func hostName(_ kind: ResponsibleHostKind) -> String {
+        switch kind {
+        case .claudeCode(let version): return version.map { "Claude Code \($0)" } ?? "Claude Code"
+        case .appBundle(let app): return app
+        case .otherExecutable(let path): return path
+        case .selfBinary: return "CheICalMCP"
+        case .unknown: return "the responsible process"
+        }
+    }
+
+    private static let appNameCharacters = CharacterSet.letters
+        .union(.decimalDigits).union(.nonBaseCharacters).union(CharacterSet(charactersIn: " .-_()+"))
+
+    /// An app bundle name fit to go into a message returned to an MCP client, or `nil`. The
+    /// name is a path component anyone can choose, so only a short plain name passes:
+    /// letters, digits, spaces and `.-_()+`, at most 64 unicode scalars (#343 verify round 2, row 9;
+    /// scalars rather than characters since verify round 3, row 22).
+    static func responseSafeAppName(_ name: String) -> String? {
+        guard !name.isEmpty, name.unicodeScalars.count <= 64,   // scalars: combining marks count too
+              name.unicodeScalars.allSatisfy(appNameCharacters.contains) else { return nil }
+        return name
+    }
+
     /// The line `--setup` prints before requesting access: whose grant the dialogs create.
     static func setupTargetLine(_ result: ResponsibleProcessResult) -> String {
         let escape = EventKitErrorSanitizer.escapeForStderr
@@ -123,7 +191,9 @@ enum ResponsibleProcessFormatter {
             return "Authorization target: unknown (\(escape(reason)))"
         case .resolved(let process) where process.isSelf:
             let path = process.path.map(escape) ?? "(no path reported)"
-            return "Authorization target: CheICalMCP (\(path)) — every host that launches this binary uses this grant (#343)"
+            return "Authorization target: CheICalMCP (\(path)) — used whenever the responsible process macOS "
+                + "checks for this binary (not necessarily the one that starts it) has no full Calendar and "
+                + "Reminders access of its own (#343)"
         case .resolved(let process):
             let host: String
             switch process.kind {
@@ -133,11 +203,16 @@ enum ResponsibleProcessFormatter {
             case .selfBinary, .unknown: host = process.path ?? "an unknown process"
             }
             return "WARNING: macOS will record this grant for \(escape(host)), not CheICalMCP "
-                + "(CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed — #343)"
+                + "(CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED was inherited, or the re-exec failed — #343)"
         }
     }
 
-    static func attributionSection(selfPid: Int32, result: ResponsibleProcessResult) -> String {
+    /// `startupDecision` is the decision this process made at start-up. Only a host it kept on
+    /// purpose is described as kept: a status read alone said so after a failed FORCE re-exec
+    /// or an inherited sentinel too, contradicting the stderr line (verify round 3b row 5).
+    static func attributionSection(
+        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil
+    ) -> String {
         // The path comes from the kernel but names a file anyone can create — escape it
         // like every other interpolated field on this output (CWE-150/117, #169).
         let escape = EventKitErrorSanitizer.escapeForStderr
@@ -149,7 +224,13 @@ enum ResponsibleProcessFormatter {
             let path = process.path.map(escape) ?? "(no path reported)"
             let marker = process.isSelf ? "  (this binary)" : ""
             lines.append("  \(process.pid)  \(path)\(marker)")
-            lines.append("  \(escape(advice(for: process.kind)))")
+            let line: String
+            switch startupDecision {
+            case .skip(.hostGrantIsUsable)? where !process.isSelf: line = keptHostLine(for: process.kind)
+            case .skip(.hostRestrictedByPolicy)? where !process.isSelf: line = restrictedHostLine(for: process.kind)
+            default: line = advice(for: process.kind)
+            }
+            lines.append("  \(escape(line))")
         }
         return lines.joined(separator: "\n")
     }

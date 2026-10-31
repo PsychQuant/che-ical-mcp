@@ -66,18 +66,18 @@ code:
 ---
 ### Requirement: Permission-denied responses surface the resolvable binary path and --setup command
 
-When a tool call fails because Calendar or Reminders access is insufficient, and when the startup banner detects that access is not granted, the output SHALL include the resolved absolute path of the currently running binary and a copy-pasteable `"<path>" --setup` command, so a user of the Claude Desktop `.mcpb` install can authorize the correct binary identity. The path SHALL be produced by the existing binary-path resolver and SHALL pass through control-character sanitization before display.
+When a tool call fails because Calendar or Reminders access is insufficient, and when the startup banner detects that access is not granted, the output SHALL include the resolved absolute path of the currently running binary and a copy-pasteable `'<path>' --setup` command, so a user of the Claude Desktop `.mcpb` install can authorize the correct binary identity. The path SHALL be produced by the existing binary-path resolver and SHALL be single-quoted with nothing else done to it, so a pasted command expands nothing and names the running binary. A path with control characters SHALL get no runnable command, only its escaped form and a note that no command is printed. A status that a policy restricts (`restricted`, or a host a policy restricts, #367) SHALL get no `--setup` command, because no prompt can change it.
 
 #### Scenario: Calendar tool call denied surfaces the setup command
 
 - **WHEN** a Calendar tool call fails due to insufficient authorization
 - **THEN** the error response includes the resolved absolute binary path
-- **AND** the response includes a `"<resolved-path>" --setup` command line
+- **AND** the response includes a `'<resolved-path>' --setup` command line
 
 #### Scenario: Startup banner surfaces the setup command on missing access
 
 - **WHEN** the startup banner runs and detects Calendar access is not granted
-- **THEN** the banner output includes the resolved absolute binary path and a `"<resolved-path>" --setup` command line
+- **THEN** the banner output includes the resolved absolute binary path and a `'<resolved-path>' --setup` command line
 
 <!-- @trace
 source: foreground-setup-tcc
