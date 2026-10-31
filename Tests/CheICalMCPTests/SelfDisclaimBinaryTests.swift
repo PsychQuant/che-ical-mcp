@@ -12,9 +12,11 @@ import Darwin
 ///
 /// Whether the *default* run re-execs depends on the authorization status of the test
 /// runner's responsible process, which a spawned child inherits: full Calendar and
-/// Reminders access keeps the host's grant, anything else re-execs. The tests therefore
-/// either force the re-exec with `CHE_ICAL_MCP_FORCE_DISCLAIM` (deterministic on every host)
-/// or read the expectation from an opted-out child under the same host.
+/// Reminders access keeps the host's grant, as does a policy restriction (#367), and
+/// anything else re-execs. The tests therefore either force the re-exec with
+/// `CHE_ICAL_MCP_FORCE_DISCLAIM` (deterministic on every host a policy does not restrict) or
+/// read the expectation from an opted-out child under the same host. Tests that need a host
+/// skip where every child is its own responsible process (`ChildAttribution`).
 final class SelfDisclaimBinaryTests: XCTestCase {
 
     private struct Run {
@@ -111,22 +113,31 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         return lines[heading + 1]
     }
 
-    /// Skips unless a child of this runner inherits a host to be responsible for it. Asked of
-    /// a child directly, not of the runner: under some launchers every process is its own
-    /// responsible process (2026-10-29, a Claude Code 2.1.312 background session: the shell,
-    /// its children and an opted-out CheICalMCP were all self-responsible), and then there is
-    /// no host attribution to observe or to keep.
     private func requireHostAttributedChild() throws {
-        guard LiveResponsibleProcessSource.isAvailable else { throw XCTSkip("responsibility SPI unavailable here") }
-        let probe = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
-        let line = try XCTUnwrap(attributionLine(probe.stdout), "no TCC attribution block in:\n\(probe.stdout)")
-        if line.hasSuffix("(this binary)") {
-            throw XCTSkip("a child of this runner is already its own responsible process, so host attribution cannot be observed")
+        try ChildAttribution.requireHostAttributedChild()
+    }
+
+    /// Whether `--print-tcc-path` reported a restricted status for either service.
+    private func reportsRestricted(_ stdout: String) -> Bool {
+        stdout.components(separatedBy: "\n").contains {
+            ($0.hasPrefix("  Calendar:") || $0.hasPrefix("  Reminders:")) && $0.contains(" restricted")
+        }
+    }
+
+    /// A forced run under a host a policy restricts does not re-exec (#367), so a test of the
+    /// forced re-exec has nothing to observe there.
+    private func skipIfThePolicyKeptTheHost(_ run: Run) throws {
+        if reportsRestricted(run.stdout) {
+            throw XCTSkip("the host is restricted by a policy, and CHE_ICAL_MCP_FORCE_DISCLAIM yields to that (#367)")
         }
     }
 
     func testForcedDisclaim_reexecsAsItsOwnResponsibleProcessKeepingThePid() throws {
+        // Verify round 3b row 4: where every child is already self-responsible, the line is
+        // `<pid> … (this binary)` with no re-exec at all, and this test passed vacuously.
+        try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
+        try skipIfThePolicyKeptTheHost(run)
         XCTAssertFalse(run.timedOut, "--print-tcc-path did not exit within the bound")
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout), "no TCC attribution block in:\n\(run.stdout)")
@@ -140,12 +151,14 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
         XCTAssertFalse(run.timedOut)
+        try skipIfThePolicyKeptTheHost(run)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
     }
 
     func testDefault_followsTheHostsAuthorizationStatus() throws {
-        // A host whose context already has full Calendar and Reminders access keeps it; any
-        // other re-execs. The oracle is a fresh opted-out child under the same host: it reports
+        // A host whose context already has full Calendar and Reminders access keeps it, as does
+        // one a policy restricts (#367); any other re-execs. The oracle is a fresh opted-out
+        // child under the same host: it reports
         // the host's status as the server's pre-exec read sees it. Reading the status in the
         // test runner instead was flaky in the full suite (2026-10-28: the runner read "not
         // usable" while both fresh children read fullAccess), after a thousand in-process tests.
@@ -158,13 +171,15 @@ final class SelfDisclaimBinaryTests: XCTestCase {
             }
         }
 
+        let restricted = reportsRestricted(host.stdout)
+
         let run = try runPrintTCCPath()
         XCTAssertFalse(run.timedOut)
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertEqual(
-            line.hasSuffix("(this binary)"), !usable,
-            "host grant usable: \(usable); got \(line)")
+            line.hasSuffix("(this binary)"), !usable && !restricted,
+            "host grant usable: \(usable), restricted: \(restricted); got \(line)")
     }
 
     func testOptOut_keepsTheHostAsTheResponsibleProcess() throws {

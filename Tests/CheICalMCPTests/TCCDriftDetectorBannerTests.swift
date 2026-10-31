@@ -37,28 +37,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// Locate the built binary. SwiftPM tests run from the package root, so debug
     /// builds live at `.build/debug/CheICalMCP`. Release builds at `.build/release/`.
     /// We prefer debug since `swift test` always builds debug.
-    /// Whether an opted-out child of this runner reports itself as its own responsible process.
-    private func childIsSelfResponsible(_ binary: URL) throws -> Bool {
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = ["--print-tcc-path"]
-        var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
-        env["CHE_ICAL_MCP_NO_DISCLAIM"] = "1"
-        process.environment = env
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = Pipe()
-        process.standardInput = Pipe()
-        try process.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let lines = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
-        guard let heading = lines.firstIndex(where: { $0.hasPrefix("TCC attribution") }), heading + 1 < lines.count else {
-            return false
-        }
-        return lines[heading + 1].hasSuffix("(this binary)")
-    }
-
     private func locateBuiltBinary() throws -> URL {
         let cwd = FileManager.default.currentDirectoryPath
         let candidates = [
@@ -393,13 +371,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// future change that moves the banner, or the re-exec, and prints it from both images.
     func testBannerIsEmittedExactlyOnceAfterTheReexec() throws {
         // Without the responsibility SPI nothing re-execs, and no FORCE notice is printed.
-        guard LiveResponsibleProcessSource.isAvailable else { throw XCTSkip("responsibility SPI unavailable here") }
-        let binary = try locateBuiltBinary()
         // Under a launcher that makes every child its own responsible process, the child is
         // already self-responsible, decides `alreadySelfResponsible`, and never re-execs.
-        if try childIsSelfResponsible(binary) {
-            throw XCTSkip("a child of this runner is already its own responsible process, so no re-exec happens")
-        }
+        try ChildAttribution.requireHostAttributedChild()
+        let binary = try locateBuiltBinary()
         // FORCE, so the re-exec happens on every host: whether a plain run re-execs depends on
         // the runner's own grant (status-aware rule), and Terminal / Xcode / CI may have one.
         var env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CHE_ICAL_MCP_") }
@@ -408,6 +383,9 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
         XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF")
+        if run.stderr.contains("restricted by a policy") {
+            throw XCTSkip("the host is restricted by a policy, and CHE_ICAL_MCP_FORCE_DISCLAIM yields to that (#367)")
+        }
         // The run must actually go through the re-exec, or this test checks a single image
         // and proves nothing (verify round 2 row 6).
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"),
@@ -418,9 +396,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
                        "the re-exec failed. Got stderr: \(run.stderr.prefix(400))")
         let headers = run.stderr.components(separatedBy: "[banner] che-ical-mcp ").count - 1
         XCTAssertEqual(headers, 1, "Expected exactly one banner header. Got stderr: \(run.stderr.prefix(400))")
-        XCTAssertFalse(
-            run.stderr.contains("could not re-exec as its own responsible process"),
-            "The re-exec should succeed on a supported macOS. Got stderr: \(run.stderr.prefix(400))")
     }
 
     /// Setting `CHE_ICAL_MCP_NO_BANNER=1` must completely suppress banner output.
