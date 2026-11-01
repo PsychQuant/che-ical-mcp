@@ -36,6 +36,9 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertTrue(advice.contains("CHE_ICAL_MCP_DISCLAIMED"))
         XCTAssertTrue(advice.contains("re-exec failed"))
         XCTAssertFalse(advice.contains("Unset CHE_ICAL_MCP_NO_DISCLAIM"))
+        // Status-aware rule: a Claude Code host with full access is kept, so a host-attributed
+        // denial can also mean the grant changed after start-up.
+        XCTAssertTrue(advice.contains("lost it since"))
     }
 
     func testUnavailable_rendersTheReason() {
@@ -59,12 +62,132 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         XCTAssertFalse(line.contains("WARNING"))
     }
 
+    func testSetupTarget_self_saysWhichHostsUseTheGrant() {
+        // Round 2 row 3: "every host that launches this binary uses this grant" was false —
+        // a host with full access of its own keeps it.
+        let line = ResponsibleProcessFormatter.setupTargetLine(
+            .resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true)))
+        XCTAssertFalse(line.contains("every host"))
+        XCTAssertTrue(line.contains("has no full Calendar and Reminders access of its own"))
+        // Verify round 3 row 19: the criterion is the responsible process, not the launcher.
+        XCTAssertTrue(line.contains("responsible process"))
+        XCTAssertFalse(line.contains("the process that launches"))
+    }
+
+    // MARK: - Shared remedy for a host-attributed denial (#343 verify round 2, row 1)
+
+    func testHostAttributedRemedy_restartsAndPointsAtCheICalMCPsOwnGrant() {
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'/Users/u/bin/CheICalMCP' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertEqual(steps.count, 3)
+        XCTAssertTrue(steps[0].contains("Restart the MCP client"))
+        XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(steps[1].contains("'/Users/u/bin/CheICalMCP' --setup"))
+        XCTAssertTrue(steps[1].contains("CheICalMCP's own grant"))
+    }
+
+    func testHostAttributedRemedy_namesEveryReasonTheReexecDidNotHappen() {
+        // Verify round 3 row 8: only NO_DISCLAIM was named, but an inherited sentinel and a
+        // failed re-exec leave the same state, and a restart fixes neither.
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertTrue(steps[0].contains("CHE_ICAL_MCP_DISCLAIMED"))
+        XCTAssertTrue(steps[0].contains("could not re-exec"))
+        // Verify round 3b row 6: the ineffective-sentinel line is the other stderr line that
+        // explains why a restart did not re-execute, and a spawn failure can be transient.
+        XCTAssertTrue(steps[0].contains("is set but another process is still responsible"))
+        XCTAssertFalse(steps[0].contains("a restart does not help"))
+    }
+
+    func testHostAttributedRemedy_treatsTheOptOutAsADeliberateSetting() {
+        // Verify round 3b row 7: the docs describe CHE_ICAL_MCP_NO_DISCLAIM as the user's way to
+        // keep the host's grant, so the remedy must not tell the client to drop it unconditionally.
+        let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: nil)
+        XCTAssertTrue(steps[0].contains("to keep the host's grant"), steps[0])
+        XCTAssertTrue(steps[0].contains("only if you want CheICalMCP's own grant instead"), steps[0])
+    }
+
+    func testHostAttributedRemedy_hasNoControlCharacters_evenForAHostilePath() {
+        // Verify round 3b row 17: the banner prints these steps unescaped, which is safe only
+        // because they are constant prose plus setupCommandHint's output. Pin that premise.
+        for path in ["/tmp/\u{1B}[2J/CheICalMCP", "/tmp/a\u{7F}b/CheICalMCP", "/tmp/c\u{85}d/CheICalMCP", "/Users/o'neil/bin/CheICalMCP"] {
+            let steps = ResponsibleProcessFormatter.hostAttributedRemedy(
+                setupCommand: EventKitManager.setupCommandHint(binaryPath: path),
+                settingsPane: "Calendar / Reminders", alsoEnable: "enable Terminal")
+            for step in steps {
+                XCTAssertFalse(TCCDriftDetector.pathHasControlChars(step), step)
+            }
+        }
+    }
+
+    func testHostAttributedRemedy_includesTheSystemSettingsStep() {
+        // Verify round 3 row 11: the banner had no System Settings step, so for a recorded
+        // "Don't Allow" its only advice was a --setup that cannot re-prompt.
+        let plain = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar / Reminders", alsoEnable: nil)
+        XCTAssertTrue(plain[2].contains("Open System Settings → Privacy & Security → Calendar / Reminders"))
+        XCTAssertTrue(plain[2].contains("Don't Allow"))
+        let app = ResponsibleProcessFormatter.hostAttributedRemedy(
+            setupCommand: "'x' --setup", settingsPane: "Calendar", alsoEnable: "enable Terminal")
+        // Verify round 3b row 15: the host's grant is kept only with full access to both.
+        XCTAssertTrue(app[2].contains("enable Terminal for both Calendar and Reminders to keep using its grant"), app[2])
+    }
+
+    private let claudeCodeHost = ResponsibleProcessResult.resolved(ResponsibleProcess(
+        pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+
+    func testAttribution_hostWithFullAccess_saysTheGrantIsKept_notThatTheReexecFailed() {
+        // Verify round 3 row 3: under the status-aware rule a Claude Code host with full access
+        // is the normal, intended state, and the failure causes did not apply.
+        let kept = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .skip(.hostGrantIsUsable))
+        XCTAssertFalse(kept.contains("was not re-executed"), kept)
+        XCTAssertTrue(kept.contains("keeps"), kept)
+        let failed = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .reexec(.hostGrantUnusable))
+        XCTAssertTrue(failed.contains("was not re-executed"), failed)
+    }
+
+    func testAttribution_keptOnlyWhenTheStartupDecisionKeptIt() {
+        // Verify round 3b row 5: reading the status alone said "kept on purpose" when a FORCE
+        // re-exec had failed or an inherited sentinel stopped it, contradicting the stderr line.
+        for decision: SelfDisclaimDecision? in [
+            .reexec(.forced), .reexec(.setup), .skip(.disclaimIneffective), .skip(.optedOut),
+            .skip(.responsibilityUnavailable("x")), nil,
+        ] {
+            let s = ResponsibleProcessFormatter.attributionSection(
+                selfPid: 500, result: claudeCodeHost, startupDecision: decision)
+            XCTAssertFalse(s.contains("keeps"), "\(String(describing: decision)): \(s)")
+            XCTAssertTrue(s.contains("was not re-executed"), "\(String(describing: decision)): \(s)")
+        }
+    }
+
+    func testAttribution_restrictedHost_saysThePolicyKeepsIt() {
+        // #367: a host a policy restricts keeps its attribution on purpose.
+        let s = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 500, result: claudeCodeHost, startupDecision: .skip(.hostRestrictedByPolicy))
+        XCTAssertTrue(s.contains("restricts"), s)
+        XCTAssertTrue(s.contains("#367"), s)
+        XCTAssertFalse(s.contains("was not re-executed"), s)
+        XCTAssertFalse(s.contains("full Calendar and Reminders access"), s)
+    }
+
+    func testAttribution_selfIsNeverDescribedAsKept() {
+        let me = ResponsibleProcessResult.resolved(ResponsibleProcess(pid: 500, path: "/Users/u/bin/CheICalMCP", isSelf: true))
+        for decision: SelfDisclaimDecision in [.skip(.hostGrantIsUsable), .skip(.hostRestrictedByPolicy)] {
+            let s = ResponsibleProcessFormatter.attributionSection(selfPid: 500, result: me, startupDecision: decision)
+            XCTAssertTrue(s.contains("CheICalMCP's own grant"), s)
+        }
+    }
+
     func testSetupTarget_host_warnsTheGrantGoesElsewhere() {
         let line = ResponsibleProcessFormatter.setupTargetLine(
             .resolved(ResponsibleProcess(pid: 3599, path: "/Applications/Terminal.app/Contents/MacOS/Terminal", isSelf: false)))
         XCTAssertTrue(line.contains("WARNING"))
         XCTAssertTrue(line.contains("Terminal"))
         XCTAssertTrue(line.contains("CHE_ICAL_MCP_NO_DISCLAIM"))
+        XCTAssertTrue(line.contains("CHE_ICAL_MCP_DISCLAIMED"), "verify round 3 row 8")
     }
 
     func testSetupTarget_unavailable_rendersTheReason() {

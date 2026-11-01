@@ -39,6 +39,10 @@ struct TCCDriftDetector {
     /// explanation too (#175 verify DA-1: Calendar-only gating would leave that user
     /// doubly silent).
     let eventKitAccessGranted: Bool
+    /// Whether either service is `.restricted` in the current attribution context. A host a
+    /// policy restricts keeps its attribution (#367), so it gets its own signal instead of the
+    /// ungranted one, whose remedy cannot change a policy.
+    let eventKitRestricted: Bool
 
     init(
         tcc: TCCDatabaseSource,
@@ -48,7 +52,8 @@ struct TCCDriftDetector {
         stalePIDListLimit: Int = 5,
         codeSignature: CodeSignatureSource = LiveCodeSignatureSource(),
         responsibleProcess: ResponsibleProcessSource = LiveResponsibleProcessSource(),
-        eventKitAccessGranted: Bool = true
+        eventKitAccessGranted: Bool = true,
+        eventKitRestricted: Bool = false
     ) {
         self.tcc = tcc
         self.processes = processes
@@ -58,6 +63,7 @@ struct TCCDriftDetector {
         self.stalePIDListLimit = stalePIDListLimit
         self.responsibleProcess = responsibleProcess
         self.eventKitAccessGranted = eventKitAccessGranted
+        self.eventKitRestricted = eventKitRestricted
     }
 
     // MARK: - Detect
@@ -156,16 +162,18 @@ struct TCCDriftDetector {
         //
         // Only checked when EventKit is NOT fully granted in this context, so granted
         // users see zero added noise. `authorizationStatus` follows the responsible
-        // process (#168), so ask the kernel which process that is: a host (Claude Code,
-        // or the app that launched its daemon) means CheICalMCP's own grant — and the
-        // --setup line that creates it — does not apply here. Self-attributed and
-        // ungranted is the plain case the --setup line already covers.
+        // process (#168), so ask the kernel which process that is: a host means this
+        // process was not re-executed although the host has no grant, and the banner
+        // gives the shared remedy for it. Self-attributed and ungranted is the plain case
+        // the --setup line already covers.
         if !eventKitAccessGranted {
             switch responsibleProcess.responsibleProcess(for: getpid()) {
             case .unavailable(let reason):
                 skipReasons.append("TCC attribution check skipped: \(reason)")
             case .resolved(let process) where !process.isSelf:
-                signals.append(.hostAttributedUngranted(host: process.kind, hostPath: process.path))
+                signals.append(eventKitRestricted
+                    ? .hostRestrictedByPolicy(host: process.kind, hostPath: process.path)
+                    : .hostAttributedUngranted(host: process.kind, hostPath: process.path))
             case .resolved:
                 break
             }
@@ -227,12 +235,15 @@ struct TCCDriftDetector {
         // emit a copy-paste command only when the path is clean, else a safe-display hint.
         //
         // Suppressed when the host-attribution signal is present (#175 verify DA-2, #343):
-        // `--setup` grants CheICalMCP's OWN attribution identity, but that signal says
-        // macOS checks a host's grant here — printing both would offer contradictory
-        // remediation, and `--setup` is the dead end in that scenario.
+        // that signal prints the shared remedy, which already carries the `--setup` command
+        // (after a restart, a host without a grant re-execs into the grant it creates), so
+        // printing this line too would repeat it. The restricted-host signal suppresses it too:
+        // `--setup` cannot change a policy (#367).
         let hostSignalPresent = report.signals.contains {
-            if case .hostAttributedUngranted = $0 { return true }
-            return false
+            switch $0 {
+            case .hostAttributedUngranted, .hostRestrictedByPolicy: return true
+            default: return false
+            }
         }
         if !calendarAccessGranted, !hostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
@@ -322,6 +333,22 @@ struct TCCDriftDetector {
                 lines.append("[drift] EventKit not granted, and macOS checks a host instead of CheICalMCP (#343)")
                 lines.append("[drift]   responsible process: \(safeHost)")
                 lines.append("[drift]   → \(advice)")
+                // Same steps as the access-denied message (verify round 2 row 1). The steps are
+                // constant prose plus the command from setupCommandHint, which is already safe to
+                // print (quoted clean path, or an escaped description): escaping the line again
+                // doubled the backslashes of `'\''` and broke the quoting (verify round 3 row 2).
+                let setupCommand = EventKitManager.setupCommandHint(binaryPath: runningBinaryPath)
+                for step in ResponsibleProcessFormatter.hostAttributedRemedy(
+                    setupCommand: setupCommand, settingsPane: "Calendar / Reminders", alsoEnable: nil) {
+                    lines.append("[drift]   → \(step)")
+                }
+
+            case .hostRestrictedByPolicy(let host, let hostPath):
+                let safeHost = EventKitErrorSanitizer.escapeForStderr(hostPath ?? "(no path reported)")
+                let line = EventKitErrorSanitizer.escapeForStderr(ResponsibleProcessFormatter.restrictedHostLine(for: host))
+                lines.append("[drift] EventKit access is restricted by a policy, and macOS checks a host instead of CheICalMCP (#367)")
+                lines.append("[drift]   responsible process: \(safeHost)")
+                lines.append("[drift]   → \(line)")
             }
         }
 
@@ -455,11 +482,15 @@ enum DriftSignal: Sendable, Equatable {
     case csreqMismatch(service: String, hasEntitlement: Bool?)
 
     /// EventKit is NOT granted and the kernel's responsible process is a host rather than
-    /// CheICalMCP (#175, reworked in #343). Under Claude Code, CheICalMCP re-execs as its own
-    /// responsible process, so there this fires only under `CHE_ICAL_MCP_NO_DISCLAIM`, with an
-    /// inherited `CHE_ICAL_MCP_DISCLAIMED`, or when the re-exec failed. Under any other host
-    /// (Terminal, VS Code, ...) the host is responsible by design and this is the ordinary
-    /// "that app has no grant yet" case. `host` drives the advice: Claude Code can never be
-    /// prompted (no purpose string); an app's grant lives under that app's name.
+    /// CheICalMCP (#175, reworked in #343). A host without full access at start-up makes
+    /// CheICalMCP re-exec as its own responsible process, so this fires only when that did
+    /// not happen: `CHE_ICAL_MCP_NO_DISCLAIM`, an inherited `CHE_ICAL_MCP_DISCLAIMED`, a failed
+    /// re-exec, or a host grant lost after start-up. `host` drives the advice: Claude Code can
+    /// never be prompted (no purpose string); an app's grant lives under that app's name.
     case hostAttributedUngranted(host: ResponsibleHostKind, hostPath: String?)
+
+    /// EventKit is NOT granted, a policy (configuration profile or Screen Time) restricts
+    /// either service, and the responsible process is a host. The host keeps its attribution
+    /// on purpose (#367), so no restart, `--setup` or System Settings switch is suggested.
+    case hostRestrictedByPolicy(host: ResponsibleHostKind, hostPath: String?)
 }

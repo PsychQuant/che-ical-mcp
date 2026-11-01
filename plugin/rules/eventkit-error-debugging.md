@@ -34,7 +34,7 @@ Pre-v1.9.0 you could rationalize "maybe the cache is stale, retry will work"; po
 
 ## Reference
 
-- `troubleshoot-tcc` skill — full 6-step diagnostic walkthrough (binary layer + host-app / responsible-process layer, #168; from v1.22.0, the server is its own responsible process when Claude Code is the responsible process, and `--print-tcc-path` names the process macOS checks, #343)
+- `troubleshoot-tcc` skill — full 6-step diagnostic walkthrough (binary layer + host-app / responsible-process layer, #168; from v1.23.0, the server is its own responsible process whenever the host has no full Calendar and Reminders access of its own, and `--print-tcc-path` names the process macOS checks, #343)
 - `/check-tcc` — quick state read
 - `mcpb/README.md` (v1.8.1+) — user-facing setup guide
 - Issue #108 (closed) — full RCA + falsified cdhash hypothesis + corrected cache anti-pattern

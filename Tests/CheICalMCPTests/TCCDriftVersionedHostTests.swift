@@ -22,7 +22,8 @@ final class TCCDriftVersionedHostTests: XCTestCase {
 
     private func makeDetector(
         responsible: ResponsibleProcessResult,
-        eventKitAccessGranted: Bool
+        eventKitAccessGranted: Bool,
+        eventKitRestricted: Bool = false
     ) -> TCCDriftDetector {
         TCCDriftDetector(
             tcc: FakeTCCDatabaseSource(entries: []),
@@ -30,7 +31,8 @@ final class TCCDriftVersionedHostTests: XCTestCase {
             runningBinaryPath: runningPath,
             diskBinaryMtime: nil,
             responsibleProcess: FakeResponsibleProcessSource(result: responsible),
-            eventKitAccessGranted: eventKitAccessGranted
+            eventKitAccessGranted: eventKitAccessGranted,
+            eventKitRestricted: eventKitRestricted
         )
     }
 
@@ -54,6 +56,32 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         let report = makeDetector(responsible: resolved(vsCodePath), eventKitAccessGranted: false).detect()
         XCTAssertTrue(report.signals.contains(
             .hostAttributedUngranted(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)))
+    }
+
+    func testRestrictedHost_getsThePolicySignal_notTheUngrantedOne() {
+        // #367: a host a policy restricts keeps its attribution on purpose; the ungranted
+        // signal's remedy (restart, --setup, the System Settings switch) cannot change a policy.
+        let report = makeDetector(
+            responsible: resolved(vsCodePath), eventKitAccessGranted: false, eventKitRestricted: true).detect()
+        XCTAssertEqual(report.signals, [.hostRestrictedByPolicy(host: .appBundle(name: "Visual Studio Code"), hostPath: vsCodePath)])
+        // Self-attributed and restricted is the access-denied message's case, not a host signal.
+        let me = makeDetector(
+            responsible: resolved(runningPath, isSelf: true), eventKitAccessGranted: false, eventKitRestricted: true).detect()
+        XCTAssertTrue(me.signals.isEmpty)
+    }
+
+    func testBanner_restrictedHost_namesThePolicyAndPrintsNoRemedyCommand() {
+        let report = DriftReport(
+            signals: [.hostRestrictedByPolicy(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.23.0", runningBinaryPath: runningPath,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains(versionedHostPath), banner)
+        XCTAssertTrue(banner.contains("configuration profile"), banner)
+        XCTAssertTrue(banner.contains("#367"), banner)
+        XCTAssertFalse(banner.contains("--setup"), banner)
+        XCTAssertFalse(banner.contains("Restart the MCP client"), banner)
     }
 
     func testNoSignal_whenSelfResponsible_evenUnderAClaudeCodeParent() {
@@ -121,16 +149,47 @@ final class TCCDriftVersionedHostTests: XCTestCase {
         XCTAssertTrue(banner.contains("Visual Studio Code's grant"))
     }
 
-    func testBanner_suppressesSetupLineWhenAHostIsResponsible() {
-        // `--setup` grants CheICalMCP's own attribution, which a host-attributed process
-        // does not use — printing it alongside the host advice would contradict it.
+    func testBanner_hostSignal_printsTheSharedRemedyWithSetupOnce() {
+        // Verify round 2 row 1: the banner hid `--setup` here ("the dead end") while the
+        // access-denied message offered it. Under the status-aware rule `--setup` is the
+        // remedy after a restart, so the banner prints the same steps — `--setup` once.
         let report = DriftReport(
             signals: [.hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: versionedHostPath)],
             skipReasons: [])
         let banner = TCCDriftDetector.formatBanner(
             report: report, version: "1.22.0", runningBinaryPath: runningPath,
             pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
-        XCTAssertFalse(banner.contains("--setup"))
+        XCTAssertTrue(banner.contains("Restart the MCP client"))
+        XCTAssertTrue(banner.contains("Open System Settings → Privacy & Security → Calendar / Reminders"))
+        XCTAssertTrue(banner.contains("'\(runningPath)' --setup"))
+        XCTAssertEqual(banner.components(separatedBy: "--setup").count - 1, 1, banner)
+    }
+
+    func testBanner_hostSignal_quotesAnApostropheOnce() {
+        // Verify round 3 row 2: the step was escaped after quoting, so `'\''` became `'\\''`
+        // and the pasted command left the quotes.
+        let path = "/Users/o'neil/bin/CheICalMCP"
+        let report = DriftReport(
+            signals: [.hostAttributedUngranted(host: .appBundle(name: "Terminal"), hostPath: "/x")],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.22.0", runningBinaryPath: path,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertTrue(banner.contains("'/Users/o'\\''neil/bin/CheICalMCP' --setup"), banner)
+        XCTAssertFalse(banner.contains("'\\\\''"), banner)
+    }
+
+    func testBanner_hostSignal_withAControlCharacterPath_printsNoCopyPasteCommand() {
+        let hostile = "/tmp/\u{1B}[2J/CheICalMCP"
+        let report = DriftReport(
+            signals: [.hostAttributedUngranted(host: .appBundle(name: "Terminal"), hostPath: "/x")],
+            skipReasons: [])
+        let banner = TCCDriftDetector.formatBanner(
+            report: report, version: "1.22.0", runningBinaryPath: hostile,
+            pid: 123, bundleID: "com.checheng.CheICalMCP", calendarAccessGranted: false)
+        XCTAssertFalse(banner.unicodeScalars.contains { $0.value == 0x1B })
+        XCTAssertFalse(banner.contains("' --setup"), "no runnable command for a path with control characters")
+        XCTAssertTrue(banner.contains("Restart the MCP client"))
     }
 
     func testBanner_keepsSetupLineWithoutAHostSignal() {
