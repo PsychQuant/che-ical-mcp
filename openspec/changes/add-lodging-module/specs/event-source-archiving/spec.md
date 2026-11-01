@@ -72,13 +72,25 @@ When the source is a booking confirmation, change notice or cancellation notice 
 
 ### Requirement: A stay is never updated as a single event, whatever the lodging switch says
 
-This requirement does not depend on the lodging module being enabled or triggered. A hit of the skill's single-event path, from the state mapping or from a notes search, on an event that holds a `lodging-module:` marker line SHALL NOT be updated as a single event: the skill SHALL read the mapped event's notes before updating it, SHALL hand the message to the lodging module when that module is on and triggered, and otherwise SHALL name the event in the report and leave it as it is. The trigger SHALL be judged on the whole thread: any message in a thread that already produced a stay, a traveler's reply included, goes to the module even when it carries no reservation number. A thread has produced a stay when `state/archives.json` holds an entry whose key starts with the Message-ID of any message of the thread followed by `#lodging:`, or when a notes search for those Message-IDs hits an event with a lodging marker; with the module off, that check SHALL also block `create_event` for the thread. A `conference-module` marker SHALL NOT be covered by this requirement: the conference module keeps its own rule that, when it is off, the skill's steps run unchanged. For the lookup of a booking archived before the module existed, the thread-root rule of the skill SHALL still apply to that one lookup.
+This requirement does not depend on the lodging module being enabled or triggered. A hit of the skill's single-event path, from the state mapping or from a notes search, on an event that holds a `lodging-module:` marker line SHALL NOT be updated as a single event: the skill SHALL read the mapped event's notes before updating it, by a search over all calendars with a range that covers the mapped event, and when the mapped event cannot be found it SHALL treat that as unknown (report it, update nothing, ask) and not as having no marker, SHALL hand the message to the lodging module when that module is on and triggered, and otherwise SHALL name the event in the report and leave it as it is. The trigger SHALL be judged on the whole thread: any message in a thread that already produced a stay, a traveler's reply included, goes to the module even when it carries no reservation number. A thread has produced a stay when `state/archives.json` holds an entry whose key starts with the Message-ID of any message of the thread followed by `#lodging:`, or when a notes search for those Message-IDs hits an event with a lodging marker; with the module off, that check SHALL block only the single-event create of the stay itself, and a flight, a meeting or any other item of the same message or thread SHALL go through the skill's steps as before, a hit that carries a lodging marker being skipped for such an item and not counted as a match. The pre-module bare-key read SHALL be used for adoption only after the module's lookup found nothing and only when the mapped event looks like a stay. A `conference-module` marker SHALL NOT be covered by this requirement: the conference module keeps its own rule that, when it is off, the skill's steps run unchanged. For the lookup of a booking archived before the module existed, the thread-root rule of the skill SHALL still apply to that one lookup.
 
 #### Scenario: A hotel message with no reservation number and the module off
 
 - **GIVEN** a stay archived through the module, `lodging_module: off`, and a later hotel message in the same thread with another Message-ID
 - **WHEN** the message is archived
 - **THEN** the skill finds the thread's stay through the state entry or the marker, creates nothing, updates nothing, and the report names the stay as left as it is
+
+#### Scenario: A flight in the thread of a stay, module off
+
+- **GIVEN** a thread that produced a stay and `lodging_module: off`
+- **WHEN** a flight added to the same thread is archived
+- **THEN** the flight is created as a single event and the stay is not touched
+
+#### Scenario: The mapped event was moved to another calendar
+
+- **GIVEN** the state maps a source to an event that the user moved to a calendar other than the one the state names
+- **WHEN** the single-event path would update it
+- **THEN** the skill still finds it, sees the lodging marker, and does not update it as a single event
 
 #### Scenario: The mapped event is read before it is updated
 
