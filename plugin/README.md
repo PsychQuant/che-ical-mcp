@@ -137,11 +137,11 @@ This plugin requires macOS permissions:
 
 ## Version
 
-Plugin version: 1.22.0 (matches MCP server version)
+Plugin version: 1.23.0 (matches MCP server version)
 
 ### Changelog
 
-**Unreleased**
+**1.23.0** (2026-11-01)
 - **The skill, `/check-tcc` and the plugin docs describe the status-aware self-disclaim rule (#343)**: the server keeps the host's grant only when it has full access to both Calendar and Reminders, or when a policy restricts the host (#367); any other host, Claude Code included, re-execs onto CheICalMCP's own grant, which `--setup` creates. After upgrading, run `~/bin/CheICalMCP --setup` once in the foreground if CheICalMCP is not granted yet, then restart the client.
 
 **1.22.0** (2026-10-27)
