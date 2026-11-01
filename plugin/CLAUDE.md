@@ -21,6 +21,9 @@ macOS Calendar & Reminders MCP server with native EventKit integration. Binary s
 
 - **eventkit-error-debugging.md** — TCC-first rule: when EventKit tools return `accessDenied` / `insufficientAccess` / `unknownAuthState`, always suspect TCC state before code bugs. Routes Claude to `troubleshoot-tcc` skill rather than retry-and-hope or premature code investigation.
 
+- **event-modules.md** and **modules/** — what one input becomes: a conference program (`modules/conference.md`, an all-day umbrella plus one event per scheduled item) or a hotel booking (`modules/lodging.md`, one all-day event keyed by reservation number; a cancellation is deleted only after the user says yes). Switch a module off with `<module>_module: off` in `.claude/.ical/config.yaml`.
+- **calendar-routing.md** — which calendar a folder's events land in (`calendar_routing` in the nearest `.claude/.ical/config.yaml`).
+
 ### Hooks (`hooks/`)
 
 - `check-mcp.sh` — Validate MCP server availability on session start
