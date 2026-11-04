@@ -73,8 +73,9 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.seriesSlots = [s0, s1, s2, s3]
         let (series, edited) = recordedSeries()
 
-        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
 
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), "#323: what it did, as data")
         XCTAssertEqual(store.log, ["save series Standup", "list", slotLog(s2), slotLog(s3), "save Standup moved"])
         XCTAssertEqual(store.starts(of: "E1"), [s0, s1], "the series keeps the slots that existed unedited")
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.map(\.start), [edited.startDate],
@@ -84,6 +85,15 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(store.refreshMarks, 1)
     }
 
+    /// #323: an event that is not a series has nothing to disclose and returns no outcome.
+    func testAOneOffEventUndoReturnsNoOutcome() throws {
+        let store = FakeSeriesExceptionsStore()
+        let event = UndoSnapshotFixtures.event(title: "Review", startDate: s0)
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(event, calendar: event.calendarIdentifier, in: store)
+        XCTAssertNil(outcome)
+        XCTAssertEqual(text, "Undone: restored event 'Review' (new ID: E1)")
+    }
+
     /// No recorded exceptions (the capture was nil): the series comes back from its rules alone,
     /// nothing is listed or removed, and the text says so.
     func testAWholeSeriesUndoWithoutRecordedExceptionsRestoresFromTheRulesAlone() throws {
@@ -91,8 +101,9 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.seriesSlots = [s0, s1, s2, s3]
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
 
-        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
 
+        XCTAssertEqual(outcome, .seriesFromRules)
         XCTAssertEqual(store.log, ["save series Standup"])
         XCTAssertEqual(store.starts(of: "E1"), [s0, s1, s2, s3])
         XCTAssertEqual(text, "Undone: restored event 'Standup' (new ID: E1). " + UndoOperation.seriesRulesRestoreNote)
@@ -145,7 +156,9 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1)
         store.addSeries(id: "S", calendar: occurrence.calendarIdentifier, title: "Standup", slots: [s0, s1])
 
-        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: occurrence.calendarIdentifier, in: store)
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: occurrence.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceAlreadyHeld)
 
         XCTAssertEqual(text, UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup"))
         XCTAssertEqual(store.log, ["holders"], "nothing saved")
@@ -158,7 +171,9 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1)
         store.add(.init(id: "O", calendar: occurrence.calendarIdentifier, title: "Standup", start: s1))
 
-        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: ["absolute_alarms"], calendar: occurrence.calendarIdentifier, in: store)
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: ["absolute_alarms"], calendar: occurrence.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: ["absolute_alarms"]))
 
         XCTAssertEqual(store.log, ["holders", "save Standup"])
         XCTAssertEqual(text, UndoOperation.occurrenceRestoredMessage(title: "Standup", newID: "E1", notCarriedOver: ["absolute_alarms"]))

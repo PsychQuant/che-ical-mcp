@@ -363,16 +363,35 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     private final class ExecutionLog { var executed: [String] = [] }
 
+    /// What the delete-undo arms return for `member` when nothing is held or recorded otherwise
+    /// (#323): an occurrence comes back as a one-off, a series from its rules (with its exceptions
+    /// applied, counting none, when it recorded them).
+    private static func simulatedEvents(_ member: UndoOperation) -> [UndoEventOutcome] {
+        switch member {
+        case .deleteOccurrence(_, let notCarriedOver): return [.occurrenceOneOff(notCarriedOver: notCarriedOver)]
+        case .deleteEvent(let snapshot):
+            guard snapshot.restoresFromRules else { return [] }
+            return snapshot.exceptions == nil ? [.seriesFromRules] : [.seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0))]
+        case .batch(let members): return members.reversed().flatMap(simulatedEvents)
+        default: return []
+        }
+    }
+
+    /// The text of a retry that restores `remaining` as `simulatedEvents` says.
+    private func retryText(_ remaining: [UndoOperation]) -> String {
+        UndoOperation.batchUndoneMessage(count: remaining.count, events: remaining.flatMap(Self.simulatedEvents))
+    }
+
     /// Undoes `members` through the production helper, as `executeUndo(.batch)` does, with
     /// `failsOn` deciding which member writes fail; returns what it throws, or nil.
     private func undoBatch(_ members: [UndoOperation], log: ExecutionLog,
                            failsOn: @escaping (String) -> Bool) async -> Error? {
         do {
-            _ = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, execute: { member in
+            _ = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
                 let title = self.titles([member])[0]
                 if failsOn(title) { throw SaveFailed.failed }
                 log.executed.append(title)
-                return title
+                return UndoMemberOutcome(text: title, differing: [], events: Self.simulatedEvents(member))
             }, describe: { _ in "eventkit_error_1" })
             return nil
         } catch {
@@ -451,7 +470,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(log.executed, ["B", "occ:M"])
         XCTAssertTrue(partial.message.contains(absoluteAlarmsNote), partial.message)
 
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        let retry = retryText(partial.remaining)
         XCTAssertFalse(retry.contains(absoluteAlarmsNote), "reported once, in the partial error: \(retry)")
     }
 
@@ -462,12 +481,12 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(log.executed, ["A"])
         XCTAssertFalse(partial.message.contains(absoluteAlarmsNote), partial.message)
 
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        let retry = retryText(partial.remaining)
         XCTAssertTrue(retry.contains(absoluteAlarmsNote), retry)
     }
 
     /// PR #282 round 3, finding 3: after #278, a whole-series delete recreated from its rules is
-    /// disclosed too (`seriesRulesRestoreNote`, from `undoDisclosures`), and the same once-only rule
+    /// disclosed too (`seriesRulesRestoreNote`, since #323 from the outcome the member returned), and the same once-only rule
     /// holds: a series restored before the failure is named in the partial error, not in the retry.
     func testASeriesRestoredBeforeAFailureIsDisclosedOnceAcrossTheRetry() async throws {
         let log = ExecutionLog()
@@ -477,7 +496,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(log.executed, ["Weekly"], "undo runs in reverse: the series, then A, which fails")
         XCTAssertTrue(partial.message.contains(UndoOperation.seriesRulesRestoreNote), partial.message)
 
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        let retry = retryText(partial.remaining)
         XCTAssertFalse(retry.contains(UndoOperation.seriesRulesRestoreNote), "disclosed once, in the partial error: \(retry)")
     }
 
@@ -489,14 +508,14 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(log.executed, ["A"])
         XCTAssertFalse(partial.message.contains(UndoOperation.seriesRulesRestoreNote), partial.message)
 
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        let retry = retryText(partial.remaining)
         XCTAssertTrue(retry.contains(UndoOperation.seriesRulesRestoreNote), retry)
     }
 
     /// A nested batch that stopped part-way carries its own restored members up.
     func testANestedBatchCarriesItsRestoredMembersLossUp() throws {
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
-                                                  restored: [moved("Z")])
+                                                  restored: [moved("Z")], restoredEvents: [.occurrenceOneOff(notCarriedOver: ["absolute_alarms"])])
         let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), moved("Z")])],
                                                      interrupted: .init(completed: 0, underlying: inner),
                                                      describe: { _ in "unused" })
@@ -814,9 +833,9 @@ final class UndoBatchRestoreTests: XCTestCase {
         let members = [reminderDeleted("Differs"), reminderDeleted("AsSaved"), deleted("B")]
         let differing = try await undoBatchReturningDifferences(members, differs: ["rem:Differs": ["due", "title"]],
                                                                 failsOn: { _ in false }).get()
-        let text = UndoOperation.batchUndoneMessage(members: members, count: 3, differing: differing)
+        let text = UndoOperation.batchUndoneMessage(count: 3, differing: differing)
         XCTAssertEqual(text, "Undone batch (3 operations). Restored reminder 'Differs' — the store holds a different due, title; check it.")
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: members, count: 3), "Undone batch (3 operations)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 3), "Undone batch (3 operations)")
     }
 
     /// Pairing: only the members whose store holds fields differently are named, each with its own
@@ -825,7 +844,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let members = [reminderDeleted("First"), reminderDeleted("Plain"), reminderDeleted("Second")]
         let differing = try await undoBatchReturningDifferences(members, differs: ["rem:First": ["notes"], "rem:Second": ["due", "priority"]],
                                                                 failsOn: { _ in false }).get()
-        let text = UndoOperation.batchUndoneMessage(members: members, count: 3, differing: differing)
+        let text = UndoOperation.batchUndoneMessage(count: 3, differing: differing)
         XCTAssertEqual(text, "Undone batch (3 operations)."
                        + " Restored reminder 'Second' — the store holds a different due, priority; check it."
                        + " Restored reminder 'First' — the store holds a different notes; check it.")
@@ -844,7 +863,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(partial.restoredDiffering, [UndoRestoredDifference(title: "Differs", storeDiffers: ["title"])])
         XCTAssertTrue(partial.message.contains("Restored reminder 'Differs' — the store holds a different title; check it."), partial.message)
         XCTAssertEqual(titles(partial.remaining), ["A"], "the reminder was restored and left the record")
-        let retry = UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count)
+        let retry = retryText(partial.remaining)
         XCTAssertFalse(retry.contains("the store holds"), retry)
     }
 
@@ -860,7 +879,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let entry = "Restored reminder '"
         let withDifferences = [reminderDeleted(crafted), deleted("B")]
         let differing = try await undoBatchReturningDifferences(withDifferences, differs: ["rem:" + crafted: ["due"]], failsOn: { _ in false }).get()
-        let text = UndoOperation.batchUndoneMessage(members: withDifferences, count: 2, differing: differing)
+        let text = UndoOperation.batchUndoneMessage(count: 2, differing: differing)
         XCTAssertEqual(text.components(separatedBy: entry).count - 1, 1, text)
         XCTAssertEqual(text.components(separatedBy: "' — ").count - 1, 1, "one quote closes, before the entry's own note: \(text)")
         XCTAssertTrue(text.hasSuffix("— the store holds a different due; check it."), text)
@@ -870,7 +889,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
         let withoutDifferences = [reminderDeleted(crafted), deleted("B")]
         let none = try await undoBatchReturningDifferences(withoutDifferences, differs: [:], failsOn: { _ in false }).get()
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: withoutDifferences, count: 2, differing: none), "Undone batch (2 operations)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 2, differing: none), "Undone batch (2 operations)")
         let quiet = UndoBatchPartiallyUndoneError(remaining: [deleted("C")], restoredCount: 1, memberError: "eventkit_error_1",
                                                   restored: [withoutDifferences[0]], restoredDiffering: none)
         XCTAssertEqual(quiet.message.components(separatedBy: entry).count - 1, 0, quiet.message)
@@ -953,7 +972,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let differing = try await undoBatchReturningDifferences(members, differs: [:], nestedDiffering: ["[rem:Y,rem:Z]": nested],
                                                                 failsOn: { _ in false }).get()
         XCTAssertEqual(differing, nested)
-        let text = UndoOperation.batchUndoneMessage(members: members, count: 2, differing: differing)
+        let text = UndoOperation.batchUndoneMessage(count: 2, differing: differing)
         XCTAssertTrue(text.contains("Restored reminder 'Z' — the store holds a different due; check it.")
                       && text.contains("Restored reminder 'Y' — the store holds a different notes; check it."), text)
     }
@@ -997,9 +1016,9 @@ final class UndoBatchRestoreTests: XCTestCase {
         let log = ExecutionLog()
         let first = await undoBatch(["A", "B"].map(deleted), log: log, failsOn: { $0 == "A" })
         let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: partial.remaining, count: partial.remaining.count),
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: partial.remaining.count),
                        "Undone batch (1 operation)")
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: ["A", "B"].map(deleted), count: 2), "Undone batch (2 operations)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 2), "Undone batch (2 operations)")
         XCTAssertEqual(UndoOperation.batchRedoneMessage(count: 1), "Redone batch (1 operation)")
         XCTAssertEqual(UndoOperation.batchRedoneMessage(count: 3), "Redone batch (3 operations)")
     }
@@ -1050,12 +1069,24 @@ final class UndoBatchRestoreTests: XCTestCase {
             .withExceptions(exceptions))
     }
 
-    /// Each member through the real arm (`SeriesExceptionsUndo.undoDeleteEvent`) on `store`.
-    private func runOnStore(_ members: [UndoOperation], _ store: FakeSeriesExceptionsStore) async throws -> [String] {
-        try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, execute: { member in
-            guard case .deleteEvent(let snapshot) = member else { throw SaveFailed.failed }
-            return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: store)
+    /// Each member through the real arms (`SeriesExceptionsUndo.undoDeleteEvent` /
+    /// `undoDeleteOccurrence`) on `store`, carrying each arm's outcome up as `undoBatchMember` does
+    /// (#323). Returns the member texts, which no batch text reads, and the outcomes.
+    private func runOnStore(_ members: [UndoOperation], _ store: FakeSeriesExceptionsStore) async throws
+        -> (texts: [String], events: [UndoEventOutcome]) {
+        let outcome = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
+            let undone: (text: String, outcome: UndoEventOutcome?)
+            switch member {
+            case .deleteEvent(let snapshot):
+                undone = try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: store)
+            case .deleteOccurrence(let snapshot, let notCarriedOver):
+                undone = try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver,
+                                                                      calendar: snapshot.calendarIdentifier, in: store)
+            default: throw SaveFailed.failed
+            }
+            return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])
         }, describe: { EventKitErrorSanitizer.sanitizeForResponse($0).code })
+        return (outcome.texts, outcome.events)
     }
 
     /// #322: a batch with a member that restores a series' exceptions restores them (the series
@@ -1066,13 +1097,89 @@ final class UndoBatchRestoreTests: XCTestCase {
         store.seriesSlots = (0...3).map(exceptionsSlot)
         let members = [deleted("Review"), seriesWithExceptions()]
 
-        let texts = try await runOnStore(members, store)
+        let (texts, events) = try await runOnStore(members, store)
 
         XCTAssertEqual(texts.count, 2)
         XCTAssertEqual(store.events.filter { $0.title == "Standup" }.map(\.start).sorted(), [exceptionsSlot(0), exceptionsSlot(1)])
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 1)
-        let message = UndoOperation.batchUndoneMessage(members: members, count: texts.count)
-        XCTAssertEqual(message.components(separatedBy: UndoOperation.seriesExceptionsBatchNote).count - 1, 1, message)
+        let message = UndoOperation.batchUndoneMessage(count: texts.count, events: events)
+        XCTAssertEqual(message, "Undone batch (2 operations). 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted")
+    }
+
+    // MARK: - #323: the batch text from what the members did
+
+    /// A series recorded with exceptions that the recreated series does not generate (a kept slot
+    /// half an hour off the rule): none is applied.
+    private func seriesWithUnmatchedExceptions(_ title: String) -> UndoOperation {
+        let exceptions = SeriesExceptions(
+            window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
+            keptSlots: [exceptionsSlot(0), exceptionsSlot(1).addingTimeInterval(1800)], detached: [])
+        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
+            .withExceptions(exceptions))
+    }
+
+    /// A series whose first occurrence was deleted on its own: it is kept from the rule.
+    private func seriesWithFirstDeleted(_ title: String) -> UndoOperation {
+        let exceptions = SeriesExceptions(
+            window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
+            keptSlots: [exceptionsSlot(1), exceptionsSlot(2), exceptionsSlot(3)], detached: [])
+        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
+            .withExceptions(exceptions))
+    }
+
+    /// Three series through the real arm: one with its exceptions applied, one whose first
+    /// occurrence is kept from the rule, one whose record did not match. The text sums what they
+    /// returned, says per kind what happened, and no longer says it cannot.
+    func testTheBatchTextSumsWhatEachSeriesMemberDid() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+
+        let (_, events) = try await runOnStore([seriesWithExceptions(), seriesWithFirstDeleted("Retro"), seriesWithUnmatchedExceptions("Sync")], store)
+        let message = UndoOperation.batchUndoneMessage(count: 3, events: events)
+
+        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
+        XCTAssertTrue(message.contains("In 1 of them the first occurrence was edited or deleted on its own; it is kept from the rule"), message)
+        XCTAssertTrue(message.contains("1 series was restored from its rules alone: its recorded exceptions did not match"), message)
+        XCTAssertFalse(message.contains("cannot say"), message)
+        XCTAssertFalse(message.contains(UndoOperation.seriesRulesRestoreNote), "no series came back without a record: \(message)")
+    }
+
+    /// An occurrence whose slot its series already holds wrote nothing: the batch text counts it as
+    /// already restored and does not claim its absolute-date alarm moved; an occurrence that came
+    /// back as a one-off with that loss is still named.
+    func testAGuardSkippedOccurrenceIsCountedAndMakesNoAlarmClaim() async throws {
+        let store = FakeSeriesExceptionsStore()
+        let held = UndoSnapshotFixtures.event(title: "Standup", startDate: exceptionsSlot(1))
+        store.addSeries(id: "S", calendar: held.calendarIdentifier, title: "Standup", slots: [exceptionsSlot(0), exceptionsSlot(1)])
+        let skipped = UndoOperation.deleteOccurrence(snapshot: held, notCarriedOver: ["absolute_alarms"])
+
+        let (_, alone) = try await runOnStore([skipped], store)
+        XCTAssertEqual(alone, [.occurrenceAlreadyHeld])
+        let quiet = UndoOperation.batchUndoneMessage(count: 1, events: alone)
+        XCTAssertEqual(quiet, "Undone batch (1 operation). 1 deleted occurrence was already restored by its series, so nothing was written for it")
+
+        let free = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Review", startDate: exceptionsSlot(2)),
+                                                  notCarriedOver: ["absolute_alarms"])
+        let (_, both) = try await runOnStore([skipped, free], store)
+        let message = UndoOperation.batchUndoneMessage(count: 2, events: both)
+        XCTAssertTrue(message.contains("Not carried over: absolute_alarms"), message)
+        XCTAssertTrue(message.contains("1 deleted occurrence was already restored by its series"), message)
+    }
+
+    /// A batch stopped part-way names what the members it restored did, from their outcomes.
+    func testAPartWayErrorNamesWhatTheRestoredSeriesDid() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+        store.failingSaveTitles = ["Fails"]
+        do {
+            // Undo runs in reverse: the series first (restored), then "Fails", whose save fails.
+            _ = try await runOnStore([deleted("Never"), deleted("Fails"), seriesWithExceptions()], store)
+            XCTFail("the failure must surface")
+        } catch {
+            let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(error)")
+            XCTAssertEqual(partial.restoredEvents.count, 1)
+            XCTAssertTrue(partial.message.contains("For the items restored: 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted"), partial.message)
+        }
     }
 
     /// #322: the member's compensating delete fails (permanent, `UnrecoverableUndoError` from

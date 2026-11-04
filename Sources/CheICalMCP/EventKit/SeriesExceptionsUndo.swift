@@ -126,9 +126,10 @@ enum SeriesExceptionsUndo {
     /// recorded gets them back (all or nothing).
     /// `calendar` is the recorded one, read by the caller through `restoreCalendar(for:kind:)` with
     /// `.recreateDeleted` (#269; `EventKitManager.undoDeletedEvent`), so this runs synchronously on
-    /// the caller's actor.
+    /// the caller's actor. Returns the text and what the undo did (#323: none for an event that is
+    /// not a series), which a batch carries up instead of the text.
     static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
-                                                                    in store: Store) throws -> String {
+                                                                    in store: Store) throws -> (text: String, outcome: UndoEventOutcome?) {
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
@@ -137,8 +138,10 @@ enum SeriesExceptionsUndo {
         if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
             outcome = try restore(exceptions, of: event, in: store)
         }
-        return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
-                                                  exceptionsOutcome: outcome)
+        let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+                                                      exceptionsOutcome: outcome)
+        guard snapshot.restoresFromRules else { return (text, nil) }
+        return (text, outcome.map(UndoEventOutcome.seriesWithExceptions) ?? .seriesFromRules)
     }
 
     /// The undo of `.deleteOccurrence`. #244: the snapshot holds no rules, so the occurrence comes
@@ -147,16 +150,18 @@ enum SeriesExceptionsUndo {
     /// rules by an undo of the whole-series delete, which brings every slot back).
     /// `calendar` is the recorded one, read once by the caller with `.recreateDeletedOccurrence`
     /// before the slot check and the write (#269 verify; `EventKitManager.undoDeletedOccurrence`).
+    /// Returns the text and what the undo did (#323).
     static func undoDeleteOccurrence<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, notCarriedOver: [String],
-                                                                         calendar: Store.Calendar, in store: Store) throws -> String {
+                                                                         calendar: Store.Calendar, in store: Store) throws -> (text: String, outcome: UndoEventOutcome) {
         if seriesHoldsSlot(of: snapshot, calendar: calendar, in: store) {
-            return UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title)
+            return (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title), .occurrenceAlreadyHeld)
         }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
-        return UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
-                                                       notCarriedOver: notCarriedOver)
+        let text = UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+                                                           notCarriedOver: notCarriedOver)
+        return (text, .occurrenceOneOff(notCarriedOver: notCarriedOver))
     }
 }

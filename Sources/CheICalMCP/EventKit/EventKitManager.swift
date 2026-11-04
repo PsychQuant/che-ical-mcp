@@ -2514,13 +2514,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
             // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam), which reads the
             // calendar through `restoreCalendar(for:kind:)` with `.recreateDeleted` (#269).
-            return try await undoDeletedEvent(snapshot)
+            return try await undoDeletedEvent(snapshot).text
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
             // #244: a one-off at the occurrence's slot, unless the series already holds it (#285);
             // the arm's code is `SeriesExceptionsUndo.undoDeleteOccurrence` (#322 seam), which
             // resolves the calendar once, before the slot check and the write (#269 verify).
-            return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
+            return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver).text
 
         case .deleteFollowingOccurrences(let title):
             // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
@@ -2623,7 +2623,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The undo of a batch record: its message, and what the stores of the reminders it recreated
     /// hold differently, as data, so a batch nested in another carries them up
     /// (`undoBatchMember`; PR #282 round 6, findings 2, 9).
-    func undoBatch(_ ops: [UndoOperation]) async throws -> (message: String, differing: [UndoRestoredDifference]) {
+    func undoBatch(_ ops: [UndoOperation]) async throws
+        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
         // #244 D3 first: a member that can never be restored refuses and discards the record,
         // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
         try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
@@ -2638,9 +2639,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
             restore: { try await self.undoBatchMember($0) },
             describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
-        // #244: names what a restored occurrence did not carry over; #261: what a restored
-        // reminder's store holds differently (`batchUndoneMessage`).
-        return (UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing), outcome.differing)
+        // #323: what the event members did, from the outcomes they returned (an occurrence's
+        // absolute-date alarm, a series' rules or exceptions restore, a slot already held); #261:
+        // what a restored reminder's store holds differently (`batchUndoneMessage`).
+        return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing),
+                outcome.differing, outcome.events)
     }
 
     /// #261: the undo of `delete_reminder`, for the single arm and for each batch member. Reads the
@@ -2668,19 +2671,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `restoreDeletedReminder`, and the fields its store holds differently travel as data
     /// (`UndoRestoredDifference`, which shows the title itself), so the batch texts name
     /// them (#261; PR #282 round 5, finding 1). A nested batch passes up its own members'
-    /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). Every
-    /// other member runs `executeUndo`.
+    /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). A
+    /// deleted event or occurrence runs the same arm as `executeUndo`, and what it did travels as
+    /// data too (`UndoEventOutcome`, #323). Every other member runs `executeUndo`.
     func undoBatchMember(_ operation: UndoOperation) async throws -> UndoMemberOutcome {
-        if case .batch(let inner) = operation {
+        switch operation {
+        case .batch(let inner):
             let undone = try await undoBatch(inner)
-            return UndoMemberOutcome(text: undone.message, differing: undone.differing)
-        }
-        guard case .deleteReminder(let snapshot) = operation else {
+            return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)
+        case .deleteReminder(let snapshot):
+            let restored = try await restoreDeletedReminder(snapshot)
+            return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
+                                     differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
+        case .deleteEvent(let snapshot):
+            // #323: the same arm as `executeUndo`'s, with what it did as data.
+            let undone = try await undoDeletedEvent(snapshot)
+            return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])
+        case .deleteOccurrence(let snapshot, let notCarriedOver):
+            let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
+            return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])
+        default:
             return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])
         }
-        let restored = try await restoreDeletedReminder(snapshot)
-        return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
-                                 differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
     }
 
     /// Execute an operation again (for redo). Only completions are written again (#247).

@@ -215,11 +215,12 @@ extension UndoOperation {
     }
 
     /// The text of an undone batch (verify round 2, finding 5; round 3, finding 3): the member texts
-    /// are not shown, so what a member did not restore as it was is named here, once each. A pure
-    /// function of the members it is given.
-    static func batchUndoneMessage(members: [UndoOperation], count: Int, differing: [UndoRestoredDifference] = []) -> String {
+    /// are not shown, so what the members did is named here, once each, from the outcomes they
+    /// returned (#323, `batchLossNote(events:)`), never from the records or the member text. A pure
+    /// function of what it is given.
+    static func batchUndoneMessage(count: Int, events: [UndoEventOutcome] = [], differing: [UndoRestoredDifference] = []) -> String {
         var message = "Undone batch (\(batchCount(count)))"
-        if let note = batchLossNote(members: members) { message += ". " + note }
+        if let note = batchLossNote(events: events) { message += ". " + note }
         // What the restored reminders' stores hold differently, from the names each member
         // returned, never from member text (#261; PR #282 round 5, finding 1).
         let named = UndoRestoredDifference.sentences(differing)
@@ -237,39 +238,22 @@ extension UndoOperation {
         count == 1 ? "1 operation" : "\(count) operations"
     }
 
-    /// What the restored `members` did not restore as they were (`undoDisclosures`: an occurrence's
-    /// absolute-date alarm, a series recreated from its rules), or nil. Also named by a batch undo
-    /// that stopped part-way, for the members it restored before the failure (#248 A,
-    /// `UndoBatchPartiallyUndoneError`), so each restored member's disclosure is made once (PR #282
-    /// round 3, finding 3: both kinds, not the alarm alone).
-    static func batchLossNote(members: [UndoOperation]) -> String? {
-        let disclosures = Set(members.flatMap(\.undoDisclosures))
-        var notes: [String] = []
-        if disclosures.contains(.absoluteAlarms) {
-            notes.append("Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
-        }
-        if disclosures.contains(.seriesRules) { notes.append(seriesRulesRestoreNote) }
-        if disclosures.contains(.seriesExceptions) { notes.append(seriesExceptionsBatchNote) }
-        return notes.isEmpty ? nil : notes.joined(separator: ". ")
-    }
+    /// No `absoluteAlarms` since #323: the `undo_history` lines never named it, and the batch
+    /// texts that did now take it from the members' outcomes.
+    private enum UndoDisclosure: Hashable { case seriesRules, seriesExceptions }
 
-    /// #285: a batch undo names the exceptions restore once, without counts (the member texts are
-    /// not shown, and counts per member are not carried up).
-    static let seriesExceptionsBatchNote = "Series were restored from their rules with their exceptions inside the checked window: occurrences deleted on their own earlier stayed deleted, occurrences edited on their own came back as separate one-off events that no longer belong to their series. Per series this text cannot say, but undo of a single event does: a first occurrence that was edited or deleted on its own is kept from the rule; an occurrence edited on its own and moved more than a year outside the checked window is not restored and its slot counts as deleted; and where the recorded exceptions did not match the recreated series none was applied. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules"
-
-    private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules, seriesExceptions }
-
+    /// What a record's undo will disclose, read before it runs: only the `undo_history` lines use
+    /// it (`seriesRecreatedFromRules`, `seriesRecreatedWithExceptions`). The batch answer and a
+    /// part-way error say what the members did, from their outcomes (#323, `batchLossNote(events:)`).
     /// Exhaustive, so a new record kind has to be classified here (verify round 3, finding 2).
     private var undoDisclosures: [UndoDisclosure] {
         switch self {
-        case .deleteOccurrence(_, let notCarriedOver):
-            return notCarriedOver.contains("absolute_alarms") ? [.absoluteAlarms] : []
         case .deleteEvent(let snapshot):
             guard snapshot.restoresFromRules else { return [] }
             return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
             return members.flatMap(\.undoDisclosures)
-        case .createEvent, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
+        case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
             return []
         }

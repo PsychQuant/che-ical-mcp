@@ -135,8 +135,8 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
     func testTheProductionBranchesRunOnTheManagersOwnStore() throws {
         let source = try SourcePins.source("EventKit/EventKitManager+SeriesExceptions.swift")
         for (declaration, call) in [
-            ("func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> String", "undoDeletedEvent(snapshot, on: "),
-            ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> String",
+            ("func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> (text: String, outcome: UndoEventOutcome?)", "undoDeletedEvent(snapshot, on: "),
+            ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> (text: String, outcome: UndoEventOutcome)",
              "undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, on: "),
         ] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)

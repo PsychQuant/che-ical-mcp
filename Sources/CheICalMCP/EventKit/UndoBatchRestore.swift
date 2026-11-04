@@ -232,24 +232,29 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// last member was dropped: `handleUndo` then discards the record.
     let remaining: [UndoOperation]
     let restoredCount: Int
-    /// The members restored before the failure, nested ones included. The batch text of the retry
-    /// covers only `remaining`, so what these did not carry over is named here (PR #278 round 3).
+    /// The members restored before the failure, nested ones included, passed up by a nested batch.
+    /// No text is built from them: since #323 what they did is named from `restoredEvents`, and what
+    /// their stores hold differently from `restoredDiffering`.
     let restored: [UndoOperation]
     /// What the stores of those members hold differently (a recreated reminder whose save threw
-    /// but which a new store finds with compared fields differing, #261), named here once, as
-    /// `restored`'s disclosures are (PR #282 round 5, finding 1).
+    /// but which a new store finds with compared fields differing, #261), named here once: the
+    /// batch text of the retry covers only `remaining` (PR #278 round 3; PR #282 round 5, finding 1).
     let restoredDiffering: [UndoRestoredDifference]
+    /// What those members' undos did (#323), named here once, from the outcomes, not the records.
+    let restoredEvents: [UndoEventOutcome]
     let memberError: String
     let failing: FailingMember
     let message: String
     var errorDescription: String? { message }
 
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
-         restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = []) {
+         restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = [],
+         restoredEvents: [UndoEventOutcome] = []) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
         self.restoredDiffering = restoredDiffering
+        self.restoredEvents = restoredEvents
         self.memberError = memberError
         self.failing = failing
         let restoredText = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
@@ -272,7 +277,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             let left = remaining.count == 1 ? "the item that failed" : "the \(remaining.count) items not yet restored"
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, so running undo again tries the item that failed first and does not restore the restored ones a second time."
         }
-        let loss = (UndoOperation.batchLossNote(members: restored).map { " For the items restored: \($0)." } ?? "")
+        let loss = (UndoOperation.batchLossNote(events: restoredEvents).map { " For the items restored: \($0)." } ?? "")
             + UndoRestoredDifference.sentences(restoredDiffering)
         let giveUp: String
         switch failing {
@@ -316,7 +321,8 @@ extension UndoOperation {
     /// nested batch is recorded today). `describe` gives the member error for the message; it is
     /// called only when the record is narrowed or reordered.
     static func batchUndoFailure(members: [UndoOperation], interrupted: UndoBatchRunner.Interrupted,
-                                 differing: [UndoRestoredDifference] = [], describe: (Error) -> String) -> Error {
+                                 differing: [UndoRestoredDifference] = [], events: [UndoEventOutcome] = [],
+                                 describe: (Error) -> String) -> Error {
         let failedIndex = members.count - 1 - interrupted.completed
         guard members.indices.contains(failedIndex) else { return interrupted.underlying }
         let inner = interrupted.underlying as? UndoBatchPartiallyUndoneError
@@ -326,13 +332,16 @@ extension UndoOperation {
         let restoredMembers = Array(members[(failedIndex + 1)...]) + (inner?.restored ?? [])
         // What those members' stores hold differently, nested ones too.
         let restoredDiffering = differing + (inner?.restoredDiffering ?? [])
+        // What those members' undos did (#323), nested ones too.
+        let restoredEvents = events + (inner?.restoredEvents ?? [])
         // Every branch reports the restored members and their differences the same way (PR #282
         // round 6, finding 18: two branches used to pass them on separately, and dropping them
         // there went unnoticed).
         func partial(_ remaining: [UndoOperation], _ failing: UndoBatchPartiallyUndoneError.FailingMember,
                      _ memberError: String) -> UndoBatchPartiallyUndoneError {
             UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
-                                          failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering)
+                                          failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering,
+                                          restoredEvents: restoredEvents)
         }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
@@ -389,24 +398,28 @@ enum UndoBatchExecution {
     /// The same, for members whose restore returns what its store holds differently (a recreated
     /// reminder found with differing fields, #261; PR #282 round 5, finding 1), as data. Those of
     /// the members written are returned, in the order they ran; when a write fails, they go into
-    /// the partial error instead, named once. No member text is read back.
+    /// the partial error instead, named once. What the event members did (`UndoEventOutcome`,
+    /// #323) travels the same way. No member text is read back.
     static func run(_ members: [UndoOperation], verb: UndoHistoryVerb,
                     check: (UndoOperation) async throws -> Void,
                     restore: (UndoOperation) async throws -> UndoMemberOutcome,
-                    describe: (Error) -> String) async throws -> (texts: [String], differing: [UndoRestoredDifference]) {
+                    describe: (Error) -> String) async throws
+        -> (texts: [String], differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
         var differing: [UndoRestoredDifference] = []
+        var events: [UndoEventOutcome] = []
         do {
             let texts = try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members, check: check,
                                                       execute: { member in
                                                           let outcome = try await restore(member)
                                                           differing.append(contentsOf: outcome.differing)
+                                                          events.append(contentsOf: outcome.events)
                                                           return outcome.text
                                                       })
-            return (texts, differing)
+            return (texts, differing, events)
         } catch let interrupted as UndoBatchRunner.Interrupted {
             switch verb {
             case .undo: throw UndoOperation.batchUndoFailure(members: members, interrupted: interrupted, differing: differing,
-                                                             describe: describe)
+                                                             events: events, describe: describe)
             case .redo: throw interrupted.underlying
             }
         }
@@ -415,10 +428,18 @@ enum UndoBatchExecution {
 
 /// What one member's restore returned: its text, and what the stores of the reminders it recreated
 /// hold differently (one for a reminder, any number for a nested batch, none otherwise), which the
-/// batch answer has to carry because the member texts are not shown (#261).
+/// batch answer has to carry because the member texts are not shown (#261), and what the deleted
+/// events and occurrences it restored did (#323).
 struct UndoMemberOutcome: Sendable {
     let text: String
     let differing: [UndoRestoredDifference]
+    let events: [UndoEventOutcome]
+
+    init(text: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome] = []) {
+        self.text = text
+        self.differing = differing
+        self.events = events
+    }
 }
 
 /// A recreated reminder whose store holds compared fields differently (#261): its title, shown
