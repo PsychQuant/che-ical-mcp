@@ -7,11 +7,12 @@ import Foundation
 /// store a test passed to `forTesting(probe:seriesExceptionsStore:)` instead, when there is one; the
 /// capture never does.
 extension EventKitManager {
-    /// The production store: this manager's `eventStore` and its own helpers. Built inside the
-    /// manager's isolation and used there only, for the call it was built for.
+    /// The production store: this manager's `eventStore` and its own helpers (the #269 calendar read
+    /// `restoreCalendar(for:kind:)`, `storedEvent`, the refresh flags). Built inside the manager's
+    /// isolation and used there only, for the call it was built for.
     var seriesExceptionsStore: EventKitSeriesExceptionsStore {
         EventKitSeriesExceptionsStore(eventStore: eventStore,
-                                      applySnapshot: { try self.applySnapshot($0, to: $1) },
+                                      restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },
                                       storedEvent: { self.storedEvent(id: $0) },
                                       markNeedsRefresh: { self.markNeedsRefresh() },
                                       refreshIfNeeded: { self.refreshIfNeeded() })
@@ -24,18 +25,33 @@ extension EventKitManager {
     }
 
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.undoDeleteEvent`).
-    func undoDeletedEvent(_ snapshot: EventSnapshot) throws -> String {
+    func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> String {
         if let store = seriesExceptionsStoreOverride {
-            return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: store)
+            return try await undoDeletedEvent(snapshot, on: store)
         }
-        return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: seriesExceptionsStore)
+        return try await undoDeletedEvent(snapshot, on: seriesExceptionsStore)
     }
 
     /// The `.deleteOccurrence` undo arm (`SeriesExceptionsUndo.undoDeleteOccurrence`).
-    func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) throws -> String {
+    func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> String {
         if let store = seriesExceptionsStoreOverride {
-            return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, in: store)
+            return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, on: store)
         }
-        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, in: seriesExceptionsStore)
+        return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, on: seriesExceptionsStore)
+    }
+
+    /// #269: the recorded calendar, read as every event undo reads it (a missing one is refused with
+    /// the way on, `EventKitError.undoCalendarMissing`, the record kept); then the arm, synchronously
+    /// on this actor, as before #322 moved it.
+    private func undoDeletedEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, on store: Store) async throws -> String {
+        let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeleted)
+        return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)
+    }
+
+    /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).
+    private func undoDeletedOccurrence<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, notCarriedOver: [String],
+                                                                          on store: Store) async throws -> String {
+        let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence)
+        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)
     }
 }

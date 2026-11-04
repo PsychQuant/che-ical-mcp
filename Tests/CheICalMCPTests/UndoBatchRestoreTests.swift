@@ -1054,7 +1054,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     private func runOnStore(_ members: [UndoOperation], _ store: FakeSeriesExceptionsStore) async throws -> [String] {
         try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, execute: { member in
             guard case .deleteEvent(let snapshot) = member else { throw SaveFailed.failed }
-            return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: store)
+            return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: store)
         }, describe: { EventKitErrorSanitizer.sanitizeForResponse($0).code })
     }
 

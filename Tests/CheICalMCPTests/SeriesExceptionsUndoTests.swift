@@ -73,7 +73,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.seriesSlots = [s0, s1, s2, s3]
         let (series, edited) = recordedSeries()
 
-        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, in: store)
+        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
 
         XCTAssertEqual(store.log, ["save series Standup", "list", slotLog(s2), slotLog(s3), "save Standup moved"])
         XCTAssertEqual(store.starts(of: "E1"), [s0, s1], "the series keeps the slots that existed unedited")
@@ -91,7 +91,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.seriesSlots = [s0, s1, s2, s3]
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
 
-        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, in: store)
+        let text = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
 
         XCTAssertEqual(store.log, ["save series Standup"])
         XCTAssertEqual(store.starts(of: "E1"), [s0, s1, s2, s3])
@@ -105,7 +105,11 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.seriesSlots = [s0, s1, s2, s3]
         store.failingSaveTitles = ["Standup moved"]
 
-        XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteEvent(recordedSeries().snapshot, in: store)) { error in
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
             XCTAssertTrue(error.localizedDescription.hasPrefix("Undo could not recreate the occurrence edited on its own on "), error.localizedDescription)
             XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         }
@@ -121,7 +125,11 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         store.failingSaveTitles = ["Standup moved"]
         store.seriesRemovalFails = true
 
-        XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteEvent(recordedSeries().snapshot, in: store)) { error in
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
             XCTAssertTrue(error is UnrecoverableUndoError, "\(error)")
             XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
             XCTAssertTrue(error.localizedDescription.contains("the series exists with 2 occurrence(s) removed"), error.localizedDescription)
@@ -137,7 +145,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1)
         store.addSeries(id: "S", calendar: occurrence.calendarIdentifier, title: "Standup", slots: [s0, s1])
 
-        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], in: store)
+        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: occurrence.calendarIdentifier, in: store)
 
         XCTAssertEqual(text, UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup"))
         XCTAssertEqual(store.log, ["holders"], "nothing saved")
@@ -150,7 +158,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1)
         store.add(.init(id: "O", calendar: occurrence.calendarIdentifier, title: "Standup", start: s1))
 
-        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: ["absolute_alarms"], in: store)
+        let text = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: ["absolute_alarms"], calendar: occurrence.calendarIdentifier, in: store)
 
         XCTAssertEqual(store.log, ["holders", "save Standup"])
         XCTAssertEqual(text, UndoOperation.occurrenceRestoredMessage(title: "Standup", newID: "E1", notCarriedOver: ["absolute_alarms"]))

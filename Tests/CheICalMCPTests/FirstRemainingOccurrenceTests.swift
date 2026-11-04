@@ -329,7 +329,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let gate = try XCTUnwrap(body.range(of: "if operation.resolvesThroughStandIn {"), "the stand-in sits behind the predicate")
         let close = try XCTUnwrap(body.range(of: "\n                    }\n", range: gate.upperBound..<body.endIndex))
         let gated = String(body[gate.upperBound..<close.lowerBound])
-        XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(expected, verb: verb)"), "the helper is called inside the gate")
+        XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(operation, expected, verb: verb)"), "the helper is called inside the gate")
         let outside = String(body[..<gate.lowerBound]) + String(body[close.upperBound...])
         XCTAssertFalse(outside.contains("seriesMoveUndoTarget("), "and nowhere else in the event arm")
         XCTAssertTrue(outside.contains("return storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")

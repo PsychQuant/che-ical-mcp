@@ -196,16 +196,18 @@ final class UndoBatchWiringTests: XCTestCase {
         let verify = try XCTUnwrap(Self.offset(of: Self.call("try await UndoRestoreDestination.verify("), in: body))
         XCTAssertNotNil(Self.offset(of: Self.call("identifier: { $0.calendarIdentifier }, allowsModifications: { $0.allowsContentModifications },"), in: body))
         let read = try XCTUnwrap(Self.offset(of: Self.call("read: {"), in: body))
-        let access = try XCTUnwrap(Self.offset(of: Self.call("try await self.ensureCalendarAccess()"), in: body))
-        let calendars = try XCTUnwrap(Self.offset(of: Self.call("eventCalendars = self.eventStore.calendars(for: .event)"), in: body))
+        // Since #269 the calendars come from `eventCalendarsForRestore`, the entry the single event
+        // undo reads them through, which checks Calendar access first (pinned in
+        // `UndoCalendarMissingTests.testTheCalendarReadChecksAccessThenRefreshes`).
+        let calendars = try XCTUnwrap(Self.offset(of: Self.call("eventCalendars = try await self.eventCalendarsForRestore()"), in: body))
         let lists = try XCTUnwrap(Self.offset(of: Self.call("reminderLists = try await self.reminderListsForRestore()"), in: body))
         let invalidate = try XCTUnwrap(Self.offset(of: Self.call("invalidate: { self.markNeedsRefresh() }"), in: body))
         XCTAssertLessThan(verify, read)
-        XCTAssertLessThan(read, access)
-        XCTAssertLessThan(access, calendars, "the calendar access check comes before the read")
+        XCTAssertLessThan(read, calendars)
         XCTAssertLessThan(calendars, invalidate)
         XCTAssertLessThan(lists, invalidate)
-        XCTAssertEqual(Self.count("calendars(for: .event)", in: body), 1)
+        XCTAssertEqual(Self.count("eventCalendarsForRestore()", in: body), 1)
+        XCTAssertEqual(Self.count("calendars(for: .event)", in: body), 0)
         XCTAssertEqual(Self.count("reminderListsForRestore()", in: body), 1)
         XCTAssertEqual(Self.count("calendars(for: .reminder)", in: body), 0)
         XCTAssertEqual(Self.count("ensureReminderAccess", in: body), 0)
@@ -214,25 +216,25 @@ final class UndoBatchWiringTests: XCTestCase {
     }
 
     /// `verify` re-reads only after a finding, with the view invalidated first, and `problems` makes the
-    /// restore's own lookups: `EventSnapshot.resolveCalendar`, which `applySnapshot` calls, and
+    /// restore's own lookups: `EventSnapshot.resolveCalendar`, which `restoreCalendar(for:kind:)` calls, and
     /// `ReminderSnapshot.resolveList` with `.recreateDeleted`, the kind the `.deleteReminder` undo
     /// restores with (the only reminder record with a destination).
     func testThePreCheckLookupsAreTheOnesTheRestoreMakes() throws {
         let file = "EventKit/UndoBatchRestore.swift"
         let lookup = Substring(try Self.body("static func problems<", in: file))
-        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)"), in: lookup))
+        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventCalendars, identifier: identifier, for: .recreateDeleted)"), in: lookup))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)"), in: lookup))
         XCTAssertNotNil(Self.offset(of: Self.call("allowsModifications(container)"), in: lookup))
         XCTAssertEqual(Self.count(".title", in: lookup), 0)
 
         // The restore side of each lookup. The reminder write path itself is pinned by
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
-        let apply = Substring(try Self.body("func applySnapshot(_ snapshot: EventSnapshot", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })"), in: apply))
-        // #322: the delete-undo arms write through `SeriesExceptionsStoreSource.apply`, which in
-        // production is that same `applySnapshot`.
+        let apply = Substring(try Self.body("func restoreCalendar(for snapshot: EventSnapshot", in: Self.manager))
+        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: $0, identifier: { $0.calendarIdentifier }, for: kind)"), in: apply))
+        // #322: the delete-undo arms read their calendar through
+        // `SeriesExceptionsStoreSource.restoreCalendar`, which in production is that same function.
         let store = Substring(try Self.body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift"))
-        XCTAssertNotNil(Self.offset(of: Self.call("applySnapshot: { try self.applySnapshot($0, to: $1) },"), in: store))
+        XCTAssertNotNil(Self.offset(of: Self.call("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
         let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))

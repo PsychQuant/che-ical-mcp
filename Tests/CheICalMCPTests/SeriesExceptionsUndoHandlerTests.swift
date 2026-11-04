@@ -110,7 +110,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         XCTAssertNotEqual(result.isError, true)
         let message = try text(result)
         XCTAssertTrue(message.contains("is already restored by its series, so nothing was written"), message)
-        XCTAssertEqual(store.log, ["holders"])
+        XCTAssertEqual(store.log, ["calendar", "holders"])
         let after = await history.historySnapshot()
         XCTAssertEqual(after.entries.map(\.description), ["Created event: Older"], "the record is used up")
     }
@@ -125,7 +125,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         XCTAssertNotEqual(result.isError, true)
         let message = try text(result)
         XCTAssertTrue(message.contains("restored the deleted occurrence of 'Standup' as a one-off event (new ID: E1)"), message)
-        XCTAssertEqual(store.log, ["holders", "save Standup"])
+        XCTAssertEqual(store.log, ["calendar", "holders", "save Standup"])
     }
 
     /// #322 (PR #400 verify round 1): the handler tests above run the override branch. The
@@ -135,19 +135,57 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
     func testTheProductionBranchesRunOnTheManagersOwnStore() throws {
         let source = try SourcePins.source("EventKit/EventKitManager+SeriesExceptions.swift")
         for (declaration, call) in [
-            ("func undoDeletedEvent(_ snapshot: EventSnapshot)", "SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: "),
-            ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String])",
-             "SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, in: "),
+            ("func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> String", "undoDeletedEvent(snapshot, on: "),
+            ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> String",
+             "undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, on: "),
         ] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
             XCTAssertEqual(SourcePins.ranges(of: "if let store = seriesExceptionsStoreOverride {", in: body).count, 1, declaration)
-            XCTAssertEqual(SourcePins.ranges(of: "return try " + call + "store)", in: body).count, 1, declaration)
-            XCTAssertEqual(SourcePins.ranges(of: "return try " + call + "seriesExceptionsStore)", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "return try await " + call + "store)", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "return try await " + call + "seriesExceptionsStore)", in: body).count, 1, declaration)
         }
         let capture = try XCTUnwrap(SourcePins.body(of: "func captureSeriesExceptions(of series: EKEvent)", in: source))
         XCTAssertEqual(SourcePins.ranges(of: "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)", in: capture).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "seriesExceptionsStoreOverride", in: capture).count, 0, "the capture never reads the override")
         let store = try XCTUnwrap(SourcePins.body(of: "var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: source))
         XCTAssertEqual(SourcePins.ranges(of: "EventKitSeriesExceptionsStore(eventStore: eventStore,", in: store).count, 1)
+    }
+
+    // MARK: - #269 (PR #389) through the moved arms
+
+    /// The recorded calendar is missing: the whole-series undo is refused at the calendar read,
+    /// before anything is written, with #269's message for a deleted event, and the record kept.
+    func testAWholeSeriesUndoIntoAMissingCalendarIsRefusedAndKept() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(slot)
+        let operation = recordedSeriesDelete()
+        guard case .deleteEvent(let snapshot) = operation else { return XCTFail("record") }
+        store.missingCalendars = [snapshot.calendarIdentifier]
+        let history = await history(with: operation)
+        let before = await history.historySnapshot()
+
+        let result = try await undo(history, on: store)
+
+        XCTAssertEqual(result.isError, true)
+        let message = try text(result)
+        XCTAssertTrue(message.contains("Cannot undo the deletion of an event (event 'Standup'): the calendar it was in when it was deleted"), message)
+        XCTAssertEqual(store.log, ["calendar"], "refused at the calendar read; nothing saved")
+        let after = await history.historySnapshot()
+        XCTAssertEqual(after.entries.map(\.id), before.entries.map(\.id), "kept on top, same id")
+    }
+
+    /// The same for an occurrence, with its own wording, before the slot check.
+    func testAnOccurrenceUndoIntoAMissingCalendarIsRefusedBeforeTheSlotCheck() async throws {
+        let store = FakeSeriesExceptionsStore()
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: slot(1))
+        store.missingCalendars = [occurrence.calendarIdentifier]
+        let history = await history(with: .deleteOccurrence(snapshot: occurrence, notCarriedOver: []))
+
+        let result = try await undo(history, on: store)
+
+        XCTAssertEqual(result.isError, true)
+        let message = try text(result)
+        XCTAssertTrue(message.contains("Cannot undo the deletion of an occurrence of an event (event 'Standup')"), message)
+        XCTAssertEqual(store.log, ["calendar"])
     }
 }

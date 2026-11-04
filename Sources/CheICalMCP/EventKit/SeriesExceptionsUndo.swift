@@ -56,7 +56,10 @@ enum SeriesExceptionsUndo {
                 createOneOff: { detached in
                     let oneOff = store.makeEvent()
                     do {
-                        try store.apply(detached.snapshot, to: oneOff)
+                        // Inside a delete-undo, after the recreated series was saved in this
+                        // calendar, so the synchronous lookup (#269); a miss here is rolled back.
+                        let calendar = try store.calendarNow(for: detached.snapshot, kind: .recreateDeleted)
+                        store.apply(detached.snapshot, to: oneOff, calendar: calendar)
                         try store.save(oneOff)
                         return oneOff
                     } catch {
@@ -108,20 +111,26 @@ enum SeriesExceptionsUndo {
         }
     }
 
-    /// Whether the calendar of `snapshot` already holds an occurrence of a recurring series with its
-    /// title at its start (`OccurrenceSlotGuard`). The store is refreshed first when this server
-    /// wrote since the last refresh, so the series an earlier undo just recreated is seen.
-    static func seriesHoldsSlot<Store: SeriesExceptionsStoreSource>(of snapshot: EventSnapshot, in store: Store) throws -> Bool {
-        OccurrenceSlotGuard.isHeld(title: snapshot.title, start: snapshot.startDate, by: try store.slotHolders(for: snapshot))
+    /// Whether `calendar` (the snapshot's own, resolved by the caller) already holds an occurrence
+    /// of a recurring series with its title at its start (`OccurrenceSlotGuard`). The store is
+    /// refreshed first when this server wrote since the last refresh, so the series an earlier undo
+    /// just recreated is seen.
+    static func seriesHoldsSlot<Store: SeriesExceptionsStoreSource>(of snapshot: EventSnapshot, calendar: Store.Calendar,
+                                                                    in store: Store) -> Bool {
+        OccurrenceSlotGuard.isHeld(title: snapshot.title, start: snapshot.startDate, by: store.slotHolders(for: snapshot, in: calendar))
     }
 
     /// The undo of `.deleteEvent`: recreate from the snapshot; a series from its rules only (#285),
     /// which the text says. #261: no discard; in the failure classes tried on device, a failed new
     /// event was not written by a later save (see NewObjectSave). A series whose exceptions were
     /// recorded gets them back (all or nothing).
-    static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, in store: Store) throws -> String {
+    /// `calendar` is the recorded one, read by the caller through `restoreCalendar(for:kind:)` with
+    /// `.recreateDeleted` (#269; `EventKitManager.undoDeletedEvent`), so this runs synchronously on
+    /// the caller's actor.
+    static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
+                                                                    in store: Store) throws -> String {
         let event = store.makeEvent()
-        try store.apply(snapshot, to: event)
+        store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
         var outcome: SeriesExceptionsRestorer.Outcome?
@@ -136,13 +145,15 @@ enum SeriesExceptionsUndo {
     /// back as a one-off event at its slot, beside what is left of the series (EventKit cannot put
     /// it back in). #285: not when the series already holds the slot (it was recreated from its
     /// rules by an undo of the whole-series delete, which brings every slot back).
+    /// `calendar` is the recorded one, read once by the caller with `.recreateDeletedOccurrence`
+    /// before the slot check and the write (#269 verify; `EventKitManager.undoDeletedOccurrence`).
     static func undoDeleteOccurrence<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, notCarriedOver: [String],
-                                                                         in store: Store) throws -> String {
-        if try seriesHoldsSlot(of: snapshot, in: store) {
+                                                                         calendar: Store.Calendar, in store: Store) throws -> String {
+        if seriesHoldsSlot(of: snapshot, calendar: calendar, in: store) {
             return UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title)
         }
         let event = store.makeEvent()
-        try store.apply(snapshot, to: event)
+        store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
         return UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",

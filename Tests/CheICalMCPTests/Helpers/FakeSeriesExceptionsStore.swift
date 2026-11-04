@@ -35,6 +35,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         }
     }
 
+    typealias Calendar = String
+
     struct Failure: Error, Equatable { let what: String }
 
     /// What the store holds.
@@ -50,6 +52,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     var failingSaveTitles: Set<String> = []
     /// `remove(_:span: .futureEvents)` throws.
     var seriesRemovalFails = false
+    /// Calendar identifiers the store does not hold: the restore's calendar reads throw for them
+    /// what production throws (`EventSnapshot.resolveCalendar` over no matching calendar, #269).
+    var missingCalendars: Set<String> = []
     private var nextID = 1
 
     /// A series already in the store: one occurrence per slot, sharing `id`.
@@ -92,10 +97,20 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func makeEvent() -> Event { Event() }
 
-    func apply(_ snapshot: EventSnapshot, to event: Event) throws {
+    func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> String {
+        log.append("calendar")
+        return try calendarNow(for: snapshot, kind: kind)
+    }
+
+    func calendarNow(for snapshot: EventSnapshot, kind: EventRestoreKind) throws -> String {
+        let known = missingCalendars.contains(snapshot.calendarIdentifier) ? [] : [snapshot.calendarIdentifier]
+        return try snapshot.resolveCalendar(in: known, identifier: { $0 }, for: kind)
+    }
+
+    func apply(_ snapshot: EventSnapshot, to event: Event, calendar: String) {
         event.title = snapshot.title
         event.start = snapshot.startDate
-        event.calendar = snapshot.calendarIdentifier
+        event.calendar = calendar
         event.hasRules = snapshot.restoresFromRules
     }
 
@@ -140,11 +155,11 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func markNeedsRefresh() { refreshMarks += 1 }
 
-    func slotHolders(for snapshot: EventSnapshot) throws -> [OccurrenceSlotGuard.Holder] {
+    func slotHolders(for snapshot: EventSnapshot, in calendar: String) -> [OccurrenceSlotGuard.Holder] {
         log.append("holders")
         let end = max(snapshot.endDate, snapshot.startDate.addingTimeInterval(60))
         return events
-            .filter { $0.calendar == snapshot.calendarIdentifier && $0.start >= snapshot.startDate && $0.start < end }
+            .filter { $0.calendar == calendar && $0.start >= snapshot.startDate && $0.start < end }
             .map { OccurrenceSlotGuard.Holder(title: $0.title, startDate: $0.start, hasRecurrenceRules: $0.hasRules) }
     }
 

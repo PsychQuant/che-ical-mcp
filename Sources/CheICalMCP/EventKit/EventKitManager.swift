@@ -2486,13 +2486,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .deleteEvent(let snapshot):
             // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
-            // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam).
-            return try undoDeletedEvent(snapshot)
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam), which reads the
+            // calendar through `restoreCalendar(for:kind:)` with `.recreateDeleted` (#269).
+            return try await undoDeletedEvent(snapshot)
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
             // #244: a one-off at the occurrence's slot, unless the series already holds it (#285);
-            // the arm's code is `SeriesExceptionsUndo.undoDeleteOccurrence` (#322 seam).
-            return try undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteOccurrence` (#322 seam), which
+            // resolves the calendar once, before the slot check and the write (#269 verify).
+            return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
 
         case .deleteFollowingOccurrences(let title):
             // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
@@ -2503,8 +2505,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // way; an update that touched a recurring event is a marker whose undo is refused
             // (#236, #262), and `verifiedEvent` refuses an event that repeats now. The snapshot
             // holds no rules, so `apply` writes none here (its rules branch serves delete-undo).
+            // The calendar is read first (#269, PR #389 round 2): `restoreCalendar` suspends, and
+            // after the #236 post-state check nothing may suspend before the write. That is about
+            // actor reentrancy only (no other call of this server can run in between); a change
+            // another process (Calendar.app, a sync) saves between the check and the save is not
+            // excluded. When the calendar is missing, its refusal comes first and the record is kept,
+            // whether the event changed, repeats now, is detached or is not found.
+            let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate)
             let event = try await verifiedEvent(of: operation, verb: .undo)
-            try applySnapshot(oldSnapshot, to: event)
+            oldSnapshot.apply(to: event, calendar: calendar)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
@@ -2517,10 +2526,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
             // event is still in the calendar it was moved to (#236). A series is resolved as the
             // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
-            let event = try await verifiedEvent(of: operation, verb: .undo)
-            guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
-                throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
+            // #269: the original calendar is read as every event undo reads it (`restoreCalendar`),
+            // and a missing one is refused with the way on, the record kept. It is read before the
+            // #236 post-state check (PR #389 round 2), so nothing suspends between that check and
+            // the write (actor reentrancy only; another process's change in between is not
+            // excluded). A missing calendar is therefore refused, and the record kept, before a
+            // changed, repeating, detached or missing event is.
+            let original = try await restoreCalendar {
+                try EventSnapshot.calendar(recorded: fromCalendarIdentifier, in: $0, identifier: { $0.calendarIdentifier },
+                                           orThrow: { EventKitError.moveBackCalendarMissing(fromCalendarIdentifier: fromCalendarIdentifier, event: title) })
             }
+            let event = try await verifiedEvent(of: operation, verb: .undo)
             event.calendar = original
             try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
             markNeedsRefresh()
@@ -2662,12 +2678,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
-    /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
-    /// reminders).
-    func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
-        let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
-        snapshot.apply(to: event, calendar: originalCalendar)
+    /// #269 verify: the calendars a single event undo restores into, and the batch pre-check's read
+    /// too. Calendar access is checked first: without it the store lists no calendar, and every
+    /// recorded calendar would be judged missing. Then the refreshed view, as
+    /// `reminderListsForRestore` reads the lists.
+    func eventCalendarsForRestore() async throws -> [EKCalendar] {
+        try await ensureCalendarAccess()
+        refreshIfNeeded()
+        return eventStore.calendars(for: .event)
+    }
+
+    /// The calendar `match` picks from `eventCalendarsForRestore`; on a miss the view is marked
+    /// stale and read once more before `match`'s refusal stands (`EventRestoreCalendar.resolve`, the
+    /// batch pre-check's order).
+    func restoreCalendar(_ match: ([EKCalendar]) throws -> EKCalendar) async throws -> EKCalendar {
+        try await EventRestoreCalendar.resolve(read: { try await self.eventCalendarsForRestore() },
+                                               invalidate: { self.markNeedsRefresh() }, match: match)
+    }
+
+    /// The recorded calendar of `snapshot`, by its identifier (`resolveCalendar`).
+    func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar {
+        try await restoreCalendar { try snapshot.resolveCalendar(in: $0, identifier: { $0.calendarIdentifier }, for: kind) }
     }
 
     /// A completion record always yields a write (#196); the throw is unreachable by
@@ -2824,6 +2855,17 @@ enum EventKitError: LocalizedError {
     /// is trusted and sits next to the `discard_id` instruction, as the batch pre-check's refusal
     /// names none of them (PR #282).
     case undoListMissing(reminder: String, hasIdentifier: Bool, kind: ReminderRestoreKind)
+    /// #269: the event counterpart of `undoListMissing`. An event undo found no calendar under the
+    /// recorded identifier (the calendar was deleted, or its account is turned off or not synced
+    /// yet), or the record has none: the delete-undo and occurrence-undo restore into the calendar
+    /// the event was deleted from, the update-undo into the one it was in before the update, the
+    /// move-undo into the one it was moved from (`.moveEvent`, also through the stand-in, #369).
+    /// Nothing was written for this event and the record is kept (`.restore`), as for every
+    /// not-found. The message names the event through `undoShownTitle` and neither the calendar nor
+    /// its account (PR #389 verify round 1, as #290 for lists): a subscribed or shared calendar's
+    /// title is set by someone else and an account name is often an e-mail address (#37), and this
+    /// text is trusted and sits next to the `discard_id` instruction. So the case carries neither.
+    case undoCalendarMissing(event: String, hasIdentifier: Bool, kind: EventRestoreKind)
 
     var errorDescription: String? {
         switch self {
@@ -2932,6 +2974,36 @@ enum EventKitError: LocalizedError {
                 ? "Giving up this undo cannot be reversed, and this tool cannot recover the deleted reminder afterwards"
                 : "Giving up this undo cannot be reversed; the reminder stays as it is now"
             return "Cannot undo \(which) \(state). Undo does not use another list of the same name. Nothing was written for this reminder and the history entry was kept; older undo entries stay blocked \(blocked).\(retry) \(loss): ask the user whether to give it up; if they agree, read undo_history and call undo with discard_id set to its id."
+        case .undoCalendarMissing(let event, let hasIdentifier, let kind):
+            let shown = undoShownTitle(event)
+            let named = shown.isEmpty ? "" : " (event '\(shown)')"
+            let which: String
+            let loss: String
+            switch kind {
+            case .recreateDeleted:
+                which = "the deletion of an event\(named): the calendar it was in when it was deleted"
+                loss = "Giving up this undo cannot be reversed, and this tool cannot recover the deleted event afterwards"
+            case .recreateDeletedOccurrence:
+                which = "the deletion of an occurrence of an event\(named): the calendar it was in when it was deleted"
+                loss = "Giving up this undo cannot be reversed, and this tool cannot recover the deleted occurrence afterwards"
+            case .revertUpdate:
+                which = "the update of an event\(named): the calendar it was in before the update"
+                loss = "Giving up this undo cannot be reversed; the event stays as it is now"
+            case .moveBack:
+                which = "the move of an event\(named): the calendar it was moved from"
+                loss = "Giving up this undo cannot be reversed; the event stays in the calendar it was moved to"
+            }
+            let state = hasIdentifier
+                ? "is not available (deleted, or its account turned off or still syncing); it was not found under its recorded identifier"
+                : "was recorded without an identifier, so it cannot be found"
+            // Without an identifier the entry can never be undone, only given up.
+            let blocked = hasIdentifier ? "until it is undone or given up" : "until it is given up"
+            let retry = hasIdentifier
+                ? " Run undo again if the calendar's account may be turned off or still syncing; if the calendar was deleted, no retry can find it."
+                : ""
+            // The way on in `UndoTargetChangedError`'s words: the user is asked and the entry
+            // discarded; no other tool is named (#377).
+            return "Cannot undo \(which) \(state). Undo does not use another calendar of the same name. Nothing was written for this event and this history entry was kept; older undo entries stay blocked \(blocked).\(retry) \(loss). To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
         case .exclusionConflict(let existingId, let date):
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         }
@@ -2939,6 +3011,23 @@ enum EventKitError: LocalizedError {
 }
 
 extension EventKitError: TrustedErrorMessage {}
+
+extension EventKitError {
+    /// #269: the refusal of a move-undo whose original calendar no longer resolves, from what the
+    /// `.moveEvent` record holds.
+    static func moveBackCalendarMissing(fromCalendarIdentifier: String, event: String) -> EventKitError {
+        EventSnapshot.calendarMissing(recordedIdentifier: fromCalendarIdentifier, event: event, for: .moveBack)
+    }
+}
+
+extension UndoOperation {
+    /// #269: `EventKitError.moveBackCalendarMissing` for a `.moveEvent` record; nil for any other
+    /// record, which has no calendar it was moved from.
+    var moveBackCalendarMissing: EventKitError? {
+        guard case .moveEvent(_, let from, _, let title, _) = self else { return nil }
+        return .moveBackCalendarMissing(fromCalendarIdentifier: from, event: title)
+    }
+}
 
 // MARK: - Batch Operation Results
 

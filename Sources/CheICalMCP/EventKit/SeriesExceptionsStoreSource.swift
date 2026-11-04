@@ -13,6 +13,7 @@ import Foundation
 /// moving the code behind the seam keeps the order of the calls (#322: no behaviour change).
 protocol SeriesExceptionsStoreSource {
     associatedtype Event
+    associatedtype Calendar
 
     /// The event's identifier and external identifier (`UndoPostState.OccurrenceIDs`).
     func identifiers(of event: Event) -> UndoPostState.OccurrenceIDs
@@ -32,8 +33,16 @@ protocol SeriesExceptionsStoreSource {
 
     /// A new, unsaved event in the store.
     func makeEvent() -> Event
-    /// Writes `snapshot` onto `event`, its calendar resolved by identifier (`applySnapshot`).
-    func apply(_ snapshot: EventSnapshot, to event: Event) throws
+    /// The recorded calendar of `snapshot` as an event undo reads it (#269,
+    /// `EventKitManager.restoreCalendar(for:kind:)`): access checked, the view refreshed, and read
+    /// once more after a miss before `EventKitError.undoCalendarMissing` stands.
+    func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> Calendar
+    /// The recorded calendar of `snapshot` from the calendars the store lists now, without the
+    /// #269 read (the one-offs of an exceptions restore, which go into the calendar the recreated
+    /// series was just saved in).
+    func calendarNow(for snapshot: EventSnapshot, kind: EventRestoreKind) throws -> Calendar
+    /// Writes `snapshot`'s fields onto `event` in `calendar` (`EventSnapshot.apply`).
+    func apply(_ snapshot: EventSnapshot, to event: Event, calendar: Calendar)
     /// Saves `event` with span "this".
     func save(_ event: Event) throws
     func remove(_ event: Event, span: EKSpan) throws
@@ -41,30 +50,31 @@ protocol SeriesExceptionsStoreSource {
     func isStored(_ event: Event) -> Bool
     func markNeedsRefresh()
 
-    /// The events in `snapshot`'s calendar from its start for its length (at least a minute), read
+    /// The events in `calendar` from `snapshot`'s start for its length (at least a minute), read
     /// after a refresh when this server wrote since the last one (`OccurrenceSlotGuard`).
-    func slotHolders(for snapshot: EventSnapshot) throws -> [OccurrenceSlotGuard.Holder]
+    func slotHolders(for snapshot: EventSnapshot, in calendar: Calendar) -> [OccurrenceSlotGuard.Holder]
 }
 
 /// The production `SeriesExceptionsStoreSource`: `EventKitManager`'s store, and the manager's own
-/// helpers for the calls that need it (`applySnapshot`, `storedEvent`, the refresh flags), passed
-/// in as closures. `EventKitManager` builds it inside its own isolation and uses it there only.
+/// helpers for the calls that need it (`restoreCalendar(for:kind:)`, `storedEvent`, the refresh
+/// flags), passed in as closures. `EventKitManager` builds it inside its own isolation and uses it there only.
 final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     typealias Event = EKEvent
+    typealias Calendar = EKCalendar
 
     private let eventStore: EKEventStore
-    private let applySnapshot: (EventSnapshot, EKEvent) throws -> Void
+    private let readRestoreCalendar: (EventSnapshot, EventRestoreKind) async throws -> EKCalendar
     private let storedEvent: (String) -> EKEvent?
     private let markRefresh: () -> Void
     private let refreshIfNeeded: () -> Void
 
     init(eventStore: EKEventStore,
-         applySnapshot: @escaping (EventSnapshot, EKEvent) throws -> Void,
+         restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
          storedEvent: @escaping (String) -> EKEvent?,
          markNeedsRefresh: @escaping () -> Void,
          refreshIfNeeded: @escaping () -> Void) {
         self.eventStore = eventStore
-        self.applySnapshot = applySnapshot
+        self.readRestoreCalendar = restoreCalendar
         self.storedEvent = storedEvent
         self.markRefresh = markNeedsRefresh
         self.refreshIfNeeded = refreshIfNeeded
@@ -101,7 +111,15 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func makeEvent() -> EKEvent { EKEvent(eventStore: eventStore) }
 
-    func apply(_ snapshot: EventSnapshot, to event: EKEvent) throws { try applySnapshot(snapshot, event) }
+    func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar {
+        try await readRestoreCalendar(snapshot, kind)
+    }
+
+    func calendarNow(for snapshot: EventSnapshot, kind: EventRestoreKind) throws -> EKCalendar {
+        try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier }, for: kind)
+    }
+
+    func apply(_ snapshot: EventSnapshot, to event: EKEvent, calendar: EKCalendar) { snapshot.apply(to: event, calendar: calendar) }
 
     func save(_ event: EKEvent) throws { try eventStore.save(event, span: .thisEvent) }
 
@@ -114,8 +132,7 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func markNeedsRefresh() { markRefresh() }
 
-    func slotHolders(for snapshot: EventSnapshot) throws -> [OccurrenceSlotGuard.Holder] {
-        let calendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
+    func slotHolders(for snapshot: EventSnapshot, in calendar: EKCalendar) -> [OccurrenceSlotGuard.Holder] {
         refreshIfNeeded()
         let end = max(snapshot.endDate, snapshot.startDate.addingTimeInterval(60))
         var holders: [OccurrenceSlotGuard.Holder] = []

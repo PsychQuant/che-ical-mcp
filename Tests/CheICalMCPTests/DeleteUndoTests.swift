@@ -421,7 +421,7 @@ final class DeleteUndoTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+undoDeletedEvent\(snapshot\)"#, in: body)
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)"#, in: body)
         XCTAssertEqual(call.count, 1)
         if let call = call.first {
             XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
