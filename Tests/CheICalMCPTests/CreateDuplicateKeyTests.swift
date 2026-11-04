@@ -68,11 +68,10 @@ final class CreateDuplicateKeyTests: XCTestCase {
     /// read back as two whole days, because the timed dates were assigned while the event was still
     /// all-day. updateEvent must set the planned flag before it writes the planned dates.
     func testUpdateEventSetsThePlannedFlagBeforeWritingTheDates() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func updateEvent("))
-        let body = String(source[from.upperBound...].prefix(9000)).filter { !$0.isWhitespace }
+        // Bounded by the function body, not a fixed prefix: comments added above the writes (#268)
+        // pushed the old 9000-character window past them.
+        let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
+            .filter { !$0.isWhitespace }
         let flag = try XCTUnwrap(body.range(of: "event.isAllDay=datePlan.isAllDay"), "the flag is set from the plan")
         let dates = try XCTUnwrap(body.range(of: "event.startDate=dates.start"))
         XCTAssertLessThan(flag.lowerBound, dates.lowerBound, "flag first, then dates")

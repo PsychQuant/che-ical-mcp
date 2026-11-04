@@ -132,9 +132,9 @@ final class UpdatedIdentifierTests: XCTestCase {
                       "refresh result kept, stand-in never trusted")
         XCTAssertTrue(flat.contains("UpdatedIdentifier.savedOccurrenceSeries( savedIsOccurrence: event !== masterEvent, span: span, masterRefreshed: masterRefreshed, master: masterRefreshed ? masterEvent.eventIdentifier : nil, occurrence: event.eventIdentifier)"),
                       String(flat.suffix(900)))
-        XCTAssertTrue(flat.contains("let crossesAccounts = newCalendar.map { FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier, toSourceID: $0.source?.sourceIdentifier) } ?? false"))
+        XCTAssertTrue(flat.contains("let crossesAccounts = newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier && FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier, toSourceID: $0.source?.sourceIdentifier) } ?? false"), "the calendar it is already in moves nothing")
         XCTAssertTrue(flat.contains("changesAccount: crossesAccounts,"))
-        let refusal = "if Self.refusesOccurrenceEditAcrossAccounts( onOccurrence: event !== masterEvent, span: span, crossesAccounts: crossesAccounts) { throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason) }"
+        let refusal = "if Self.refusesOccurrenceEditAcrossAccounts( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) { throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason) }"
         let refuse = try XCTUnwrap(flat.range(of: refusal), "refusal wired")
         let firstWrite = try XCTUnwrap(flat.range(of: "if let t = title { event.title = t }"))
         XCTAssertLessThan(refuse.lowerBound, firstWrite.lowerBound, "refused before the first field is assigned")

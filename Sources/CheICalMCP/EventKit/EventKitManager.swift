@@ -1069,9 +1069,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
         // Read before any field is assigned; also tells the response (#268) not to trust the series
         // object's identifier after the save.
+        // The calendar the event is already in moves nothing, even when its account cannot be read
+        // (#268 final review).
         let crossesAccounts = newCalendar.map {
-            FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
-                                                         toSourceID: $0.source?.sourceIdentifier)
+            $0.calendarIdentifier != event.calendar?.calendarIdentifier
+                && FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                                toSourceID: $0.source?.sourceIdentifier)
         } ?? false
         if FirstRemainingOccurrence.refusesUpdateThroughStandIn(
             viaStandIn: resolved.viaStandIn,
@@ -1080,8 +1083,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
         }
         // #268 verify round 4: an occurrence edit that would move the series to another account.
+        // An occurrence addressed by its own detached id resolves as masterEvent itself; it is an
+        // occurrence edit all the same (final review), as the undo classifier below counts it.
         if Self.refusesOccurrenceEditAcrossAccounts(
-            onOccurrence: event !== masterEvent, span: span, crossesAccounts: crossesAccounts) {
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) {
             throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason)
         }
 
