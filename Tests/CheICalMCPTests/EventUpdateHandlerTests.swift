@@ -32,6 +32,19 @@ final class EventUpdateHandlerTests: XCTestCase {
         XCTAssertNil(result["previous_id"])
     }
 
+    /// #268 verify: the most common recurring edit (one occurrence, span this) answers the series'
+    /// identifier, with the occurrence's own identifier beside it.
+    func testAnOccurrenceEditKeepsTheSeriesIdentifier() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await update(server, ["event_id": .string("series"), "title": .string("Second"),
+                                               "occurrence_date": .string("2027-06-14T09:00:00+08:00")])
+        XCTAssertEqual(result["id"] as? String, "series")
+        XCTAssertEqual(result["id_changed"] as? Bool, false)
+        XCTAssertNil(result["previous_id"])
+        let occurrence = try XCTUnwrap(result["occurrence_id"] as? String)
+        XCTAssertTrue(occurrence.hasPrefix("series/RID="), occurrence)
+    }
+
     func testTheRequestCarriesTheCallsFields() async throws {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)

@@ -4,6 +4,7 @@ import Foundation
 /// An `EventWriteSource` for the event write handler tests (#268, #372). Identifiers and titles
 /// select the outcome:
 /// - update with `calendarSource == "Other"`: saved under `moved-<id>` (a cross-account move);
+/// - update with `occurrenceDate` and span this: saved under `<id>/RID=<seconds>` (a detached occurrence);
 /// - update of an id starting with `allday-`: the stored event is all-day, 2027-04-10 (host zone);
 /// - create titled `duplicate`: answered as a duplicate.
 actor FakeEventWriteSource: EventWriteSource {
@@ -17,7 +18,12 @@ actor FakeEventWriteSource: EventWriteSource {
 
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
         updates.append(request)
-        let id = request.calendarSource == "Other" ? "moved-" + request.identifier : request.identifier
+        var id = request.calendarSource == "Other" ? "moved-" + request.identifier : request.identifier
+        // One occurrence edited on its own (occurrence_date, span this) saves a detached occurrence,
+        // which reads back as `<series>/RID=<seconds>` (device, iCloud).
+        if let occurrence = request.occurrenceDate, request.span == .thisEvent {
+            id += "/RID=\(Int(occurrence.timeIntervalSinceReferenceDate))"
+        }
         let storedAllDay = request.identifier.hasPrefix("allday-")
         let isAllDay = request.isAllDay ?? storedAllDay
         let start = request.startDate ?? Self.storedStart
