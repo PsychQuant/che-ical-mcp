@@ -45,6 +45,10 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo cannot find the item under its recorded identifier
 - **THEN** nothing is written, the record stays on top with the same id, and the error names the item and discard_id
 
+#### Scenario: Calendar to restore into not found (#269)
+- **WHEN** undo of a single `delete_event` (a whole event or one occurrence), `update_event` or move of an event (`move_events_batch`, `copy_event` with `delete_original`, also a whole-series move through the stand-in, #369) finds no calendar under the identifier it recorded for the calendar it restores into, or the record has none; a same-named calendar in another account does not count
+- **THEN** nothing is written for that event, the record stays on top with the same id, and the error names the calendar, its account and the event as the undo texts show titles (quotes replaced, hidden characters dropped, capped), says that nothing was written and the entry was kept, offers running undo again only when the identifier was recorded (the account may be turned off or still syncing), says what giving up the undo loses (the deleted event or occurrence; for an update the event stays as it is; for a move it stays in the calendar it was moved to), and then to ask the user whether to give up the undo and, if they agree, to call undo with its id as discard_id; it names no other tool. The reminder counterpart is the list of #242; a batch is checked before its first write instead (scenario "Batch member cannot be restored")
+
 #### Scenario: Recurring occurrence identity lost (#204)
 - **WHEN** undo or redo of an identity-guarded recurring completion finds that the identifier resolves to another occurrence
 - **THEN** nothing is written and the record is discarded, so older records stay reachable

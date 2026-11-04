@@ -220,7 +220,7 @@ final class UndoBatchWiringTests: XCTestCase {
     func testThePreCheckLookupsAreTheOnesTheRestoreMakes() throws {
         let file = "EventKit/UndoBatchRestore.swift"
         let lookup = Substring(try Self.body("static func problems<", in: file))
-        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)"), in: lookup))
+        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventCalendars, identifier: identifier, for: .recreateDeleted)"), in: lookup))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)"), in: lookup))
         XCTAssertNotNil(Self.offset(of: Self.call("allowsModifications(container)"), in: lookup))
         XCTAssertEqual(Self.count(".title", in: lookup), 0)
@@ -228,7 +228,7 @@ final class UndoBatchWiringTests: XCTestCase {
         // The restore side of each lookup. The reminder write path itself is pinned by
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
         let apply = Substring(try Self.body("private func applySnapshot(_ snapshot: EventSnapshot", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })"), in: apply))
+        XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier }, for: kind)"), in: apply))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
         let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))

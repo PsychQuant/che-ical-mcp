@@ -139,10 +139,14 @@ struct EventSnapshot {
         self.availability = availability ?? event.availability
     }
     /// Names can be duplicated across accounts; history restores only its original calendar.
-    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
+    /// #269: a missing calendar throws `EventKitError.undoCalendarMissing`, named with this
+    /// snapshot's calendar title, account and event title, as `ReminderSnapshot.resolveList` names
+    /// a missing list (#242); `kind` decides what its message says giving the undo up loses.
+    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String, for kind: EventRestoreKind) throws -> T {
         guard !calendarIdentifier.isEmpty,
               let calendar = calendars.first(where: { identifier($0) == calendarIdentifier }) else {
-            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+            throw EventKitError.undoCalendarMissing(calendar: calendarTitle, account: calendarSource, event: title,
+                                                    hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
         }
         return calendar
     }
@@ -203,6 +207,17 @@ struct EventSnapshot {
 enum ReminderRestoreKind: Sendable {
     case recreateDeleted
     case revertUpdate
+}
+
+/// #269: the event undo a calendar is looked up for, the counterpart of `ReminderRestoreKind`.
+/// Giving up a delete-undo loses the deleted event or occurrence (this tool cannot recreate it any
+/// more); giving up an update-undo leaves the event as it is now, a move-undo leaves it in the
+/// calendar it was moved to.
+enum EventRestoreKind: Sendable, Equatable {
+    case recreateDeleted
+    case recreateDeletedOccurrence
+    case revertUpdate
+    case moveBack
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
@@ -341,8 +356,12 @@ enum UndoOperation {
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
     /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
-    /// the event is still in `toCalendarIdentifier` (#236).
-    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool)
+    /// the event is still in `toCalendarIdentifier` (#236). #269: `fromCalendarTitle` and
+    /// `fromCalendarAccount` (its account's title) are what the refusal names when that calendar is
+    /// missing at undo time (`moveBackCalendarMissing`); no default, so a recording site cannot
+    /// leave them out. The stack is in memory only, so no record predates them.
+    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool,
+                   fromCalendarTitle: String, fromCalendarAccount: String?)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -372,7 +391,7 @@ enum UndoOperation {
             return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
             return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
-        case .moveEvent(_, _, _, let title, _):
+        case .moveEvent(_, _, _, let title, _, _, _):
             return "Moved event: \(undoVisibleTitle(title))"
         case .createReminder(_, let title, _):
             return "Created reminder: \(undoVisibleTitle(title))"
@@ -691,7 +710,7 @@ extension UndoOperation {
         case .updateRecurringEvent(_, let title, _):
             // Its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
-        case .moveEvent(_, _, _, let title, _):
+        case .moveEvent(_, _, _, let title, _, _, _):
             return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + nothingWritten
         case .createReminder(_, let title, _):
             return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten

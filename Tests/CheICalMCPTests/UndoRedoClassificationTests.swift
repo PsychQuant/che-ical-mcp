@@ -28,7 +28,7 @@ final class UndoRedoClassificationTests: XCTestCase {
             .deleteFollowingOccurrences(title: "Standup"),
             .updateEvent(id: "EVT-1", oldSnapshot: event, saved: event),
             .updateRecurringEvent(id: "EVT-1", title: "Standup", kind: .series),
-            .moveEvent(id: "EVT-1", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
+            .moveEvent(id: "EVT-1", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil),
             .createReminder(id: "REM-1", title: "Pay rent", created: reminder),
             .deleteReminder(snapshot: reminder),
             .updateReminder(id: "REM-1", oldSnapshot: reminder, saved: reminder),

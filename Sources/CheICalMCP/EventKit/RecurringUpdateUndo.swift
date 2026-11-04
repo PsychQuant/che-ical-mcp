@@ -74,7 +74,7 @@ extension UndoOperation {
         case .updateEvent(_, let old, _):
             (action, title) = ("update", old.title)
             remedy = "If the change should be reverted, revert it in Calendar (or with update_event)."
-        case .moveEvent(_, _, _, let movedTitle, false):
+        case .moveEvent(_, _, _, let movedTitle, false, _, _):
             (action, title) = ("move", movedTitle)
             // Round 7 findings 4, 26: a move is reverted by moving the event back.
             remedy = "If it should go back to its original calendar, move it back in Calendar (or with move_events_batch, or update_event with calendar_name)."
@@ -95,7 +95,7 @@ extension UndoOperation {
     /// occurrence never matches (and its delete would start from that occurrence); a one-off move
     /// or update must not reach an occurrence of a series at all.
     var resolvesThroughStandIn: Bool {
-        if case .moveEvent(_, _, _, _, true) = self { return true }
+        if case .moveEvent(_, _, _, _, true, _, _) = self { return true }
         return false
     }
 }

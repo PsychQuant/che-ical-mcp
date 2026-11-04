@@ -115,7 +115,7 @@ extension EventKitManager {
                 expected, verb: verb,
                 lookup: { () -> EKEvent? in
                     if operation.resolvesThroughStandIn {
-                        return try seriesMoveUndoTarget(expected, verb: verb)
+                        return try seriesMoveUndoTarget(operation, expected, verb: verb)
                     }
                     refreshIfNeeded()
                     return storedEvent(id: expected.itemID)
@@ -159,11 +159,13 @@ extension EventKitManager {
     /// series object when it refreshes, else the earliest remaining occurrence, with no
     /// edited-before refusal (a move leaves no occurrence behind, device 2026-10-20). The decision
     /// (not found, the residual not-found, the cross-account refusal) is `SeriesMoveUndo.decide`.
-    private func seriesMoveUndoTarget(_ expected: UndoPostState, verb: UndoHistoryVerb) throws -> EKEvent? {
+    private func seriesMoveUndoTarget(_ operation: UndoOperation, _ expected: UndoPostState,
+                                      verb: UndoHistoryVerb) throws -> EKEvent? {
         let id = expected.itemID
         let resolved = freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)
         // A recorded calendar that no longer resolves gives nil here; `decide` refuses a stand-in
-        // still in the destination with `calendarNotFound`, and the move arm refuses the series object the same way.
+        // still in the destination with the record's refusal (#269), and the move arm refuses the
+        // series object the same way.
         let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap { restoring in
             eventStore.calendar(withIdentifier: restoring)
         }
@@ -175,7 +177,8 @@ extension EventKitManager {
                                         calendarID: $0.event.calendar?.calendarIdentifier,
                                         sourceID: $0.event.calendar?.source?.sourceIdentifier)
             },
-            original: original.map { SeriesMoveUndo.OriginalCalendar(sourceID: $0.source?.sourceIdentifier) })
+            original: original.map { SeriesMoveUndo.OriginalCalendar(sourceID: $0.source?.sourceIdentifier) },
+            missingOriginal: { operation.moveBackCalendarMissing })
     }
 
     /// #377: the not-found message of an event undo, asked only after the lookup found nothing or

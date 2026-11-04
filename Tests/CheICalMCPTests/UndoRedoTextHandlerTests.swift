@@ -33,7 +33,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
         let ops: [UndoOperation] = [
             .createEvent(id: "e", title: title, created: event),
             .deleteEvent(snapshot: event),
-            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false),
+            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil),
             .createReminder(id: "r", title: title, created: reminder),
             .deleteReminder(snapshot: reminder),
             .updateRecurringEvent(id: "e", title: title, kind: .series),
