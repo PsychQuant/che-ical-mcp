@@ -1486,12 +1486,11 @@ class CheICalMCPServer {
 
         // A value without offset is read in the event's own zone, to match findOccurrence's day
         // boundary; the zone is read after access is ensured and from the refreshed event (#270,
-        // #271), and only when the value needs it and the span uses it (span all ignores the date,
-        // which is still checked as a date).
+        // #271). OccurrenceDateInput decides from the span and the value whether it is needed.
         let spanStr = arguments["span"]?.stringValue ?? "this"
         let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
-            arguments["occurrence_date"]?.stringValue, iso: dateFormatter,
-            zone: { spanStr == "all" ? nil : try await self.eventKitManager.occurrenceDateTimeZone(identifier: eventId) })
+            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
+            zoneLookup: { try await self.eventKitManager.occurrenceDateTimeZone(identifier: eventId) })
 
         if spanStr == "all" {
             try await eventKitManager.deleteEventSeries(identifier: eventId)
@@ -2723,7 +2722,8 @@ class CheICalMCPServer {
                 // for a value without offset (#270 verify).
                 let id = ids[index]
                 occurrenceDates[index] = try await OccurrenceDateInput.resolve(
-                    text, iso: dateFormatter, zone: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                    text, iso: dateFormatter, span: span.rawValue,
+                    zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
             }
         }
 
