@@ -642,8 +642,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ///
     /// - Parameter hint: optional caller-specific guidance appended to the error message
     ///   (e.g. `updateEvent`'s "provide both start_time and end_time" advice).
-    static func validateTimeRange(start: Date, end: Date, isAllDay: Bool, hint: String? = nil) throws {
-        guard start >= end, !isAllDay else { return }
+    static func validateTimeRange(
+        start: Date, end: Date, isAllDay: Bool, hint: String? = nil,
+        calendar: Calendar = Calendar.gregorian(in: .current)
+    ) throws {
+        // #348 step 5 / #364: an all-day event is checked by its days (an end day before the start
+        // day is refused; start = end is one day). It used to be exempt entirely.
+        if isAllDay {
+            _ = try AllDayRange.normalize(start: start, end: end, calendar: calendar)
+            return
+        }
+        guard start >= end else { return }
         let formatter = ISO8601DateFormatter()
         var message = "Start time (\(formatter.string(from: start))) must be before end time (\(formatter.string(from: end)))."
         if let hint { message += " " + hint }
