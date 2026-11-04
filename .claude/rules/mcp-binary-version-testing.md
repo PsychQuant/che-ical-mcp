@@ -185,8 +185,9 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     (d) 對照組（日曆還在）：在拋棄式日曆建一次性事件 → `delete_event` → `undo`：要成功還原（這次讀日曆會先做 Calendar
         access 檢查，日曆在就不會被判成不見）。
     若回的仍是「Calendar not found: <identifier>」，就是測試表面還是舊 binary。2026-11-04 已在 iCloud 用 repo 內
-    build 的 binary 做過 (a)(b)(c)（PR #389 第一輪 verify 前的版本，當時的訊息還帶日曆名與帳號；第一輪修正後的
-    裝置結果見 #269 的 Verify-fix）：(a)(b) 各在一個 stdio process 裡，(c) 的系列建立與刪第一個場次用 `--cli`、搬移與
+    build 的 binary 做過 (a)(b)(c)（PR #389 第一輪 verify 前的版本，當時的訊息還帶日曆名與帳號）；第一輪修正後的
+    binary 重做了 (a)(b)(d)，訊息只寫事件名、沒有日曆名與帳號，(d) 成功還原（結果見 #269 的 Verify-fix）；(c) 沒有
+    用修正後的 binary 重做。最初那次的細節：(a)(b) 各在一個 stdio process 裡，(c) 的系列建立與刪第一個場次用 `--cli`、搬移與
     undo 在一個 stdio process 裡；三者都回上面的訊息、`discard_id` 都移除了該筆，跨 process 的 `list_events` 確認事件
     仍在搬去的日曆。(c) 從訊息分不出是 `decide` 還是 move arm 丟的（兩處同一個訊息）。update-undo 的那一臂沒有在裝置上做。
     出版前在重啟後的 session MCP 上重做一次。
