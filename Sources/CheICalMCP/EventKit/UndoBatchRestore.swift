@@ -215,8 +215,9 @@ extension UndoRestoreDestinationMissingError: TrustedErrorMessage {}
 /// The message is author-controlled text plus `memberError`, which is either a sanitized code or
 /// the verbatim message of a `TrustedErrorMessage` (`EventKitErrorSanitizer.writeFailureLog`), and
 /// the recorded titles of items (the failed one, the restored ones whose store differs), shown
-/// through `undoShownTitle`. That is the condition under which this type conforms to
-/// `TrustedErrorMessage`.
+/// through `undoShownTitle`, and the failed one's recorded start or due date formatted by this
+/// server (digits, separators and an offset; #407). That is the condition under which this type
+/// conforms to `TrustedErrorMessage`.
 struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// Where the member whose write failed is in `remaining`.
     enum FailingMember: Sendable {
@@ -252,11 +253,12 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// `failingTitle`: the recorded title of the member that failed (nil for a nested batch's
     /// remainder), shown through `undoShownTitle`. `failedBeforeWrite`: its error is one the restore
     /// raises before it writes anything (`UndoOperation.failsBeforeAnyWrite`), so no second copy can
-    /// come of it (PR #390 round 1).
+    /// come of it (PR #390 round 1). `failingWhen`: what tells it apart from another member of the
+    /// same title (`UndoOperation.restoredItemWhen`, #407), or nil.
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
          restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = [],
          restoredEvents: [UndoEventOutcome] = [],
-         failingTitle: String? = nil, failedBeforeWrite: Bool = false) {
+         failingTitle: String? = nil, failingWhen: String? = nil, failedBeforeWrite: Bool = false) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
@@ -300,7 +302,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
         case .runsLast, .inRecordedOrder:
-            let item = failingTitle.map { "'\(undoShownTitle($0))'" }
+            let item = failingTitle.map { "'\(undoShownTitle($0))'" + (failingWhen.map { " (\($0))" } ?? "") }
             let written: String
             if failedBeforeWrite {
                 written = " \(item ?? "The item that failed") failed before anything of it was written (its calendar or list was not found), so running undo again does not add a copy of it."
@@ -367,13 +369,17 @@ extension UndoOperation {
         // The failed member's title, and whether its error came before any write (PR #390 round 1);
         // a nested batch's remainder has neither.
         let failingTitle = inner == nil ? members[failedIndex].restoredItemTitle : nil
+        // #407: its start or due date, when another member of this record shares its title.
+        let failingWhen = failingTitle.flatMap { title in
+            restoredItemTitles(of: members).filter { $0 == title }.count > 1 ? members[failedIndex].restoredItemWhen : nil
+        }
         let failedBeforeWrite = inner == nil && failsBeforeAnyWrite(interrupted.underlying)
         func partial(_ remaining: [UndoOperation], _ failing: UndoBatchPartiallyUndoneError.FailingMember,
                      _ memberError: String) -> UndoBatchPartiallyUndoneError {
             UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
                                           failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering,
                                           restoredEvents: restoredEvents,
-                                          failingTitle: failingTitle, failedBeforeWrite: failedBeforeWrite)
+                                          failingTitle: failingTitle, failingWhen: failingWhen, failedBeforeWrite: failedBeforeWrite)
         }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
@@ -412,6 +418,37 @@ extension UndoOperation {
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
              .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
             return nil
+        }
+    }
+
+    /// #407: what tells this member apart from another of the same title in a batch: the recorded
+    /// start of an event or occurrence (an all-day one by its day, in this Mac's zone as all-day
+    /// dates are, #364; a timed one with its offset, in the event's own zone), or a reminder's
+    /// recorded due date (a date, or a date and time, as recorded). Nil for a reminder without a
+    /// due date and for every other kind. Only digits, separators and an offset: no calendar,
+    /// list or account name (#37).
+    var restoredItemWhen: String? {
+        switch self {
+        case .deleteEvent(let snapshot), .deleteOccurrence(let snapshot, _):
+            let format = snapshot.isAllDay ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm:ssXXXXX"
+            let zone = snapshot.isAllDay ? TimeZone.current : (snapshot.timeZone ?? TimeZone.current)
+            return "starting " + DateFormatter.machineReadable(format, zone: zone).string(from: snapshot.startDate)
+        case .deleteReminder(let snapshot):
+            guard let due = snapshot.dueDateComponents, let year = due.year, let month = due.month, let day = due.day else { return nil }
+            var text = String(format: "%04d-%02d-%02d", year, month, day)
+            if let hour = due.hour { text += String(format: "T%02d:%02d", hour, due.minute ?? 0) }
+            return "due " + text
+        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
+             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+            return nil
+        }
+    }
+
+    /// The recorded titles of `members`' restorable items, nested batches included (#407).
+    static func restoredItemTitles(of members: [UndoOperation]) -> [String] {
+        members.flatMap { member -> [String] in
+            if case .batch(let inner) = member { return restoredItemTitles(of: inner) }
+            return member.restoredItemTitle.map { [$0] } ?? []
         }
     }
 
