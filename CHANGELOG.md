@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Turning a timed event into a one-day all-day event with start = end was refused** (#364): `update_event` checked the range with the event's stored flag before applying `all_day`. The range is now decided from the state the event will be in after the update.
 - **Turning an all-day event into a timed one with explicit times gave whole days** (#364 verify, device): `update_event` with `all_day: false` and `start_time` `22:00` / `end_time` next day `00:00` read back as two whole days (48 h), because the timed dates were assigned while the event was still all-day. The flag is now set before the dates. This predates #364 (1.23.0 has the same order).
 - **An all-day end day before the start day was accepted** (#348): all-day events were exempt from the range check. They are now refused with a message that names the two days.
+- **`delete_event` read the time zone of a date-only `occurrence_date` before Calendar access was ensured** (#270): before access was ever granted the lookup found nothing, so the date was read in this Mac's zone, and the delete then searched that day in the event's zone; when the two zones fall on different days the wrong day was searched. The zone is now read after access is ensured, through the same method `move_events_batch` uses. Found by code reading; not reproduced on device (that needs the binary's Calendar access reset).
 
 ## [1.23.0] - 2026-11-01
 
