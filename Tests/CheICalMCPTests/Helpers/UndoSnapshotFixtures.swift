@@ -27,10 +27,11 @@ enum UndoSnapshotFixtures {
         return EventSnapshot(from: event)
     }
 
-    static func reminder(title: String = "Reminder") -> ReminderSnapshot {
+    static func reminder(title: String = "Reminder", due: DateComponents? = nil) -> ReminderSnapshot {
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
         reminder.title = title
+        reminder.dueDateComponents = due
         return ReminderSnapshot(from: reminder)
     }
 }
