@@ -122,9 +122,12 @@ struct EventSnapshot {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
-        self.calendarIdentifier = event.calendar.calendarIdentifier
-        self.calendarTitle = event.calendar.title
-        self.calendarSource = event.calendar.source?.title
+        // An event without a calendar is recorded without an identifier (its undo is refused with
+        // `calendarNotFound` by `resolveCalendar`); the calendar was read through the implicitly
+        // unwrapped `calendar` and crashed on it (#286, as `ReminderSnapshot` in PR #277).
+        self.calendarIdentifier = event.calendar?.calendarIdentifier ?? ""
+        self.calendarTitle = event.calendar?.title ?? ""
+        self.calendarSource = event.calendar?.source?.title
         self.notes = event.notes
         self.location = event.location
         self.url = event.url

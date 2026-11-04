@@ -120,4 +120,60 @@ final class EventSnapshotTests: XCTestCase {
     func testEventWithoutAlarmsRecordsNone() {
         XCTAssertEqual(EventSnapshot(from: makeEvent()).alarms, [])
     }
+
+    // MARK: - An event without a calendar (#286)
+
+    /// `EKEvent.calendar` is implicitly unwrapped. The snapshot read it directly and trapped while
+    /// the undo record of a calendar-less event was built; the reminder side has been nil-safe
+    /// since PR #277. The event is recorded with an empty identifier instead.
+    func testAnEventWithoutACalendarIsRecordedWithAnEmptyIdentifier() {
+        let event = EKEvent(eventStore: store)
+        event.title = "Review"
+        event.startDate = absoluteDate
+        event.endDate = absoluteDate.addingTimeInterval(3600)
+        XCTAssertNil(event.calendar as EKCalendar?, "the fixture must have no calendar")
+
+        let snapshot = EventSnapshot(from: event)
+
+        XCTAssertEqual(snapshot.calendarIdentifier, "")
+        XCTAssertEqual(snapshot.calendarTitle, "")
+        XCTAssertNil(snapshot.calendarSource)
+        XCTAssertEqual(snapshot.title, "Review")
+    }
+
+    /// Its undo is refused like any other missing destination: an empty identifier matches no
+    /// calendar, not even one whose identifier is empty too.
+    func testTheUndoOfAnEventWithoutACalendarIsRefusedAsCalendarNotFound() {
+        let event = EKEvent(eventStore: store)
+        event.startDate = absoluteDate
+        event.endDate = absoluteDate.addingTimeInterval(3600)
+        let snapshot = EventSnapshot(from: event)
+
+        XCTAssertThrowsError(try snapshot.resolveCalendar(in: [(id: "work", title: "Work"), (id: "", title: "")],
+                                                          identifier: { $0.id })) { error in
+            guard case EventKitError.calendarNotFound(let identifier, _) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertEqual(identifier, "")
+        }
+    }
+
+    /// A revert of the fix traps the test process in the value test above, which reads as a crash
+    /// rather than a named failure, so this also pins the source: `EventSnapshot.init(from:)`
+    /// reads the calendar through an optional only. It reads the source text (comments removed,
+    /// whitespace collapsed), so it guards against a revert; renaming the parameter `event`
+    /// turns it red with the behaviour unchanged, and the expected text needs updating then.
+    func testTheSnapshotReadsTheCalendarThroughAnOptional() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/UndoManager.swift")
+        let code = SourceScan.collapsingWhitespace(
+            SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        let start = try XCTUnwrap(code.range(of: "init(from event: EKEvent,"))
+        let end = try XCTUnwrap(code.range(of: "func resolveCalendar<T>(", range: start.upperBound..<code.endIndex))
+        let body = String(code[start.upperBound..<end.lowerBound])
+
+        XCTAssertFalse(body.contains("event.calendar."), body)
+        XCTAssertTrue(body.contains("self.calendarIdentifier = event.calendar?.calendarIdentifier ?? \"\""), body)
+        XCTAssertTrue(body.contains("self.calendarTitle = event.calendar?.title ?? \"\""), body)
+        XCTAssertTrue(body.contains("self.calendarSource = event.calendar?.source?.title"), body)
+    }
 }
