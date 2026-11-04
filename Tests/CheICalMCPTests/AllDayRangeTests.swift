@@ -219,6 +219,36 @@ final class AllDayRangeTests: XCTestCase {
         }
     }
 
+    // MARK: #373 — all-day → timed with only one of start_time / end_time
+
+    /// #373: a start-only `all_day: false` on an all-day event used to keep the stored length, so a
+    /// one-day event (00:00 – 23:59:59) became a timed event of 23 h 59 min 59 s. It is refused and
+    /// asks for both times.
+    func testPlanUpdateAllDayToTimedWithOnlyStartTimeIsRefused() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                                      newStart: at(2027, 3, 1, 9), requestedAllDay: false)) { error in
+            XCTAssertTrue("\(error)".contains("start_time and end_time for the timed event"), "\(error)")
+        }
+    }
+
+    /// #373: an end-only `all_day: false` used to keep the stored start (00:00 of the day), so the
+    /// event became a timed event starting at midnight. Same refusal, naming both fields.
+    func testPlanUpdateAllDayToTimedWithOnlyEndTimeIsRefused() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                                      newEnd: at(2027, 3, 1, 10), requestedAllDay: false)) { error in
+            let text = "\(error)"
+            XCTAssertTrue(text.contains("start_time") && text.contains("end_time"), text)
+        }
+    }
+
+    /// #373: the guard is only for the flip. A start-only move of an event that stays timed still
+    /// keeps its duration (the documented update_event behaviour).
+    func testPlanUpdateStartOnlyOfATimedEventStillKeepsItsDuration() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 11), storedAllDay: false,
+                         newStart: at(2027, 3, 26, 14), requestedAllDay: false)
+        XCTAssertEqual([p.start, p.end], [at(2027, 3, 26, 14), at(2027, 3, 26, 15)])
+    }
+
     // MARK: a day that is not 24 hours long
 
     /// #364 verify round 2: zones that start DST at midnight begin that day at 01:00, so "one day

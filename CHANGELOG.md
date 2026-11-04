@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`update_event` turning an all-day event into a timed one with only `start_time` or only `end_time` is refused** (#373): a start-only call kept the stored all-day length, so a one-day event (`00:00` to `23:59:59`) became a timed event of 23 h 59 min 59 s from the new start; an end-only call kept `00:00` of the day as the start. The call is now refused with a message asking for both `start_time` and `end_time`, and writes nothing. `all_day: false` alone (no dates) and calls with both dates are unchanged.
 - **Turning a timed event into a one-day all-day event with start = end was refused** (#364): `update_event` checked the range with the event's stored flag before applying `all_day`. The range is now decided from the state the event will be in after the update.
 - **Turning an all-day event into a timed one with explicit times gave whole days** (#364 verify, device): `update_event` with `all_day: false` and `start_time` `22:00` / `end_time` next day `00:00` read back as two whole days (48 h), because the timed dates were assigned while the event was still all-day. The flag is now set before the dates. This predates #364 (1.23.0 has the same order).
 - **An all-day end day before the start day was accepted** (#348): all-day events were exempt from the range check. They are now refused with a message that names the two days.
