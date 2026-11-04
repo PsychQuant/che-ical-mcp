@@ -119,6 +119,96 @@ final class DeleteUndoTests: XCTestCase {
                        .followingOccurrences)
     }
 
+    // MARK: - #322: which record sites list the series' exceptions
+
+    private final class CaptureCalls { var count = 0 }
+
+    /// The exceptions a capture returns; the gate tests only check whether it was asked.
+    private func recordedExceptions(_ calls: CaptureCalls) -> () -> SeriesExceptions? {
+        { calls.count += 1; return SeriesExceptions(window: DateInterval(start: self.firstStart, duration: self.week), keptSlots: [self.firstStart], detached: []) }
+    }
+
+    /// #285 / #322: `delete_event` lists the series' exceptions (the closure runs, before anything
+    /// is removed) only for a delete that can remove the whole series: rules, span other than
+    /// "this", from the series' first occurrence. The record carries what it returned.
+    func testOnlyASeriesDeleteFromTheFirstOccurrenceListsItsExceptions() {
+        let series = weekly(startingAt: firstStart)
+        let calls = CaptureCalls()
+        let whole = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart), span: .futureEvents,
+                                          seriesExceptions: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(whole.series.exceptions?.keptSlots, [firstStart], "the record carries what the capture returned")
+        guard case .deleteEvent(let snapshot) = whole.record(for: .wholeEvent) else { return XCTFail("whole-series record") }
+        XCTAssertNotNil(snapshot.exceptions)
+    }
+
+    func testSpanThisDoesNotListTheExceptions() {
+        let series = weekly(startingAt: firstStart)
+        let calls = CaptureCalls()
+        let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart), span: .thisEvent,
+                                              seriesExceptions: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 0)
+        XCTAssertNil(snapshots.series.exceptions)
+    }
+
+    func testADeleteFromALaterOccurrenceDoesNotListTheExceptions() {
+        let series = weekly(startingAt: firstStart)
+        let calls = CaptureCalls()
+        let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)),
+                                              span: .futureEvents, seriesExceptions: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 0)
+        XCTAssertNil(snapshots.series.exceptions)
+    }
+
+    func testAOneOffDeleteDoesNotListExceptions() {
+        let oneOff = EKEvent(eventStore: store)
+        oneOff.calendar = EKCalendar(for: .event, eventStore: store)
+        oneOff.title = "Review"
+        oneOff.startDate = firstStart
+        oneOff.endDate = firstStart.addingTimeInterval(1800)
+        let calls = CaptureCalls()
+        let snapshots = DeletedEventSnapshots(series: oneOff, removed: oneOff, span: .futureEvents,
+                                              seriesExceptions: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 0)
+        XCTAssertNil(snapshots.series.exceptions)
+    }
+
+    /// #322: `deleteEventSeries` and `deleteEventSeriesBatch` record through
+    /// `EventSnapshot.recordingSeriesDelete`: a series asks the capture once and carries it; a one-off
+    /// does not ask it.
+    func testASeriesDeleteRecordListsTheExceptionsAndAOneOffDoesNot() {
+        let calls = CaptureCalls()
+        let series = EventSnapshot.recordingSeriesDelete(of: weekly(startingAt: firstStart), capture: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(series.exceptions?.keptSlots, [firstStart])
+
+        let oneOff = EKEvent(eventStore: store)
+        oneOff.calendar = EKCalendar(for: .event, eventStore: store)
+        oneOff.title = "Review"
+        oneOff.startDate = firstStart
+        oneOff.endDate = firstStart.addingTimeInterval(1800)
+        let single = EventSnapshot.recordingSeriesDelete(of: oneOff, capture: recordedExceptions(calls))
+        XCTAssertEqual(calls.count, 1, "a one-off does not ask")
+        XCTAssertNil(single.exceptions)
+    }
+
+    /// #322: the four record sites that can delete a whole series each list its exceptions through
+    /// one of the two gates tested above; none builds the record another way.
+    func testEveryWholeSeriesRecordSiteListsTheExceptionsThroughAGate() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let single = try XCTUnwrap(SourcePins.body(of: "func deleteEvent(identifier: String, span: EKSpan", in: source))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: single).count, 1)
+        for declaration in ["func deleteEventSeries(identifier: String)", "func deleteEventSeriesBatch(identifiers: [String])"] {
+            let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
+            XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptions\(of: event\) \}\)"#, in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "withExceptions(", in: body).count, 0, declaration)
+        }
+        let batch = try XCTUnwrap(SourcePins.body(of: "func deleteEventsBatch(", in: source))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: batch).count, 1)
+        // No other site calls the capture.
+        XCTAssertEqual(SourcePins.ranges(of: "captureSeriesExceptions(of:", in: SourcePins.code(source)).count, 4)
+    }
+
     // MARK: - Record shapes
 
     /// PR #282 round 4, finding 2: the event batch builder (`deleteEventsBatch`) records only what
@@ -324,18 +414,21 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operation)")
     }
 
-    /// The whole-event arm of `executeUndo` reports through that text (pinned: it needs an
-    /// authorized store to run).
+    /// The whole-event arm of `executeUndo` reports through that text. Since #322 the arm runs
+    /// `SeriesExceptionsUndo.undoDeleteEvent`, which `SeriesExceptionsUndoHandlerTests` runs against
+    /// a fake store; this pin keeps the arm on it and the message in it.
     func testTheWholeEventUndoArmReportsTheRulesRestore() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let message = SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: body)
-        XCTAssertEqual(message.count, 1)
-        if let message = message.first {
-            XCTAssertGreaterThan(message.lowerBound, arm.lowerBound)
-            XCTAssertLessThan(message.lowerBound, next.lowerBound, "in the whole-event arm")
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)"#, in: body)
+        XCTAssertEqual(call.count, 1)
+        if let call = call.first {
+            XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
+            XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
+        let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to

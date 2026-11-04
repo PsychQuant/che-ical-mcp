@@ -329,11 +329,54 @@ final class UndoCalendarMissingTests: XCTestCase {
     /// store's calendars itself or throws the bare lookup error.
     func testEachUndoArmResolvesItsCalendarThroughTheRestoreRead() throws {
         let undo = try body("func executeUndo(_ operation: UndoOperation)")
+        // #322 (PR #400): the two delete arms run `SeriesExceptionsUndo` over the
+        // `SeriesExceptionsStoreSource` seam, whose production `restoreCalendar` is
+        // `restoreCalendar(for:kind:)`; the call sequences are pinned there, unchanged.
         let delete = try XCTUnwrap(arm("deleteEvent", of: undo))
-        XCTAssertTrue(delete.contains("try await applySnapshot(snapshot, to: event, for: .recreateDeleted)"), delete)
+        XCTAssertTrue(delete.contains("return try await undoDeletedEvent(snapshot)"), delete)
         let occurrence = try XCTUnwrap(arm("deleteOccurrence", of: undo))
-        XCTAssertTrue(occurrence.contains("let calendar = try await restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence) if seriesHoldsSlot(of: snapshot, in: calendar) {"), occurrence)
-        XCTAssertTrue(occurrence.contains("snapshot.apply(to: event, calendar: calendar)"), occurrence)
+        XCTAssertTrue(occurrence.contains("return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)"), occurrence)
+        let wrappers = "EventKit/EventKitManager+SeriesExceptions.swift"
+        let readDelete = try body("private func undoDeletedEvent<", in: wrappers)
+        XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeleted) return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)"), readDelete)
+        let readOccurrence = try body("private func undoDeletedOccurrence<", in: wrappers)
+        XCTAssertTrue(readOccurrence.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence) return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)"), readOccurrence)
+        let seam = "EventKit/SeriesExceptionsUndo.swift"
+        let undoDelete = try body("static func undoDeleteEvent<", in: seam)
+        XCTAssertTrue(undoDelete.contains("let event = store.makeEvent() store.apply(snapshot, to: event, calendar: calendar) try store.save(event)"), undoDelete)
+        let undoOccurrence = try body("static func undoDeleteOccurrence<", in: seam)
+        XCTAssertTrue(undoOccurrence.contains("if seriesHoldsSlot(of: snapshot, calendar: calendar, in: store) {"), undoOccurrence)
+        XCTAssertTrue(undoOccurrence.contains("store.apply(snapshot, to: event, calendar: calendar)"), undoOccurrence)
+        let production = try body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift")
+        XCTAssertTrue(production.contains("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), production)
+        // PR #400 verify round 2: the adapter's requirement is that closure, whole; anything else
+        // (its own synchronous `calendarNow`) would skip #269's access check and re-read.
+        let adapterRead = try body("func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar",
+                                   in: "EventKit/SeriesExceptionsStoreSource.swift")
+        XCTAssertEqual(adapterRead, "func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar { try await readRestoreCalendar(snapshot, kind) }")
+        // #389's negative scans, extended to where the two delete arms now live.
+        for (declaration, file) in [("static func undoDeleteEvent<", seam), ("static func undoDeleteOccurrence<", seam),
+                                    ("private func undoDeletedEvent<", wrappers), ("private func undoDeletedOccurrence<", wrappers)] {
+            let arm = try body(declaration, in: file)
+            for forbidden in ["calendarNotFound", "calendar(withIdentifier:", "calendars(for: .event)", "calendarNow("] {
+                XCTAssertFalse(arm.contains(forbidden), "\(declaration): \(forbidden)")
+            }
+        }
+        // `calendarNow` (the synchronous lookup without #269's read) is declared by the requirement
+        // and the adapter, and called once: the exceptions one-off. A closed enumeration over Sources.
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var uses: [String] = []
+        for file in files {
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            for use in SourcePins.ranges(of: "calendarNow(", in: code) {
+                uses.append(file.lastPathComponent + (code[..<use.lowerBound].hasSuffix("func ") ? " declares" : " calls"))
+            }
+        }
+        XCTAssertEqual(uses.sorted(), ["SeriesExceptionsStoreSource.swift declares", "SeriesExceptionsStoreSource.swift declares",
+                                       "SeriesExceptionsUndo.swift calls"])
         // PR #389 round 2 (LOW): the update and move arms read the calendar before the #236
         // post-state check, so no suspension point sits between that check and the write.
         let update = try XCTUnwrap(arm("updateEvent", of: undo))
@@ -344,8 +387,8 @@ final class UndoCalendarMissingTests: XCTestCase {
         XCTAssertFalse(undo.contains("eventStore.calendar(withIdentifier:"), "no arm looks a calendar up past the restore read")
         XCTAssertFalse(undo.contains("eventStore.calendars(for: .event)"), "no arm reads the calendars past the restore read")
 
-        let apply = try body("private func applySnapshot(_ snapshot: EventSnapshot")
-        XCTAssertTrue(apply.contains("let originalCalendar = try await restoreCalendar(for: snapshot, kind: kind) snapshot.apply(to: event, calendar: originalCalendar)"), apply)
+        // `applySnapshot` had no caller left after #322 moved the delete arm and was removed.
+        XCTAssertFalse(try SourcePins.source("EventKit/EventKitManager.swift").contains("func applySnapshot("))
     }
 
     /// An event undo checks Calendar access before it looks the event up, as the reminder case
@@ -365,7 +408,11 @@ final class UndoCalendarMissingTests: XCTestCase {
     /// The series-exception one-offs restore into the calendar the recreated series was just saved
     /// in, inside the delete-undo, so they keep the synchronous lookup.
     func testTheOneOffRestoreKeepsTheSynchronousLookup() throws {
-        let save = try body("func saveOneOff(_ event: EKEvent, from snapshot: EventSnapshot)")
-        XCTAssertTrue(save.contains("let calendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier }, for: .recreateDeleted) snapshot.apply(to: event, calendar: calendar)"), save)
+        // #322 (PR #400): `saveOneOff` became the one-off step of `SeriesExceptionsUndo.restore`,
+        // over the seam; the production `calendarNow` is the same synchronous lookup.
+        let restore = try body("static func restore<", in: "EventKit/SeriesExceptionsUndo.swift")
+        XCTAssertTrue(restore.contains("let calendar = try store.calendarNow(for: detached.snapshot, kind: .recreateDeleted) store.apply(detached.snapshot, to: oneOff, calendar: calendar) try store.save(oneOff)"), restore)
+        let now = try body("func calendarNow(for snapshot: EventSnapshot, kind: EventRestoreKind) throws -> EKCalendar", in: "EventKit/SeriesExceptionsStoreSource.swift")
+        XCTAssertTrue(now.contains("try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier }, for: kind)"), now)
     }
 }

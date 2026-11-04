@@ -175,7 +175,7 @@ final class UndoPostStateGuardTests: XCTestCase {
         XCTAssertEqual(saved.changedFields(in: EventSnapshot(from: event), restoring: original), ["title"])
     }
 
-    /// `applySnapshot` writes `location` unconditionally, and EventKit couples it with the
+    /// `EventSnapshot.apply` (used after `restoreCalendar(for:kind:)`) writes `location` unconditionally, and EventKit couples it with the
     /// structured location (a new string replaces the place, `nil` clears it; checked in memory),
     /// so the place always round-trips and update-undo always compares it.
     func testUpdateUndoComparesTheStructuredLocation() {

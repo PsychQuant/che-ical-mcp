@@ -103,6 +103,17 @@ struct DeletedEventSnapshots {
     }
 }
 
+extension EventSnapshot {
+    /// #322: the record of a whole-series delete by `deleteEventSeries` / `deleteEventSeriesBatch`
+    /// (#185): the event's snapshot, rules included, carrying the series' exceptions (#285) when it
+    /// has rules. `capture` runs only then, before the caller removes anything; a one-off is not
+    /// listed. `delete_event` and `delete_events_batch` gate the same capture through
+    /// `DeletedEventSnapshots` instead, because there the span and the occurrence decide.
+    static func recordingSeriesDelete(of event: EKEvent, capture: () -> SeriesExceptions?) -> EventSnapshot {
+        EventSnapshot(from: event).withExceptions(event.hasRecurrenceRules ? capture() : nil)
+    }
+}
+
 extension UndoOperation {
     /// Undo of the marker: permanent (`UnrecoverableUndoError`, the record is discarded so earlier
     /// operations stay undoable). The issue asked to keep the entry; the maintainer chose the

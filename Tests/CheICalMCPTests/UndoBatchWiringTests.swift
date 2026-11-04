@@ -231,6 +231,10 @@ final class UndoBatchWiringTests: XCTestCase {
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
         let apply = Substring(try Self.body("func restoreCalendar(for snapshot: EventSnapshot", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: $0, identifier: { $0.calendarIdentifier }, for: kind)"), in: apply))
+        // #322: the delete-undo arms read their calendar through
+        // `SeriesExceptionsStoreSource.restoreCalendar`, which in production is that same function.
+        let store = Substring(try Self.body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift"))
+        XCTAssertNotNil(Self.offset(of: Self.call("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
         let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))
