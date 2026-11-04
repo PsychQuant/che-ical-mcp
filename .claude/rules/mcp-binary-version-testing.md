@@ -139,10 +139,18 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
         紀錄保留），記錄下來回報到 #369，當成已知限制，不是安全問題；以其他方式寫入才是 bug。
     再做一次 edited-before 形狀：(a) 之後用 `--cli` 的 `update_event` span `this` 單獨改第一個剩下的場次，
     再做 (b)(c)，4 個場次（含被改過的）都回到 A。
-    **系列的 create-undo 仍會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，
-    create-undo 會以「not found under its recorded identifier」拒絕並保留紀錄（#377，尚未修），所以 (a) 才要放在
-    `--cli` 做。2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 做過 (b)(c) 與 edited-before 形狀，
+    **系列的 create-undo 會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，
+    create-undo 會以「Cannot undo the creation of the recurring event … first occurrence is deleted」拒絕、什麼都
+    沒寫、紀錄保留（#377，見第 11 步），會卡住下面的紀錄，所以 (a) 才要放在 `--cli` 做。2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 做過 (b)(c) 與 edited-before 形狀，
     跨 process 的 `list_events` 確認結果；出版前在重啟後的 session MCP 上重做一次。跨帳號搬回（拒絕、紀錄保留）
     沒有在裝置上驗過：只在有第二個帳號的拋棄式日曆時做。
+11. **第一個場次被刪掉之後，系列的 create-undo（#377）**：拋棄式日曆（名稱含 `#377`）。session MCP：建每週 5 次的
+    系列 → `delete_event` span `this` 刪第一個場次 → `undo`（delete-undo：把那個場次還原成一次性事件）→ `undo`：
+    要以「Cannot undo the creation of the recurring event '…': the series this undo would delete no longer reads,
+    while later occurrences of it remain …」拒絕，什麼都沒寫（`list_events` 仍是 4 個系列場次加 1 個一次性事件），
+    `undo_history` 最上面仍是「Created event」→ `undo` 帶該筆的 `discard_id` 移除它。若回的是原本的「not found under
+    its recorded identifier」，就是系列的 bare id 在該來源上已經解析不到（不是 #326 的形狀），探測位置要移，回報到
+    #377。2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過（跨 process 的 `list_events`
+    確認 5 個事件都在）；出版前在重啟後的 session MCP 上重做一次。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
