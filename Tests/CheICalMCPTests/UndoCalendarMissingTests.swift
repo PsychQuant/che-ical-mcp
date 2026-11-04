@@ -334,10 +334,12 @@ final class UndoCalendarMissingTests: XCTestCase {
         let occurrence = try XCTUnwrap(arm("deleteOccurrence", of: undo))
         XCTAssertTrue(occurrence.contains("let calendar = try await restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence) if seriesHoldsSlot(of: snapshot, in: calendar) {"), occurrence)
         XCTAssertTrue(occurrence.contains("snapshot.apply(to: event, calendar: calendar)"), occurrence)
+        // PR #389 round 2 (LOW): the update and move arms read the calendar before the #236
+        // post-state check, so no suspension point sits between that check and the write.
         let update = try XCTUnwrap(arm("updateEvent", of: undo))
-        XCTAssertTrue(update.contains("try await applySnapshot(oldSnapshot, to: event, for: .revertUpdate)"), update)
+        XCTAssertTrue(update.contains("let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate) let event = try await verifiedEvent(of: operation, verb: .undo) oldSnapshot.apply(to: event, calendar: calendar) try eventStore.save(event, span: .thisEvent)"), update)
         let move = try XCTUnwrap(arm("moveEvent", of: undo))
-        XCTAssertTrue(move.contains("let original = try await restoreCalendar { try EventSnapshot.calendar(recorded: fromCalendarIdentifier, in: $0, identifier: { $0.calendarIdentifier }, orThrow: { EventKitError.moveBackCalendarMissing(fromCalendarIdentifier: fromCalendarIdentifier, event: title) }) }"), move)
+        XCTAssertTrue(move.contains("let original = try await restoreCalendar { try EventSnapshot.calendar(recorded: fromCalendarIdentifier, in: $0, identifier: { $0.calendarIdentifier }, orThrow: { EventKitError.moveBackCalendarMissing(fromCalendarIdentifier: fromCalendarIdentifier, event: title) }) } let event = try await verifiedEvent(of: operation, verb: .undo) event.calendar = original try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)"), move)
         XCTAssertFalse(undo.contains("calendarNotFound"), "no event undo arm throws the bare lookup error")
         XCTAssertFalse(undo.contains("eventStore.calendar(withIdentifier:"), "no arm looks a calendar up past the restore read")
         XCTAssertFalse(undo.contains("eventStore.calendars(for: .event)"), "no arm reads the calendars past the restore read")

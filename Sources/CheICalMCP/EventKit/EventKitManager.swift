@@ -2477,8 +2477,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // way; an update that touched a recurring event is a marker whose undo is refused
             // (#236, #262), and `verifiedEvent` refuses an event that repeats now. The snapshot
             // holds no rules, so `apply` writes none here (its rules branch serves delete-undo).
+            // The calendar is read first (#269, PR #389 round 2): `restoreCalendar` suspends, and
+            // after the #236 post-state check nothing may suspend before the write. When both the
+            // calendar is missing and the event changed, the missing-calendar refusal comes first.
+            let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate)
             let event = try await verifiedEvent(of: operation, verb: .undo)
-            try await applySnapshot(oldSnapshot, to: event, for: .revertUpdate)
+            oldSnapshot.apply(to: event, calendar: calendar)
             try eventStore.save(event, span: .thisEvent)
             markNeedsRefresh()
             return "Undone: restored event '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
@@ -2492,12 +2496,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // event is still in the calendar it was moved to (#236). A series is resolved as the
             // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
             // #269: the original calendar is read as every event undo reads it (`restoreCalendar`),
-            // and a missing one is refused with the way on, the record kept.
-            let event = try await verifiedEvent(of: operation, verb: .undo)
+            // and a missing one is refused with the way on, the record kept. It is read before the
+            // #236 post-state check (PR #389 round 2), so nothing suspends between that check and
+            // the write; a missing calendar is therefore refused before a changed event is.
             let original = try await restoreCalendar {
                 try EventSnapshot.calendar(recorded: fromCalendarIdentifier, in: $0, identifier: { $0.calendarIdentifier },
                                            orThrow: { EventKitError.moveBackCalendarMissing(fromCalendarIdentifier: fromCalendarIdentifier, event: title) })
             }
+            let event = try await verifiedEvent(of: operation, verb: .undo)
             event.calendar = original
             try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
             markNeedsRefresh()
