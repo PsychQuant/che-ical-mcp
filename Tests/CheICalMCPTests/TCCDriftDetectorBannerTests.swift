@@ -458,38 +458,80 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
     /// outside. The contract holds by control flow, so the test pins that control flow:
     /// (a) the `--setup` block sits above the top-level `emitStartupBanner()` call; (b) inside it
     /// the non-interactive branch ends in `exit(` and the interactive branch calls
-    /// `SetupRunner.runInteractive()`; (c) `runInteractive()` is declared `-> Never`.
+    /// `SetupRunner.runInteractive()`; (c) `runInteractive()` is declared `-> Never`. The block
+    /// itself must not mention `emitStartupBanner`. Matched on code only (comments and string
+    /// contents blanked) and on the call token, not the whole line (#249 verify).
     func testNoBannerForSetupFlag() throws {
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/CheICalMCP")
         let main = try String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)
-        let lines = main.components(separatedBy: "\n")
+        // Code only: line comments and string literals are blanked, so a comment or a message that
+        // mentions `exit(` or `emitStartupBanner` does not count, and a trailing comment or a
+        // wrapped line does not break the match (#249 verify).
+        let code = main.components(separatedBy: "\n").map(Self.codeOnly)
 
+        let raw = main.components(separatedBy: "\n")
         let setupStart = try XCTUnwrap(
-            lines.firstIndex(of: "if CommandLine.arguments.contains(\"--setup\") {"),
-            "main.swift must have a top-level --setup block")
-        let setupEnd = try XCTUnwrap(
-            lines[setupStart...].firstIndex(of: "}"),
-            "the --setup block must close at the top level")
+            code.indices.first { code[$0].contains("if CommandLine.arguments.contains(") && raw[$0].contains(#""--setup""#) },
+            "main.swift must have a --setup block")
+        let setupEnd = try XCTUnwrap(Self.closingLine(of: setupStart, in: code),
+                                     "the --setup block must close")
         let bannerCall = try XCTUnwrap(
-            lines.firstIndex(of: "emitStartupBanner()"),
-            "main.swift must call emitStartupBanner() at the top level")
+            code.firstIndex { $0.contains("emitStartupBanner(") && !$0.contains("func emitStartupBanner") },
+            "main.swift must call emitStartupBanner()")
         XCTAssertLessThan(setupEnd, bannerCall, "(a) the --setup block must come before the banner call")
 
-        let block = lines[setupStart...setupEnd].joined(separator: "\n")
+        let block = code[setupStart...setupEnd].joined(separator: "\n")
+        XCTAssertFalse(block.contains("emitStartupBanner"), "(a) the --setup block must not emit the banner itself")
         let headless = try XCTUnwrap(block.range(of: "SetupRunner.requestBoth(nonInteractive: true)"),
                                      "(b) the non-interactive branch must request headlessly")
-        let elseBranch = try XCTUnwrap(block.range(of: "} else {", range: headless.upperBound..<block.endIndex),
+        let elseBranch = try XCTUnwrap(block.range(of: #"\}\s*else\s*\{"#, options: .regularExpression,
+                                                   range: headless.upperBound..<block.endIndex),
                                        "(b) the --setup block must have an interactive branch")
-        XCTAssertNotNil(block.range(of: "exit(", range: headless.upperBound..<elseBranch.lowerBound),
+        XCTAssertNotNil(block.range(of: #"\bexit\("#, options: .regularExpression,
+                                    range: headless.upperBound..<elseBranch.lowerBound),
                         "(b) the non-interactive branch must end in exit(")
         XCTAssertNotNil(block.range(of: "SetupRunner.runInteractive()", range: elseBranch.upperBound..<block.endIndex),
                         "(b) the interactive branch must call SetupRunner.runInteractive()")
 
         let runner = try String(contentsOf: sources.appendingPathComponent("SetupRunner.swift"), encoding: .utf8)
-        XCTAssertTrue(runner.contains("static func runInteractive() -> Never"),
-                      "(c) runInteractive() must never return, or the banner could follow it")
+            .components(separatedBy: "\n").map(Self.codeOnly).joined(separator: "\n")
+        XCTAssertNotNil(runner.range(of: #"static\s+func\s+runInteractive\(\)\s*->\s*Never"#, options: .regularExpression),
+                        "(c) runInteractive() must never return, or the banner could follow it")
+    }
+
+    /// A source line with its string literals emptied (`"..."` becomes `""`) and its line comment removed.
+    private static func codeOnly(_ line: String) -> String {
+        var out = "", inString = false, escaped = false
+        var chars = Array(line)[...]
+        while let c = chars.first {
+            chars = chars.dropFirst()
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true }
+                else if c == "\"" { inString = false; out.append(c) }
+            } else if c == "\"" {
+                inString = true; out.append(c)
+            } else if c == "/", chars.first == "/" {
+                break
+            } else {
+                out.append(c)
+            }
+        }
+        return out
+    }
+
+    /// The index of the line that closes the brace opened on `start`, counting braces in code only.
+    private static func closingLine(of start: Int, in code: [String]) -> Int? {
+        var depth = 0, opened = false
+        for i in start..<code.count {
+            for c in code[i] {
+                if c == "{" { depth += 1; opened = true }
+                if c == "}" { depth -= 1 }
+            }
+            if opened, depth == 0 { return i }
+        }
+        return nil
     }
 
     /// Spawn the binary from a path not present in TCC.db — typically forces a
