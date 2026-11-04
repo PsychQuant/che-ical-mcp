@@ -50,6 +50,12 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     /// Saves of events with these titles throw (after taking an identifier, as a save that may have
     /// written would leave it).
     var failingSaveTitles: Set<String> = []
+    /// What those saves throw; the fake's own `Failure` when nil (#398).
+    var saveFailure: Error?
+    /// `remove(_:span: .thisEvent)` of an occurrence at one of these slots throws `removalFailure`
+    /// (the fake's own `Failure` when nil) and removes nothing (#398).
+    var failingRemovalSlots: Set<Date> = []
+    var removalFailure: Error?
     /// `remove(_:span: .futureEvents)` throws.
     var seriesRemovalFails = false
     /// Calendar identifiers the store does not hold: the restore's calendar reads throw for them
@@ -121,7 +127,7 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         event.external = "X-\(id)"
         if failingSaveTitles.contains(event.title) {
             log.append("save failed \(event.title)")
-            throw Failure(what: "save \(event.title)")
+            throw saveFailure ?? Failure(what: "save \(event.title)")
         }
         log.append(event.hasRules ? "save series \(event.title)" : "save \(event.title)")
         events.append(event)
@@ -143,6 +149,10 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
             log.append("remove series")
             events.removeAll { $0.id != nil && $0.id == event.id }
         } else {
+            if failingRemovalSlots.contains(slot(of: event)) {
+                log.append("remove failed \(slot(of: event).timeIntervalSince1970)")
+                throw removalFailure ?? Failure(what: "remove occurrence")
+            }
             log.append("remove \(slot(of: event).timeIntervalSince1970)")
             events.removeAll { $0 === event }
         }

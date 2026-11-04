@@ -63,7 +63,7 @@ enum SeriesExceptionsUndo {
                         try store.save(oneOff)
                         return oneOff
                     } catch {
-                        throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: oneOff)
+                        throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: oneOff, underlying: error)
                     }
                 },
                 removeOneOff: { oneOff in
@@ -93,18 +93,18 @@ enum SeriesExceptionsUndo {
         case .surplusUnresolved(let date):
             return EventKitError.seriesExceptionsRestoreFailed(
                 reason: "Undo could not restore the exceptions of the series: no occurrence of the recreated series on \(day(date)). The series was deleted again; nothing was restored. Retry undo.")
-        case .removeFailed(let date):
+        case .removeFailed(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
-                reason: "Undo could not remove the occurrence on \(day(date)) that the deleted series did not have. The recreated series was deleted again; nothing was restored. Retry undo.")
-        case .oneOffFailed(let date):
+                reason: "Undo could not remove the occurrence on \(day(date)) that the deleted series did not have (\(code)). The recreated series was deleted again; nothing was restored. Retry undo.")
+        case .oneOffFailed(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
-                reason: "Undo could not recreate the occurrence edited on its own on \(day(date)). The recreated series and the occurrences recreated so far were deleted again; nothing was restored. Retry undo; if it keeps failing, discard_id gives up this undo (the series is then not restored at all).")
-        case .strayOneOffs(let date):
+                reason: "Undo could not recreate the occurrence edited on its own on \(day(date)) (\(code)). The recreated series and the occurrences recreated so far were deleted again; nothing was restored. Retry undo; if it keeps failing with the same code, discard_id gives up this undo (the series is then not restored at all).")
+        case .strayOneOffs(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
-                reason: "Undo could not finish restoring the exceptions of the series (the occurrence edited on its own on \(day(date)) could not be recreated). The recreated series was deleted again, but an occurrence recreated before the failure could not be removed and remains in the calendar: check Calendar and remove it before retrying undo, or a retry will add it again.")
-        case .oneOffMaybeLeft(let date):
+                reason: "Undo could not finish restoring the exceptions of the series: the occurrence edited on its own on \(day(date)) could not be recreated (\(code)). The recreated series was deleted again, but an occurrence recreated before the failure could not be removed and remains in the calendar: check Calendar and remove it before retrying undo, or a retry will add it again.")
+        case .oneOffMaybeLeft(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
-                reason: "Undo could not recreate the occurrence edited on its own on \(day(date)). The recreated series was deleted again, but that occurrence's save failed in a way that may have written it and it could not be removed: check Calendar for a stray event on that day before retrying undo.")
+                reason: "Undo could not recreate the occurrence edited on its own on \(day(date)) (\(code)). The recreated series was deleted again, but that occurrence's save failed in a way that may have written it and it could not be removed: check Calendar for a stray event on that day before retrying undo.")
         case .rollbackFailed(let applied):
             return UnrecoverableUndoError(
                 message: "Undo recreated the series but could not finish restoring its exceptions, and deleting it again failed too: the series exists with \(applied) occurrence(s) removed, and any occurrences edited on their own that were recreated before the failure may remain (they were removed first where possible). Check Calendar; this undo entry is discarded because a retry would create a second series.")

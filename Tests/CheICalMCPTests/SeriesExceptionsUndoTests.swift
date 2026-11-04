@@ -117,6 +117,88 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(store.events.count, 0, "nothing of the recreated series or the one-off is left")
     }
 
+    // MARK: - #398: the failure's code reaches the text
+
+    /// An EventKit error whose description names a calendar (remote-set text, #37).
+    private func eventKitError(_ code: Int) -> NSError {
+        NSError(domain: EKErrorDomain, code: code,
+                userInfo: [NSLocalizedDescriptionKey: "The calendar 'Therapy notes' refused the change"])
+    }
+
+    /// The edited occurrence's save fails with an EventKit error: the text names its code, so a
+    /// failure that recurs on every retry can be told from a passing one, and never its description.
+    func testAOneOffSaveFailureNamesItsEventKitCodeAndNotItsDescription() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+        store.saveFailure = eventKitError(3)
+
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
+            let text = error.localizedDescription
+            XCTAssertTrue(text.hasPrefix("Undo could not recreate the occurrence edited on its own on "), text)
+            XCTAssertTrue(text.contains("(eventkit_error_3)"), text)
+            XCTAssertTrue(text.contains("if it keeps failing with the same code"), text)
+            XCTAssertFalse(text.contains("Therapy notes"), text)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
+        XCTAssertEqual(store.events.count, 0, "what is written does not change: nothing is left")
+    }
+
+    /// A failure that is not an EventKit error gets the sanitizer's generic code.
+    func testAOneOffSaveFailureThatIsNotAnEventKitErrorNamesTheGenericCode() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("(error_unknown)"), error.localizedDescription)
+        }
+    }
+
+    /// Removing a surplus occurrence fails: the series is deleted again, the record is kept, and
+    /// the text names the removal's code, not its description.
+    func testASurplusRemovalFailureNamesItsEventKitCode() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingRemovalSlots = [s3]
+        store.removalFailure = eventKitError(1)
+
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
+            let text = error.localizedDescription
+            XCTAssertTrue(text.hasPrefix("Undo could not remove the occurrence on "), text)
+            XCTAssertTrue(text.contains("(eventkit_error_1)"), text)
+            XCTAssertFalse(text.contains("Therapy notes"), text)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
+        XCTAssertEqual(store.log.suffix(3), [slotLog(s2), "remove failed \(s3.timeIntervalSince1970)", "remove series"])
+        XCTAssertEqual(store.events.count, 0)
+    }
+
+    /// Every text of a rolled-back restore that has a failure names its code (#398).
+    func testEveryRolledBackFailureTextNamesItsCode() {
+        let cases: [SeriesExceptionsRestoreError] = [
+            .removeFailed(s1, code: "eventkit_error_7"), .oneOffFailed(s1, code: "eventkit_error_7"),
+            .strayOneOffs(s1, code: "eventkit_error_7"), .oneOffMaybeLeft(s1, code: "eventkit_error_7"),
+        ]
+        for error in cases {
+            let text = SeriesExceptionsUndo.restoreFailure(error).localizedDescription
+            XCTAssertTrue(text.contains("(eventkit_error_7)"), "\(error): \(text)")
+            XCTAssertEqual(UndoFailureDisposition.of(SeriesExceptionsUndo.restoreFailure(error)), .restore, "\(error)")
+        }
+    }
+
     /// The compensating delete fails too: permanent, the record is discarded (a retry would create
     /// a second series).
     func testAFailedCompensatingDeleteIsPermanent() throws {

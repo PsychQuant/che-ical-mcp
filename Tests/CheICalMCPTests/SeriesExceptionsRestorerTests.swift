@@ -43,18 +43,18 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
     private func run(_ exceptions: SeriesExceptions, generated: [Date]? = nil, log: Log = Log(),
                      failRemoveAt: Date? = nil, failCreateTitle: String? = nil, failRollback: Bool = false,
                      failOneOffCleanup: Bool = false, writeThenThrow: Bool = false,
-                     seriesStart: Date? = nil) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
+                     seriesStart: Date? = nil, createError: Error? = nil, removeError: Error? = nil) throws -> (SeriesExceptionsRestorer.Outcome, Log) {
         let outcome = try SeriesExceptionsRestorer.restore(
             exceptions: exceptions, seriesStart: seriesStart ?? at(slots[0]),
             generated: (generated ?? slots.map(at)).map { (slot: $0, occurrence: $0) },
             remove: { date in
-                if let failRemoveAt, UndoPostState.sameInstant(date, failRemoveAt) { throw Boom() }
+                if let failRemoveAt, UndoPostState.sameInstant(date, failRemoveAt) { throw removeError ?? Boom() }
                 log.removed.append(date); log.events.append("remove")
             },
             createOneOff: { detached in
                 if detached.snapshot.title == failCreateTitle {
-                    if writeThenThrow { throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: detached.snapshot.title) }
-                    throw Boom()
+                    if writeThenThrow { throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: detached.snapshot.title, underlying: createError ?? Boom()) }
+                    throw createError ?? Boom()
                 }
                 log.created.append(detached.snapshot.title); log.events.append("create")
                 return detached.snapshot.title
@@ -103,7 +103,7 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
     func testAFailedRemovalRollsTheSeriesBackAndCreatesNothing() {
         let log = Log()
         XCTAssertThrowsError(try run(spikeExceptions, log: log, failRemoveAt: at(slots[2]))) { error in
-            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .removeFailed(at(slots[2])))
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .removeFailed(at(slots[2]), code: "error_unknown"))
         }
         XCTAssertEqual(log.rolledBack, 1)
         XCTAssertEqual(log.created, [])
@@ -114,11 +114,57 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
                                    detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2]), detached("C", slot: slots[3])])
         let log = Log()
         XCTAssertThrowsError(try run(two, log: log, failCreateTitle: "C")) { error in
-            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[3])))
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[3]), code: "error_unknown"))
         }
         XCTAssertEqual(log.created, ["A", "B"])
         XCTAssertEqual(log.removedOneOffs, ["A", "B"])
         XCTAssertEqual(log.rolledBack, 1)
+    }
+
+    // MARK: - #398: the failure's code is kept, sanitized
+
+    private func ekError(_ code: Int) -> NSError {
+        NSError(domain: EKErrorDomain, code: code, userInfo: [NSLocalizedDescriptionKey: "Calendar 'Private' refused"])
+    }
+
+    func testARemovalFailureKeepsTheEventKitCode() {
+        XCTAssertThrowsError(try run(spikeExceptions, failRemoveAt: at(slots[2]), removeError: ekError(1))) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .removeFailed(at(slots[2]), code: "eventkit_error_1"))
+        }
+    }
+
+    func testAOneOffFailureKeepsTheEventKitCodeOfTheSaveBehindTheWriteFailedWrapper() {
+        let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
+        XCTAssertThrowsError(try run(one, failCreateTitle: "B", writeThenThrow: true, createError: ekError(3))) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[1]), code: "eventkit_error_3"))
+        }
+        XCTAssertThrowsError(try run(one, failCreateTitle: "B", createError: ekError(4))) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[1]), code: "eventkit_error_4"))
+        }
+    }
+
+    func testTheStrayAndMaybeLeftCasesKeepTheSaveCode() {
+        let two = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
+                                   detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
+        XCTAssertThrowsError(try run(two, failCreateTitle: "B", failOneOffCleanup: true, createError: ekError(5))) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .strayOneOffs(at(slots[2]), code: "eventkit_error_5"))
+        }
+        let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
+        XCTAssertThrowsError(try run(one, failCreateTitle: "B", failOneOffCleanup: true, writeThenThrow: true,
+                                     createError: ekError(6))) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffMaybeLeft(at(slots[1]), code: "eventkit_error_6"))
+        }
+    }
+
+    /// A trusted error's text is its sanitized "code" (`sanitizeForResponse`); here only the code
+    /// is kept, so a trusted error's text (which may quote a calendar title) does not reach the
+    /// undo text: it is reported as the generic code (#37).
+    func testATrustedErrorIsReportedByCodeNotByItsText() {
+        let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
+        let trusted = EventKitError.seriesExceptionsRestoreFailed(reason: "calendar 'Private' is gone")
+        XCTAssertThrowsError(try run(one, failCreateTitle: "B", createError: trusted)) { error in
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[1]), code: "error_unknown"))
+        }
     }
 
     func testAFailedRollbackIsReportedNotSwallowed() {
@@ -135,7 +181,7 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
                                    detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
         let log = Log()
         XCTAssertThrowsError(try run(two, log: log, failCreateTitle: "B", failOneOffCleanup: true)) { error in
-            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .strayOneOffs(at(slots[2])))
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .strayOneOffs(at(slots[2]), code: "error_unknown"))
         }
         XCTAssertEqual(log.rolledBack, 1)
     }
@@ -154,7 +200,7 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
         let log = Log()
         XCTAssertThrowsError(try run(one, log: log, failCreateTitle: "B", failOneOffCleanup: true, writeThenThrow: true)) { error in
-            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffMaybeLeft(at(slots[1])))
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffMaybeLeft(at(slots[1]), code: "error_unknown"))
         }
         XCTAssertEqual(log.rolledBack, 1)   // the series IS rolled back; only the unwritten-or-written event is uncertain
     }
@@ -235,7 +281,7 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
                                    detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
         let log = Log()
         XCTAssertThrowsError(try run(two, log: log, failCreateTitle: "B", writeThenThrow: true)) { error in
-            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[2])))
+            XCTAssertEqual(error as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[2]), code: "error_unknown"))
         }
         XCTAssertEqual(log.removedOneOffs, ["A", "B"])  // B was possibly written: it is cleaned up too
         XCTAssertEqual(log.rolledBack, 1)
