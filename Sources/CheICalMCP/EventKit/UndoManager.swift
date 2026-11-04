@@ -260,8 +260,7 @@ struct ReminderSnapshot {
     /// it is unit-tested without EventKit (closure seam).
     func resolveList<T>(in lists: [T], identifier: (T) -> String, for kind: ReminderRestoreKind) throws -> T {
         try Self.list(recorded: calendarIdentifier, in: lists, identifier: identifier) {
-            EventKitError.undoListMissing(list: calendarTitle, account: calendarSource, reminder: title,
-                                          hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
+            EventKitError.undoListMissing(reminder: title, hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
         }
     }
 
