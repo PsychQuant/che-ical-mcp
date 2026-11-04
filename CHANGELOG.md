@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_reminders` and `search_reminders` report each reminder's own time zone as `item_timezone`** (#241): the per-reminder `timezone` was always the host zone, whatever zone the reminder stores, so a floating reminder (no stored zone, the kind iCloud Web shifts, #134 / #237) looked the same as one zoned in the host zone. The new `item_timezone` is the reminder's `EKCalendarItem.timeZone`: a time zone identifier (usually IANA), or `null` when the reminder stores no zone, which covers date-only and undated reminders too; a floating timed reminder is `item_timezone` null with `due.time` set. With a due date it matches `due.timezone`. Clients that reject unknown fields must update their decoders. `timezone` keeps its value and is now documented as what it always was: the host zone, the zone of the `*_local` strings. No existing key changes value or type. The tool descriptions say both.
+
 ### Changed
 
 - **Reminder `due` and `start` render milliseconds only when they are non-zero** (#252): `list_reminders`, `search_reminders` and the completion snapshots printed `.000` whenever the date components carried a `nanosecond`, even `0`. A start date EventKit fills in reads back with `nanosecond = 0` while the due has none, so the same time rendered as `10:00:00.000` / `...02:00:00.000Z` on `start` and `10:00:00` / `...02:00:00Z` on `due`. `time` and `date_time` now drop an all-zero (or sub-millisecond) fraction, so equal times compare equal as strings; a real millisecond part (`.250`) is printed as before. Both fields show the same truncated milliseconds: `999 999 999` ns reads `.999` on both (`date_time` used to round it into the next second while `time` showed `.999`).
