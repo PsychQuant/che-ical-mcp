@@ -32,7 +32,20 @@ final class CalendarDeletionHandlerTests: XCTestCase {
         let text = try await call(fake, ["id": .string("cal-1")])
         let calls = await fake.calls
         XCTAssertEqual(calls, [.init(identifier: "cal-1", requireEmpty: false)])
-        XCTAssertFalse(text.contains("searched_from"), text)
+        let body = try json(text)
+        XCTAssertEqual(Set(body.keys), ["action", "id"], "the answer is the one before #328: \(text)")
+        XCTAssertEqual(body["action"] as? String, "deleted")
+        XCTAssertEqual(body["id"] as? String, "cal-1")
+    }
+
+    /// PR #413 verify r1: the description says, before the call, what is checked and what the
+    /// answer carries.
+    func testTheDescriptionStatesTheWindowAndTheAnswerFields() throws {
+        let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "delete_calendar" })
+        let text = tool.description ?? ""
+        for field in ["checked_empty", "searched_from", "searched_to", "reminders_found", "200 years", "0026", "not undoable"] {
+            XCTAssertTrue(text.contains(field), "\(field): \(text)")
+        }
     }
 
     func testACheckedDeleteReportsTheSearchedWindow() async throws {
@@ -56,9 +69,16 @@ final class CalendarDeletionHandlerTests: XCTestCase {
     }
 
     func testRequireEmptyMustBeABoolean() async throws {
-        let fake = CalendarDeletionFake()
-        let result = try? await call(fake, ["id": .string("cal-1"), "require_empty": .string("true")])
-        let calls = await fake.calls
-        XCTAssertEqual(calls, [], "nothing deleted on a bad argument: \(String(describing: result))")
+        for bad: Value in [.string("true"), .int(1)] {
+            let fake = CalendarDeletionFake()
+            do {
+                _ = try await call(fake, ["id": .string("cal-1"), "require_empty": bad])
+                XCTFail("\(bad) must be refused")
+            } catch let error as ToolError {
+                XCTAssertTrue("\(error)".contains("require_empty must be a boolean (true or false)"), "\(bad): \(error)")
+            }
+            let calls = await fake.calls
+            XCTAssertEqual(calls, [], "\(bad): nothing deleted")
+        }
     }
 }

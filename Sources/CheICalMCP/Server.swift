@@ -171,7 +171,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar (or reminder list) by its identifier. Not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted. Events are searched about 200 years each side of now (EventKit has no query for every event of a calendar); a passed check returns searched_from and searched_to, and an event outside them is not seen. Without require_empty the calendar is deleted as before.",
+                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. Only about 200 years either side of now are checked for events (EventKit has no query for every event of a calendar): an event outside them, for example one typed with the year 0026, is not seen, and the calendar is deleted with it. A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list. Without require_empty the answer is {action, id}, as before.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([

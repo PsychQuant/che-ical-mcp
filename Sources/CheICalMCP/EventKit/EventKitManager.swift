@@ -645,11 +645,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var checked: CalendarEmptiness.Checked?
         if requireEmpty {
             let generation = writeGeneration
+            try CalendarEmptiness.checkKinds(holdsEvents: calendar.allowedEntityTypes.contains(.event),
+                                             holdsReminders: calendar.allowedEntityTypes.contains(.reminder))
             var searched: EventRangeQuery.Span?
             if calendar.allowedEntityTypes.contains(.event) {
                 let window = CalendarEmptiness.window(now: Date())
-                // Each span is at most `EventRangeQuery.maxSpanDays`, so `events(from:to:calendars:)`
-                // (the one path a range reaches EventKit by, #325) runs one query for it.
+                // Each probe query is at most 1459 days + 1 s (`CalendarEmptiness.probeSpanDays`), so
+                // `events(from:to:calendars:)` (the one path a range reaches EventKit by, #325) runs
+                // one query for it.
                 try CalendarEmptiness.checkEvents(window: window, count: { try events(from: $0, to: $1, calendars: [calendar]).count })
                 searched = window
             }

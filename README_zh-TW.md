@@ -64,7 +64,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
 | `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
-| `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（搜尋現在前後約 200 年；通過時回傳 `searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
+| `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
 </details>

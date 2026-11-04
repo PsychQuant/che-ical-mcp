@@ -33,6 +33,7 @@ final class BooleanArgumentContractTests: XCTestCase {
         ("cleanup_completed_reminders", "dry_run", [:]),
         ("copy_event", "delete_original", ["event_id": .string("e"), "target_calendar": .string("Work")]),
         ("delete_events_batch", "dry_run", [:]),
+        ("delete_calendar", "require_empty", ["id": .string("c")]),
     ]
     private let badValues: [Value] = [.string("true"), .string("false"), .int(1), .double(0)]
 

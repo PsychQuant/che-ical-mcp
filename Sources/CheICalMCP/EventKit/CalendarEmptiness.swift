@@ -7,10 +7,16 @@ import Foundation
 /// predicate takes no dates). EventKit is behind closures, so the sequence is tested without it.
 /// Nothing here is async: the caller (`EventKitManager.deleteCalendar`) runs it on its actor.
 enum CalendarEmptiness {
-    /// Half the span ceiling on each side of now (about 200 years each way): the widest window
-    /// `EventRangeQuery.spans` searches in one call. An event outside it is not found; the answer
-    /// and the refusal both state the window.
+    /// About 200 years each way (73,000 days, half of `EventRangeQuery`'s 400-year ceiling). An
+    /// event outside it is not found; the description, the answer and the refusal state the window.
     static let windowDaysEachSide = EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays / 2
+
+    /// One probe span: a day shorter than `EventRangeQuery.maxSpanDays`, so a span queried from one
+    /// second before its start (1459 days + 1 s) is still one EventKit query through
+    /// `events(from:to:calendars:)` and stays about two days clear of EventKit's cut at
+    /// start + 1461 days (#325), whatever years it crosses (PR #413 verify r1: 1460 days + 1 s was
+    /// split into two queries, with no margin over the cut).
+    static let probeSpanDays = EventRangeQuery.maxSpanDays - 1
 
     /// What a passed check searched, for the response.
     struct Checked: Equatable, Sendable {
@@ -25,17 +31,38 @@ enum CalendarEmptiness {
         return EventRangeQuery.Span(start: now.addingTimeInterval(-reach), end: now.addingTimeInterval(reach))
     }
 
+    /// `window` as consecutive spans of at most `probeSpanDays`.
+    static func probeSpans(of window: EventRangeQuery.Span) -> [EventRangeQuery.Span] {
+        let length = TimeInterval(probeSpanDays) * 86_400
+        var spans: [EventRangeQuery.Span] = []
+        var start = window.start
+        while start < window.end {
+            let end = min(window.end, start.addingTimeInterval(length))
+            spans.append(EventRangeQuery.Span(start: start, end: end))
+            start = end
+        }
+        return spans
+    }
+
     /// The first span of `window` that holds events, and how many it holds; nil when none does.
     /// Each span after the first is queried from one second before its start, as
     /// `EventRangeQuery.collect` does, so a zero-length event on a boundary is not missed.
     static func firstEvents(in window: EventRangeQuery.Span,
                             count: (Date, Date) throws -> Int) throws -> (atLeast: Int, span: EventRangeQuery.Span)? {
-        for span in try EventRangeQuery.spans(from: window.start, to: window.end) {
+        for span in probeSpans(of: window) {
             let from = span.start > window.start ? max(window.start, span.start.addingTimeInterval(-1)) : span.start
             let found = try count(from, span.end)
             if found > 0 { return (found, span) }
         }
         return nil
+    }
+
+    /// A calendar that allows neither events nor reminders cannot be read for either, so it is not
+    /// claimed empty: refused (PR #413 verify r1).
+    static func checkKinds(holdsEvents: Bool, holdsReminders: Bool) throws {
+        guard holdsEvents || holdsReminders else {
+            throw EventKitError.calendarNotEmpty(reason: "Refusing to delete the calendar: require_empty is set and it allows neither events nor reminders, so it cannot be checked. Nothing was deleted.")
+        }
     }
 
     /// Throws `EventKitError.calendarNotEmpty` when `window` holds events. Synchronous, so it runs

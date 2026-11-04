@@ -8,11 +8,44 @@ final class CalendarEmptinessTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private let day: TimeInterval = 86_400
 
-    func testTheWindowIsCenteredOnNowAndFitsTheSpanCeiling() throws {
+    func testTheWindowIsCenteredOnNow() {
         let window = CalendarEmptiness.window(now: now)
         XCTAssertEqual(window.start, now.addingTimeInterval(-Double(CalendarEmptiness.windowDaysEachSide) * day))
         XCTAssertEqual(window.end, now.addingTimeInterval(Double(CalendarEmptiness.windowDaysEachSide) * day))
-        XCTAssertEqual(try EventRangeQuery.spans(from: window.start, to: window.end).count, EventRangeQuery.maxSpans)
+    }
+
+    /// PR #413 verify r1: every query, overlap second included, is one EventKit query
+    /// (`EventRangeQuery.spans` gives one span for it) and stays clear of the four-year cut
+    /// (EventKit cut at start + 1461 days, #325), also across 1900, 2100 and 2200, which have no
+    /// leap day; the queries cover the window with no gap.
+    func testEveryProbeQueryIsOneEventKitQueryWithMarginAcrossCenturyYears() throws {
+        var queried: [(Date, Date)] = []
+        let window = CalendarEmptiness.window(now: now)
+        _ = try CalendarEmptiness.firstEvents(in: window) { from, to in queried.append((from, to)); return 0 }
+        let gregorian = Calendar(identifier: .gregorian)
+        var crossed = Set<Int>()
+        for (index, (from, to)) in queried.enumerated() {
+            XCTAssertEqual(try EventRangeQuery.spans(from: from, to: to).count, 1, "query \(index) is one EventKit query")
+            XCTAssertLessThanOrEqual(to.timeIntervalSince(from), Double(EventRangeQuery.maxSpanDays) * day, "query \(index)")
+            XCTAssertLessThan(to.timeIntervalSince(from), Double(EventRangeQuery.previousCutDays - 1) * day, "a day of margin, query \(index)")
+            for year in [1900, 2100, 2200] {
+                let jan = gregorian.date(from: DateComponents(timeZone: TimeZone(identifier: "UTC"), year: year, month: 1, day: 1))!
+                if from < jan && jan < to { crossed.insert(year) }
+            }
+            if index > 0 { XCTAssertEqual(from, queried[index - 1].1.addingTimeInterval(-1), "no gap, one second of overlap") }
+        }
+        XCTAssertEqual(crossed, [1900, 2100, 2200], "the window's queries cross the years without a leap day")
+        XCTAssertEqual(queried.first?.0, window.start)
+        XCTAssertEqual(queried.last?.1, window.end)
+    }
+
+    /// PR #413 verify r1: a calendar that allows neither events nor reminders is not claimed empty.
+    func testACalendarThatHoldsNeitherKindIsRefused() {
+        XCTAssertThrowsError(try CalendarEmptiness.checkKinds(holdsEvents: false, holdsReminders: false)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Nothing was deleted"), error.localizedDescription)
+        }
+        XCTAssertNoThrow(try CalendarEmptiness.checkKinds(holdsEvents: true, holdsReminders: false))
+        XCTAssertNoThrow(try CalendarEmptiness.checkKinds(holdsEvents: false, holdsReminders: true))
     }
 
     func testAnEmptyCalendarIsSearchedThroughTheWholeWindow() throws {
@@ -20,7 +53,7 @@ final class CalendarEmptinessTests: XCTestCase {
         let window = CalendarEmptiness.window(now: now)
         let found = try CalendarEmptiness.firstEvents(in: window) { from, to in queried.append((from, to)); return 0 }
         XCTAssertNil(found)
-        XCTAssertEqual(queried.count, EventRangeQuery.maxSpans)
+        XCTAssertEqual(queried.count, CalendarEmptiness.probeSpans(of: window).count)
         XCTAssertEqual(queried.first?.0, window.start)
         XCTAssertEqual(queried.last?.1, window.end)
         // A span after the first is queried from one second before its start, as `collect` does.
@@ -36,8 +69,7 @@ final class CalendarEmptinessTests: XCTestCase {
         })
         XCTAssertEqual(queried, 3)
         XCTAssertEqual(found.atLeast, 2)
-        let spans = try EventRangeQuery.spans(from: window.start, to: window.end)
-        XCTAssertEqual(found.span, spans[2])
+        XCTAssertEqual(found.span, CalendarEmptiness.probeSpans(of: window)[2])
     }
 
     func testAnEventCalendarWithEventsIsRefusedWithTheWindowAndALowerBound() throws {
