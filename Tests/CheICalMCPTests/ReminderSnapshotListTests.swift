@@ -276,4 +276,18 @@ final class ReminderSnapshotListTests: XCTestCase {
             XCTAssertFalse(partial.message.contains("account '"), partial.message)
         }
     }
+    /// #290 verify: the negative message checks never had an account in their input, so an
+    /// account-only revert stayed green. The case itself must carry no list or account field,
+    /// and the snapshot's list title / account must not reach any trusted message builder.
+    func testTheMissingListCaseCarriesNoListOrAccount() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        XCTAssertTrue(code.contains("case undoListMissing(reminder: String, hasIdentifier: Bool, kind: ReminderRestoreKind)"),
+                      "undoListMissing carries exactly the reminder, hasIdentifier and kind")
+        XCTAssertEqual(code.components(separatedBy: "case undoListMissing(").count, 2, "declared once")
+        let undo = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/UndoManager.swift")
+        let undoCode = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: undo, encoding: .utf8)))
+        let call = try XCTUnwrap(SourceScan.arguments(of: "EventKitError.undoListMissing(", in: undoCode), "resolveList builds the refusal")
+        XCTAssertFalse(call.contains("calendarTitle") || call.contains("calendarSource"), call)
+    }
 }
