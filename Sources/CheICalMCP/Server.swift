@@ -489,7 +489,7 @@ class CheICalMCPServer {
             // Reminder Tools
             Tool(
                 name: "list_reminders",
-                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). A date-only due (due.time null) is a day: is_overdue becomes true only once that day has ended in the host time zone, its due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
+                description: "List reminders from the Reminders app with optional filtering, sorting, and limiting. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). A date-only due (due.time null) is a day: is_overdue becomes true only once that day has ended in the host time zone, its due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null). Reports item_timezone (the reminder's own time zone; null when floating), where floating means the reminder stores no time zone; timezone is the host time zone, the zone of the *_local strings, not the reminder's.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -668,7 +668,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "search_reminders",
-                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). For a date-only due (due.time null), due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null).",
+                description: "Search reminders by keyword(s) in title or notes, or filter by tag. Supports single keyword or multiple keywords with AND/OR matching. Includes has_recurrence, full public reminder_recurrence_rules (legacy alias recurrence_rules), due date precision, the start date (start, in the due shape; start_date/start_date_local) and time-based alarms (alarms: relative minutes_before, measured from the due date: positive = before the due date, negative = after; or absolute absolute_date; [] when none; location alarms stay in location_trigger). For a date-only due (due.time null), due_date / due_date_local are 00:00 of the day in the host time zone, and a start stored as 00:00 without a time zone reads as a day in start (time null). Reports item_timezone (the reminder's own time zone; null when floating), where floating means the reminder stores no time zone; timezone is the host time zone, the zone of the *_local strings, not the reminder's.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1653,8 +1653,11 @@ class CheICalMCPServer {
     /// `start` has the `due` shape; `start_date` / `start_date_local` mirror `due_date` / `due_date_local`.
     /// #297: under a date-only due, a 00:00 floating start reads as a day in `start`
     /// (`ReminderDueReading.startAsRead`); the strings keep their shape (host-zone midnight).
+    /// #241: `item_timezone` is the reminder's own zone, null when floating; `timezone`
+    /// stays the zone of the `*_local` strings (the host zone).
     private func reminderScheduleFields(_ reminder: ReminderReadSnapshot, zone: TimeZone = .current) -> [String: Any] {
         var fields: [String: Any] = [
+            "item_timezone": reminder.timeZone?.identifier ?? NSNull(),
             // #297: under a date-only due, the 00:00 floating start the store hands back is a day.
             "start": ReminderDueValue(components: ReminderDueReading.startAsRead(reminder.startDateComponents,
                                                                                  due: reminder.dueDateComponents))?.dictionary ?? NSNull(),
