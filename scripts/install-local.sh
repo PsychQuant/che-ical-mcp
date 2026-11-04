@@ -123,7 +123,7 @@ signature_line() { printf '%s\n' "$SIGNATURE" | "$CSP_GREP" -qx -- "$1"; }
 signature_line_matches() { printf '%s\n' "$SIGNATURE" | "$CSP_GREP" -qE -- "$1"; }
 if [[ "$MODE" == adhoc ]]; then
     if ! signature_line "Signature=adhoc" \
-       || signature_line_matches '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*linker-signed'; then
+       || signature_line_matches '^CodeDirectory .*linker-signed'; then
         echo "Error: the product is not ad-hoc signed by codesign; nothing installed (#239)" >&2
         exit 1
     fi
@@ -145,4 +145,10 @@ if ! cp "$STAGED" "$NEW_FILE" || ! chmod 755 "$NEW_FILE"; then
 fi
 refuse_directory_dest
 # -h: a symlink to a directory created since the check above is replaced, not followed.
-mv -fh "$NEW_FILE" "$DEST"
+/bin/mv -fh "$NEW_FILE" "$DEST"
+# A real directory created between the check and the rename would receive the file inside it
+# (BSD mv); refuse to report success unless DEST is now the regular file (#239 verify round 4).
+if [[ ! -f "$DEST" || -L "$DEST" ]]; then
+    echo "Error: $DEST is not the installed file after the rename; check that path (#239)" >&2
+    exit 1
+fi
