@@ -285,7 +285,7 @@ struct TCCDriftDetector {
                     lines.append("[banner] Reminders access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup (it prompts only while the status is notDetermined)")
                 }
             case .denied:
-                lines.append("[banner] Reminders access denied — a \"Don't Allow\" is recorded for the process macOS checks, so no prompt will appear: switch that entry on in System Settings → Privacy & Security → Reminders")
+                lines.append("[banner] Reminders access denied — --setup will not prompt from this status: switch that entry on, or off and on, in System Settings → Privacy & Security → Reminders")
             case .writeOnly:
                 lines.append("[banner] Reminders access is write-only — System Settings → Privacy & Security → Reminders → that entry's Options… → Full Access")
             default:

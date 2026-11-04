@@ -33,7 +33,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings → Privacy & Security (#382; see `troubleshoot-tcc` skill Step 4) |
+   | `denied` | Explicitly denied | Switch CheICalMCP on, or off and on, in System Settings → Privacy & Security (#382; see `troubleshoot-tcc` skill Step 4) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 

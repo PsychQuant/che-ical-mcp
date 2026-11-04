@@ -87,7 +87,7 @@ Quit and reopen Claude Desktop. Calendar tool calls should now succeed.
 
 ### Dialog doesn't appear at all
 
-TCC may have a stale `denied` record blocking the new prompt. Switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)). Then re-run Step 3.
+TCC may have a stale `denied` record blocking the new prompt. Switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)). Then re-run Step 3.
 
 **Last resort**, only on CheICalMCP v1.11.0 or later: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. The user decides and runs it; an agent must not.
 

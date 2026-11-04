@@ -334,7 +334,8 @@ final class TCCDriftDetectorTests: XCTestCase {
 
     func testRestrictedCalendar_deniedReminders_offersTheSwitchNotSetup() {
         let b = restrictedCalendarBanner(reminders: .denied)
-        XCTAssertTrue(b.contains("switch that entry on in System Settings → Privacy & Security → Reminders"), b)
+        XCTAssertTrue(b.contains("switch that entry on, or off and on, in System Settings → Privacy & Security → Reminders"), b)
+        XCTAssertFalse(b.contains("Don't Allow"), "a denied status is not proof the switch is off (#154): \(b)")
         XCTAssertFalse(b.contains("for CheICalMCP"), "the status may be a host's (round 3): \(b)")
         XCTAssertFalse(b.contains("' --setup"), b)
     }

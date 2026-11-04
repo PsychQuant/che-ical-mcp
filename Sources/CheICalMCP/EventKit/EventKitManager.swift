@@ -239,7 +239,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
             1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
             \(setupHint)
-            2. Or switch CheICalMCP on in System Settings → Privacy & Security → \(type) \
+            2. Or switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → \(type) \
             (if it is not listed, step 1 adds it: an app appears there once it requests access)
             3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
             """
