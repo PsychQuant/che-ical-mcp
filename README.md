@@ -91,7 +91,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_reminders` | List reminders with filter/sort/limit, tags extraction (v1.0.0) |
-| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267), and the response then carries `date_sync` with `aligned` judged on the saved reminder (#301). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
+| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267); with a due date, bare or timed, the response carries `date_sync` with `aligned` judged on the saved reminder (#301, #308; a timed due that lost its time zone on save is written again and saved a second time, as `update_reminder` does). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `update_reminder` | Update a reminder (including tags, `clear_due_date`) (v1.3.0) |
 | `complete_reminder` | Mark as completed/incomplete |
 | `delete_reminder` | Delete a reminder |
