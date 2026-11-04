@@ -59,6 +59,15 @@ enum SourceScan {
         return String(scanner.out)
     }
 
+    /// `strippingComments`, with the text of every string literal blanked too (its delimiters
+    /// included; the code inside `\( )` is kept), for a guard that counts code only (#283,
+    /// `SharedTestStoreTests`). Offsets and line breaks are kept.
+    static func codeOnly(_ text: String) -> String {
+        var scanner = CommentStripper(text, blankingStrings: true)
+        scanner.code(untilClosingParen: false)
+        return String(scanner.out)
+    }
+
     /// The text between the parentheses of the first call that starts with `marker` (which ends
     /// in `(`), balanced on parentheses; nil when `marker` is absent or unbalanced.
     static func arguments(of marker: String, in code: String) -> String? {
@@ -97,8 +106,17 @@ private struct CommentStripper {
     let chars: [Unicode.Scalar]
     var i = 0
     var out = String.UnicodeScalarView()
+    /// Whether a string literal's text is blanked rather than copied (`SourceScan.codeOnly`).
+    let blankingStrings: Bool
 
-    init(_ text: String) { chars = Array(text.unicodeScalars) }
+    init(_ text: String, blankingStrings: Bool = false) {
+        chars = Array(text.unicodeScalars)
+        self.blankingStrings = blankingStrings
+    }
+
+    /// A string literal's text: copied, or blanked for `codeOnly`.
+    private mutating func literal(_ n: Int = 1) { blankingStrings ? blank(n) : copy(n) }
+    private mutating func literal(_ s: String) { literal(s.unicodeScalars.count) }
 
     private func at(_ s: String) -> Bool {
         var j = i
@@ -154,22 +172,22 @@ private struct CommentStripper {
         while i + hashes < chars.count, chars[i + hashes] == "#" { hashes += 1 }
         guard i + hashes < chars.count, chars[i + hashes] == "\"" else { return false }
         let pounds = String(repeating: "#", count: hashes)
-        copy(hashes)
+        literal(hashes)
         let multiline = at("\"\"\"")
         let delimiter = (multiline ? "\"\"\"" : "\"") + pounds
-        copy(multiline ? 3 : 1)
+        literal(multiline ? 3 : 1)
         let escape = "\\" + pounds
         while i < chars.count {
-            if at(delimiter) { copy(delimiter); return true }
+            if at(delimiter) { literal(delimiter); return true }
             if !multiline, isLineBreak(chars[i]) { return true }   // unterminated: leave the string
             if at(escape + "(") {
-                copy(escape + "(")
+                literal(escape + "(")
                 code(untilClosingParen: true)
-                copy()   // the closing `)`
+                literal()   // the closing `)`
             } else if at(escape) {
-                copy(escape.unicodeScalars.count + 1)
+                literal(escape.unicodeScalars.count + 1)
             } else {
-                copy()
+                literal()
             }
         }
         return true

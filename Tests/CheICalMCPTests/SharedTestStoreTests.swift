@@ -19,8 +19,14 @@ final class SharedTestStoreTests: XCTestCase {
         return try files.compactMap { file in
             let text = try String(contentsOf: file, encoding: .utf8)
             guard text.contains("EKEventStore") else { return nil }
-            return (String(file.path.dropFirst(root.path.count + 1)), SourcePins.code(text))
+            return (String(file.path.dropFirst(root.path.count + 1)), SourceScan.codeOnly(text))
         }
+    }
+
+    /// The constructions in `text`, comments and string literals (raw and multi-line ones too)
+    /// left out, the code of interpolations kept.
+    private static func constructions(in text: String) -> Int {
+        SourcePins.ranges(ofPattern: construction, in: SourceScan.codeOnly(text)).count
     }
 
     func testOnlyTheSharedHelperBuildsAStore() throws {
@@ -43,10 +49,21 @@ final class SharedTestStoreTests: XCTestCase {
     func testThePatternCatchesEverySpelling() {
         for spelling in ["let s = EKEventStore()", "let s = EKEventStore ()", "let s = EKEventStore.init()",
                          "let s = EKEventStore(sources: [])", "f(EKReminder(eventStore: EKEventStore()))"] {
-            XCTAssertEqual(SourcePins.ranges(ofPattern: Self.construction, in: SourcePins.code(spelling)).count, 1, spelling)
+            XCTAssertEqual(Self.constructions(in: spelling), 1, spelling)
         }
-        for ignored in ["// EKEventStore()", "let s = \"EKEventStore()\"", "/* EKEventStore() */", "let s: EKEventStore = shared"] {
-            XCTAssertEqual(SourcePins.ranges(ofPattern: Self.construction, in: SourcePins.code(ignored)).count, 0, ignored)
+        for ignored in ["// EKEventStore()", "let s = \"EKEventStore()\"", "/* EKEventStore() */", "let s: EKEventStore = shared",
+                        "let s = #\"EKEventStore()\"#", "let s = \"\"\"\nEKEventStore()\n\"\"\""] {
+            XCTAssertEqual(Self.constructions(in: ignored), 0, ignored)
+        }
+    }
+
+    /// PR #390 round 1: a raw string holding `\(` or a quote must not hide the code after it (the
+    /// guard used `SourcePins.code`, which does not know raw strings, and failed open there). The
+    /// code of an interpolation still counts.
+    func testACodeAfterARawStringStillCounts() {
+        for spelling in [##"let r = #"\("#; let s = EKEventStore()"##, ##"let r = #"a"b"#; let s = EKEventStore()"##,
+                         ##"let u = "https://x"; let s = EKEventStore()"##, ##"let t = "\(EKEventStore())""##] {
+            XCTAssertEqual(Self.constructions(in: spelling), 1, spelling)
         }
     }
 }
