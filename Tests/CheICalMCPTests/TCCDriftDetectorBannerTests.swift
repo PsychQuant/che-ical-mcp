@@ -451,27 +451,45 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
     }
 
-    /// #163 / #122 skip-list: `--setup` exits before `emitStartupBanner()` is reached, so it
-    /// must emit no banner. Exit status is intentionally NOT asserted — `--setup` exits
-    /// non-zero when access is denied/skipped (host-TCC-state dependent), and under this
-    /// non-interactive spawn `.notDetermined` is skipped (never calls the blocking request,
-    /// so no hang).
-    ///
-    /// `maxWait: 1.0` is explicit (#233): in a GUI session `--setup` runs the interactive
-    /// SetupWindow `NSApplication`, which never exits by itself (#249), so the 10 s default
-    /// cap would keep that window on screen for 10 s on every run.
+    /// #163 / #122 skip-list: `--setup` must emit no banner. Checked structurally over the source,
+    /// not by spawning the binary (#249): in a GUI session `--setup` runs the interactive
+    /// SetupWindow `NSApplication` (#143 keeps `CI` from making it non-interactive), which takes
+    /// focus and never exits by itself, and a test cannot make the child non-interactive from
+    /// outside. The contract holds by control flow, so the test pins that control flow:
+    /// (a) the `--setup` block sits above the top-level `emitStartupBanner()` call; (b) inside it
+    /// the non-interactive branch ends in `exit(` and the interactive branch calls
+    /// `SetupRunner.runInteractive()`; (c) `runInteractive()` is declared `-> Never`.
     func testNoBannerForSetupFlag() throws {
-        let binary = try locateBuiltBinary()
-        let run = try spawnAndCaptureStderr(
-            binary: binary,
-            arguments: ["--setup"],
-            maxWait: 1.0
-        )
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/CheICalMCP")
+        let main = try String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)
+        let lines = main.components(separatedBy: "\n")
 
-        XCTAssertFalse(
-            run.stderr.contains("[banner]"),
-            "--setup path should not emit banner. Got stderr: \(run.stderr)"
-        )
+        let setupStart = try XCTUnwrap(
+            lines.firstIndex(of: "if CommandLine.arguments.contains(\"--setup\") {"),
+            "main.swift must have a top-level --setup block")
+        let setupEnd = try XCTUnwrap(
+            lines[setupStart...].firstIndex(of: "}"),
+            "the --setup block must close at the top level")
+        let bannerCall = try XCTUnwrap(
+            lines.firstIndex(of: "emitStartupBanner()"),
+            "main.swift must call emitStartupBanner() at the top level")
+        XCTAssertLessThan(setupEnd, bannerCall, "(a) the --setup block must come before the banner call")
+
+        let block = lines[setupStart...setupEnd].joined(separator: "\n")
+        let headless = try XCTUnwrap(block.range(of: "SetupRunner.requestBoth(nonInteractive: true)"),
+                                     "(b) the non-interactive branch must request headlessly")
+        let elseBranch = try XCTUnwrap(block.range(of: "} else {", range: headless.upperBound..<block.endIndex),
+                                       "(b) the --setup block must have an interactive branch")
+        XCTAssertNotNil(block.range(of: "exit(", range: headless.upperBound..<elseBranch.lowerBound),
+                        "(b) the non-interactive branch must end in exit(")
+        XCTAssertNotNil(block.range(of: "SetupRunner.runInteractive()", range: elseBranch.upperBound..<block.endIndex),
+                        "(b) the interactive branch must call SetupRunner.runInteractive()")
+
+        let runner = try String(contentsOf: sources.appendingPathComponent("SetupRunner.swift"), encoding: .utf8)
+        XCTAssertTrue(runner.contains("static func runInteractive() -> Never"),
+                      "(c) runInteractive() must never return, or the banner could follow it")
     }
 
     /// Spawn the binary from a path not present in TCC.db — typically forces a
