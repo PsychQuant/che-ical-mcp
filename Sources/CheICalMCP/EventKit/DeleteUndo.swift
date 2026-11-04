@@ -238,7 +238,9 @@ extension UndoOperation {
         count == 1 ? "1 operation" : "\(count) operations"
     }
 
-    private enum UndoDisclosure: Hashable { case absoluteAlarms, seriesRules, seriesExceptions }
+    /// No `absoluteAlarms` since #323: the `undo_history` lines never named it, and the batch
+    /// texts that did now take it from the members' outcomes.
+    private enum UndoDisclosure: Hashable { case seriesRules, seriesExceptions }
 
     /// What a record's undo will disclose, read before it runs: only the `undo_history` lines use
     /// it (`seriesRecreatedFromRules`, `seriesRecreatedWithExceptions`). The batch answer and a
@@ -246,14 +248,12 @@ extension UndoOperation {
     /// Exhaustive, so a new record kind has to be classified here (verify round 3, finding 2).
     private var undoDisclosures: [UndoDisclosure] {
         switch self {
-        case .deleteOccurrence(_, let notCarriedOver):
-            return notCarriedOver.contains("absolute_alarms") ? [.absoluteAlarms] : []
         case .deleteEvent(let snapshot):
             guard snapshot.restoresFromRules else { return [] }
             return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
             return members.flatMap(\.undoDisclosures)
-        case .createEvent, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
+        case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
             return []
         }

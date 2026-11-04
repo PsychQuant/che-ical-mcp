@@ -232,12 +232,13 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// last member was dropped: `handleUndo` then discards the record.
     let remaining: [UndoOperation]
     let restoredCount: Int
-    /// The members restored before the failure, nested ones included. The batch text of the retry
-    /// covers only `remaining`, so what these did not carry over is named here (PR #278 round 3).
+    /// The members restored before the failure, nested ones included, passed up by a nested batch.
+    /// No text is built from them: since #323 what they did is named from `restoredEvents`, and what
+    /// their stores hold differently from `restoredDiffering`.
     let restored: [UndoOperation]
     /// What the stores of those members hold differently (a recreated reminder whose save threw
-    /// but which a new store finds with compared fields differing, #261), named here once, as
-    /// `restored`'s disclosures are (PR #282 round 5, finding 1).
+    /// but which a new store finds with compared fields differing, #261), named here once: the
+    /// batch text of the retry covers only `remaining` (PR #278 round 3; PR #282 round 5, finding 1).
     let restoredDiffering: [UndoRestoredDifference]
     /// What those members' undos did (#323), named here once, from the outcomes, not the records.
     let restoredEvents: [UndoEventOutcome]

@@ -35,7 +35,11 @@ extension UndoOperation {
                 ? "1 deleted occurrence was already restored by its series, so nothing was written for it"
                 : "\(held) deleted occurrences were already restored by their series, so nothing was written for them")
         }
-        if events.contains(.seriesFromRules) { notes.append(seriesRulesRestoreNote) }
+        let fromRules = events.filter { $0 == .seriesFromRules }.count
+        if fromRules == 1 { notes.append(seriesRulesRestoreNote) }
+        if fromRules > 1 {
+            notes.append("\(fromRules) series were restored from their rules alone, because their exceptions were not checked when they were deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot")
+        }
         let restores = events.compactMap { outcome -> SeriesExceptionsRestorer.Outcome? in
             if case .seriesWithExceptions(let restore) = outcome { return restore }
             return nil

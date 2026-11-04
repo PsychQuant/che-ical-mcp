@@ -82,6 +82,15 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertTrue(message.contains("1 series was restored from its rules with its exceptions inside the checked window"), message)
     }
 
+    /// PR #406 verify r1, 3: one series from its rules keeps the single wording; more say how many.
+    func testBatchUndoTextCountsTheSeriesRestoredFromTheirRulesAlone() {
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 1, events: [.seriesFromRules]),
+                       "Undone batch (1 operation). " + UndoOperation.seriesRulesRestoreNote)
+        let message = UndoOperation.batchUndoneMessage(count: 3, events: [.seriesFromRules, .seriesFromRules, .seriesFromRules])
+        XCTAssertEqual(message, "Undone batch (3 operations). 3 series were restored from their rules alone, because their exceptions were not checked when they were deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot")
+        XCTAssertFalse(message.contains(UndoOperation.seriesRulesRestoreNote), message)
+    }
+
     func testBatchUndoTextSaysWhichSeriesHadNoExceptionApplied() {
         let message = UndoOperation.batchUndoneMessage(count: 2, events: [
             .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true)),
