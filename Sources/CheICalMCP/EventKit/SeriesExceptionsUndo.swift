@@ -95,7 +95,7 @@ enum SeriesExceptionsUndo {
                 reason: "Undo could not restore the exceptions of the series: no occurrence of the recreated series on \(day(date)). The series was deleted again; nothing was restored. Retry undo.")
         case .removeFailed(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
-                reason: "Undo could not remove the occurrence on \(day(date)) that the deleted series did not have (\(code)). The recreated series was deleted again; nothing was restored. Retry undo.")
+                reason: "Undo could not remove the occurrence on \(day(date)) that the deleted series did not have (\(code)). The recreated series was deleted again; nothing was restored. Retry undo; if it keeps failing with the same code, discard_id gives up this undo (the series is then not restored at all).")
         case .oneOffFailed(let date, let code):
             return EventKitError.seriesExceptionsRestoreFailed(
                 reason: "Undo could not recreate the occurrence edited on its own on \(day(date)) (\(code)). The recreated series and the occurrences recreated so far were deleted again; nothing was restored. Retry undo; if it keeps failing with the same code, discard_id gives up this undo (the series is then not restored at all).")

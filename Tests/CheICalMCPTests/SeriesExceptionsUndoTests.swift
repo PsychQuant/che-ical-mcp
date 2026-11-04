@@ -179,6 +179,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
             let text = error.localizedDescription
             XCTAssertTrue(text.hasPrefix("Undo could not remove the occurrence on "), text)
             XCTAssertTrue(text.contains("(eventkit_error_1)"), text)
+            XCTAssertTrue(text.contains("if it keeps failing with the same code, discard_id gives up this undo"), text)
             XCTAssertFalse(text.contains("Therapy notes"), text)
             XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         }

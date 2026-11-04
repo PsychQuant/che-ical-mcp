@@ -143,6 +143,18 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         }
     }
 
+    /// PR #405 verify r1, 4: the description behind the code goes to stderr for an operator (escaped,
+    /// through the sanitizer's failure log), never into the text.
+    func testTheFailureDescriptionIsLoggedToStderrNotReturned() throws {
+        let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
+        var thrown: Error?
+        let log = try capturedStderr {
+            XCTAssertThrowsError(try run(one, failCreateTitle: "B", createError: ekError(3))) { thrown = $0 }
+        }
+        XCTAssertTrue(log.contains("Calendar 'Private' refused"), log)
+        XCTAssertEqual(thrown as? SeriesExceptionsRestoreError, .oneOffFailed(at(slots[1]), code: "eventkit_error_3"))
+    }
+
     func testTheStrayAndMaybeLeftCasesKeepTheSaveCode() {
         let two = SeriesExceptions(window: window, keptSlots: [at(slots[0])],
                                    detached: [detached("A", slot: slots[1]), detached("B", slot: slots[2])])
@@ -156,9 +168,9 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         }
     }
 
-    /// A trusted error's text is its sanitized "code" (`sanitizeForResponse`); here only the code
-    /// is kept, so a trusted error's text (which may quote a calendar title) does not reach the
-    /// undo text: it is reported as the generic code (#37).
+    /// A trusted error's "code" under `sanitizeForResponse` is its whole text; the one that can reach
+    /// a one-off's creation (`undoCalendarMissing`) is a complete give-up instruction, which in the
+    /// "(code)" slot would contradict the restore text. Only the code is kept: the generic one.
     func testATrustedErrorIsReportedByCodeNotByItsText() {
         let one = SeriesExceptions(window: window, keptSlots: [at(slots[0])], detached: [detached("B", slot: slots[1])])
         let trusted = EventKitError.seriesExceptionsRestoreFailed(reason: "calendar 'Private' is gone")

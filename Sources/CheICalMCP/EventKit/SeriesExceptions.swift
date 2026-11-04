@@ -171,12 +171,17 @@ enum SeriesExceptionsRestorer {
         var notApplied: Bool = false
     }
 
-    /// The sanitized code of a failed write (#398): `eventkit_error_<N>`, `error_<domain>_<N>` or
-    /// `error_unknown`. `sanitize`, not `sanitizeForResponse`: for a trusted error the latter's
-    /// "code" is the error's whole text, which can quote a calendar title (#37); only the code is
-    /// kept here.
+    /// The sanitized code of a failed write (#398): `eventkit_error_<N>`, `error_<domain>_<N>` for
+    /// another NSError, otherwise `error_unknown`. `sanitize`, not `sanitizeForResponse`: for a
+    /// trusted error the latter's "code" is the error's whole text. The one trusted error that can
+    /// reach a one-off's creation is `undoCalendarMissing` (from `calendarNow`), a complete
+    /// instruction to give the undo up; in the "(code)" slot of a text that says the restore was
+    /// rolled back and can be retried, it would contradict that text. So only the code is kept.
+    /// The description behind it goes to stderr for an operator (escaped and capped, through
+    /// `writeFailureLog`, which logs untrusted errors only), never into the text (PR #405 verify).
     static func failureCode<OneOff>(_ error: Error, oneOff: OneOff.Type) -> String {
         let underlying = (error as? SeriesExceptionsOneOffWriteFailed<OneOff>)?.underlying ?? error
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "series exceptions restore", error: underlying)
         return EventKitErrorSanitizer.sanitize(underlying).code
     }
 
