@@ -325,6 +325,14 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 - 支援 `create_event`、`update_event`、`create_events_batch`
 - 復原/重做會保留個別時區設定
 
+### 鬧鐘（讀取）
+
+事件的回應會用 `alarms` 列出事件的時間型鬧鐘（#240），格式與提醒事項讀取工具相同（#231），可以用來確認 `alarms_minutes_offsets` 寫入了什麼，也看得到指定日期的鬧鐘。適用於 `list_events`、`search_events`、`list_events_quick`（`detail_level: summary` 時不列；可用 `fields: ["alarms"]` 選取）與 `check_conflicts`。
+
+- `{"kind": "relative", "minutes_before": 15}`：從開始時間算起，正數是開始前、負數是開始後（與 `alarms_minutes_offsets` 同向）
+- `{"kind": "absolute", "absolute_date": "...Z", "absolute_date_local": "..."}`：`absolute_date_local` 與其他 `*_local` 字串同一個時區（有 `display_timezone` 時用它）
+- 先列指定日期的鬧鐘（依日期），再列相對鬧鐘（最早的在前）；沒有鬧鐘時是 `[]`。地點鬧鐘不列出。循環事件的各個場次回報的是整個系列的鬧鐘，照 EventKit 回傳的內容
+
 ### 事件參與者與組織者資訊
 
 事件查詢工具（`list_events`、`search_events`、`list_events_quick`、`check_conflicts`）的回應中，現在包含參與者和組織者資訊。

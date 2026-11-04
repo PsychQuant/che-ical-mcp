@@ -252,6 +252,23 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
+    /// manifest, as the reminder read tools do (#231).
+    func testEventReadToolsDescribeAlarms() throws {
+        let sign = "positive = before the start, negative = after"
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["list_events", "list_events_quick", "search_events"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains(sign), "defineTools() \(name): \(declared)")
+            XCTAssertTrue(declared.contains("Outside detail_level summary each event lists its time-based alarms as alarms"), "defineTools() \(name)")
+            XCTAssertTrue(declared.contains("location alarms are not listed"), "defineTools() \(name)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains(sign), "mcpb/manifest.json \(name): \(summary)")
+        }
+    }
+
     /// #241: both reminder read tools name `item_timezone` (the reminder's own zone, null when
     /// floating) and say what `timezone` names, in defineTools() and in the manifest.
     func testReminderReadToolsDescribeItemTimezone() throws {

@@ -323,6 +323,14 @@ Set the display timezone for individual events — essential for multi-timezone 
 - Available on `create_event`, `update_event`, and `create_events_batch`
 - Undo/redo preserves per-event timezone
 
+### Alarms (Read)
+
+Event responses list the event's time-based alarms as `alarms` (#240), in the shape the reminder read tools use (#231), so a caller can check what `alarms_minutes_offsets` wrote and see absolute-date alarms. Available in `list_events`, `search_events`, `list_events_quick` (outside `detail_level: summary`; `fields: ["alarms"]` selects it) and `check_conflicts`.
+
+- `{"kind": "relative", "minutes_before": 15}`: measured from the start, positive = before, negative = after (the sense of `alarms_minutes_offsets`)
+- `{"kind": "absolute", "absolute_date": "...Z", "absolute_date_local": "..."}`: `absolute_date_local` is in the zone of the other `*_local` strings (`display_timezone` when given)
+- Absolute alarms come first by date, then relative alarms earliest first; `[]` when none. Location alarms are not listed. An occurrence of a recurring event reports the series' alarms as EventKit returns them
+
 ### Attendees & Organizer (Read-Only)
 
 Event responses include participant information when available. These fields are **read-only** due to EventKit limitations — they cannot be set or modified through the MCP.
