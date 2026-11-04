@@ -4,9 +4,11 @@ import Foundation
 ///
 /// EventKit reads an all-day `endDate` differently depending on whether the event is already
 /// all-day when the date is assigned (device, iCloud): on a new or still-timed event a midnight end
-/// excludes that day; on an event that is already all-day it includes it. Every all-day write is
-/// therefore normalized first to (start of the start day, last day at 23:59:59), the one value that
-/// reads the same in both states and the one the tools return when they read the event back.
+/// excludes that day; on an event that is already all-day it includes it. The all-day writes of
+/// `create_event`, `create_events_batch` and `update_event` are therefore normalized first to (start
+/// of the start day, last day at 23:59:59), the one value that reads the same in both states and the
+/// one the tools return when they read the event back. `copy_event` and undo copy the stored dates
+/// unchanged; the device check found no widening there.
 ///
 /// The rule (the exclusive boundary, the iCal `DTEND` reading): an end exactly at a midnight of a
 /// day later than the start day excludes that day; any other end includes its day; start = end is
@@ -61,9 +63,13 @@ enum AllDayRange {
         if let newEnd {
             end = newEnd
         } else if let newStart, isAllDay, storedAllDay {
-            // An all-day event moved by its start keeps its number of days, not its seconds.
-            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: storedStart),
-                                               to: calendar.startOfDay(for: storedEnd)).day ?? 0
+            // An all-day event moved by its start keeps its number of days, not its seconds. The
+            // stored pair is read with the same rule (#364 verify round 1): an end some other client
+            // or source stored as an exact next midnight is a boundary, not a day.
+            let stored = (try? normalize(start: storedStart, end: storedEnd, calendar: calendar))
+                ?? (start: calendar.startOfDay(for: storedStart), end: storedEnd)
+            let days = calendar.dateComponents([.day], from: stored.start,
+                                               to: calendar.startOfDay(for: stored.end)).day ?? 0
             let firstDay = calendar.startOfDay(for: newStart)
             end = lastSecond(of: calendar.date(byAdding: .day, value: days, to: firstDay) ?? firstDay, calendar: calendar)
         } else if let newStart {

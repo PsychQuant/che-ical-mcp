@@ -265,14 +265,14 @@ class CheICalMCPServer {
                     "type": .string("object"),
                     "properties": .object([
                         "title": .object(["type": .string("string"), "description": .string("Event title")]),
-                        "start_time": .object(["type": .string("string"), "description": .string("Start time in ISO8601 format with timezone (e.g., 2026-01-30T14:00:00+08:00)")]),
+                        "start_time": .object(["type": .string("string"), "description": .string("Start time in ISO8601 format with timezone (e.g., 2026-01-30T14:00:00+08:00). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
                         "end_time": .object(["type": .string("string"), "description": .string("End time in ISO8601 format with timezone (e.g., 2026-01-30T15:00:00+08:00). For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day.")]),
                         "notes": .object(["type": .string("string"), "description": .string("Optional event notes")]),
                         "location": .object(["type": .string("string"), "description": .string("Optional event location")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (use list_calendars to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
@@ -342,11 +342,11 @@ class CheICalMCPServer {
                     "properties": .object([
                         "event_id": .object(["type": .string("string"), "description": .string("The event identifier")]),
                         "title": .object(["type": .string("string"), "description": .string("New title")]),
-                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). If only start_time is provided, the event duration is preserved automatically (an all-day event keeps its number of days).")]),
+                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). If only start_time is provided, the event duration is preserved automatically (an event that stays all-day keeps its number of days; an all-day event turned into a timed one keeps its stored length, so pass end_time too). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
                         "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration. For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. The same rule applies whether the event is already all-day or becomes all-day in this call.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
@@ -800,13 +800,13 @@ class CheICalMCPServer {
                                 "type": .string("object"),
                                 "properties": .object([
                                     "title": .object(["type": .string("string")]),
-                                    "start_time": .object(["type": .string("string")]),
+                                    "start_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
                                     "end_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day.")]),
                                     "notes": .object(["type": .string("string")]),
                                     "location": .object(["type": .string("string")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
-                                    "all_day": .object(["type": .string("boolean"), "description": .string("Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
+                                    "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
                                         "description": .string("Recurrence rule"),

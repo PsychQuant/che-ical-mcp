@@ -138,6 +138,17 @@ final class AllDayRangeTests: XCTestCase {
         XCTAssertEqual(p.end, at(2027, 4, 2, 23, 59, 59))
     }
 
+    /// #364 verify round 1: a stored all-day end may be an exclusive next-midnight (another
+    /// client or source wrote it). A start-only move must count days with the same rule.
+    func testPlanUpdateStartOnlyCountsAStoredMidnightEndAsExclusive() throws {
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 2), storedAllDay: true,
+                         newStart: at(2027, 4, 1))
+        XCTAssertEqual(p.end, at(2027, 4, 1, 23, 59, 59), "one day stays one day")
+        let q = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 4), storedAllDay: true,
+                         newStart: at(2027, 4, 1))
+        XCTAssertEqual(q.end, at(2027, 4, 3, 23, 59, 59), "three days stay three days")
+    }
+
     func testPlanUpdateFlagOnlyTurnsATimedEventIntoItsDay() throws {
         let p = try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 11), storedAllDay: false,
                          requestedAllDay: true)

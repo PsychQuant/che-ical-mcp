@@ -602,6 +602,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private func findDuplicateEvent(
         title: String,
         startDate: Date,
+        isAllDay: Bool,
         calendar: EKCalendar
     ) -> EKEvent? {
         // Search within a 1-minute window around the start date
@@ -613,7 +614,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars: [calendar]
         )
         let events = eventStore.events(matching: predicate)
-        return events.first { $0.title == title }
+        return events.first {
+            Self.isCreateDuplicate(title: title, start: startDate, isAllDay: isAllDay,
+                                   candidateTitle: $0.title, candidateStart: $0.startDate,
+                                   candidateAllDay: $0.isAllDay)
+        }
+    }
+
+    /// Whether an event found around the start counts as the one `create_event` was asked to make.
+    /// #364 verify round 1: an all-day create's start is midnight after normalization, and a
+    /// same-titled all-day event on the previous day (ending 23:59:59) overlaps the search window,
+    /// so for an all-day create only an all-day event starting at the same instant matches.
+    static func isCreateDuplicate(
+        title: String, start: Date, isAllDay: Bool,
+        candidateTitle: String?, candidateStart: Date?, candidateAllDay: Bool
+    ) -> Bool {
+        guard candidateTitle == title else { return false }
+        guard isAllDay else { return true }
+        return candidateAllDay && candidateStart == start
     }
 
     func listEvents(
@@ -633,9 +651,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return try events(from: startDate, to: endDate, calendars: calendars)
     }
 
-    /// Validates that a timed event's start is strictly before its end.
-    ///
-    /// All-day events are exempt (their day-range / same-instant representation is valid).
+    /// Validates that a timed event's start is strictly before its end, and that an all-day
+    /// event's last day is not before its first day (#364 / #348, through `AllDayRange`; start = end
+    /// is one day).
     /// Shared by `createEvent` and `updateEvent` so both reject inverted / zero-duration
     /// timed events consistently — previously only `updateEvent` guarded this, letting
     /// `createEvent` persist invalid events (#160).
@@ -705,7 +723,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
 
         // Idempotency: check for existing event with same title + start time on same calendar
-        if let existing = findDuplicateEvent(title: title, startDate: startDate, calendar: calendar) {
+        if let existing = findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar) {
             // #182 — idempotency with exclusions: identical retry (every requested
             // date already absent from the existing series) → skipped; any requested
             // date still present → conflict (differing exclusion set). Extra
