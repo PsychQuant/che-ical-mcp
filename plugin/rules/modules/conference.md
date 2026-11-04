@@ -35,7 +35,7 @@ Use that calendar for the umbrella and every session. The one exception is the u
 | `title` | the conference's **official name** (as the program writes it) |
 | `all_day` | `true` (no `timezone`: all-day events are floating days) |
 | `start_time` | the first day as a **date only**, `YYYY-MM-DD` |
-| `end_time` | the **day after the last day**, date only (an exclusive boundary) |
+| `end_time` | the **day after the last day**, date only (an exclusive boundary), on create and when an update moves the umbrella's dates (#364: the server reads both the same way) |
 | `location` | the venue |
 | `notes` | a day-by-day overview, then the marker lines (section 6) |
 | `alarms_minutes_offsets` | not passed (the module adds no reminder to the umbrella) |

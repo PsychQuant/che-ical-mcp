@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **An all-day event's dates mean the same on `create_event` and `update_event`** (#364, #348): the end is an exclusive boundary. An end exactly at a midnight of a day later than the start day excludes that day; any other end includes its day; start = end is one day. Days are read in this Mac's time zone. Every all-day write is normalized to the start of the first day and the last day at `23:59:59` before it reaches EventKit, so the result no longer depends on whether the event was already all-day. **What changes for callers**: `update_event` on an event that is already all-day with a date-only `end_time` used to include that day (`2026-03-01` to `2026-03-03` read as three days) and now excludes it (two days), the same as `create_event` has always done. Pass the day after the last day, or the last day at `23:59:59` (the value `list_events` returns). Create callers are unchanged. **Measured on iCloud only** (2026-11-02, host `+08:00`); Google and Exchange calendars were not checked.
+
+### Fixed
+
+- **Turning a timed event into a one-day all-day event with start = end was refused** (#364): `update_event` checked the range with the event's stored flag before applying `all_day`. The range is now decided from the state the event will be in after the update.
+- **An all-day end day before the start day was accepted** (#348): all-day events were exempt from the range check. They are now refused with a message that names the two days.
+- **The two-day all-day event of #348 came from the end's offset**, not from `23:59:59`: a value with an offset is converted to this Mac's zone before its day is taken, so `T23:59:59+07:00` on a `+08:00` host is the next day. The `create_event`, `update_event` and `create_events_batch` descriptions now say so and ask for all-day dates without an offset.
+
 ## [1.23.0] - 2026-11-01
 
 ### Changed
