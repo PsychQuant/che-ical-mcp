@@ -399,6 +399,37 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(partial.message.contains("not only the one that failed"), "one item left: \(partial.message)")
     }
 
+    /// PR #390 round 1: the check-first sentence names the item that failed (its title shown
+    /// through `undoShownTitle`), and a failure the restore raises before it writes anything (its
+    /// calendar or list not found) says no second copy can come of it instead.
+    func testThePartialErrorNamesTheFailedItemAndWhetherItCanHaveBeenWritten() throws {
+        func partial(_ members: [UndoOperation], _ error: Error) throws -> UndoBatchPartiallyUndoneError {
+            let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 0, underlying: error),
+                                                         describe: { _ in "eventkit_error_1" })
+            return try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        }
+        let saved = try partial([deleted("Bob's lunch")], SaveFailed.failed)
+        XCTAssertTrue(saved.message.contains("The save of 'Bob\u{2019}s lunch' may have written it anyway"), saved.message)
+        XCTAssertTrue(saved.message.contains("running undo again can add a second copy: check first."), saved.message)
+
+        let lookups: [Error] = [EventKitError.calendarNotFound(identifier: "cal-1"),
+                                EventKitError.calendarNotFoundWithSource(name: "Work", source: "iCloud"),
+                                EventKitError.undoListMissing(list: "L", account: nil, reminder: "R", hasIdentifier: true,
+                                                              kind: .recreateDeleted)]
+        for error in lookups {
+            for members in [[reminderDeleted("R")], [deleted("A"), reminderDeleted("R")]] {
+                let lookup = try partial(members, error)
+                XCTAssertTrue(lookup.message.contains("'R' failed before anything of it was written"), "\(error): \(lookup.message)")
+                XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
+            }
+        }
+
+        // A nested batch's remainder has no one title: the sentence stays general.
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
+        let nested = try partial([.batch([deleted("Y")])], inner)
+        XCTAssertTrue(nested.message.contains("Its save may have written it anyway"), nested.message)
+    }
+
     /// A permanent member error (`UnrecoverableUndoError`) means that member can never be restored.
     /// It is dropped and the members never attempted are kept, whether or not something was written
     /// first (PR #282 round 2, findings 8, 9, 12, 17); before, the first write's permanent error
