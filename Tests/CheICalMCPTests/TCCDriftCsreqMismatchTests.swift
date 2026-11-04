@@ -141,8 +141,8 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        // #357: the agnostic remedy replaces the bundle-id reset; no reset, no --setup.
-        TCCRemedyAssertions.assertAgnosticRemedy(banner, pane: "Calendar")
+        // #357: main's switch sentence replaces the bundle-id reset (round 4, R1); no reset, no --setup.
+        TCCRemedyAssertions.assertSwitchRemedy(banner, pane: "Calendar")
         XCTAssertFalse(banner.contains("' --setup"), banner)
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }

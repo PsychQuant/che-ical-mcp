@@ -16,7 +16,6 @@ import XCTest
 final class AccessDeniedMessageTests: XCTestCase {
 
     private let hint = "\"/buried/path/CheICalMCP\" --setup"
-    private let diagnose = "'/buried/path/CheICalMCP' --print-tcc-path"
 
     // MARK: - #154 dead-end signature (deniedByStatus + .mcpb) — the fix
 
@@ -47,14 +46,14 @@ final class AccessDeniedMessageTests: XCTestCase {
     func testMCPBDeniedByStatus_pointsAtWorkingAlternatives() {
         let msg = EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
+            isMCPB: true, deniedByStatus: true, setupHint: hint)
 
         XCTAssertTrue(msg.contains("claude plugin install che-ical-mcp@psychquant-claude-plugins"),
             "must point at the working Claude Code plugin install path")
         // #357 (deliberate change to the #158 pin): `tccutil reset Calendar com.checheng.CheICalMCP`
-        // fails with -10814 for a bare binary. Step 2 is the status- and attribution-agnostic
-        // remedy, and this text goes to the model, so it carries no reset at all.
-        TCCRemedyAssertions.assertAgnosticRemedy(msg, pane: "Calendar", printTCCPathHint: diagnose)
+        // fails with -10814 for a bare binary. Step 2 is main's existing switch sentence (round 4,
+        // R1), and this text goes to the model, so it carries no reset at all.
+        TCCRemedyAssertions.assertSwitchRemedy(msg, pane: "Calendar")
         XCTAssertTrue(msg.contains(".ics"), "must mention the `.ics` import fallback")
     }
 
@@ -63,8 +62,8 @@ final class AccessDeniedMessageTests: XCTestCase {
         // the tccutil service name until #357).
         let reminders = EventKitManager.accessDeniedMessage(
             type: "Reminders", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
-        TCCRemedyAssertions.assertAgnosticRemedy(reminders, pane: "Reminders")
+            isMCPB: true, deniedByStatus: true, setupHint: hint)
+        TCCRemedyAssertions.assertSwitchRemedy(reminders, pane: "Reminders")
         XCTAssertFalse(reminders.contains("Privacy & Security → Calendar"), reminders)
     }
 
@@ -89,10 +88,9 @@ final class AccessDeniedMessageTests: XCTestCase {
         }
     }
 
-    func testUnknownAuthStateMessage_givesTheAgnosticRemedy() {
+    func testUnknownAuthStateMessage_givesTheSwitchRemedy() {
         let msg = EventKitError.unknownAuthState(type: "Calendar", statusValue: 99).errorDescription ?? ""
-        TCCRemedyAssertions.assertAgnosticRemedy(msg, pane: "Calendar")
-        XCTAssertTrue(msg.contains("' --print-tcc-path on the Mac"), "this binary's command: \(msg)")
+        TCCRemedyAssertions.assertSwitchRemedy(msg, pane: "Calendar")
     }
 
     func testNonInteractiveBranch_saysAnUnlistedEntryIsAddedBySetup() {

@@ -33,7 +33,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | See `troubleshoot-tcc` skill Step 4: find the process macOS checks with `--print-tcc-path`, switch that entry on in System Settings (`tccutil reset` with the bundle id fails with -10814 for this binary, #357) |
+   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings → Privacy & Security (#382; see `troubleshoot-tcc` skill Step 4) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 

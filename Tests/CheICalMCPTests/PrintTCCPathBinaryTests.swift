@@ -76,5 +76,7 @@ final class PrintTCCPathBinaryTests: XCTestCase {
         XCTAssertEqual(shown, BinaryPathResolver.resolveArgv0(binary.path))
         XCTAssertNotEqual(shown, plantedPath)
         XCTAssertFalse(text.contains("'\(plantedPath)' --setup"), "the --setup command must not name the planted file")
+        // #357 round 4 (R4): agents read this output, so it carries no reset of any kind.
+        TCCRemedyAssertions.assertNoReset(text)
     }
 }

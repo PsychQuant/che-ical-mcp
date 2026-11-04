@@ -133,20 +133,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --print-tcc-path"
     }
 
-    static func resolvedPrintTCCPathHint() -> String {
-        printTCCPathHint(binaryPath: RunningBinaryPath.current())
-    }
-
     /// What stands where `tccutil reset <service> com.checheng.CheICalMCP` stood (#357): that
     /// command fails with -10814 for a bare binary (no LaunchServices registration, README
-    /// erratum). The text does not depend on the status or on which process macOS checks —
-    /// `--print-tcc-path` shows that — and carries no reset of any kind, because it reaches the
-    /// model (access-denied, unknown state) and agents read the banner and `--print-tcc-path`.
-    static func agnosticRemedy(pane: String, printTCCPathHint: String) -> String {
-        "run \(printTCCPathHint) on the Mac to see which process macOS checks; in System Settings → "
-            + "Privacy & Security → \(pane) switch that entry on, or off and on (if two CheICalMCP rows are "
-            + "listed, one at a time, re-checking --print-tcc-path); whether the switch clears a "
-            + "code-requirement mismatch is not yet confirmed (#382)"
+    /// erratum). Round 4 (R1): no new remedy prose — this is the sentence main already uses in
+    /// the self-attributed, already-denied access-denied branch, with the pane name, and #382 as
+    /// the pointer to the open device question. No reset of any kind.
+    static func switchOnStep(pane: String) -> String {
+        "switch CheICalMCP on in System Settings → Privacy & Security → \(pane) (#382)"
     }
 
     /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)
@@ -159,8 +152,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var lines = [
             "Re-prompt (run from Terminal, NOT over SSH):",
             "  \(setupCommandHint(binaryPath: binaryPath))",
-            "  If that does not restore access: "
-                + agnosticRemedy(pane: "Calendar / Reminders", printTCCPathHint: printTCCPathHint(binaryPath: binaryPath)),
+            "  If that does not restore access: " + switchOnStep(pane: "Calendar / Reminders"),
         ]
         // #368: a `restricted` status comes from a configuration profile or Screen Time; no
         // prompt appears for it, so nothing in this section can change it.
@@ -209,8 +201,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         deniedByStatus: Bool,
         setupHint: String,
         attribution: ResponsibleHostKind? = nil,
-        restrictedByPolicy: Bool = false,
-        printTCCPathHint: String = "CheICalMCP --print-tcc-path"
+        restrictedByPolicy: Bool = false
     ) -> String {
         if restrictedByPolicy {
             let checked: String
@@ -282,8 +273,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
             `disclaimer` wrapper entirely (see #132): in Claude Code, run \
             `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-            2. Or have a person at the Mac fix the stale/mismatched row: \
-            \(agnosticRemedy(pane: type, printTCCPathHint: printTCCPathHint))
+            2. Or \(switchOnStep(pane: type))
             3. Or, for one-off calendar data, fall back to `.ics` import
             4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
             """
@@ -2792,8 +2782,7 @@ enum EventKitError: LocalizedError {
                 deniedByStatus: deniedByStatus,
                 setupHint: EventKitManager.resolvedSetupCommandHint(),
                 attribution: EventKitManager.currentAttribution(),
-                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type),
-                printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()
+                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type)
             )
         case .insufficientAccess(let type):
             return """
@@ -2807,7 +2796,7 @@ enum EventKitError: LocalizedError {
             return """
             \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
-            2. Or \(EventKitManager.agnosticRemedy(pane: type, printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()))
+            2. Or \(EventKitManager.switchOnStep(pane: type))
             3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .unsupportedEntityType(let rawValue):

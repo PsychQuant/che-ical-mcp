@@ -367,14 +367,9 @@ struct TCCDriftDetector {
                 // copy-paste command only for a recognized service and a clean path.
                 // #357: the agnostic remedy stands where the bundle-id reset stood; no reset.
                 if let pane = settingsPaneName(forService: service) {
-                    let remedy = EventKitManager.agnosticRemedy(
-                        pane: pane, printTCCPathHint: EventKitManager.printTCCPathHint(binaryPath: runningBinaryPath))
-                    if pathHasControlChars(runningBinaryPath) {
-                        // The hint is an escaped description here, never a command.
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation: \(remedy))")
-                    } else {
-                        lines.append("[drift]   → \(remedy)")
-                    }
+                    // #357 round 4 (R1): main's switch sentence; it names no path, so the
+                    // control-char and clean variants are the same line.
+                    lines.append("[drift]   → \(EventKitManager.switchOnStep(pane: pane))")
                 } else {
                     let safeService = EventKitErrorSanitizer.escapeForStderr(service)
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")

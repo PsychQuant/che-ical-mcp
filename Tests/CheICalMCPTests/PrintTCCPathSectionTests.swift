@@ -20,13 +20,12 @@ final class PrintTCCPathSectionTests: XCTestCase {
     }
 
     // #357: the section offers no reset (agents read it); where the bundle-id reset stood is
-    // the agnostic remedy.
-    func testSection_offersNoReset_andGivesTheAgnosticRemedy() {
+    // main's switch sentence (round 4, R1).
+    func testSection_offersNoReset_andGivesTheSwitchRemedy() {
         for status in [EKAuthorizationStatus.notDetermined, .denied, .restricted, .fullAccess, .writeOnly] {
             let s = section(status, status)
             XCTAssertTrue(s.hasPrefix("Re-prompt"), s)
-            TCCRemedyAssertions.assertAgnosticRemedy(s, pane: "Calendar / Reminders",
-                                                     printTCCPathHint: "'\(path)' --print-tcc-path")
+            TCCRemedyAssertions.assertSwitchRemedy(s, pane: "Calendar / Reminders")
         }
     }
 

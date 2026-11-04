@@ -117,9 +117,7 @@ Read the chain like this:
 
 ### Step 4: Fix a stale TCC entry (only if `denied` or post-upgrade silent fail)
 
-Run `"$BINARY" --print-tcc-path` on the Mac to see which process macOS checks; in System Settings → Privacy & Security → Calendar / Reminders switch that entry on, or off and on (if two CheICalMCP rows are listed, one at a time, re-checking `--print-tcc-path`). Whether the switch clears a code-requirement mismatch is not yet confirmed ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
-
-**Last resort**, only on CheICalMCP v1.11.0 or later: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. The user decides and runs it; an agent must not. Show the user the command and its consequence and let them decide.
+Switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
 
 > **Never `tccutil reset <service> com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration** (#357).
 
