@@ -76,6 +76,17 @@ final class UndoRedoClassificationTests: XCTestCase {
         XCTAssertTrue(reminders.contains("1 reminder") && reminders.contains("delete_reminders_batch"), reminders)
     }
 
+    /// #296 item 1: the redo refusal of a mixed batch counted "1 operations" for one member, as the
+    /// other batch texts no longer do (PR #282 round 5). A one-member batch reaches it when its
+    /// member is neither an event delete nor a reminder delete, e.g. a nested batch.
+    func testAMixedBatchRedoRefusalCountsOneOperationInTheSingular() throws {
+        let one = try XCTUnwrap(UndoOperation.batch([.createReminder(id: "REM-1", title: "Pay rent", created: reminder)]).redoInstruction)
+        XCTAssertTrue(one.hasPrefix("Cannot redo this batch of 1 operation:"), one)
+        let two = try XCTUnwrap(UndoOperation.batch([.createReminder(id: "REM-1", title: "Pay rent", created: reminder),
+                                                    .deleteEvent(snapshot: event)]).redoInstruction)
+        XCTAssertTrue(two.hasPrefix("Cannot redo this batch of 2 operations:"), two)
+    }
+
     /// #244 (PR #278): a restored occurrence is a one-off event, deleted again with `delete_event`;
     /// the marker of an occurrence-and-following delete is never undone (its undo discards the
     /// record), so there is nothing to redo. Neither writes on redo.
