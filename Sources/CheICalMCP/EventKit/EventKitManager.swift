@@ -1044,6 +1044,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
             calendar: Calendar.gregorian(in: .current))
         if let dates = datePlan.datesToWrite {
+            // The planned flag goes first (#364 verify round 4, device): timed dates assigned while
+            // the event is still all-day are read as whole days, so 22:00 → 00:00 came back as two
+            // days. The normalized all-day pair reads the same in either state.
+            event.isAllDay = datePlan.isAllDay
             event.startDate = dates.start
             event.endDate = dates.end
         }

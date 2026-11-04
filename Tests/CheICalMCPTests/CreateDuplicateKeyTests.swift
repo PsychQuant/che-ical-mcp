@@ -50,7 +50,8 @@ final class CreateDuplicateKeyTests: XCTestCase {
     func testCreateEventPassesItsAllDayFlagToTheDuplicateCheck() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
-        // Whitespace-insensitive and bounded by the next `func`, so reformatting does not break it.
+        // Whitespace-insensitive and bounded by the next plain `    func` declaration (a later
+        // `static`/`private func` stays inside the slice), so reformatting does not break it.
         let source = try String(contentsOf: url, encoding: .utf8)
         func body(_ name: String) throws -> String {
             let from = try XCTUnwrap(source.range(of: name), name)
@@ -61,5 +62,19 @@ final class CreateDuplicateKeyTests: XCTestCase {
         XCTAssertTrue(try body("func createEvent(")
             .contains("findDuplicateEvent(title:title,startDate:startDate,isAllDay:isAllDay,calendar:calendar)"))
         XCTAssertTrue(try body("private func findDuplicateEvent(").contains("Self.isCreateDuplicate("))
+    }
+
+    /// #364 verify round 4, device check on PR #371: an all-day event turned timed with 22:00 → 00:00
+    /// read back as two whole days, because the timed dates were assigned while the event was still
+    /// all-day. updateEvent must set the planned flag before it writes the planned dates.
+    func testUpdateEventSetsThePlannedFlagBeforeWritingTheDates() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func updateEvent("))
+        let body = String(source[from.upperBound...].prefix(9000)).filter { !$0.isWhitespace }
+        let flag = try XCTUnwrap(body.range(of: "event.isAllDay=datePlan.isAllDay"), "the flag is set from the plan")
+        let dates = try XCTUnwrap(body.range(of: "event.startDate=dates.start"))
+        XCTAssertLessThan(flag.lowerBound, dates.lowerBound, "flag first, then dates")
     }
 }

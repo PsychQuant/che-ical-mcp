@@ -93,8 +93,10 @@ enum AllDayRange {
             hint: datesGiven
                 ? "When changing the date, provide both start_time and end_time."
                 : "Turning an all-day event into a timed one needs start_time and end_time for the timed event.")
-        // A flag-only `all_day: false` writes no dates (#364 verify round 3): writing them while the
-        // event is still all-day is the order that made EventKit read a midnight end as one more day.
+        // A flag-only `all_day: false` writes no dates (#364 verify round 3): it has no new dates to
+        // write, and writing the stored ones back while the event is still all-day is the order in
+        // which EventKit read a midnight end as one more day. A call that brings timed dates still
+        // writes them before the flag; that order predates #364 (see the device check on PR #371).
         return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: datesGiven ? (start, end) : nil)
     }
 
