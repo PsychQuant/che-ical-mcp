@@ -16,9 +16,11 @@ final class ReminderTagsTests: XCTestCase {
         let input = String(repeating: "#a", count: 10_000) + " x"
         let start = Date()
         let result = ReminderTags.extract(from: input)
-        // #417: the linear-time bound judged through HostLoad (a loaded host can starve it).
-        try HostLoad.live.checkWithinBound(Date().timeIntervalSince(start), bound: 1, "Tag extraction of a 20,000-character line")
+        let elapsed = Date().timeIntervalSince(start)
         XCTAssertEqual(result.cleanNotes, input)
         XCTAssertTrue(result.tags.isEmpty)
+        // #417: the linear-time bound judged through HostLoad (a loaded host can starve it). Last:
+        // nothing above depends on it, so a skip here must not keep them from running.
+        try HostLoad.live.checkWithinBound(elapsed, bound: 1, "Tag extraction of a 20,000-character line")
     }
 }

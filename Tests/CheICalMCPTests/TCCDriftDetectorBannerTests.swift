@@ -59,6 +59,8 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         /// had not matched, so the helper had to terminate it. A child that is expected to exit
         /// by itself should leave this false; otherwise a hung child only shows up as slow.
         let timedOut: Bool
+        /// The cap this spawn ran with, so its check names the bound that was used (#417).
+        let maxWait: TimeInterval
         /// True when a stderr or stdout drain wait hit `drainCap`, so the output may be partial
         /// (#417). Judged through `checkSpawnBounds` before the output is read.
         let drainTimedOut: Bool
@@ -69,13 +71,13 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
     /// #417: the spawn's wall-clock limits judged through `HostLoad`, before any assertion on the
     /// child's output (an `XCTSkip` cannot retract a failure recorded earlier, #366 / #418). With
-    /// `exitsBySelf` the child must exit by itself within `maxWait`: on a host loaded past the
-    /// threshold a timeout cannot tell "did not exit" from "too slow", and below it the timeout is
-    /// still a failure. The drain is judged in every case.
-    private func checkSpawnBounds(_ run: SpawnResult, exitsBySelf: Bool = true, maxWait: TimeInterval = 10.0,
+    /// `exitsBySelf` the child must exit by itself within the cap it ran with (`run.maxWait`): on a
+    /// host loaded past the threshold a timeout cannot tell "did not exit" from "too slow", and
+    /// below it the timeout is still a failure. The drain is judged in every case.
+    private func checkSpawnBounds(_ run: SpawnResult, exitsBySelf: Bool = true,
                                   _ what: String, file: StaticString = #filePath, line: UInt = #line) throws {
         if exitsBySelf {
-            try HostLoad.live.checkNotTimedOut(run.timedOut, bound: maxWait, what, file: file, line: line)
+            try HostLoad.live.checkNotTimedOut(run.timedOut, bound: run.maxWait, what, file: file, line: line)
         }
         try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)
     }
@@ -229,8 +231,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             _ = waitDone.wait(timeout: .now() + 1.0)
         }
 
-        // Bound the drain waits too — if EOF still hasn't arrived (extremely unlikely
-        // after explicit pipe-write-end close + SIGKILL), partial output is fine.
+        // Bound the drain waits too. EOF should have arrived by now (the write ends are closed and
+        // the child is gone); a wait that reaches `drainCap` means the output may be partial, and
+        // the result says so (`drainTimedOut`) so `checkSpawnBounds` reports it before the output
+        // is read (#417).
         let stderrDrainTimedOut = drainDone.wait(timeout: .now() + Self.drainCap) == .timedOut
         let stdoutDrainTimedOut = stdoutDrainDone.wait(timeout: .now() + Self.drainCap) == .timedOut
         try? stderrHandle.close()
@@ -245,6 +249,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             terminationStatus: process.terminationStatus,
             untilMatchedAfter: matchedAfter,
             timedOut: timedOut,
+            maxWait: maxWait,
             drainTimedOut: stderrDrainTimedOut || stdoutDrainTimedOut
         )
     }
@@ -309,12 +314,13 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
         let elapsed = Date().timeIntervalSince(start)
 
-        // #417: the capped child is not expected to exit; its drain and the path's duration are
-        // judged first. That the cap fired stays a hard assertion: load can only make it more certain.
-        try checkSpawnBounds(run, exitsBySelf: false, "The capped `sleep 30` spawn")
-        try HostLoad.live.checkWithinBound(elapsed, bound: 3.0, "The cap path (about maxWait plus the SIGTERM)")
+        // That the cap fired stays a hard assertion, made first: load can only make it more
+        // certain, and it reads nothing the child wrote. The capped child is not expected to exit;
+        // the drain and the path's duration are judged after it, through `HostLoad` (#417).
         XCTAssertTrue(run.timedOut, "`sleep 30` ignores stdin EOF, so the 0.3 s cap must end the wait")
         XCTAssertNil(run.untilMatchedAfter)
+        try checkSpawnBounds(run, exitsBySelf: false, "The capped `sleep 30` spawn")
+        try HostLoad.live.checkWithinBound(elapsed, bound: 3.0, "The cap path (about maxWait plus the SIGTERM)")
     }
 
     // MARK: - Tests
@@ -588,7 +594,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // budget if the default changes.
         let run = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
 
-        try checkSpawnBounds(run, maxWait: 10.0, "The server from an arbitrary path (it should exit by itself on stdin EOF after the banner)")   // #417
+        try checkSpawnBounds(run, "The server from an arbitrary path (it should exit by itself on stdin EOF after the banner)")   // #417
         XCTAssertTrue(
             run.stderr.contains("[banner] che-ical-mcp"),
             "Banner should appear even from arbitrary path. Got stderr: \(run.stderr.prefix(200))"

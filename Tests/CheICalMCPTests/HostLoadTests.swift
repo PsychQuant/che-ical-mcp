@@ -143,8 +143,9 @@ final class HostLoadTests: XCTestCase {
     func testTheTimingTestsUseTheHelperAndKeepTheirBounds() throws {
         let tests = try SourceScan.sourcesDirectory().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Tests/CheICalMCPTests")
-        let banner = try String(contentsOf: tests.appendingPathComponent("TCCDriftDetectorBannerTests.swift"), encoding: .utf8)
-        let disclaim = try String(contentsOf: tests.appendingPathComponent("SelfDisclaimBinaryTests.swift"), encoding: .utf8)
+        // Comments stripped, so a commented-out call does not satisfy a pin (PR #422 verify round 1).
+        let banner = SourceScan.strippingComments(try String(contentsOf: tests.appendingPathComponent("TCCDriftDetectorBannerTests.swift"), encoding: .utf8))
+        let disclaim = SourceScan.strippingComments(try String(contentsOf: tests.appendingPathComponent("SelfDisclaimBinaryTests.swift"), encoding: .utf8))
         let bannerTest = try XCTUnwrap(SourceScan.body(of: "func testBannerAppearsInDefaultMCPServerMode() throws {", in: banner))
         XCTAssertTrue(bannerTest.contains("try HostLoad.live.checkWithinBound(\n            arrival, bound: 5.0,"), bannerTest)
         XCTAssertEqual(bannerTest.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
@@ -163,7 +164,9 @@ final class HostLoadTests: XCTestCase {
         XCTAssertLessThan(warmUpCheck.lowerBound, warmUpStatus.lowerBound,
                           "the warm-up's timeout check must come before its exit-status assertion")
         XCTAssertFalse(bannerTest.contains("maxWait:"), "the banner spawns use the default cap")
-        XCTAssertTrue(banner.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
+        // The spawn helper's own default, not any text in the file that looks like it (PR #422 verify round 1).
+        let spawnParameters = try XCTUnwrap(SourceScan.arguments(of: "func spawnAndCaptureStderr(", in: banner))
+        XCTAssertTrue(spawnParameters.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
         XCTAssertFalse(disclaim.contains("XCTAssertFalse(run.timedOut") || disclaim.contains("XCTAssertFalse(host.timedOut"))
         // #417: the seven call sites go through `checkRunBounds` (its two `checkNotTimedOut` calls:
         // the 15 s bound and the drain); `HostLoadWiringTests` pins the call sites and their order.

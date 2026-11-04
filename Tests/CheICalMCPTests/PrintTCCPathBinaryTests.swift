@@ -69,6 +69,10 @@ final class PrintTCCPathBinaryTests: XCTestCase {
         // retract a failure recorded earlier, #366 / #418).
         try HostLoad.live.checkNotTimedOut(timedOut, bound: 20, "--print-tcc-path through PATH (it should exit by itself)")
         try HostLoad.live.checkNotTimedOut(drainTimedOut, bound: 3, "--print-tcc-path through PATH: output drain")
+        // A regression above is recorded without throwing. Stop there, as the test did before #417:
+        // the output is partial, and after a drain timeout `output` may still be written by the
+        // reader (it is not locked), so reading it would race (PR #422 verify round 1).
+        guard !timedOut, !drainTimedOut else { return }
         let text = String(decoding: output, as: UTF8.self)
 
         let lines = text.components(separatedBy: "\n")

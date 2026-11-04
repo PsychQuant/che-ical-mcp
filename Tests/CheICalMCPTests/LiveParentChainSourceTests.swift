@@ -13,6 +13,10 @@ final class LiveParentChainSourceTests: XCTestCase {
     /// host has been seen to take longer, and the test then failed with "ps timed out" (#257).
     /// The 500 ms default stays covered by production code; `testTimeout_...` below targets the
     /// timeout path itself with a short budget, where a slow host can only make it more certain.
+    ///
+    /// A deliberate exception (#417) to routing wall-clock bounds through `HostLoad`: this is a
+    /// budget handed to the production source, not a test's own bound, and a `ps` that overruns it
+    /// says so in `failureReason` ("ps timed out after 10000ms").
     private let generousTimeoutMilliseconds = 10_000
 
     override func tearDown() {
@@ -67,10 +71,11 @@ final class LiveParentChainSourceTests: XCTestCase {
         let script = try makeScript("exec sleep 30")
         let started = Date()
         let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: 200).captureChain(from: 500)
-        // #417: judged through HostLoad (the runner must end the child at the budget, not wait for it).
-        try HostLoad.live.checkWithinBound(Date().timeIntervalSince(started), bound: 10,
-                                           "The 200 ms ps budget ending the child")
+        let elapsed = Date().timeIntervalSince(started)
         XCTAssertTrue(result.hops.isEmpty)
         XCTAssertEqual(result.failureReason, "ps timed out after 200ms")
+        // #417: judged through HostLoad (the runner must end the child at the budget, not wait for
+        // it). Last: the result above is complete either way, so a skip must not keep it unchecked.
+        try HostLoad.live.checkWithinBound(elapsed, bound: 10, "The 200 ms ps budget ending the child")
     }
 }

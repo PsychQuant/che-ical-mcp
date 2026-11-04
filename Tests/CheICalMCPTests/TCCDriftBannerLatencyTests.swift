@@ -111,11 +111,16 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
         XCTAssertTrue(banner.contains("macOS checks a host instead of CheICalMCP"))
     }
 
-    func testBannerBuildMedianIsUnderTheTarget() {
+    /// #417: the target is judged through `HostLoad`, like the suite's other wall-clock upper bounds.
+    func testBannerBuildMedianIsUnderTheTarget() throws {
         let detector = worstCaseDetector()
         let median = BannerLatency.median(runs: 15) { _ = buildBanner(detector) }
-        XCTAssertLessThan(median, latencyTarget,
-                          "median banner build \(median) exceeds the #127 target \(latencyTarget)")
+        try HostLoad.live.checkWithinBound(Self.seconds(median), bound: Self.seconds(latencyTarget),
+                                           "Median banner build (the #127 target)")
+    }
+
+    private static func seconds(_ duration: Duration) -> TimeInterval {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     /// The measurement can see a slow source: one that sleeps past the target per call makes the

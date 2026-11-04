@@ -10,6 +10,16 @@ import XCTest
 ///   `XCTSkip`, with the measurement and the load ("cannot judge");
 /// - over it otherwise, including when the load cannot be read: `XCTFail`, with the load.
 /// The reader is a closure so each branch is tested with injected values (`HostLoadTests`).
+///
+/// Where a check goes in a test (#417). An `XCTSkip` cannot retract a failure recorded before it,
+/// and a skip stops the test, so:
+/// - before every assertion that reads output the bound protects: a child's stdout or stderr, or
+///   anything else that may be incomplete when the bound is exceeded (an overrun there makes that
+///   assertion fail first, and the later skip turns into a failure);
+/// - after assertions whose input is complete either way (the value a pure function returned,
+///   the result a runner returned, whether a cap fired), so a skip cannot keep them from running;
+/// - after cleanup that must run whatever the verdict (closing descriptors, disconnecting), or
+///   that cleanup is registered with `addTeardownBlock` / `defer`, since a skip is a thrown error.
 struct HostLoad {
     struct Snapshot: Equatable {
         /// `getloadavg`'s 1-minute average; nil when it could not be read.

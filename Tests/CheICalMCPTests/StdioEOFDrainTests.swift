@@ -36,8 +36,7 @@ final class StdioEOFDrainTests: XCTestCase {
     /// through `HostLoad` before the output is read: on a host loaded past the threshold a timeout
     /// cannot tell "did not exit" from "too slow"; below it, it is still a failure.
     private func checkRunBounds(_ run: Run, _ what: String, file: StaticString = #filePath, line: UInt = #line) throws {
-        let maxWait = run.maxWait
-        try HostLoad.live.checkNotTimedOut(!run.exitedBySelf, bound: maxWait, "\(what) (the server should exit by itself on stdin EOF)", file: file, line: line)
+        try HostLoad.live.checkNotTimedOut(!run.exitedBySelf, bound: run.maxWait, "\(what) (the server should exit by itself on stdin EOF)", file: file, line: line)
         try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)
     }
 

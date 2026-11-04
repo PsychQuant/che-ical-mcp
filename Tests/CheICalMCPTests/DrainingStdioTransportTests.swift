@@ -61,8 +61,15 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertEqual(pipe(&toClient), 0)
         let inner = StdioTransport(input: FileDescriptor(rawValue: toServer[0]),
                                    output: FileDescriptor(rawValue: toClient[1]))
-        return Pipes(transport: DrainingStdioTransport(inner: inner, drainTimeout: drainTimeout),
-                     clientWrite: toServer[1], serverRead: toClient[0])
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: drainTimeout)
+        let serverRead = toClient[0]
+        // Registered here, not at the end of each test: a timing check throws `XCTSkip` on a loaded
+        // host, and a skip ends the test before any cleanup after it (PR #422 verify round 1).
+        addTeardownBlock {
+            close(serverRead)
+            await transport.disconnect()
+        }
+        return Pipes(transport: transport, clientWrite: toServer[1], serverRead: serverRead)
     }
 
     private func write(_ fd: Int32, _ text: String) {
@@ -92,8 +99,6 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300), "the stream must wait for the reply")
         try checkUnder5Seconds(elapsed, "The stream's end after the reply (not at the timeout)")
-        close(p.serverRead)
-        await p.transport.disconnect()
     }
 
     /// A request that is never answered holds the stream only until the timeout.
@@ -112,19 +117,17 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300))
         try checkUnder5Seconds(elapsed, "The drain cut off at the 300 ms cap")
-        close(p.serverRead)
-        await p.transport.disconnect()
     }
 
     private struct WaitTimedOut: Error {}
 
-    /// Returns as soon as `condition` holds. If it does not within 5 s, the overrun is judged
-    /// through `HostLoad` (#417: a skip on a host loaded past the threshold, otherwise a failure)
-    /// and the test stops (PR #409 verify round 3: it used to return quietly either way).
+    /// Returns as soon as `condition` holds. If it does not within 500 polls 10 ms apart (at least
+    /// 5 s; longer when the sleeps overshoot on a busy host), the overrun is judged through
+    /// `HostLoad` (#417: a skip on a host loaded past the threshold, otherwise a failure) and the
+    /// test stops (PR #409 verify round 3: it used to return quietly either way). The poll count is
+    /// the bound, as before #417; the check reports it as 5 s.
     private func waitUntil(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while clock.now < deadline {
+        for _ in 0..<500 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -132,7 +135,12 @@ final class DrainingStdioTransportTests: XCTestCase {
         throw WaitTimedOut()
     }
 
-    /// #417: the tests' "ended well before the cap" bound, judged through `HostLoad`.
+    /// #417: the tests' "ended well before the cap" bound, judged through `HostLoad`. In several of
+    /// these tests the bound is the only check that tells "ended after the reply / at EOF" from
+    /// "ended at the 10 s / 30 s drain timeout", so on a host loaded past the threshold a real
+    /// drain regression shows up as a skip, not a failure. That is the #417 policy (an overrun
+    /// cannot be judged there) and accepted: below the threshold it still fails, and the skip
+    /// message carries the elapsed time.
     private func checkUnder5Seconds(_ elapsed: Duration, _ what: String,
                                     file: StaticString = #filePath, line: UInt = #line) throws {
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
@@ -259,7 +267,5 @@ final class DrainingStdioTransportTests: XCTestCase {
 
         XCTAssertEqual(messages, 1)
         try checkUnder5Seconds(clock.now - start, "EOF with nothing outstanding (no drain wait)")
-        close(p.serverRead)
-        await p.transport.disconnect()
     }
 }
