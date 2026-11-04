@@ -817,6 +817,23 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(confirmed.aligned, true)
     }
 
+    /// #308 verify round 1: `tool` defaults to `update_reminder`, so update's log lines keep their
+    /// prefix now that `create_reminder` passes its own name.
+    func testConfirmSavedLogsUnderUpdateReminderByDefault() {
+        let reminder = floatingDateOnlyReminder()
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var reloads = 0
+        var logged: [String] = []
+
+        _ = ReminderDateSync.confirmSaved(reminder, report: report,
+                                          save: { throw NSError(domain: "test", code: 1) },
+                                          reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) }; return true },
+                                          rollback: {}, log: { logged.append($0) })
+
+        XCTAssertEqual(logged.count, 2, "the fallback and its failed save")
+        XCTAssertTrue(logged.allSatisfy { $0.hasPrefix("update_reminder: ") }, "\(logged)")
+    }
+
     /// Verify 1: `aligned` is judged on the reminder as read back, not on the in-memory state.
     func testConfirmSavedJudgesAlignmentOnTheReminderAsReadBack() {
         let reminder = divergedReminder()

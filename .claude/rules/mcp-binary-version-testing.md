@@ -171,6 +171,33 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過這三個形狀（含 discard 再 delete 的順序，
     跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）；出版前在重啟後
     的 session MCP 上重做一次。
+12. **還原目標日曆不見了（#269）**：拋棄式日曆（名稱含 `#269`）。session MCP：
+    (a) 在日曆 A 建一次性事件 → `delete_event` → 刪掉日曆 A → `undo`：要以「Cannot undo the deletion of an event
+        (event '…'): the calendar it was in when it was deleted is not available (deleted, or its account turned off or
+        still syncing); it was not found under its recorded identifier.」拒絕，訊息裡**沒有日曆名稱也沒有帳號**（#37、
+        #290），什麼都沒寫、`undo_history` 最上面仍是「Deleted event」，最後一句是「To go on, ask the user whether to give
+        up this undo; if they agree, read undo_history and call undo with discard_id set to its id.」，不點名任何其他工具
+        → `undo` 帶該筆的 `discard_id` 移除它；
+    (b) 日曆 C、D：在 C 建一次性事件 → `move_events_batch` 搬到 D → 刪掉日曆 C → `undo`：「Cannot undo the move of an
+        event (event '…'): the calendar it was moved from is not available …」，事件仍在 D → `discard_id` 移除；
+    (c) 經 stand-in 的整串搬移（第 10 步的 (a)(b)）之後刪掉 A → `undo`：同 (b) 的訊息，系列仍在 B。PR #389 第二輪起
+        move 臂先讀日曆、再做 #236 的檢查，所以這個訊息由 move 臂的 `restoreCalendar` 丟出；`SeriesMoveUndo.decide` 那一處
+        只在兩次讀取之間日曆剛好被刪時才會走到。
+    (d) 對照組（日曆還在）：在拋棄式日曆建一次性事件 → `delete_event` → `undo`：要成功還原（這次讀日曆會先做 Calendar
+        access 檢查，日曆在就不會被判成不見）。
+    (e) update-undo 那一臂：日曆 C、D：在 C 建一次性事件 → `update_event` 帶 `calendar_name` 把它從 C 改到 D → 刪掉日曆 C
+        → `undo`：「Cannot undo the update of an event (event '…'): the calendar it was in before the update is not
+        available …」，事件不變（仍在 D、欄位是更新後的值），`undo_history` 最上面仍是「Updated event」→ `discard_id` 移除。
+    (f) occurrence-delete 那一臂：在日曆 A 建每週 3 次的系列 → `delete_event` span `this` 刪第二個場次 → 刪掉日曆 A →
+        `undo`：「Cannot undo the deletion of an occurrence of an event (event '…'): the calendar it was in when it was
+        deleted is not available …」，什麼都沒寫，紀錄保留 → `discard_id` 移除。
+    若回的仍是「Calendar not found: <identifier>」，就是測試表面還是舊 binary。2026-11-04 已在 iCloud 用 repo 內
+    build 的 binary 做過 (a)(b)(c)（PR #389 第一輪 verify 前的版本，當時的訊息還帶日曆名與帳號）；第一輪修正後的
+    binary 重做了 (a)(b)(d)，訊息只寫事件名、沒有日曆名與帳號，(d) 成功還原（結果見 #269 的 Verify-fix）；(c) 沒有
+    用修正後的 binary 重做。**出版前仍欠**：用修正後的 binary 做 (c)，以及第一次做 (e)(f)。最初那次的細節：(a)(b) 各在一個 stdio process 裡，(c) 的系列建立與刪第一個場次用 `--cli`、搬移與
+    undo 在一個 stdio process 裡；三者都回上面的訊息、`discard_id` 都移除了該筆，跨 process 的 `list_events` 確認事件
+    仍在搬去的日曆。(c) 從訊息分不出是 `decide` 還是 move arm 丟的（兩處同一個訊息）。update-undo 的那一臂沒有在裝置上做。
+    出版前在重啟後的 session MCP 上重做一次。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
 
@@ -202,3 +229,24 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 4. `list_events` 讀回：標題仍是原本的標題、仍在拋棄式日曆，只有 notes 改了。
 
 結果記在 #373 與 #274。結束後刪掉拋棄式日曆。
+
+## Release gate：create_reminder fallback 第二次存檔失敗後的 rollback（#308）
+
+#308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
+掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
+`reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
+`rollback` 有被呼叫；`rollback()` 是否真的丟掉一筆已在 store 的提醒事項上待存的改動，**沒有在
+裝置上看過**——這正是 #274 對 reminder 尚未回答的問題，兩者用同一個探測就能一起回答。
+
+前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
+讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
+的那個版本打 tag 之前**：
+
+1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
+   `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
+   `create_reminder: the saved due date read back without its time or zone` 這行。
+2. 沒有這樣的來源時，這一步不能在裝置上做：在 #274 的 reminder 探測（`update_reminder` 存檔失敗後
+   同一個 session 的下一次寫入）做完之前，把 #308 的 fallback rollback 視為未驗證，release note
+   照 CHANGELOG 的寫法說明，不寫成已確認。
+
+結果記在 #308 與 #274。結束後刪掉拋棄式清單。
