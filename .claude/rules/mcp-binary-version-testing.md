@@ -250,3 +250,17 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    照 CHANGELOG 的寫法說明，不寫成已確認。
 
 結果記在 #308 與 #274。結束後刪掉拋棄式清單。
+
+## Release gate：首場被刪除的系列，經 stand-in 的 delete / update 之 undo（#335）
+
+#335 的 items 3、4 只在單一 stdio process 驗過（2026-11-01 與 2026-11-05，iCloud）。**下一個 tag 之前**，
+在重啟後的 session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#335` 的拋棄式日曆，系列的建立與
+刪第一個場次都用 `--cli` 做（不進 session 的 undo stack）：
+
+1. 每週 5 次的系列 → `--cli` 刪第一個場次（span `this`）→ session：`delete_event` 用 bare id、span `future`、
+   `occurrence_date` 為 stand-in 的日期 → `undo`：新 id、同一行事曆、剩下的 4 個日期都回來，不多一個；
+2. 同上，改用 span `all`；
+3. 同上的系列 → session：`update_event` span `this` 改一個較晚場次的標題 → `undo`：以「Undo does not restore
+   updates that touched a recurring event」拒絕，紀錄被丟棄，什麼都沒寫。
+
+整串搬移（item 2）的 undo 見上方第 10 步（#369）。結果記在 #335。結束後刪掉拋棄式日曆。
