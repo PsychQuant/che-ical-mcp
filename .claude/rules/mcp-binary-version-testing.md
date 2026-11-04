@@ -129,9 +129,12 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     不要在 session MCP 上做，讓 session 的 undo stack 只有下面兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
     (a) `--cli`：在 A 建每週 5 次的系列 → `--cli`：`delete_event` span `this` 刪第一個場次；
     (b) session MCP：在 A 建一筆一次性事件 → `move_events_batch` 用系列的 bare id、span `all` 搬到 B
-        （`in_place`、id 不變、B 有 4 個場次）。此時 `undo_history` 只有兩筆，由上而下是
-        「Moved event」、「Created event: <一次性事件>」；
+        （`in_place`、id 不變、B 有 4 個場次）。此時 `undo_history` 最上面兩筆由上而下是
+        「Moved event」、「Created event: <一次性事件>」；同一個 session 先做過第 1–9 步時，
+        它們下面還有那些步驟留下的紀錄，這是預期的；
     (c) `undo`：4 個場次回到 A、id 不變 → `undo`：刪掉那筆一次性事件（堆疊沒被卡住）。
+    (d) 已經在 Calendar.app 搬回去的情況：重做 (a)(b)，undo 之前先在 Calendar.app 把整個系列搬回 A →
+        `undo` 要被接受，而且什麼都沒改：所有場次仍在 A、id 不變。
     再做一次 edited-before 形狀：(a) 之後用 `--cli` 的 `update_event` span `this` 單獨改第一個剩下的場次，
     再做 (b)(c)，4 個場次（含被改過的）都回到 A。
     **系列的 create-undo 仍會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，
