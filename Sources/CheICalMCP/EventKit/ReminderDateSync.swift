@@ -279,15 +279,21 @@ enum ReminderDateSync {
     ///   the fallback's second read) is not aligned. Without this, `isAligned` returned nil for
     ///   it and the response left `aligned` out, as if the update had cleared the due. The timed
     ///   first read still runs the fallback, which treats a missing due as one that lost its time.
-    /// - `create_reminder` (#301) calls this too for a date-only create, with a no-op `save` and
-    ///   `rollback` (a date-only write never runs the fallback). A create whose save threw but
-    ///   committed may not re-read; it then reports `aligned: false` ("not confirmed").
+    /// - `create_reminder` calls this too, through `ReminderCreateWrite.readBack`, for a date-only
+    ///   create (#301) and a timed one (#308), with the store's real `save` and `rollback` (a
+    ///   date-only write never runs the fallback; a timed one can save the new reminder twice).
+    ///   `tool` names the caller in the log lines. A create whose save threw but committed may
+    ///   not re-read; it then reports `aligned: false` ("not confirmed"). A create whose first
+    ///   save threw and whose store holds fields differently passes `fallback: false`: a timed due
+    ///   that read back without its time or zone is then not written again (`aligned: false`), since
+    ///   saving again an object whose first save threw is the #261 hazard.
     ///
     /// What this cannot see is anything EventKit does not return. The duplicate alarm rows that
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
     /// only one of them, so a reminder in that state reads as aligned here as well.
     static func confirmSaved(_ reminder: EKReminder, report: Report, save: () throws -> Void,
-                             reload: () -> Bool, rollback: () -> Void,
+                             reload: () -> Bool, rollback: () -> Void, tool: String = "update_reminder",
+                             fallback: Bool = true,
                              log: (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) -> Report {
         guard let written = report.writtenDue else { return report }
         var confirmed = report
@@ -305,13 +311,19 @@ enum ReminderDateSync {
             return confirmed
         }
         if requestedTime && dueLostTimeOrZone(reminder.dueDateComponents) {
-            log("update_reminder: the saved due date read back without its time or zone; writing it around the start date and saving again\n")
+            // #308 verify round 1: `fallback: false` writes nothing and judges the read-back as it is.
+            guard fallback else {
+                log("\(tool): the saved due date read back without its time or zone; not written again, since the first save reported an error\n")
+                confirmed.aligned = false
+                return confirmed
+            }
+            log("\(tool): the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
             do {
                 try save()
             } catch {
                 rollback()
-                log("update_reminder: saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
+                log("\(tool): saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
             }
             guard reload(), reminder.dueDateComponents != nil else {
                 confirmed.aligned = false

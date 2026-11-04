@@ -239,6 +239,42 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #386: the four event read tools name `item_timezone` (the event's own zone, null when
+    /// floating) and say what `timezone` is, in defineTools() and in the manifest; the
+    /// `detail_level` summary list and the `fields` list name the field too.
+    func testEventReadToolsDescribeItemTimezone() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let tools = CheICalMCPServer.defineTools()
+        for name in ["list_events", "search_events", "list_events_quick", "check_conflicts"] {
+            let tool = tools.first { $0.name == name }
+            let declared = tool?.description ?? ""
+            XCTAssertTrue(declared.contains("item_timezone (the event's own time zone; null when floating, all-day events included)"), "defineTools() \(name): \(declared)")
+            XCTAssertTrue(declared.contains("timezone is the event's time zone, or the host time zone when the event is floating"), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("item_timezone (the event's own time zone, null when floating)"), "mcpb/manifest.json \(name): \(summary)")
+            guard name != "check_conflicts" else { continue }
+            let schema = "\(String(describing: tool?.inputSchema))"
+            XCTAssertTrue(schema.contains("end_date_local, timezone, item_timezone, is_all_day, calendar — plus location when set"), "detail_level of \(name)")
+            XCTAssertTrue(schema.contains("Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day,"), "fields of \(name)")
+        }
+    }
+
+    /// #383 verify: update_event's occurrence_date says which zone it is read in, for both forms,
+    /// and the floating case; the description of the tool names occurrence_start; the manifest too.
+    func testUpdateEventDescribesTheOccurrenceDateZone() throws {
+        let tool = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
+        let schema = "\(String(describing: tool?.inputSchema))"
+        XCTAssertTrue(schema.contains("Without an offset it is read in the event's current time zone, not in timezone (the zone the event gets); with an offset it is used as given, and its day is taken in the event's current time zone too. A floating or all-day series uses this Mac's time zone."), schema)
+        XCTAssertTrue((tool?.description ?? "").contains("adds occurrence_start, the start of the occurrence occurrence_date matched"), tool?.description ?? "")
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let summary = entries.first { $0["name"] as? String == "update_event" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("occurrence_start for the occurrence occurrence_date matched"), summary)
+    }
+
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
     /// removes absolute-date alarms; both places a client reads about the three writers say so.
     func testReminderWritersDescribeTheBareDateForm() throws {
@@ -435,6 +471,49 @@ final class ManifestParityTests: XCTestCase {
         }
         for entry in entries {
             XCTAssertFalse((entry["description"] as? String ?? "").contains(backwards), "mcpb/manifest.json \(entry["name"] ?? "")")
+        }
+    }
+
+    /// #391 (PR #394 verify round 1): every parameter that names an occurrence by date says that it
+    /// is the day the occurrence starts on, and what a date or time inside an overnight occurrence
+    /// does. `update_event`'s keeps #392's zone wording too (`testUpdateEventDescribesTheOccurrenceDateZone`).
+    func testOccurrenceDateParametersNameTheStartDay() throws {
+        func descriptions(of key: String, in value: Value) -> [String] {
+            guard let object = value.objectValue else {
+                return value.arrayValue?.flatMap { descriptions(of: key, in: $0) } ?? []
+            }
+            var found: [String] = []
+            if let property = object["properties"]?.objectValue?[key]?.objectValue?["description"]?.stringValue { found.append(property) }
+            for (_, child) in object { found += descriptions(of: key, in: child) }
+            return found
+        }
+        let tools = CheICalMCPServer.defineTools()
+        let cases: [(tool: String, key: String, count: Int)] = [
+            ("update_event", "occurrence_date", 1),
+            ("delete_event", "occurrence_date", 1),
+            ("move_events_batch", "occurrence_dates", 1),
+            ("create_event", "excluded_occurrence_dates", 1),
+            ("create_events_batch", "excluded_occurrence_dates", 1),
+        ]
+        for (name, key, count) in cases {
+            let schema = try XCTUnwrap(tools.first { $0.name == name }?.inputSchema, name)
+            let found = Array(Set(descriptions(of: key, in: schema)))
+            XCTAssertEqual(found.count, count, "\(name).\(key): \(found)")
+            for text in found {
+                XCTAssertTrue(text.contains("the day the occurrence starts on"), "\(name).\(key): \(text)")
+                XCTAssertTrue(text.contains("runs past midnight"), "\(name).\(key): \(text)")
+            }
+        }
+        for key in ["occurrence_date", "occurrence_dates"] {
+            for text in [("update_event", key), ("delete_event", key), ("move_events_batch", key)].flatMap({ pair in
+                descriptions(of: pair.1, in: tools.first { $0.name == pair.0 }!.inputSchema) }) {
+                XCTAssertTrue(text.contains("selects the occurrence starting on that following day"), text)
+            }
+        }
+        for name in ["create_event", "create_events_batch"] {
+            for text in descriptions(of: "excluded_occurrence_dates", in: tools.first { $0.name == name }!.inputSchema) {
+                XCTAssertTrue(text.contains("rolled back"), "\(name): \(text)")
+            }
         }
     }
 }

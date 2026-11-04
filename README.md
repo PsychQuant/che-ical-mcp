@@ -91,7 +91,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_reminders` | List reminders with filter/sort/limit, tags extraction (v1.0.0) |
-| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267), and the response then carries `date_sync` with `aligned` judged on the saved reminder (#301). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
+| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267); with a due date, bare or timed, the response carries `date_sync` with `aligned` judged on the saved reminder (#301, #308; a timed due that lost its time zone on save is written again and saved a second time, as `update_reminder` does). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `update_reminder` | Update a reminder (including tags, `clear_due_date`) (v1.3.0) |
 | `complete_reminder` | Mark as completed/incomplete |
 | `delete_reminder` | Delete a reminder |
@@ -316,7 +316,10 @@ Set the display timezone for individual events — essential for multi-timezone 
 
 - **`timezone`** parameter accepts IANA identifiers (e.g., `Europe/Berlin`, `America/New_York`, `Asia/Taipei`)
 - When `timezone` is provided, naive datetimes (without offset) are interpreted in that timezone
+  - except `update_event`'s `occurrence_date`, which names an occurrence of the event as it is now: without an offset it is read in the event's current time zone, as on `delete_event` and `move_events_batch` (#383, #270)
+  - with an offset it is used as given, and its day is taken in the event's current time zone; the response's `occurrence_start` gives the start of the occurrence it matched
 - Event output includes the event's own timezone in `timezone` field and formats `start_date_local`/`end_date_local` accordingly
+- Event output also reports `item_timezone` (#386): the event's own time zone identifier (usually IANA), or `null` when the event stores no time zone (a floating event; all-day events are floating). `timezone` falls back to the host time zone for those, so `item_timezone` is what tells them apart from an event stored in the host zone. With `display_timezone`, the `*_local` strings are in that zone; neither field changes
 - Available on `create_event`, `update_event`, and `create_events_batch`
 - Undo/redo preserves per-event timezone
 
