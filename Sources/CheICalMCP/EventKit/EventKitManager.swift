@@ -1164,11 +1164,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `move_events_batch`: the zone of the event the write will resolve (nil if not found or no
     /// zone set). Access is ensured first (#270): before access was ever granted the lookup finds
     /// nothing and the date would be read in the server zone. A denial surfaces from the write
-    /// itself, so it is not reported here. A reminder's id gives nil here and not found from the
-    /// write (#260).
+    /// itself, so it is not reported here. The event is resolved the way the write resolves it,
+    /// refreshed (#271): a stored object can keep its old zone after an edit made elsewhere. No
+    /// edited-before refusal, since only the zone is needed; the write applies its own. A
+    /// reminder's id gives nil here and not found from the write (#260).
     func occurrenceDateTimeZone(identifier: String) async -> TimeZone? {
         try? await ensureCalendarAccess()
-        return storedEvent(id: identifier)?.timeZone
+        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event.timeZone
     }
 
     /// Find a specific occurrence of a recurring event on a given date.

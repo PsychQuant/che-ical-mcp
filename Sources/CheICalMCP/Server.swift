@@ -1485,7 +1485,7 @@ class CheICalMCPServer {
         }
 
         // Use the event's own timezone for occurrence_date parsing to match findOccurrence's day
-        // boundary; read after access is ensured (#270).
+        // boundary; read after access is ensured and from the refreshed event (#270, #271).
         let eventTz = await eventKitManager.occurrenceDateTimeZone(identifier: eventId)
         let spanStr = arguments["span"]?.stringValue ?? "this"
         let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: eventTz) }

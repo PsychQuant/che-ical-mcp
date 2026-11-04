@@ -29,7 +29,8 @@ extension EventKitManager: EventCopySource {
         return EventCopyValue(eventIdentifier: event.eventIdentifier, title: event.title)
     }
     func eventTimeZone(identifier: String) async -> TimeZone? {
-        // The same lookup as delete_event (#270): access ensured first (verify round 2 #2).
+        // The same lookup as delete_event (#270): access ensured first (verify round 2 #2), then
+        // the refreshed event (#271).
         await occurrenceDateTimeZone(identifier: identifier)
     }
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
