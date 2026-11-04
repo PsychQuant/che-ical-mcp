@@ -12,9 +12,12 @@ import XCTest
 /// sources' subprocess cost (sqlite3, ps) is a different budget and stays with the spawn tripwire.
 ///
 /// `formatBanner` alone runs in microseconds, so timing it alone would catch nothing; the fixture
-/// below drives every branch of `detect()` and every banner section instead (asserted in
-/// `testWorstCaseFixtureExercisesEverySection`, so a short-circuit cannot make the timing pass
-/// trivially).
+/// below makes `detect()` emit four signal kinds (TCC path mismatch and code-requirement mismatch
+/// for both services, stale processes past the PID list limit, host attribution of an ungranted
+/// host) and `formatBanner` print their lines (asserted in
+/// `testWorstCaseFixtureReachesFourSignalKindsAndTheirLines`, so a short-circuit cannot make the
+/// timing pass trivially). Not reached: the restricted-host signal, skip reasons and the
+/// Calendar-not-granted line (a host signal suppresses it).
 ///
 /// Measured on an M5 Max (2026-11-04, Debug build; the median test run 20 times while a full
 /// `TZ=UTC swift test` ran beside it): the median of the 15 timed runs was 0.087–0.112 ms. 200 ms
@@ -47,8 +50,12 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
             }
         }
         let cutoff = TCCDriftFixtures.lstartDate("Mon May 11 22:36:52 2026")
-        let stale: [RunningProcess] = (0..<40).map { i in
-            TCCDriftFixtures.process(pid: Int32(80_000 + i), startedAt: cutoff.addingTimeInterval(-Double(i + 1) * 60))
+        // `detect()` drops the test process's own PID, so the 40 PIDs skip it: otherwise one could
+        // equal it and the "(+ 35 more)" count would be off by one (PR #389 round 2).
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let pids = Array((Int32(80_000)..<Int32(80_041)).filter { $0 != ownPID }.prefix(40))
+        let stale: [RunningProcess] = pids.enumerated().map { i, pid in
+            TCCDriftFixtures.process(pid: pid, startedAt: cutoff.addingTimeInterval(-Double(i + 1) * 60))
         }
         return TCCDriftDetector(
             tcc: tcc ?? FakeTCCDatabaseSource(entries: entries),
@@ -80,7 +87,7 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
 
     // MARK: - Tests
 
-    func testWorstCaseFixtureExercisesEverySection() {
+    func testWorstCaseFixtureReachesFourSignalKindsAndTheirLines() {
         let detector = worstCaseDetector()
         let report = detector.detect()
         var kinds: Set<String> = []
@@ -99,6 +106,7 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
         let banner = buildBanner(detector)
         XCTAssertTrue(banner.contains("entry path mismatch"))
         XCTAssertTrue(banner.contains("pins a code requirement"))
+        XCTAssertTrue(banner.contains("[drift] 40 stale CheICalMCP processes running"), banner)
         XCTAssertTrue(banner.contains("(+ 35 more)"), "more stale PIDs than the list limit")
         XCTAssertTrue(banner.contains("macOS checks a host instead of CheICalMCP"))
     }
