@@ -496,7 +496,8 @@ final class NewObjectSaveTests: XCTestCase {
     ///   since #277 (`let r = try await applyReminderSnapshot(…, into: { EKReminder(eventStore: s) })`),
     ///   so the reminder is created after the lists are read;
     /// - built inline as the argument of `saveNewReminder`.
-    /// Each local is then saved through `saveNewReminder` once and never with a bare `.save`.
+    /// Each local is then saved through `saveNewReminder` once and never with a bare `.save`, except
+    /// the #237 fallback of `create_reminder`'s read-back (#308), which saves it again afterwards.
     func testEveryNewReminderIsSavedThroughSaveNewReminder() throws {
         let code = try code()
         let build = #"EKReminder(?:\.init)? ?\( ?eventStore: ?\w+ ?\)"#
@@ -510,8 +511,22 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(direct.count + viaClosure.count, 2, "createReminder and the delete-undo recreate")
         for construction in direct + viaClosure {
             let name = construction.groups[1]
-            let body = segment(of: code, at: construction.start)
+            var body = segment(of: code, at: construction.start)
             XCTAssertEqual(try matches(#"try saveNewReminder\( ?\#(name) ?,"#, in: body).count, 1, body)
+            // #308: the one bare save allowed is the read-back's #237 fallback in `createReminder`.
+            // It runs after `saveNewReminder` returned, so on a reminder the store has taken in. That
+            // is a second save of an existing object only when the first save returned: after a
+            // save that threw but was found (#261), `readBack` is handed `storeDiffers` and skips the
+            // fallback when it is non-empty; one that threw and was found as written returns the
+            // same empty list as a save that returned, so the two cannot be told apart here. It must
+            // come after `saveNewReminder` and be passed `storeDiffers`, and is taken out before the
+            // count.
+            let fallback = #"ReminderCreateWrite\.readBack\( ?\#(name) ?, ?report: ?\w+ ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try \w+\.save\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#
+            if let range = body.range(of: fallback, options: .regularExpression) {
+                let first = try XCTUnwrap(body.range(of: #"try saveNewReminder\( ?\#(name) ?,"#, options: .regularExpression))
+                XCTAssertLessThan(first.lowerBound, range.lowerBound, "the fallback saves only after saveNewReminder")
+                body.removeSubrange(range)
+            }
             XCTAssertEqual(try matches(#"\.save\( ?\#(name) ?,"#, in: body).count, 0, body)
         }
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
@@ -528,10 +543,11 @@ final class NewObjectSaveTests: XCTestCase {
         // create_reminder marks the store for a refresh, builds the result and records the undo
         // entry; delete-undo marks the refresh and reports the restore (its record is consumed).
         // The names of fields the store holds differently travel with the success: into the
-        // create's result, and onto the undo message. #301: a date-only create is read back in
-        // between (`confirmSaved`, which does not throw), and its report rides with the result.
+        // create's result, and onto the undo message. #301 / #308: a dated create is read back in
+        // between (`ReminderCreateWrite.readBack`, which does not throw; a timed one may save again
+        // through the #237 fallback), and its report rides with the result.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?var dateSync: ?ReminderDateSync\.Report\? ?if let dayReport ?\{ ?dateSync = ReminderDateSync\.confirmSaved\( ?reminder ?, ?report: ?dayReport ?, ?save: ?\{ ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?\} ?\) ?\} ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
