@@ -128,6 +128,7 @@ final class AccessDeniedMessageTests: XCTestCase {
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("SSH session detected"))
         XCTAssertTrue(msg.contains("Full Disk Access"))
+        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "verify LOW (#362): warning on every sshd step")
     }
 
     func testSSHNonInteractiveBranch_unchanged() {
@@ -135,6 +136,7 @@ final class AccessDeniedMessageTests: XCTestCase {
             type: "Calendar", isSSH: true, isNonInteractive: true,
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("SSH + non-interactive session detected"))
+        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "verify LOW (#362): warning on every sshd step")
     }
 
     func testNonInteractiveBranch_usesInjectedHint() {
@@ -276,11 +278,19 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertFalse(msg.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
     }
 
-    func testAttribution_doesNotOverrideTheSSHBranch() {
-        let msg = EventKitManager.accessDeniedMessage(
+    /// #362: the attribution decides the SSH text, and the SSH context is still named. A
+    /// self-attributed ssh denial no longer gets the pre-#343 SSH text.
+    func testSSHText_followsTheAttribution_andStillNamesTheSSHContext() {
+        let selfMsg = EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: true, isNonInteractive: false,
             isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: .selfBinary)
-        XCTAssertTrue(msg.contains("SSH session detected"))
+        XCTAssertTrue(selfMsg.contains("SSH session detected"), selfMsg)
+        XCTAssertTrue(selfMsg.contains("CheICalMCP's own grant"), selfMsg)
+        XCTAssertFalse(selfMsg.contains("does not carry privacy permissions to SSH sessions"), selfMsg)
+        let hostMsg = EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: true, isNonInteractive: false, isMCPB: false,
+            deniedByStatus: false, setupHint: hint, attribution: .appBundle(name: "Visual Studio Code"))
+        XCTAssertNotEqual(selfMsg, hostMsg)
     }
 
     // MARK: - #362: the SSH text follows the attribution
@@ -313,8 +323,9 @@ final class AccessDeniedMessageTests: XCTestCase {
     func testSSH_selfAttribution_keepsTheSshdStepOnlyAsALastResort() {
         let msg = ssh(.selfBinary)
         XCTAssertTrue(msg.contains("Full Disk Access"), msg)
-        XCTAssertTrue(msg.contains("still denied"), msg)
-        XCTAssertTrue(msg.contains("broad file access"), "the existing warning stays: \(msg)")
+        XCTAssertTrue(msg.contains("still refused"), msg)
+        XCTAssertTrue(msg.contains("untested"), "say the step is untested for this attribution: \(msg)")
+        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "the existing warning stays: \(msg)")
     }
 
     func testSSH_selfAttributionAlreadyDenied_offersTheSwitch() {
@@ -323,17 +334,38 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(msg.contains("switch CheICalMCP on"), msg)
     }
 
-    /// A host keeps its attribution over ssh (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed re-exec):
-    /// the host steps stay as they were.
-    func testSSH_hostOrUnknownAttribution_keepsTheHostSteps() {
-        let hosts: [ResponsibleHostKind?] = [nil, .claudeCode(version: "2.1.309"),
-                                             .appBundle(name: "Visual Studio Code"), .otherExecutable(path: "/usr/sbin/sshd"), .unknown]
+    /// #362 verify: a host keeps its attribution over ssh (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed
+    /// re-exec), where a local `--setup` grant is not the one macOS checks. The text leads with
+    /// sshd's Full Disk Access, with its warning, and says when a local `--setup` applies.
+    func testSSH_hostAttribution_leadsWithSshdFullDiskAccess() {
+        let hosts: [ResponsibleHostKind] = [.claudeCode(version: "2.1.309"),
+                                            .appBundle(name: "Visual Studio Code"),
+                                            .otherExecutable(path: "/usr/sbin/sshd"), .unknown]
         for host in hosts {
-            let msg = ssh(host)
-            XCTAssertTrue(msg.contains("SSH session detected"), msg)
-            XCTAssertTrue(msg.contains("Full Disk Access"), msg)
-            XCTAssertFalse(msg.contains("CheICalMCP's own grant"), msg)
-            XCTAssertTrue(ssh(host, nonInteractive: true).contains("SSH + non-interactive session detected"))
+            for nonInteractive in [false, true] {
+                let msg = ssh(host, nonInteractive: nonInteractive)
+                XCTAssertTrue(msg.contains(nonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"), msg)
+                XCTAssertTrue(msg.contains("1. Grant Full Disk Access to /usr/sbin/sshd"), msg)
+                XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
+                XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"), msg)
+                XCTAssertTrue(msg.contains("only when this ssh process re-executes onto CheICalMCP"), msg)
+                XCTAssertFalse(msg.contains("Run CheICalMCP once LOCALLY first"), msg)
+                XCTAssertFalse(msg.contains("/usr/sbin/sshd/"), "a host path is not echoed: \(msg)")
+            }
+        }
+    }
+
+    /// #362 verify: with the kernel lookup unavailable, it is unknown which grant macOS checks,
+    /// so the text gives both cases.
+    func testSSH_unknownAttribution_givesBothCases() {
+        for nonInteractive in [false, true] {
+            let msg = ssh(nil, nonInteractive: nonInteractive)
+            XCTAssertTrue(msg.contains("SSH"), msg)
+            XCTAssertTrue(msg.contains("If this ssh process re-executed onto CheICalMCP"), msg)
+            XCTAssertTrue(msg.contains(hint), msg)
+            XCTAssertTrue(msg.contains("If it kept the ssh context's attribution"), msg)
+            XCTAssertTrue(msg.contains("Full Disk Access to /usr/sbin/sshd"), msg)
+            XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
         }
     }
 

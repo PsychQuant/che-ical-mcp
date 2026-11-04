@@ -78,10 +78,17 @@ final class SetupCommandTests: XCTestCase {
         let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isNonInteractive: false)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SSH"), "SSH error should mention SSH")
-        // #362: errorDescription reads the live attribution. When the test runner is its own
-        // responsible process the SSH text names CheICalMCP's grant and its local `--setup`
-        // (AccessDeniedMessageTests pins each attribution); every variant keeps the sshd step.
-        XCTAssertTrue(message.contains("Full Disk Access"), "every SSH variant keeps the sshd step")
+        // #362: errorDescription reads the live attribution, so the expectation does too
+        // (AccessDeniedMessageTests pins each attribution with an injected value).
+        switch EventKitManager.currentAttribution() {
+        case .selfBinary?:
+            XCTAssertTrue(message.contains("CheICalMCP's own grant"), message)
+            XCTAssertTrue(message.contains("--setup"), "self-attributed: the local --setup: \(message)")
+        case nil:
+            XCTAssertTrue(message.contains("If this ssh process re-executed onto CheICalMCP"), message)
+        case _?:
+            XCTAssertTrue(message.contains("1. Grant Full Disk Access to /usr/sbin/sshd"), message)
+        }
     }
 
     func testAccessDeniedSSHAndLaunchdMessage() {
@@ -150,7 +157,8 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(hint.contains("--setup"))
     }
 
-    /// The resolved hint reads argv[0] (the xctest runner here) and still ends in `--setup`.
+    /// The resolved hint reads the running binary's path from the kernel (`RunningBinaryPath`,
+    /// #360; the xctest runner here) and still ends in `--setup`.
     func testResolvedSetupCommandHint_containsSetupFlag() {
         let hint = EventKitManager.resolvedSetupCommandHint()
         XCTAssertTrue(hint.contains("--setup"), "resolved hint must contain the --setup flag")

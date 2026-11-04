@@ -192,8 +192,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// path-derived static that a test cannot flip). `deniedByStatus` selects the #154 dead-end
     /// variant that must NOT lead with `--setup`, because a bare `--setup` cannot re-prompt a
     /// status that is already `.denied` (the status-first check only requests on `.notDetermined`). (#158)
-    /// `attribution` is the kind of process macOS checks (#343); it only shapes the generic
-    /// branch, and `nil` means the kernel lookup was unavailable. `restrictedByPolicy` is a
+    /// `attribution` is the kind of process macOS checks (#343); it shapes the SSH branch
+    /// (#362, `sshMessage`) and the generic branch, and `nil` means the kernel lookup was
+    /// unavailable. `restrictedByPolicy` is a
     /// `.restricted` status (a configuration profile or Screen Time), which no prompt, switch
     /// or `--setup` can change, so it takes precedence over every other branch. It names the
     /// process macOS checks, because a restricted host keeps its attribution (#367).
@@ -222,37 +223,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             \(type) access for \(checked).
             """
         }
-        // #362: under the status-aware rule (#343) an ssh context without full access re-execs,
-        // so macOS checks CheICalMCP's own grant there; the pre-#343 text below only fits a
-        // host that keeps its attribution (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed re-exec).
-        if isSSH, case .selfBinary? = attribution {
-            return sshSelfAttributedMessage(
-                type: type, isNonInteractive: isNonInteractive, deniedByStatus: deniedByStatus,
-                setupHint: setupHint)
-        }
-        if isSSH && isNonInteractive {
-            return """
-            \(type) access denied (SSH + non-interactive session detected). \
-            macOS TCC does not carry privacy permissions to SSH sessions, \
-            and permission dialogs cannot appear in non-interactive environments. Workarounds:
-            1. Run 'CheICalMCP --setup' once from Terminal on the target Mac (not over SSH)
-            2. Or manually add CheICalMCP in: \
-            System Settings → Privacy & Security → \(type)
-            3. Or grant Full Disk Access to /usr/sbin/sshd: \
-            System Settings → Privacy & Security → Full Disk Access → add sshd
-            4. After any step, restart both the SSH session and the non-interactive job \
-            (launchd service, CI runner, etc.)
-            """
-        }
+        // #362: the SSH text follows the process macOS checks. Under the status-aware rule
+        // (#343) an ssh context without full access re-execs onto CheICalMCP's own grant; a
+        // host keeps its attribution only with `CHE_ICAL_MCP_NO_DISCLAIM` or a failed re-exec.
         if isSSH {
-            return """
-            \(type) access denied (SSH session detected). \
-            macOS TCC does not carry privacy permissions to SSH sessions. Workarounds:
-            1. Run CheICalMCP once LOCALLY first to trigger the TCC permission dialog
-            2. Or grant Full Disk Access to /usr/sbin/sshd: \
-            System Settings → Privacy & Security → Full Disk Access → add sshd
-            3. After either step, restart the SSH session
-            """
+            return sshMessage(
+                type: type, isNonInteractive: isNonInteractive, deniedByStatus: deniedByStatus,
+                setupHint: setupHint, attribution: attribution)
         }
         if isNonInteractive {
             return """
@@ -370,32 +347,70 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// The SSH denial when macOS checks CheICalMCP's own grant (#362). The dialog cannot appear
-    /// over ssh, so the grant is created on the Mac itself. Whether sshd's Full Disk Access is
-    /// still needed once that grant exists was not measured (no ssh login was available in the
-    /// #362 run), so that step stays, last and with its warning.
-    static func sshSelfAttributedMessage(
-        type: String, isNonInteractive: Bool, deniedByStatus: Bool, setupHint: String
+    /// The sshd Full Disk Access step, with its warning (#362 verify: every SSH text that
+    /// offers it carries the warning).
+    private static let sshdFullDiskAccessStep =
+        "Grant Full Disk Access to /usr/sbin/sshd: System Settings → Privacy & Security → Full Disk Access → add sshd "
+        + "(this gives sshd broad file access; only on a Mac you fully control)"
+
+    /// The SSH access-denied message (#362), by the process macOS checks:
+    /// - `.selfBinary`: the ssh process re-executed onto CheICalMCP's own grant. The dialog
+    ///   cannot appear over ssh, so the grant is created on the Mac itself. Whether sshd's Full
+    ///   Disk Access is still needed once that grant exists is untested (no ssh login was
+    ///   available in the #362 run), so that step stays last, for access still refused.
+    /// - a host: the ssh process kept its own attribution (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed
+    ///   re-exec), so a local `--setup` grant is not the one macOS checks; sshd's Full Disk
+    ///   Access comes first.
+    /// - `nil`: the kernel lookup is unavailable, so both cases are given.
+    static func sshMessage(
+        type: String, isNonInteractive: Bool, deniedByStatus: Bool, setupHint: String,
+        attribution: ResponsibleHostKind?
     ) -> String {
         let context = isNonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"
+        let noDialog = isNonInteractive
+            ? "Permission dialogs cannot appear over SSH or in non-interactive environments."
+            : "The permission dialog cannot appear over SSH."
         let restart = isNonInteractive
             ? "restart both the SSH session and the non-interactive job (launchd service, CI runner, etc.)"
             : "restart the SSH session"
-        let first = deniedByStatus
-            ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
-                + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
-            : "On the Mac itself (Terminal.app, not over SSH: the permission dialog cannot appear over SSH), "
-                + "run this binary's setup once: \(setupHint) — or switch CheICalMCP on in "
-                + "System Settings → Privacy & Security → \(type)"
-        return ([
-            "\(type) access denied (\(context)). \(ResponsibleProcessFormatter.advice(for: .selfBinary))",
-        ] + numbered([
-            first,
-            "Then \(restart)",
-            "If it is still denied over SSH after that, grant Full Disk Access to /usr/sbin/sshd: "
-                + "System Settings → Privacy & Security → Full Disk Access → add sshd "
-                + "(this gives sshd broad file access; only on a Mac you fully control)",
-        ])).joined(separator: "\n")
+        let localSetupBody = "the Mac itself (Terminal.app, not over SSH), run this binary's setup once: \(setupHint)"
+            + " — or switch CheICalMCP on in System Settings → Privacy & Security → \(type)"
+        let localSetup = "On \(localSetupBody)"
+        let header: String
+        let steps: [String]
+        switch attribution {
+        case .selfBinary?:
+            header = "\(type) access denied (\(context)). \(ResponsibleProcessFormatter.advice(for: .selfBinary)) \(noDialog)"
+            let first = deniedByStatus
+                ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
+                    + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
+                : localSetup
+            steps = [
+                first,
+                "Then \(restart)",
+                "If it is still refused over SSH after that (untested with CheICalMCP's own grant): \(sshdFullDiskAccessStep)",
+            ]
+        case nil:
+            header = "\(type) access denied (\(context)). \(noDialog) It is not known which process macOS checks "
+                + "here (the kernel lookup is unavailable; `CheICalMCP --print-tcc-path` may show it), so there are two cases:"
+            steps = [
+                "If this ssh process re-executed onto CheICalMCP (the default without CHE_ICAL_MCP_NO_DISCLAIM): \(localSetup)",
+                "If it kept the ssh context's attribution (CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed): "
+                    + sshdFullDiskAccessStep,
+                "After either step, \(restart)",
+            ]
+        case _?:
+            header = "\(type) access denied (\(context)). \(noDialog) macOS checks another process here, not CheICalMCP: "
+                + "this ssh process kept its own attribution (CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed; "
+                + "`CheICalMCP --print-tcc-path` shows which process). Workarounds:"
+            steps = [
+                sshdFullDiskAccessStep,
+                "Or remove CHE_ICAL_MCP_NO_DISCLAIM from this ssh process's environment and, on \(localSetupBody). "
+                    + "A local --setup grant applies only when this ssh process re-executes onto CheICalMCP.",
+                "After either step, \(restart)",
+            ]
+        }
+        return ([header] + numbered(steps)).joined(separator: "\n")
     }
 
     private static func numbered(_ steps: [String]) -> [String] {

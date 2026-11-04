@@ -498,7 +498,7 @@ From v1.23.0 an SSH session is handled like any other host ([the status-aware ru
 
 > ⚠️ Step 2 grants `sshd` broad file access — only use this on machines you fully control. Whether it is still needed once CheICalMCP's own grant exists has not been measured yet ([#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)), so it stays as the fallback.
 >
-> With `CHE_ICAL_MCP_NO_DISCLAIM=1` (or when the re-exec fails), the ssh context keeps its own attribution and the pre-v1.23.0 situation applies: the grant macOS checks is that context's, which a local `--setup` does not create, and Step 2 is the workaround.
+> **With `CHE_ICAL_MCP_NO_DISCLAIM=1` set for the ssh process (or when the re-exec fails)**, the ssh context keeps its own attribution: the grant macOS checks is that context's, which a local `--setup` does not create. There, start with Step 2 (Full Disk Access for `sshd`, only on a Mac you fully control); a local `--setup` grant applies only when the ssh process re-executes onto CheICalMCP, i.e. without `CHE_ICAL_MCP_NO_DISCLAIM`. If `--print-tcc-path` cannot show the attribution (the kernel lookup is unavailable), either case may apply, and the access-denied message gives both.
 
 ### launchd / Automation
 

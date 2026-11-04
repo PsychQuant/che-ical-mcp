@@ -465,7 +465,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 > ⚠️ 步驟 2 會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的機器上使用。CheICalMCP 有了自己的授權之後是否仍需要這一步，目前還沒有實測（[#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)），所以保留作為備案。
 >
-> 設定 `CHE_ICAL_MCP_NO_DISCLAIM=1`（或重新執行失敗）時，ssh 環境保留自己的歸屬，情況同 v1.23.0 以前：macOS 檢查的是該環境的授權，本機的 `--setup` 不會建立它，步驟 2 是因應方式。
+> **ssh 程序設定了 `CHE_ICAL_MCP_NO_DISCLAIM=1`（或重新執行失敗）時**，ssh 環境保留自己的歸屬：macOS 檢查的是該環境的授權，本機的 `--setup` 不會建立它。這時先做步驟 2（授予 `sshd` 完整磁碟存取權限，僅限完全由你控管的 Mac）；本機 `--setup` 建立的授權，只有在 ssh 程序重新執行成 CheICalMCP 時（也就是沒有設定 `CHE_ICAL_MCP_NO_DISCLAIM`）才會用到。如果 `--print-tcc-path` 顯示不出歸屬（kernel 查詢無法使用），兩種情況都有可能，拒絕存取的訊息會兩種都列出。
 
 ---
 
