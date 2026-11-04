@@ -123,23 +123,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
-    /// The paste-ready `--print-tcc-path` command for this binary, built like
-    /// `setupCommandHint` (single-quoted clean path; no command for a control-character path).
-    static func printTCCPathHint(binaryPath: String) -> String {
-        guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
-            return "the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --print-tcc-path "
-                + "(its path has control characters, so no command is printed)"
-        }
-        return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --print-tcc-path"
-    }
-
     /// What stands where `tccutil reset <service> com.checheng.CheICalMCP` stood (#357): that
     /// command fails with -10814 for a bare binary (no LaunchServices registration, README
     /// erratum). Round 4 (R1): no new remedy prose — this is the sentence main already uses in
     /// the self-attributed, already-denied access-denied branch, with the pane name, and #382 as
-    /// the pointer to the open device question. No reset of any kind.
+    /// the pointer to the open device question. Round 5: "on, or off and on", because these
+    /// surfaces do not see an off switch. No reset of any kind.
     static func switchOnStep(pane: String) -> String {
-        "switch CheICalMCP on in System Settings → Privacy & Security → \(pane) (#382)"
+        "switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → \(pane) (#382)"
     }
 
     /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)

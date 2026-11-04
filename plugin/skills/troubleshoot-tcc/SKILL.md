@@ -117,7 +117,7 @@ Read the chain like this:
 
 ### Step 4: Fix a stale TCC entry (only if `denied` or post-upgrade silent fail)
 
-Switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
+Switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
 
 > **Never `tccutil reset <service> com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration** (#357).
 

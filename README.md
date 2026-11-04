@@ -468,7 +468,7 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 >
 > That covers both shipped builds: the Developer-ID `~/bin/CheICalMCP` and the `.mcpb` `server/CheICalMCP` are bare executables with an embedded Info.plist. The -10814 was seen with the #154-era builds; on 2026-11-04 `lsregister -dump` had no record for `com.checheng.CheICalMCP` on a Mac with the Developer-ID `~/bin/CheICalMCP` installed (the command itself was not re-run there, because a lookup that unexpectedly succeeded would reset the real grant). Since #357 no message, banner line or `--print-tcc-path` section prints it.
 >
-> Instead: Switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
+> Instead: Switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
 >
 > **Last resort**, only on CheICalMCP v1.11.0 or later: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. The user decides and runs it; an agent must not. On a pre-entitlements binary (before v1.11.0) it leaves CheICalMCP permanently unable to re-prompt.
 

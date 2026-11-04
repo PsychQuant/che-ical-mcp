@@ -26,10 +26,12 @@ enum TCCRemedyAssertions {
         _ text: String, pane: String, file: StaticString = #filePath, line: UInt = #line
     ) {
         assertNoReset(text, file: file, line: line)
-        XCTAssertTrue(text.contains("witch CheICalMCP on in System Settings → Privacy & Security → \(pane) (#382)"),
+        // Round 5: the code does not see an off switch on these surfaces, so "on, or off and on".
+        XCTAssertTrue(text.contains("witch CheICalMCP on, or off and on, in System Settings → Privacy & Security → \(pane) (#382)"),
                       text, file: file, line: line)
         XCTAssertFalse(text.contains("to see which process macOS checks"), text, file: file, line: line)
         XCTAssertFalse(text.contains("re-checking"), text, file: file, line: line)
-        XCTAssertFalse(text.contains("off and on"), text, file: file, line: line)
+        XCTAssertTrue(text.contains("off and on"), text, file: file, line: line)
+        XCTAssertFalse(text.contains("shows which"), "run from Terminal it shows Terminal's context: \(text)", file: file, line: line)
     }
 }
