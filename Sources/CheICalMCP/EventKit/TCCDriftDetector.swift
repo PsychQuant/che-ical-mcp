@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 
 /// Detects TCC + process state drift relative to the binary currently starting up and
@@ -184,6 +185,26 @@ struct TCCDriftDetector {
 
     // MARK: - Format banner
 
+    /// The startup banner's status inputs, from the two EventKit statuses (#368 round 2:
+    /// extracted from `main.swift` so the wiring is tested).
+    struct BannerStatusInputs: Equatable {
+        let calendarAccessGranted: Bool
+        let calendarRestricted: Bool
+        let remindersStatus: EKAuthorizationStatus
+        /// Both services have full access (gates the host-attribution check, #343).
+        let eventKitAccessGranted: Bool
+        /// Either service is restricted by a policy (#367).
+        let eventKitRestricted: Bool
+
+        init(calendar: EKAuthorizationStatus, reminders: EKAuthorizationStatus) {
+            calendarAccessGranted = calendar == .fullAccess
+            calendarRestricted = calendar == .restricted
+            remindersStatus = reminders
+            eventKitAccessGranted = calendar == .fullAccess && reminders == .fullAccess
+            eventKitRestricted = SelfDisclaim.hostIsRestricted(calendar: calendar, reminders: reminders)
+        }
+    }
+
     /// Render the banner that the caller writes to stderr. Pure — no IO.
     ///
     /// Shape:
@@ -202,7 +223,9 @@ struct TCCDriftDetector {
         runningBinaryPath: String,
         pid: Int32,
         bundleID: String,
-        calendarAccessGranted: Bool = true
+        calendarAccessGranted: Bool = true,
+        calendarRestricted: Bool = false,
+        remindersStatus: EKAuthorizationStatus = .fullAccess
     ) -> String {
         // CWE-117 / stderr-injection defense (verify finding B1, three-reviewer
         // consensus): every interpolated value reaching stderr passes through
@@ -245,7 +268,30 @@ struct TCCDriftDetector {
             default: return false
             }
         }
-        if !calendarAccessGranted, !hostSignalPresent {
+        if !calendarAccessGranted, !hostSignalPresent, calendarRestricted {
+            // #368: a `restricted` Calendar status is a policy (configuration profile or Screen
+            // Time). `--setup` shows no prompt for it, so no command is printed. The banner does
+            // not know the attribution (it may be unavailable), so the line names "the process
+            // macOS checks", not CheICalMCP (round-3 LOW 13).
+            lines.append("[banner] Calendar access is restricted by a policy (configuration profile or Screen Time); --setup cannot change it — ask whoever manages this Mac to allow Calendar access for the process macOS checks (CheICalMCP --print-tcc-path shows which)")
+            // #368 verify (DA): the policy covers Calendar only, so the Reminders line follows
+            // the Reminders status. `--setup` prompts only from `notDetermined`; the status may
+            // be a host's, so the other lines name "that entry", not CheICalMCP (round 3).
+            switch remindersStatus {
+            case .notDetermined:
+                if pathHasControlChars(runningBinaryPath) {
+                    lines.append("[banner] Reminders access not granted — binary path has control chars; run the binary at \(safePath) with --setup (it prompts only while the status is notDetermined)")
+                } else {
+                    lines.append("[banner] Reminders access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup (it prompts only while the status is notDetermined)")
+                }
+            case .denied:
+                lines.append("[banner] Reminders access denied — a \"Don't Allow\" is recorded for the process macOS checks (CheICalMCP --print-tcc-path shows which), so no prompt will appear: switch that entry on in System Settings → Privacy & Security → Reminders")
+            case .writeOnly:
+                lines.append("[banner] Reminders access is write-only — System Settings → Privacy & Security → Reminders → that entry's Options… → Full Access (CheICalMCP --print-tcc-path shows which process macOS checks)")
+            default:
+                break  // restricted (a policy) or granted: nothing --setup or a switch can add
+            }
+        } else if !calendarAccessGranted, !hostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
                 lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
             } else {

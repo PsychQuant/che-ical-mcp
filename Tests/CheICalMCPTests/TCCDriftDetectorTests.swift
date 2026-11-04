@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -287,6 +288,141 @@ final class TCCDriftDetectorTests: XCTestCase {
             "banner must surface the --setup remediation command")
         XCTAssertTrue(banner.contains(runningPath),
             "banner --setup hint must reference the resolved running binary path")
+    }
+
+    // #368 — a `restricted` Calendar status is a policy; `--setup` cannot change it.
+
+    func testFormatBannerRestrictedCalendar_namesThePolicyAndOffersNoSetup() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: true
+        )
+
+        XCTAssertTrue(banner.contains("Calendar access is restricted by a policy"), banner)
+        XCTAssertTrue(banner.contains("configuration profile or Screen Time"), banner)
+        XCTAssertTrue(banner.contains("allow Calendar access for the process macOS checks"), banner)
+        // Round-3 LOW 13: the banner does not know the attribution (it may be unavailable), so it
+        // does not claim CheICalMCP is the process macOS checks.
+        XCTAssertFalse(banner.contains("access for CheICalMCP"), banner)
+        XCTAssertFalse(banner.contains("' --setup"), "no runnable --setup command for a policy: \(banner)")
+        XCTAssertFalse(banner.contains("Calendar access not granted — grant via"), banner)
+    }
+
+    /// Verify DA (#368), round 2 (P4): with Calendar restricted, the Reminders line follows the
+    /// Reminders status. `--setup` is offered only for `notDetermined` (it prompts only from
+    /// that status); `denied` → the switch; `writeOnly` → Options… → full access; `restricted`
+    /// and `fullAccess` → no Reminders line.
+    private func restrictedCalendarBanner(reminders: EKAuthorizationStatus,
+                                          signals: [DriftSignal] = []) -> String {
+        TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: signals, skipReasons: []), version: "1.12.0",
+            runningBinaryPath: runningPath, pid: 12345, bundleID: bundleID,
+            calendarAccessGranted: false, calendarRestricted: true, remindersStatus: reminders)
+    }
+
+    func testRestrictedCalendar_notDeterminedReminders_offersSetup() {
+        let b = restrictedCalendarBanner(reminders: .notDetermined)
+        XCTAssertTrue(b.contains("Calendar access is restricted by a policy"), b)
+        XCTAssertTrue(b.contains("Reminders access not granted — grant via: '\(runningPath)' --setup"), b)
+        XCTAssertTrue(b.contains("prompts only while the status is notDetermined"), b)
+    }
+
+    func testRestrictedCalendar_deniedReminders_offersTheSwitchNotSetup() {
+        let b = restrictedCalendarBanner(reminders: .denied)
+        XCTAssertTrue(b.contains("switch that entry on in System Settings → Privacy & Security → Reminders"), b)
+        XCTAssertFalse(b.contains("for CheICalMCP"), "the status may be a host's (round 3): \(b)")
+        XCTAssertFalse(b.contains("' --setup"), b)
+    }
+
+    func testRestrictedCalendar_writeOnlyReminders_offersOptionsFullAccess() {
+        let b = restrictedCalendarBanner(reminders: .writeOnly)
+        XCTAssertTrue(b.contains("Options…"), b)
+        XCTAssertTrue(b.contains("Full Access"), b)
+        XCTAssertFalse(b.contains("' --setup"), b)
+    }
+
+    func testRestrictedCalendar_restrictedOrGrantedReminders_printsNoRemindersLine() {
+        for status in [EKAuthorizationStatus.restricted, .fullAccess] {
+            XCTAssertFalse(restrictedCalendarBanner(reminders: status).contains("[banner] Reminders"))
+        }
+    }
+
+    func testRestrictedCalendar_hostSignal_stillHidesTheRemindersLine() {
+        let b = restrictedCalendarBanner(
+            reminders: .notDetermined,
+            signals: [.hostRestrictedByPolicy(host: .claudeCode(version: "2.1.206"), hostPath: "/x/claude")])
+        XCTAssertFalse(b.contains("[banner] Reminders"), b)
+        XCTAssertFalse(b.contains("' --setup"), b)
+    }
+
+    /// The `main.swift` wiring, extracted (round 2): statuses → the banner's inputs.
+    func testBannerStatusInputs_mapStatusesToTheBannerFlags() {
+        let restricted = TCCDriftDetector.BannerStatusInputs(calendar: .restricted, reminders: .denied)
+        XCTAssertFalse(restricted.calendarAccessGranted)
+        XCTAssertTrue(restricted.calendarRestricted)
+        XCTAssertEqual(restricted.remindersStatus, .denied)
+        XCTAssertFalse(restricted.eventKitAccessGranted)
+        XCTAssertTrue(restricted.eventKitRestricted)
+        let granted = TCCDriftDetector.BannerStatusInputs(calendar: .fullAccess, reminders: .fullAccess)
+        XCTAssertTrue(granted.calendarAccessGranted)
+        XCTAssertFalse(granted.calendarRestricted)
+        XCTAssertTrue(granted.eventKitAccessGranted)
+        XCTAssertFalse(granted.eventKitRestricted)
+        let half = TCCDriftDetector.BannerStatusInputs(calendar: .fullAccess, reminders: .restricted)
+        XCTAssertFalse(half.eventKitAccessGranted)
+        XCTAssertTrue(half.eventKitRestricted)
+        XCTAssertFalse(half.calendarRestricted)
+    }
+
+    func testFormatBannerNotRestricted_keepsTheSetupLine() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: false
+        )
+
+        XCTAssertTrue(banner.contains("Calendar access not granted — grant via: '\(runningPath)' --setup"), banner)
+        XCTAssertFalse(banner.contains("restricted by a policy"), banner)
+    }
+
+    func testFormatBannerRestrictedWithHostSignal_printsNoSecondRestrictedLine() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(
+                signals: [.hostRestrictedByPolicy(host: .claudeCode(version: "2.1.206"), hostPath: "/x/claude")],
+                skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: true
+        )
+
+        XCTAssertFalse(banner.contains("[banner] Calendar access is restricted by a policy"),
+            "the host signal already explains the restriction: \(banner)")
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+    }
+
+    /// Round-3 LOW 20: the control-char variant of the Reminders line prints no runnable command.
+    func testRestrictedCalendar_notDeterminedReminders_controlCharPath_printsNoCommand() {
+        let path = "/path/with\u{07}bel/CheICalMCP"
+        let b = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []), version: "1.12.0",
+            runningBinaryPath: path, pid: 12345, bundleID: bundleID,
+            calendarAccessGranted: false, calendarRestricted: true, remindersStatus: .notDetermined)
+        let line = b.components(separatedBy: "\n").first { $0.hasPrefix("[banner] Reminders") } ?? ""
+        XCTAssertTrue(line.contains("binary path has control chars"), b)
+        XCTAssertFalse(line.contains("' --setup"), b)
+        XCTAssertFalse(b.unicodeScalars.contains { $0.value == 0x07 }, "escaped: \(b)")
     }
 
     func testFormatBannerNoSetupHintWhenCalendarGranted() {

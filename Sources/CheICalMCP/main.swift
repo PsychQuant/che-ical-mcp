@@ -120,10 +120,9 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           Calendar:   \(statusString(calStatus))
           Reminders:  \(statusString(remStatus))
 
-        Reset TCC + re-prompt (run from Terminal, NOT over SSH):
-          tccutil reset Calendar \(bundleID)
-          tccutil reset Reminders \(bundleID)
-          \(EventKitManager.setupCommandHint(binaryPath: absolute))
+        \(EventKitManager.printTCCPathRepromptSection(
+            bundleID: bundleID, binaryPath: absolute,
+            calendarStatus: calStatus, remindersStatus: remStatus))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -245,18 +244,18 @@ func emitStartupBanner() {
     // the explanation too (verify DA-1) — and the kernel lookup only happens on the
     // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
-    let calendarStatus = statusSource.authorizationStatus(for: .event)
-    let remindersStatus = statusSource.authorizationStatus(for: .reminder)
-    let calendarGranted = calendarStatus == .fullAccess
-    let remindersGranted = remindersStatus == .fullAccess
+    // Statuses → banner inputs in one tested pure function (#368).
+    let inputs = TCCDriftDetector.BannerStatusInputs(
+        calendar: statusSource.authorizationStatus(for: .event),
+        reminders: statusSource.authorizationStatus(for: .reminder))
 
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
         diskBinaryMtime: mtime,
-        eventKitAccessGranted: calendarGranted && remindersGranted,
-        eventKitRestricted: SelfDisclaim.hostIsRestricted(calendar: calendarStatus, reminders: remindersStatus)
+        eventKitAccessGranted: inputs.eventKitAccessGranted,
+        eventKitRestricted: inputs.eventKitRestricted
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
@@ -266,7 +265,9 @@ func emitStartupBanner() {
         runningBinaryPath: resolvedPath,
         pid: ProcessInfo.processInfo.processIdentifier,
         bundleID: bundleID,
-        calendarAccessGranted: calendarGranted
+        calendarAccessGranted: inputs.calendarAccessGranted,
+        calendarRestricted: inputs.calendarRestricted,
+        remindersStatus: inputs.remindersStatus
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }

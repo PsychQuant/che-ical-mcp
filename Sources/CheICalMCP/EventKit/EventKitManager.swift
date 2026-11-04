@@ -123,6 +123,29 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
+    /// The "Reset TCC + re-prompt" section of `--print-tcc-path`, built here (not inline in
+    /// `main.swift`) so it can be pinned without spawning the binary (#357, #368).
+    static func printTCCPathRepromptSection(
+        bundleID: String = "com.checheng.CheICalMCP",
+        binaryPath: String,
+        calendarStatus: EKAuthorizationStatus,
+        remindersStatus: EKAuthorizationStatus
+    ) -> String {
+        var lines = [
+            "Reset TCC + re-prompt (run from Terminal, NOT over SSH):",
+            "  tccutil reset Calendar \(bundleID)",
+            "  tccutil reset Reminders \(bundleID)",
+            "  \(setupCommandHint(binaryPath: binaryPath))",
+        ]
+        // #368: a `restricted` status comes from a configuration profile or Screen Time; no
+        // prompt appears for it, so nothing in this section can change it.
+        if calendarStatus == .restricted || remindersStatus == .restricted {
+            lines.append("  (a `restricted` status is set by a configuration profile or Screen Time: "
+                + "nothing here changes it; ask whoever manages this Mac)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The binary path as `--print-tcc-path` shows it: as is, so it names the same file as the
     /// `--setup` command beneath it, unless it has control characters, which are escaped and
     /// said so (verify round 3b row 11: escaping a clean path doubled its backslashes).
