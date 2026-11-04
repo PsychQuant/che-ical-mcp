@@ -424,7 +424,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Mark that EventKit sources need to be refreshed (called after write operations)
     func markNeedsRefresh() {
         needsRefresh = true
+        writeGeneration &+= 1
     }
+
+    /// #328 (PR #413 verify r1): moves with every `markNeedsRefresh`, which follows each write this
+    /// manager commits (and a few reads that want a fresh view, which only makes the check below
+    /// refuse more often). `deleteCalendar(requireEmpty:)` compares it across its one suspension.
+    private(set) var writeGeneration = 0
 
     // MARK: - Calendars
 
@@ -620,11 +626,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return calendar
     }
 
-    /// #328: with `requireEmpty`, the calendar is checked first (`CalendarEmptiness.check`): events
-    /// over the stated window, reminders whole; a non-empty one is refused and nothing is deleted.
-    /// A calendar holds events or reminders; after its check nothing suspends before the removal,
-    /// so no other call of this server can write to it in between. Another process (Calendar.app,
-    /// a sync) can.
+    /// #328: with `requireEmpty`, the calendar is checked first: events over the stated window
+    /// (`CalendarEmptiness.checkEvents`), reminders whole (`checkReminders`); a non-empty one, or one
+    /// that cannot be counted, is refused and nothing is deleted. The event check runs on this actor
+    /// with no suspension; the one suspension is the reminder fetch, across which the write
+    /// generation is compared, so no write by this server lands between the check and
+    /// `removeCalendar` (PR #413 verify r1). A write by another app or a sync can still land in
+    /// between: EventKit offers no way to delete a calendar only if it is empty.
     @discardableResult
     func deleteCalendar(identifier: String, requireEmpty: Bool = false) async throws -> CalendarEmptiness.Checked? {
         try await ensureCalendarAccess()
@@ -636,26 +644,37 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var checked: CalendarEmptiness.Checked?
         if requireEmpty {
-            let store = eventStore
-            // Each span is at most `EventRangeQuery.maxSpanDays`, so `events(from:to:calendars:)`
-            // (the one path a range reaches EventKit by, #325) runs one query for it.
-            checked = try await CalendarEmptiness.check(
-                holdsEvents: calendar.allowedEntityTypes.contains(.event),
-                holdsReminders: calendar.allowedEntityTypes.contains(.reminder),
-                now: Date(),
-                countEvents: { from, to in try self.events(from: from, to: to, calendars: [calendar]).count },
-                countReminders: {
-                    try await withCheckedThrowingContinuation { continuation in
-                        store.fetchReminders(matching: store.predicateForReminders(in: [calendar])) { reminders in
-                            continuation.resume(returning: reminders?.count ?? 0)
-                        }
-                    }
-                })
+            let generation = writeGeneration
+            var searched: EventRangeQuery.Span?
+            if calendar.allowedEntityTypes.contains(.event) {
+                let window = CalendarEmptiness.window(now: Date())
+                // Each span is at most `EventRangeQuery.maxSpanDays`, so `events(from:to:calendars:)`
+                // (the one path a range reaches EventKit by, #325) runs one query for it.
+                try CalendarEmptiness.checkEvents(window: window, count: { try events(from: $0, to: $1, calendars: [calendar]).count })
+                searched = window
+            }
+            var reminders: Int?
+            if calendar.allowedEntityTypes.contains(.reminder) {
+                let counted = await countReminders(in: calendar)
+                try CalendarEmptiness.checkReminders(counted: counted, generationBefore: generation, generationAfter: writeGeneration)
+                reminders = 0
+            }
+            checked = CalendarEmptiness.Checked(searched: searched, reminders: reminders)
         }
 
         try eventStore.removeCalendar(calendar, commit: true)
         markNeedsRefresh()
         return checked
+    }
+
+    /// The number of reminders in `calendar`, completed ones included; nil when the fetch returns
+    /// nothing (it failed), which the check refuses (PR #413 verify r1).
+    private func countReminders(in calendar: EKCalendar) async -> Int? {
+        await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: [calendar])) { reminders in
+                continuation.resume(returning: reminders?.count)
+            }
+        }
     }
 
     // MARK: - Events

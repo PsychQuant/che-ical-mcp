@@ -5,6 +5,7 @@ import Foundation
 /// over a stated window, in `EventRangeQuery`'s spans, and the search stops at the first span that
 /// holds any, so the count it reports is a lower bound. A reminder list is counted whole (its
 /// predicate takes no dates). EventKit is behind closures, so the sequence is tested without it.
+/// Nothing here is async: the caller (`EventKitManager.deleteCalendar`) runs it on its actor.
 enum CalendarEmptiness {
     /// Half the span ceiling on each side of now (about 200 years each way): the widest window
     /// `EventRangeQuery.spans` searches in one call. An event outside it is not found; the answer
@@ -37,26 +38,27 @@ enum CalendarEmptiness {
         return nil
     }
 
-    /// Checks a calendar that holds events (`holdsEvents`) or reminders (`holdsReminders`), and
-    /// throws `EventKitError.calendarNotEmpty` when it is not empty. Nothing is deleted here.
-    static func check(holdsEvents: Bool, holdsReminders: Bool, now: Date,
-                      countEvents: (Date, Date) throws -> Int,
-                      countReminders: () async throws -> Int) async throws -> Checked {
-        var searched: EventRangeQuery.Span?
-        if holdsEvents {
-            let window = window(now: now)
-            if let found = try firstEvents(in: window, count: countEvents) {
-                throw EventKitError.calendarNotEmpty(reason: eventsMessage(atLeast: found.atLeast, span: found.span, window: window))
-            }
-            searched = window
+    /// Throws `EventKitError.calendarNotEmpty` when `window` holds events. Synchronous, so it runs
+    /// on its caller's actor with no suspension (PR #413 verify r1). A `count` that throws stops the
+    /// check: a read that cannot answer refuses, it is never taken as empty.
+    static func checkEvents(window: EventRangeQuery.Span, count: (Date, Date) throws -> Int) throws {
+        if let found = try firstEvents(in: window, count: count) {
+            throw EventKitError.calendarNotEmpty(reason: eventsMessage(atLeast: found.atLeast, span: found.span, window: window))
         }
-        var reminders: Int?
-        if holdsReminders {
-            let count = try await countReminders()
-            if count > 0 { throw EventKitError.calendarNotEmpty(reason: remindersMessage(count)) }
-            reminders = 0
+    }
+
+    /// The reminders check after the fetch: `counted` is nil when the fetch returned nothing (it
+    /// failed), which refuses instead of reading as an empty list; a write this server committed
+    /// during the fetch (`generationBefore` != `generationAfter`, the manager's write generation)
+    /// refuses too, even when the count was 0; any reminder refuses (PR #413 verify r1).
+    static func checkReminders(counted: Int?, generationBefore: Int, generationAfter: Int) throws {
+        guard let counted else {
+            throw EventKitError.calendarNotEmpty(reason: "Refusing to delete the list: require_empty is set and its reminders could not be counted. Nothing was deleted.")
         }
-        return Checked(searched: searched, reminders: reminders)
+        guard generationBefore == generationAfter else {
+            throw EventKitError.calendarNotEmpty(reason: "Refusing to delete the list: require_empty is set and the calendar data changed while the list was being checked. Nothing was deleted; try again.")
+        }
+        if counted > 0 { throw EventKitError.calendarNotEmpty(reason: remindersMessage(counted)) }
     }
 
     /// Numbers and dates formatted by this server only: no calendar or event title (#37).
