@@ -279,7 +279,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("List of minutes before the event to trigger reminders")
+                            "description": .string("List of minutes before the event to trigger reminders (integers from -525600 to 525600, one year)")
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
@@ -389,7 +389,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("List of minutes before the event to trigger reminders. Replaces all existing alarms. Use empty array [] to remove all alarms.")
+                            "description": .string("List of minutes before the event to trigger reminders (integers from -525600 to 525600, one year). Replaces all existing alarms. Use empty array [] to remove all alarms.")
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
@@ -565,7 +565,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder the alarm moves with each occurrence. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false.")
+                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false.")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -612,7 +612,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets.")
+                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets.")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -1020,7 +1020,7 @@ class CheICalMCPServer {
                                     "alarms_minutes_offsets": .object([
                                         "type": .string("array"),
                                         "items": .object(["type": .string("integer")]),
-                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date, only the relative alarms, refused without a timed due date (date-only included) for that row.")
+                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row.")
                                     ])
                                 ]),
                                 "required": .array([.string("title"), .string("calendar_name")])
@@ -1917,6 +1917,7 @@ class CheICalMCPServer {
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
         if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
+        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }   // PR #415 verify round 1
         // #268: the identifier after the save (a move to another account's list may change it).
         response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether

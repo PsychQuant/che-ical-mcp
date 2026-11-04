@@ -242,6 +242,16 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
    `undo` → 讀回 15，`location_trigger` 還在；
 3. `update_reminder` 帶 `alarms_minutes_offsets: []` → 相對鬧鐘清空，`location_trigger` 還在；
 4. 純日期提醒帶 `alarms_minutes_offsets: [240]` → 拒絕、什麼都沒寫。
+5. 建立帶時間到期日與 `[15]` 的提醒 → 等至少 60 秒、什麼都不改 → `undo` 要刪掉它（#236 的 post-state guard
+   比對 `relativeOffset`；以 `alarms` 拒絕就是同步後 offset 變了，要回報）。
+6. 循環提醒（每週）帶時間到期日與 `[15]` → `complete_reminder` → `list_reminders` 讀下一次的 `alarms`，
+   要仍是 `minutes_before: 15`（「鬧鐘跟著每一次重複移動」目前只是 EventKit 的預期語意）。
+
+**需要使用者在場的兩步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
+
+7. 打開 Reminders.app 看第 1 步那個提醒：顯示的日期與時間要是**到期時間**（03:29 那類），不是「到期減 offset」
+   （#227 / #235 看過 Reminders.app 會把鬧鐘時間當成提醒的日期顯示）。
+8. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 

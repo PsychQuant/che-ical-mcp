@@ -74,4 +74,25 @@ enum ReminderRelativeAlarms {
     static func differs(requested: [Int], stored: [Double]) -> Bool {
         requested.map(Double.init).sorted() != stored.sorted()
     }
+
+    /// PR #415 verify round 1: an update that makes the reminder undated or date-only (a bare
+    /// `due_date` or `clear_due_date`) without `alarms_minutes_offsets` keeps its relative alarms
+    /// (#267), which then cannot fire as before. Nothing is written differently; the response
+    /// says so, with the way to remove them.
+    static func leftoverNote(requested: [Int]?, dueTouched: Bool, dueAfter: DueState, relativeCount: Int) -> String? {
+        guard requested == nil, dueTouched, relativeCount > 0 else { return nil }
+        switch dueAfter {
+        case .timed: return nil
+        case .none: return leftoverNoDueNote(relativeCount)
+        case .dateOnly: return leftoverDateOnlyNote(relativeCount)
+        }
+    }
+
+    static func leftoverNoDueNote(_ count: Int) -> String {
+        "The reminder keeps \(count) relative alarm\(count == 1 ? "" : "s"), measured from the due date; without a due date they never fire. To remove them, call update_reminder with alarms_minutes_offsets: []."
+    }
+
+    static func leftoverDateOnlyNote(_ count: Int) -> String {
+        "The reminder keeps \(count) relative alarm\(count == 1 ? "" : "s"), measured from the due date; on a date-only reminder when they fire has not been measured (#333). To remove them, call update_reminder with alarms_minutes_offsets: []."
+    }
 }

@@ -20,9 +20,16 @@ private actor AlarmWriteFake: ReminderWriteSource {
     }
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         updated.append(request)
+        // "keeps-alarms" stands for a reminder with two relative alarms the update leaves in place.
+        let leftover = request.identifier == "keeps-alarms"
+            ? ReminderRelativeAlarms.leftoverNote(requested: request.alarmOffsets, dueTouched: request.due != nil || request.clearDueDate,
+                                                  dueAfter: ReminderRelativeAlarms.dueState(requested: request.due, clearDue: request.clearDueDate, existing: nil),
+                                                  relativeCount: 2)
+            : nil
         return ReminderUpdateResult(reminder: ReminderWriteSnapshot(id: request.identifier, title: "Saved", notes: nil),
                                     dateSync: nil,
-                                    storedRelativeAlarms: request.alarmOffsets.map { $0.map(Double.init).sorted(by: >) })
+                                    storedRelativeAlarms: request.alarmOffsets.map { $0.map(Double.init).sorted(by: >) },
+                                    leftoverAlarmsNote: leftover)
     }
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
         ReminderWriteSnapshot(id: identifier, title: "Old", notes: nil)
@@ -159,6 +166,48 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
             XCTAssertTrue(schema.contains("alarms_minutes_offsets"), name)
             XCTAssertTrue(schema.contains("only the relative alarms"), name)
             XCTAssertTrue(schema.contains("date-only"), name)
+            XCTAssertTrue(schema.contains("525600"), "\(name): the bound is stated")
+        }
+        // PR #415 verify round 1: the recurring claim is stated as unchecked, and the event tools state the bound.
+        let create = "\(String(describing: tools.first { $0.name == "create_reminder" }?.inputSchema))"
+        XCTAssertTrue(create.contains("that is not yet checked on a device"), create)
+        XCTAssertFalse(create.contains("the alarm moves with each occurrence"), create)
+        for name in ["create_event", "update_event"] {
+            XCTAssertTrue("\(String(describing: tools.first { $0.name == name }?.inputSchema))".contains("from -525600 to 525600"), name)
+        }
+    }
+
+    func testAnUpdateThatLeavesRelativeAlarmsWithoutATimedDueSaysSo() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let cleared = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("keeps-alarms"), "clear_due_date": .bool(true)]))
+        XCTAssertEqual(cleared["alarms_note"] as? String, ReminderRelativeAlarms.leftoverNoDueNote(2))
+        let dated = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("keeps-alarms"), "due_date": .string("2026-12-11")]))
+        XCTAssertEqual(dated["alarms_note"] as? String, ReminderRelativeAlarms.leftoverDateOnlyNote(2))
+        let plain = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "due_date": .string("2026-12-11")]))
+        XCTAssertNil(plain["alarms_note"])
+    }
+
+    /// PR #415 verify round 1: the event tools refuse a present non-array value and an offset
+    /// outside one year (Int.max used to trap `Int * 60` on create_event / update_event) before
+    /// anything is looked up or written.
+    func testTheEventToolsRefuseANonArrayOrOutOfRangeOffset() async throws {
+        let server = try await CheICalMCPServer()
+        let event: [String: Value] = ["title": .string("x"), "start_time": .string("2026-12-10T09:00:00"),
+                                      "end_time": .string("2026-12-10T10:00:00"), "calendar_name": .string("none")]
+        for (value, expected) in [(Value.string("15"), "must be an array of integers"), (.array([.int(Int.max)]), "525600")] {
+            for (tool, base) in [("create_event", event), ("update_event", ["event_id": .string("none")] as [String: Value])] {
+                var arguments = base
+                arguments["alarms_minutes_offsets"] = value
+                do {
+                    _ = try await server.executeToolCall(name: tool, arguments: arguments)
+                    XCTFail("\(tool) accepted \(value)")
+                } catch {
+                    XCTAssertTrue("\(error)".contains(expected), "\(tool): \(error)")
+                }
+            }
         }
     }
 }

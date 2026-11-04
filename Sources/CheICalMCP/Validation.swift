@@ -150,6 +150,10 @@ enum InputValidation {
     /// `alarms_minutes_offsets` (#333, shared by the event and reminder tools): absent or JSON
     /// null is nil; an array of integers is the list; anything else, including a present value that
     /// is not an array, is refused rather than ignored.
+    /// PR #415 verify round 1: one year in minutes. Bounds the seconds every alarm writer computes
+    /// (`-offset * 60` trapped on `Int.max`) and keeps a typo from scheduling an alarm years away.
+    static let maxAlarmOffsetMinutes = 525_600
+
     static func parseAlarmOffsets(_ arguments: [String: Value]) throws -> [Int]? {
         guard let raw = arguments["alarms_minutes_offsets"], raw != .null else { return nil }
         guard let array = raw.arrayValue else {
@@ -158,6 +162,10 @@ enum InputValidation {
         return try array.enumerated().map { idx, v in
             guard let n = v.intValue else {
                 throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
+            }
+            guard (-maxAlarmOffsetMinutes...maxAlarmOffsetMinutes).contains(n) else {
+                throw ToolError.invalidParameter(
+                    "alarms_minutes_offsets[\(idx)] must be between -\(maxAlarmOffsetMinutes) and \(maxAlarmOffsetMinutes) (one year in minutes)")
             }
             return n
         }

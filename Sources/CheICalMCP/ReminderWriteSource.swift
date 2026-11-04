@@ -38,6 +38,9 @@ struct ReminderUpdateResult: Sendable {
     /// #333: the relative alarms read off the saved reminder (minutes before), when the request
     /// carried `alarmOffsets`; nil otherwise.
     var storedRelativeAlarms: [Double]? = nil
+    /// PR #415 verify round 1: set when the update left relative alarms on a reminder without a
+    /// timed due (`ReminderRelativeAlarms.leftoverNote`).
+    var leftoverAlarmsNote: String? = nil
 }
 protocol ReminderWriteSource: Sendable {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult
