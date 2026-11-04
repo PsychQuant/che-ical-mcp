@@ -9,6 +9,15 @@ final class HostLoadTests: XCTestCase {
         HostLoad(read: { HostLoad.Snapshot(loadAverage: average, cores: cores) })
     }
 
+    /// A reader with the given load whose failures go to a list instead of XCTFail.
+    private func recording(_ average: Double?, cores: Int) -> (load: HostLoad, failures: () -> [String]) {
+        final class Box { var messages: [String] = [] }
+        let box = Box()
+        let load = HostLoad(read: { HostLoad.Snapshot(loadAverage: average, cores: cores) },
+                            fail: { message, _, _ in box.messages.append(message) })
+        return (load, { box.messages })
+    }
+
     func testTheRatioIsLoadPerCore() {
         XCTAssertEqual(HostLoad.Snapshot(loadAverage: 72, cores: 18).perCore, 4)
         XCTAssertNil(HostLoad.Snapshot(loadAverage: nil, cores: 18).perCore, "getloadavg failed: no ratio")
@@ -64,9 +73,25 @@ final class HostLoadTests: XCTestCase {
         XCTAssertThrowsError(try load(760, cores: 18).checkWithinBound(5.1, bound: 5.0, "arrival")) { error in
             XCTAssertTrue(error is XCTSkip, "\(error)")
         }
-        try XCTExpectFailure("below the threshold an overrun is a failure") {
-            XCTAssertNoThrow(try load(1, cores: 18).checkWithinBound(5.1, bound: 5.0, "arrival"))
-        }
+        // Below the threshold: reported through the failure sink, and nothing is thrown. Asserting
+        // both pins the regression -> XCTFail mapping in `report`; an XCTExpectFailure around
+        // XCTAssertNoThrow was satisfied by a thrown XCTSkip as well (#366 post-merge verify).
+        let quiet = recording(1, cores: 18)
+        XCTAssertNoThrow(try quiet.load.checkWithinBound(5.1, bound: 5.0, "arrival"))
+        XCTAssertEqual(quiet.failures().count, 1, "below the threshold an overrun is a failure")
+        let overloaded = recording(760, cores: 18)
+        _ = try? overloaded.load.checkWithinBound(5.1, bound: 5.0, "arrival")
+        XCTAssertEqual(overloaded.failures(), [], "a skip records no failure")
+    }
+
+    /// Exactly at the bound is over it, as with the `XCTAssertLessThan(arrival, 5.0)` it replaced.
+    func testCheckWithinBoundFailsExactlyAtTheBound() {
+        let quiet = recording(1, cores: 18)
+        XCTAssertNoThrow(try quiet.load.checkWithinBound(5.0, bound: 5.0, "arrival"))
+        XCTAssertEqual(quiet.failures().count, 1, "elapsed == bound must fail")
+        let under = recording(1, cores: 18)
+        XCTAssertNoThrow(try under.load.checkWithinBound(4.999, bound: 5.0, "arrival"))
+        XCTAssertEqual(under.failures(), [])
     }
 
     func testCheckNotTimedOutThrowsASkipOnlyWhenOverloaded() throws {
@@ -74,20 +99,47 @@ final class HostLoadTests: XCTestCase {
         XCTAssertThrowsError(try load(760, cores: 18).checkNotTimedOut(true, bound: 15, "spawn")) { error in
             XCTAssertTrue(error is XCTSkip, "\(error)")
         }
-        try XCTExpectFailure("below the threshold a timeout is a failure") {
-            XCTAssertNoThrow(try load(1, cores: 18).checkNotTimedOut(true, bound: 15, "spawn"))
+        let quiet = recording(1, cores: 18)
+        XCTAssertNoThrow(try quiet.load.checkNotTimedOut(true, bound: 15, "spawn"))
+        XCTAssertEqual(quiet.failures().count, 1, "below the threshold a timeout is a failure")
+        XCTAssertTrue(quiet.failures().first?.contains("load 1.00 on 18 cores") ?? false, "\(quiet.failures())")
+        let unknown = recording(nil, cores: 18)
+        XCTAssertNoThrow(try unknown.load.checkNotTimedOut(true, bound: 15, "spawn"))
+        XCTAssertEqual(unknown.failures().count, 1, "an unknown load is a failure, never a skip")
+    }
+
+    /// The live reader returns the 1-minute load average and the active core count. Its value is
+    /// compared with a direct `getloadavg` read: a reader that over-reports (say, multiplied by the
+    /// core count) would turn every real regression on the routed tests into a skip.
+    func testTheLiveReaderReadsTheHost() throws {
+        let snapshot = HostLoad.live.read()
+        XCTAssertEqual(snapshot.cores, ProcessInfo.processInfo.activeProcessorCount)
+        let live = try XCTUnwrap(snapshot.loadAverage, "getloadavg works on macOS")
+        var direct = [Double](repeating: 0, count: 1)
+        XCTAssertEqual(getloadavg(&direct, 1), 1)
+        XCTAssertEqual(live, direct[0], accuracy: max(1.0, direct[0] * 0.25),
+                       "the live reader reports the 1-minute load average as getloadavg gives it")
+    }
+
+    /// The default sink (used by `HostLoad.live`) records an XCTest failure at the caller's line.
+    /// Silencing it would let every timing regression on the routed tests pass.
+    func testTheDefaultSinkFailsAtTheCallersLine() throws {
+        let callLine = #line + 9
+        let options = XCTExpectedFailure.Options()
+        options.issueMatcher = { issue in
+            issue.compactDescription.contains("load 1.00 on 18 cores")
+                && !issue.compactDescription.contains("threw error")
+                && issue.sourceCodeContext.location?.lineNumber == callLine
+        }
+        try XCTExpectFailure("below the threshold the default sink records a failure", options: options) {
+            // The next line is `callLine`.
+            XCTAssertNoThrow(try load(1, cores: 18).checkWithinBound(5.1, bound: 5.0, "arrival"))
         }
     }
 
-    /// The live reader returns the 1-minute load average and the active core count.
-    func testTheLiveReaderReadsTheHost() {
-        let snapshot = HostLoad.live.read()
-        XCTAssertEqual(snapshot.cores, ProcessInfo.processInfo.activeProcessorCount)
-        XCTAssertNotNil(snapshot.loadAverage, "getloadavg works on macOS")
-    }
-
     /// The listed timing tests go through the helper, and the bounds stay where they were: the
-    /// 5.0 s banner tripwire, the 10 s spawn cap, the 15 s `--print-tcc-path` run.
+    /// 5.0 s banner tripwire, the 10 s spawn cap, the 15 s `--print-tcc-path` run (default and
+    /// every call site). The banner spawn's timeout is checked before its stderr assertions.
     func testTheTimingTestsUseTheHelperAndKeepTheirBounds() throws {
         let tests = try SourceScan.sourcesDirectory().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Tests/CheICalMCPTests")
@@ -96,9 +148,29 @@ final class HostLoadTests: XCTestCase {
         let bannerTest = try XCTUnwrap(SourceScan.body(of: "func testBannerAppearsInDefaultMCPServerMode() throws {", in: banner))
         XCTAssertTrue(bannerTest.contains("try HostLoad.live.checkWithinBound(\n            arrival, bound: 5.0,"), bannerTest)
         XCTAssertEqual(bannerTest.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
+        // The timed spawn's timeout is judged before its stderr is asserted on: when it timed out the
+        // `until` predicate (header && path) never matched, so an assertion first would record a
+        // failure that the later XCTSkip cannot retract (#366 post-merge verify).
+        let timeoutCheck = try XCTUnwrap(bannerTest.range(of: "HostLoad.live.checkNotTimedOut(run.timedOut"))
+        let firstStderrAssert = try XCTUnwrap(bannerTest.range(of: "XCTAssertTrue(\n            run.stderr.contains(\"[banner] che-ical-mcp\")"))
+        XCTAssertLessThan(timeoutCheck.lowerBound, firstStderrAssert.lowerBound,
+                          "the banner spawn's timeout check must come before its stderr assertions")
+        // The one stderr check allowed before it holds whatever the timing: header implies path.
+        let pathCheck = try XCTUnwrap(bannerTest.range(of: "!run.stderr.contains(\"[banner] che-ical-mcp\") || run.stderr.contains(resolvedBinaryPath)"))
+        XCTAssertLessThan(pathCheck.lowerBound, timeoutCheck.lowerBound, "the #129 path check runs before the timeout check")
+        let warmUpCheck = try XCTUnwrap(bannerTest.range(of: "checkNotTimedOut(\n            warmUp.timedOut"))
+        let warmUpStatus = try XCTUnwrap(bannerTest.range(of: "warmUp.terminationStatus"))
+        XCTAssertLessThan(warmUpCheck.lowerBound, warmUpStatus.lowerBound,
+                          "the warm-up's timeout check must come before its exit-status assertion")
+        XCTAssertFalse(bannerTest.contains("maxWait:"), "the banner spawns use the default cap")
+        XCTAssertTrue(banner.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
         XCTAssertFalse(disclaim.contains("XCTAssertFalse(run.timedOut") || disclaim.contains("XCTAssertFalse(host.timedOut"))
         XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 7)
         XCTAssertTrue(disclaim.contains("timeout: TimeInterval = 15) throws -> Run {"), "the 15 s bound is unchanged")
+        // Every `timeout:` in the file is one of the seven known ones (runBounded's parameter and its
+        // three waits, runPrintTCCPath's 15 s default and its forward, the hang test's 1 s), so no
+        // call site overrides the 15 s bound, whatever its arguments look like.
+        XCTAssertEqual(disclaim.components(separatedBy: "timeout:").count - 1, 7, "a new `timeout:` in SelfDisclaimBinaryTests")
         XCTAssertTrue(disclaim.contains("XCTAssertTrue(run.timedOut)"), "the hang test still expects its timeout")
     }
 }
