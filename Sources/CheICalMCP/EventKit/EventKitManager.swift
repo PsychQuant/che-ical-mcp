@@ -2125,7 +2125,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        let storeDiffers = try saveNewReminder(reminder, handler: "createReminder")
+        let storeDiffers = try saveNewReminder(reminder, handler: "createReminder", restoring: false)
         markNeedsRefresh()
         // #301: read the date-only create back, as `update_reminder` does. A date-only write never
         // runs the fallback, so there is nothing to save or roll back.
@@ -2149,8 +2149,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// entry, the delete-undo's restore). Returns the compared fields the store holds differently
     /// (empty after a save or when it holds the reminder as written), for the caller to name
     /// through `NewObjectSave.differingFieldsNote`.
-    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws -> [String] {
-        try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+    ///
+    /// #281: a save that returns is checked in this store, as it is (no refresh; see
+    /// `NewObjectSave`): does the list (by the identifier the reminder had before the save) and the
+    /// reminder still resolve. A save
+    /// into a list deleted elsewhere between the caller's list lookup and this save returns without
+    /// error and writes nothing; it reads as a gone list and an unresolvable reminder, and
+    /// `NewObjectSave.ListDeletedDuringSave` is thrown (`restoring` picks the delete-undo wording),
+    /// so no undo entry is recorded for a create and a delete-undo keeps its record.
+    private func saveNewReminder(_ reminder: EKReminder, handler: String, restoring: Bool) throws -> [String] {
+        let listID = reminder.calendar?.calendarIdentifier
+        return try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+                              verified: {
+                                  try NewObjectSave.confirmWritten(
+                                      listGone: listID.map { eventStore.calendar(withIdentifier: $0) == nil } ?? false,
+                                      itemResolves: eventStore.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil,
+                                      restoring: restoring)
+                              },
                               committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
                               discard: { try eventStore.remove(reminder, commit: false) },
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
@@ -2634,7 +2649,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// a second copy. The names are data: callers build their note from them, never from text.
     func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String]) {
         let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
-        let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder")
+        let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder", restoring: true)
         markNeedsRefresh()
         return (snapshot.title, storeDiffers)
     }

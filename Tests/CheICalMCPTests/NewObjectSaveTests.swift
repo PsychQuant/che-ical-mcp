@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 import XCTest
 @testable import CheICalMCP
@@ -31,10 +32,12 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// Runs the helper with closures that record each call; `report` records the outcome by name.
     private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: NewObjectSave.Found?,
-                     discard: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?, differing: [String]) {
+                     discard: @escaping () throws -> Void = {},
+                     verified: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?, differing: [String]) {
         var calls: [String] = []
         do {
             let differing = try NewObjectSave.run(save: { calls.append("save"); try save() },
+                                                  verified: { calls.append("verified"); try verified() },
                                                   committed: { calls.append("committed"); return committed },
                                                   discard: { calls.append("discard"); try discard() },
                                                   report: { calls.append("report \(self.name($0))") })
@@ -44,11 +47,60 @@ final class NewObjectSaveTests: XCTestCase {
         }
     }
 
-    func testASuccessfulSaveRunsNothingElse() {
+    /// #281: a save that returned is verified, and nothing else runs (no new store, no discard,
+    /// no report). A failed save never reaches `verified` (the failure tests below list every call).
+    func testASuccessfulSaveIsVerifiedAndNothingElseRuns() {
         let result = run(save: {}, committed: .absent)
         XCTAssertNil(result.error)
-        XCTAssertEqual(result.calls, ["save"])
+        XCTAssertEqual(result.calls, ["save", "verified"])
         XCTAssertEqual(result.differing, [])
+    }
+
+    /// #281: a save that returned but whose check finds nothing written throws the check's error,
+    /// and nothing else runs: no new store, no discard (the save returned, so nothing is pending;
+    /// #261's rule, no defensive discard without probe evidence), no report. The caller's success
+    /// path (`create_reminder`'s result and undo entry, delete-undo's restore) is not reached.
+    func testASuccessfulSaveThatIsNotVerifiedThrowsAndNothingElseRuns() {
+        let result = run(save: {}, committed: .saved, discard: { XCTFail("discarded") },
+                         verified: { try NewObjectSave.confirmWritten(listGone: true, itemResolves: false, restoring: false) })
+        XCTAssertEqual(result.error as? NewObjectSave.ListDeletedDuringSave, NewObjectSave.ListDeletedDuringSave(restoring: false))
+        XCTAssertEqual(result.calls, ["save", "verified"])
+    }
+
+    /// #281: the decision. On device (iCloud, 2026-11-05) a reminder saved into a list deleted
+    /// through another store returned from `save`, and right after it the saving store read both
+    /// the list and the reminder as nil (4 of 4); after a normal save both read present (1 of 1).
+    /// Only that pair is "not written". A list that reads gone while the reminder resolves, or a
+    /// reminder that does not resolve while its list does (a transient read), counts as written:
+    /// turning a real save into a reported failure would invite a retry that writes a second copy.
+    func testOnlyAGoneListWithAnUnresolvableReminderIsNotWritten() {
+        XCTAssertFalse(NewObjectSave.reminderWritten(listGone: true, itemResolves: false))
+        XCTAssertTrue(NewObjectSave.reminderWritten(listGone: true, itemResolves: true))
+        XCTAssertTrue(NewObjectSave.reminderWritten(listGone: false, itemResolves: false))
+        XCTAssertTrue(NewObjectSave.reminderWritten(listGone: false, itemResolves: true))
+        for (listGone, itemResolves) in [(true, true), (false, false), (false, true)] {
+            XCTAssertNoThrow(try NewObjectSave.confirmWritten(listGone: listGone, itemResolves: itemResolves, restoring: false))
+            XCTAssertNoThrow(try NewObjectSave.confirmWritten(listGone: listGone, itemResolves: itemResolves, restoring: true))
+        }
+        XCTAssertThrowsError(try NewObjectSave.confirmWritten(listGone: true, itemResolves: false, restoring: true)) {
+            XCTAssertEqual($0 as? NewObjectSave.ListDeletedDuringSave, NewObjectSave.ListDeletedDuringSave(restoring: true))
+        }
+    }
+
+    /// #281: the error is author-written (no list title, no account name, no reminder title: #37)
+    /// and trusted, so its text reaches the client. A create says nothing was created; delete-undo
+    /// says nothing was written and the entry was kept, and the entry is kept (`.restore`, #191),
+    /// so the next undo reports the list as unavailable through `undoListMissing`.
+    func testTheListDeletedErrorIsTrustedAndKeepsADeleteUndoRecord() {
+        let create = NewObjectSave.ListDeletedDuringSave(restoring: false)
+        let undo = NewObjectSave.ListDeletedDuringSave(restoring: true)
+        XCTAssertEqual(create.errorDescription,
+                       "The reminder list was deleted while the reminder was being saved; nothing was created.")
+        XCTAssertEqual(undo.errorDescription,
+                       "Cannot undo the deletion of the reminder: its list was deleted while the reminder was being restored, so nothing was written and the history entry was kept. The next undo reports the list as unavailable and says how to give the entry up.")
+        XCTAssertTrue((create as Error) is TrustedErrorMessage)
+        XCTAssertEqual(UndoFailureDisposition.of(undo), .restore)
+        XCTAssertEqual(UndoFailureDisposition.of(create), .restore)
     }
 
     /// The default: a failed save that a new store cannot find is discarded once, after the
@@ -463,7 +515,10 @@ final class NewObjectSaveTests: XCTestCase {
             XCTAssertEqual(try matches(#"\.save\( ?\#(name) ?,"#, in: body).count, 0, body)
         }
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
-        XCTAssertEqual(try matches(#"NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
+        // #281: after a save that returned, the saving store is asked, without a refresh, whether
+        // the list (by the identifier it had before the save) and the reminder still resolve.
+        XCTAssertEqual(try matches(#"^\{ ?let listID = reminder\.calendar\?\.calendarIdentifier ?return try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
+                                   + #"verified: ?\{ ?try NewObjectSave\.confirmWritten\( ?listGone: ?listID\.map ?\{ ?\w+\.calendar\( ?withIdentifier: ?\$0 ?\) ?== ?nil ?\} ?\?\? ?false ?, ?itemResolves: ?\w+\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?!= ?nil ?, ?restoring: ?restoring ?\) ?\} ?, ?"#
                                    + freshCheck("reminderCheck", "reminder")
                                    + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?"#
                                    + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\) ?\}$"#,
@@ -476,12 +531,12 @@ final class NewObjectSaveTests: XCTestCase {
         // create's result, and onto the undo message. #301: a date-only create is read back in
         // between (`confirmSaved`, which does not throw), and its report rides with the result.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?var dateSync: ?ReminderDateSync\.Report\? ?if let dayReport ?\{ ?dateSync = ReminderDateSync\.confirmSaved\( ?reminder ?, ?report: ?dayReport ?, ?save: ?\{ ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?\} ?\) ?\} ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?var dateSync: ?ReminderDateSync\.Report\? ?if let dayReport ?\{ ?dateSync = ReminderDateSync\.confirmSaved\( ?reminder ?, ?report: ?dayReport ?, ?save: ?\{ ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?\} ?\) ?\} ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
         let undoArm = try body(of: "func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String])", in: code)
-        XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?return \( ?snapshot\.title ?, ?storeDiffers ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
+        XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?true ?\) ?markNeedsRefresh\( ?\) ?return \( ?snapshot\.title ?, ?storeDiffers ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
         let message = try body(of: "static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String", in: code)
         XCTAssertEqual(try matches(#"^\{ ?"" ?\+ ?NewObjectSave\.undoSuffix\( ?restored\.storeDiffers ?\) ?\}$"#, in: message).count, 1, message)
         XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let snapshot ?\) ?: ?return Self\.restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
