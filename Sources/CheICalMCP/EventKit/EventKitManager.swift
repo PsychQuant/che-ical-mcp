@@ -67,8 +67,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         EventKitManager(authorizationSource: probe)
     }
 
-    /// #322: also runs the delete-undo exceptions layer (`SeriesExceptionsUndo`: the `.deleteEvent`
-    /// and `.deleteOccurrence` undo arms, the exceptions record and restore) on `seriesExceptionsStore`.
+    /// #322: also runs the `.deleteEvent` and `.deleteOccurrence` undo arms (`SeriesExceptionsUndo`,
+    /// the exceptions restore and the slot guard included) on `seriesExceptionsStore`. The record
+    /// sites' capture does not read it: it always runs on the manager's own store.
     static func forTesting(probe: AuthorizationStatusSource,
                            seriesExceptionsStore: any SeriesExceptionsStoreSource) -> EventKitManager {
         EventKitManager(authorizationSource: probe, seriesExceptionsStore: seriesExceptionsStore)

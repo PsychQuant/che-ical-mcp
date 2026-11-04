@@ -3,8 +3,9 @@ import Foundation
 
 /// #285 — the EventKit side of recording and restoring a series' exceptions. The code lives in
 /// `SeriesExceptionsUndo`, over the `SeriesExceptionsStoreSource` seam (#322); these entry points
-/// run it on this manager's store (`EventKitSeriesExceptionsStore`), or on the store a test passed
-/// to `forTesting(probe:seriesExceptionsStore:)`.
+/// run it on this manager's store (`EventKitSeriesExceptionsStore`). The two undo arms run it on the
+/// store a test passed to `forTesting(probe:seriesExceptionsStore:)` instead, when there is one; the
+/// capture never does.
 extension EventKitManager {
     /// The production store: this manager's `eventStore` and its own helpers. Built inside the
     /// manager's isolation and used there only, for the call it was built for.

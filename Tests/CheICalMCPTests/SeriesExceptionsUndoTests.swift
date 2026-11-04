@@ -20,12 +20,19 @@ final class SeriesExceptionsUndoTests: XCTestCase {
     /// A series of four weekly occurrences: the third deleted on its own, the second edited on its
     /// own and moved by half an hour, and another series in the same calendar. The capture keeps
     /// the slots that exist unedited, records the edited one by its rule slot, ignores the other
-    /// series, and lists the window and a year each side as three queries.
+    /// series, and lists the window and a year each side as three queries. The edited occurrence
+    /// reads back as iCloud showed (#311): its identifiers carry `/RID=<seconds since 2001>` of its
+    /// slot, and its `occurrenceDate` has drifted to the moved start, so only the `/RID=` reading
+    /// of `SeriesExceptionsPlanner.ruleSlot` gives the slot.
     func testTheCaptureRecordsKeptSlotsAndEditedOccurrencesOfThisSeriesOnly() throws {
         let store = FakeSeriesExceptionsStore()
         let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: [s0, s1, s3])
+        let rid = "/RID=\(Int(s1.timeIntervalSinceReferenceDate))"
+        occurrences[1].id = "S" + rid
+        occurrences[1].external = "X-S" + rid
         occurrences[1].detached = true
         occurrences[1].start = s1.addingTimeInterval(1800)
+        occurrences[1].occurrenceDate = occurrences[1].start
         store.addSeries(id: "T", calendar: "C", title: "Other", slots: [s0, s2])
         store.window = DateInterval(start: s0.addingTimeInterval(-day), end: s3.addingTimeInterval(day))
 

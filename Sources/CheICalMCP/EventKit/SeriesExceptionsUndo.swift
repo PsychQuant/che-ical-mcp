@@ -23,7 +23,7 @@ enum SeriesExceptionsUndo {
         // there (PR #318 verify B1; round 2, A: the four-year limit is per query).
         var seen = Set<String>()
         for range in SeriesExceptionsPlanner.listingRanges(for: window) {
-            store.enumerateEvents(in: range, inCalendarOf: series) { occurrence in
+            for occurrence in store.events(in: range, inCalendarOf: series) {
                 let key = "\(store.identifiers(of: occurrence).eventIdentifier ?? "")|\(store.startDate(of: occurrence).timeIntervalSinceReferenceDate)"
                 if seen.insert(key).inserted { observed.append(store.observed(occurrence)) }
             }
@@ -45,10 +45,9 @@ enum SeriesExceptionsUndo {
         }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: restoredIDs.externalIdentifier)
         var generated: [(slot: Date, occurrence: Store.Event)] = []
-        store.enumerateEvents(in: exceptions.window, inCalendarOf: restored) { occurrence in
-            if UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
-                generated.append((store.slot(of: occurrence), occurrence))
-            }
+        for occurrence in store.events(in: exceptions.window, inCalendarOf: restored)
+        where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
+            generated.append((store.slot(of: occurrence), occurrence))
         }
         do {
             return try SeriesExceptionsRestorer.restore(

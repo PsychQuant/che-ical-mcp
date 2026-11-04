@@ -127,4 +127,27 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         XCTAssertTrue(message.contains("restored the deleted occurrence of 'Standup' as a one-off event (new ID: E1)"), message)
         XCTAssertEqual(store.log, ["holders", "save Standup"])
     }
+
+    /// #322 (PR #400 verify round 1): the handler tests above run the override branch. The
+    /// production branch of each undo arm, and the capture, run `SeriesExceptionsUndo` on the
+    /// manager's own store (`seriesExceptionsStore`, built on `eventStore`); this pins that wiring,
+    /// which only a device run executes.
+    func testTheProductionBranchesRunOnTheManagersOwnStore() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager+SeriesExceptions.swift")
+        for (declaration, call) in [
+            ("func undoDeletedEvent(_ snapshot: EventSnapshot)", "SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: "),
+            ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String])",
+             "SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, in: "),
+        ] {
+            let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "if let store = seriesExceptionsStoreOverride {", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "return try " + call + "store)", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "return try " + call + "seriesExceptionsStore)", in: body).count, 1, declaration)
+        }
+        let capture = try XCTUnwrap(SourcePins.body(of: "func captureSeriesExceptions(of series: EKEvent)", in: source))
+        XCTAssertEqual(SourcePins.ranges(of: "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)", in: capture).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "seriesExceptionsStoreOverride", in: capture).count, 0, "the capture never reads the override")
+        let store = try XCTUnwrap(SourcePins.body(of: "var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: source))
+        XCTAssertEqual(SourcePins.ranges(of: "EventKitSeriesExceptionsStore(eventStore: eventStore,", in: store).count, 1)
+    }
 }

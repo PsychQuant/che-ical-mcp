@@ -5,8 +5,11 @@ import Foundation
 /// #322: an in-memory `SeriesExceptionsStoreSource` for the delete-undo exceptions layer
 /// (`SeriesExceptionsUndo`). Its events follow what the device showed for iCloud (#285, #311):
 /// the occurrences of a series share the series' identifier and external identifier, report
-/// `hasRecurrenceRules`, and carry the slot their rule gave them in `occurrenceDate`; an
-/// occurrence edited on its own is `detached` and keeps that slot while its start can move.
+/// `hasRecurrenceRules`, and carry the slot their rule gave them in `occurrenceDate`. An
+/// occurrence edited on its own is `detached`; a test that needs it as iCloud shows it sets its
+/// identifiers to `<series id>/RID=<seconds since 2001>` and may let its `occurrenceDate` drift
+/// (`SeriesExceptionsUndoTests` does, for the capture). Saving and listing are simplified: a saved
+/// series generates `seriesSlots`, a listing is every event starting in the range.
 /// `log` records every write and listing in order, so a test can pin the order of the calls.
 final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     final class Event {
@@ -81,12 +84,10 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
             startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start))
     }
 
-    func enumerateEvents(in range: DateInterval, inCalendarOf event: Event, _ body: (Event) -> Void) {
-        guard let calendar = event.calendar else { return }
+    func events(in range: DateInterval, inCalendarOf event: Event) -> [Event] {
+        guard let calendar = event.calendar else { return [] }
         log.append("list")
-        for listed in events where listed.calendar == calendar && listed.start >= range.start && listed.start < range.end {
-            body(listed)
-        }
+        return events.filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
     }
 
     func makeEvent() -> Event { Event() }

@@ -3,10 +3,11 @@ import Foundation
 
 /// #322: the narrow seam of the delete-undo exceptions layer (#285), per the CLAUDE.md Test Seam
 /// Convention: a `<Domain>Source` scoped to what `SeriesExceptionsUndo` needs, not a widening of
-/// `EventKitManaging`. `Event` is the store's event type (`EKEvent` in production), so the undo
-/// arms and the exceptions record and restore can run against a fake in tests. Production uses
-/// `EventKitSeriesExceptionsStore`, built by `EventKitManager` on its own store; a test passes a
-/// fake through `EventKitManager.forTesting(probe:seriesExceptionsStore:)`.
+/// `EventKitManaging`. `Event` is the store's event type (`EKEvent` in production), so the code
+/// runs against a fake in tests. Production uses `EventKitSeriesExceptionsStore`, built by
+/// `EventKitManager` on its own store. A test runs `SeriesExceptionsUndo` on a fake directly, or
+/// passes one through `EventKitManager.forTesting(probe:seriesExceptionsStore:)`, which only the two
+/// undo arms read: the record sites' capture always runs on the manager's own store.
 ///
 /// Every requirement is one EventKit call (or the manager helper that already wrapped it), so
 /// moving the code behind the seam keeps the order of the calls (#322: no behaviour change).
@@ -24,9 +25,10 @@ protocol SeriesExceptionsStoreSource {
     func slot(of occurrence: Event) -> Date
     /// The occurrence as the capture records it.
     func observed(_ occurrence: Event) -> SeriesExceptionsPlanner.ObservedOccurrence
-    /// One query over `range` in `event`'s calendar (nothing when it has none). Callers pass the
-    /// scan window or a listing range derived from it, each at most 1460 days plus a year.
-    func enumerateEvents(in range: DateInterval, inCalendarOf event: Event, _ body: (Event) -> Void)
+    /// The events of one query over `range` in `event`'s calendar, in the order the store lists
+    /// them (none when it has no calendar). Callers pass only a listing range of the scan window
+    /// or the recorded window, at most 1460 days plus a year (`EventRangeQueryTests` pins them).
+    func events(in range: DateInterval, inCalendarOf event: Event) -> [Event]
 
     /// A new, unsaved event in the store.
     func makeEvent() -> Event
@@ -87,16 +89,14 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
             snapshot: EventSnapshot(from: occurrence, includeRecurrence: false))
     }
 
-    func enumerateEvents(in range: DateInterval, inCalendarOf event: EKEvent, _ body: (EKEvent) -> Void) {
-        guard let calendar = event.calendar else { return }
-        // `enumerateEvents` runs its block synchronously, before it returns (the code this replaced
-        // appended to local arrays the same way), so `body` does not outlive the call.
-        withoutActuallyEscaping(body) { body in
-            eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
-                                                                               calendars: [calendar])) { occurrence, _ in
-                body(occurrence)
-            }
+    func events(in range: DateInterval, inCalendarOf event: EKEvent) -> [EKEvent] {
+        guard let calendar = event.calendar else { return [] }
+        var listed: [EKEvent] = []
+        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
+                                                                           calendars: [calendar])) { occurrence, _ in
+            listed.append(occurrence)
         }
+        return listed
     }
 
     func makeEvent() -> EKEvent { EKEvent(eventStore: eventStore) }
