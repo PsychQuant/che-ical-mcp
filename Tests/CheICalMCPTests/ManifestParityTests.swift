@@ -223,6 +223,21 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #241: both reminder read tools name `item_timezone` (the reminder's own zone, null when
+    /// floating) and say what `timezone` names, in defineTools() and in the manifest.
+    func testReminderReadToolsDescribeItemTimezone() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["list_reminders", "search_reminders"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains("item_timezone (the reminder's own time zone; null when floating)"), "defineTools() \(name): \(declared)")
+            XCTAssertTrue(declared.contains("timezone is the host time zone, the zone of the *_local strings"), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("item_timezone (the reminder's own time zone, null when floating)"), "mcpb/manifest.json \(name): \(summary)")
+        }
+    }
+
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
     /// removes absolute-date alarms; both places a client reads about the three writers say so.
     func testReminderWritersDescribeTheBareDateForm() throws {

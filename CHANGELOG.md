@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_reminders` and `search_reminders` report each reminder's own time zone as `item_timezone`** (#241): the per-reminder `timezone` was always the host zone, whatever zone the reminder stores, so a floating reminder (no stored zone, the kind iCloud Web shifts, #134 / #237) looked the same as one zoned in the host zone. The new `item_timezone` is the reminder's `EKCalendarItem.timeZone`: a time zone identifier (usually IANA), or `null` when the reminder stores no zone, which covers date-only and undated reminders too; a floating timed reminder is `item_timezone` null with `due.time` set. With a due date it matches `due.timezone`. Clients that reject unknown fields must update their decoders. `timezone` keeps its value and is now documented as what it always was: the host zone, the zone of the `*_local` strings. No existing key changes value or type. The tool descriptions say both.
+
 ### Changed
 
 - **The summaries of `create_reminder`, `create_reminders_batch` and `create_calendar` in the bundle manifest name the `store_differs` keys and the retry warning** (#291): as the tool descriptions do, they list the keys `store_differs` can hold (for a reminder `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`; for a list `title` and `account`) and say that creating the item again with the same parameters may make a second copy. The `create_reminders_batch` description says it too. The 1.20.0 entry for #261 now says which duplicate check each create runs and that the undo of `delete_reminder` shows its title with quotes replaced and capped.

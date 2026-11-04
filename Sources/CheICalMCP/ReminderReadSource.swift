@@ -68,13 +68,15 @@ struct ReminderReadSnapshot: Sendable {
     let rules: [ReminderRecurrenceRuleValue]?
     let locationTrigger: LocationTrigger?
     let alarms: [Alarm]
+    /// #241: the reminder's own zone (`EKCalendarItem.timeZone`); nil when floating.
+    let timeZone: TimeZone?
 
     init(id: String, title: String?, notes: String? = nil, isCompleted: Bool = false,
          priority: Int = 0, calendarTitle: String = "Reminders", dueDateComponents: DateComponents? = nil,
          startDateComponents: DateComponents? = nil,
          completionDate: Date? = nil, creationDate: Date? = nil, hasRecurrence: Bool = false,
          rules: [ReminderRecurrenceRuleValue]? = nil, locationTrigger: LocationTrigger? = nil,
-         alarms: [Alarm] = []) {
+         alarms: [Alarm] = [], timeZone: TimeZone? = nil) {
         self.calendarItemIdentifier = id
         self.title = title
         self.notes = notes
@@ -89,6 +91,7 @@ struct ReminderReadSnapshot: Sendable {
         self.rules = rules
         self.locationTrigger = locationTrigger
         self.alarms = alarms
+        self.timeZone = timeZone
     }
 
     init(from reminder: EKReminder) {
@@ -121,7 +124,7 @@ struct ReminderReadSnapshot: Sendable {
                   completionDate: reminder.completionDate, creationDate: reminder.creationDate,
                   hasRecurrence: reminder.hasRecurrenceRules,
                   rules: reminder.recurrenceRules?.map(ReminderRecurrenceRuleValue.init(from:)),
-                  locationTrigger: trigger, alarms: alarms)
+                  locationTrigger: trigger, alarms: alarms, timeZone: reminder.timeZone)
     }
 
     var recurrenceMetadata: [String: Any] {
