@@ -101,7 +101,7 @@
     },
     {
       "name": "check_conflicts",
-      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
+      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating) and time-based alarms (minutes_before: positive = before the start, negative = after)"
     },
     {
       "name": "copy_event",
