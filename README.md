@@ -126,6 +126,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 
 **Identifier after an update (#268):** `update_event` and `update_reminder` answer with the identifier the item has after the save. A `calendar_name` in another account can change it (the event part follows the #226 device finding); `id_changed` says whether it differs from the identifier you passed, and `previous_id`, present only when it changed, repeats that identifier.
 
+**All-day dates with an offset (#372):** all-day dates are whole days read in this Mac's time zone. A `start_time` or `end_time` written with another offset is converted first and can land on another day (`2027-04-11T23:59:59+07:00` on a `+08:00` Mac is 04-12, so the event gets one more day). The event is still saved that way; `create_event`, each `create_events_batch` result and `update_event` (when the event is all-day after the call, for the dates it gave) add a `warnings` list whose entries name the `field`, its day in the written offset (`written_day`), the day the event uses (`host_day`) and a `message`. The comparison is on the days, so an offset whose day agrees, or a value without an offset, gives no warning. Send all-day dates without an offset.
+
 </details>
 
 <details>

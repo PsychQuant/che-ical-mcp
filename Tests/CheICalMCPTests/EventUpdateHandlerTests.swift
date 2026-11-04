@@ -3,22 +3,8 @@ import MCP
 import XCTest
 @testable import CheICalMCP
 
-/// `update_event` driven through an `EventWriteSource` fake: the response the handler builds from
-/// the saved event.
-private actor UpdateFake: EventWriteSource {
-    private(set) var updates: [EventUpdateRequest] = []
-
-    func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
-        updates.append(request)
-        // #268: a move to a calendar in another account ("Other") comes back with a new identifier.
-        let id = request.calendarSource == "Other" ? "moved-" + request.identifier : request.identifier
-        let start = request.startDate ?? Date(timeIntervalSince1970: 1_800_000_000)
-        return EventWriteValue(eventIdentifier: id, title: request.title ?? "Saved",
-                               isAllDay: request.isAllDay ?? false,
-                               startDate: start, endDate: request.endDate ?? start.addingTimeInterval(3600))
-    }
-}
-
+/// `update_event` driven through `FakeEventWriteSource` (Helpers/): the response the handler
+/// builds from the saved event.
 final class EventUpdateHandlerTests: XCTestCase {
     private func update(_ server: CheICalMCPServer, _ args: [String: Value]) async throws -> [String: Any] {
         let raw = try await server.executeToolCall(name: "update_event", arguments: args)
@@ -28,7 +14,7 @@ final class EventUpdateHandlerTests: XCTestCase {
     // MARK: - #268 identifier after the save
 
     func testUpdateToACalendarInAnotherAccountReportsTheNewIdentifier() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: UpdateFake())
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
         let result = try await update(server, ["event_id": .string("e1"), "calendar_name": .string("Work"),
                                                "calendar_source": .string("Other")])
         XCTAssertEqual(result["action"] as? String, "updated")
@@ -38,7 +24,7 @@ final class EventUpdateHandlerTests: XCTestCase {
     }
 
     func testUpdateThatKeepsTheIdentifierSaysItDidNotChange() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: UpdateFake())
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
         let result = try await update(server, ["event_id": .string("e1"), "title": .string("Renamed")])
         XCTAssertEqual(result["title"] as? String, "Renamed")
         XCTAssertEqual(result["id"] as? String, "e1")
@@ -47,7 +33,7 @@ final class EventUpdateHandlerTests: XCTestCase {
     }
 
     func testTheRequestCarriesTheCallsFields() async throws {
-        let fake = UpdateFake()
+        let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)
         _ = try await update(server, ["event_id": .string("e1"), "calendar_name": .string("Work"),
                                       "calendar_source": .string("Other"), "span": .string("all"),
@@ -60,5 +46,54 @@ final class EventUpdateHandlerTests: XCTestCase {
         XCTAssertEqual(request.span, .futureEvents)
         XCTAssertTrue(request.applyToAll)
         XCTAssertNotNil(request.occurrenceDate)
+    }
+
+    // MARK: - #372 all-day offset warnings
+
+    func testAnAllDayUpdateWithAnEndWhoseOffsetMovesTheDayWarns() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await update(server, ["event_id": .string("e1"), "all_day": .bool(true),
+                                               "start_time": .string("2027-04-10"),
+                                               "end_time": .string(FakeEventWriteSource.behindHost("2027-04-11", "23:30:00"))])
+        let warnings = try XCTUnwrap(result["warnings"] as? [[String: Any]])
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertEqual(warnings[0]["field"] as? String, "end_time")
+        XCTAssertEqual(warnings[0]["written_day"] as? String, "2027-04-11")
+        XCTAssertEqual(warnings[0]["host_day"] as? String, "2027-04-12")
+    }
+
+    /// Only `end_time` on an event that is already all-day: the first day is the saved one.
+    func testAnEndOnlyUpdateOfAnAllDayEventWarns() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await update(server, ["event_id": .string("allday-e1"),
+                                               "end_time": .string(FakeEventWriteSource.behindHost("2027-04-11", "23:30:00"))])
+        let warnings = try XCTUnwrap(result["warnings"] as? [[String: Any]])
+        XCTAssertEqual(warnings.map { $0["field"] as? String }, ["end_time"])
+    }
+
+    func testAStartOnlyUpdateOfAnAllDayEventWarnsOnTheStart() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await update(server, ["event_id": .string("allday-e1"),
+                                               "start_time": .string(FakeEventWriteSource.behindHost("2027-04-10", "23:30:00"))])
+        let warnings = try XCTUnwrap(result["warnings"] as? [[String: Any]])
+        XCTAssertEqual(warnings.map { $0["field"] as? String }, ["start_time"])
+        XCTAssertEqual(warnings[0]["host_day"] as? String, "2027-04-11")
+    }
+
+    func testAnUpdateThatLeavesTheEventTimedDoesNotWarn() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await update(server, ["event_id": .string("e1"),
+                                               "start_time": .string(FakeEventWriteSource.behindHost("2027-04-10", "23:00:00")),
+                                               "end_time": .string(FakeEventWriteSource.behindHost("2027-04-10", "23:30:00"))])
+        XCTAssertNil(result["warnings"])
+    }
+
+    func testAnAllDayUpdateWithoutDatesOrWithoutOffsetsDoesNotWarn() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let titleOnly = try await update(server, ["event_id": .string("allday-e1"), "title": .string("Renamed")])
+        XCTAssertNil(titleOnly["warnings"])
+        let plain = try await update(server, ["event_id": .string("e1"), "all_day": .bool(true),
+                                              "start_time": .string("2027-04-10"), "end_time": .string("2027-04-12")])
+        XCTAssertNil(plain["warnings"])
     }
 }

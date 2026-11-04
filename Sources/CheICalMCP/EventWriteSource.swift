@@ -24,6 +24,30 @@ struct EventUpdateRequest: Sendable {
     var clearTimezone = false
 }
 
+/// The fields of a `create_event` call (or one `create_events_batch` item), as
+/// `EventKitManager.createEvent` takes them.
+struct EventCreateRequest: Sendable {
+    let title: String
+    let startDate: Date
+    let endDate: Date
+    var notes: String? = nil
+    var location: String? = nil
+    var url: String? = nil
+    var calendarName: String? = nil
+    var calendarSource: String? = nil
+    var isAllDay = false
+    var alarmOffsets: [Int]? = nil
+    var recurrenceRule: RecurrenceRuleInput? = nil
+    var structuredLocation: StructuredLocationInput? = nil
+    var timezone: TimeZone? = nil
+}
+
+/// A create's saved event, and whether it was an existing duplicate (`skipped`).
+struct EventCreateValue: Sendable, Equatable {
+    let event: EventWriteValue
+    let isDuplicate: Bool
+}
+
 /// The saved event, as the write handlers read it for their response.
 struct EventWriteValue: Sendable, Equatable {
     let eventIdentifier: String?
@@ -33,10 +57,24 @@ struct EventWriteValue: Sendable, Equatable {
     let endDate: Date
 }
 
-/// #268: narrow seam for the event write handlers (CLAUDE.md "Test Seam Convention"), so a test
-/// can return a saved event whose identifier differs from the one the call named.
+/// Narrow seam for the event write handlers (CLAUDE.md "Test Seam Convention"): #268, so a test
+/// can return a saved event whose identifier differs from the one the call named; #372, so the
+/// all-day offset warnings of `create_event`, `create_events_batch` and `update_event` are tested
+/// through the handlers.
 protocol EventWriteSource: Sendable {
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue
+    func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue
+    /// `create_events_batch`'s advisory lookup of existing events with a similar title (kept on the
+    /// seam so a handler test does not read the host's calendars).
+    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue]
+}
+
+/// An existing event `create_events_batch` names as similar to a batch title.
+struct SimilarEventValue: Sendable, Equatable {
+    let eventIdentifier: String?
+    let title: String?
+    let calendarTitle: String
+    let startDate: Date
 }
 
 extension EventWriteValue {
@@ -59,5 +97,23 @@ extension EventKitManager: EventWriteSource {
             occurrenceDate: request.occurrenceDate, applyToAll: request.applyToAll,
             timezone: request.timezone, clearTimezone: request.clearTimezone)
         return EventWriteValue(event)
+    }
+
+    func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue {
+        let result = try await createEvent(
+            title: request.title, startDate: request.startDate, endDate: request.endDate,
+            notes: request.notes, location: request.location, url: request.url,
+            calendarName: request.calendarName, calendarSource: request.calendarSource,
+            isAllDay: request.isAllDay, alarmOffsets: request.alarmOffsets,
+            recurrenceRule: request.recurrenceRule, structuredLocation: request.structuredLocation,
+            timezone: request.timezone)
+        return EventCreateValue(event: EventWriteValue(result.event), isDuplicate: result.isDuplicate)
+    }
+
+    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] {
+        try await findSimilarEvents(title: title, limit: limit).map {
+            SimilarEventValue(eventIdentifier: $0.eventIdentifier, title: $0.title,
+                              calendarTitle: $0.calendar.title, startDate: $0.startDate)
+        }
     }
 }
