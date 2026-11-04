@@ -82,6 +82,15 @@ fi
 export CHECK_STAGED_STRICT=1
 
 DEST="$DIR/$NAME"
+# The installed path must be a file (or absent): a directory, or a symlink to one, would receive
+# the product inside it (#239 verify round 3). Checked again right before the rename.
+refuse_directory_dest() {
+    if [[ -d "$DEST" ]]; then
+        echo "Error: $DEST is a directory (or a symlink to one); nothing installed (#239)" >&2
+        exit 1
+    fi
+}
+refuse_directory_dest
 echo "Installing $NAME $VERSION ($ARCH, $MODE) to $DEST"
 
 cd "$PROJECT_DIR"
@@ -107,13 +116,18 @@ if ! "$VERIFY_CODESIGN" --verify --strict "$STAGED" 2>/dev/null; then
     echo "Error: the signed product does not verify (codesign --verify --strict); nothing installed (#239)" >&2
     exit 1
 fi
+# Whole lines of `codesign -dv`, not substrings: its Executable= line holds the stage path, which
+# could contain any of these words (#239 verify round 3).
 SIGNATURE=$("$VERIFY_CODESIGN" -dv "$STAGED" 2>&1 || true)
+signature_line() { printf '%s\n' "$SIGNATURE" | "$CSP_GREP" -qx -- "$1"; }
+signature_line_matches() { printf '%s\n' "$SIGNATURE" | "$CSP_GREP" -qE -- "$1"; }
 if [[ "$MODE" == adhoc ]]; then
-    if [[ "$SIGNATURE" != *"Signature=adhoc"* || "$SIGNATURE" == *"linker-signed"* ]]; then
+    if ! signature_line "Signature=adhoc" \
+       || signature_line_matches '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*linker-signed'; then
         echo "Error: the product is not ad-hoc signed by codesign; nothing installed (#239)" >&2
         exit 1
     fi
-elif [[ "$SIGNATURE" != *"TeamIdentifier=$TEAM_ID"* ]]; then
+elif ! signature_line "TeamIdentifier=$TEAM_ID"; then
     echo "Error: the signed product's TeamIdentifier is not $TEAM_ID; nothing installed (#239)" >&2
     exit 1
 fi
@@ -129,4 +143,6 @@ if ! cp "$STAGED" "$NEW_FILE" || ! chmod 755 "$NEW_FILE"; then
     echo "Error: cannot copy the checked product into $DIR; the installed file is unchanged (#239)" >&2
     exit 1
 fi
-mv -f "$NEW_FILE" "$DEST"
+refuse_directory_dest
+# -h: a symlink to a directory created since the check above is replaced, not followed.
+mv -fh "$NEW_FILE" "$DEST"

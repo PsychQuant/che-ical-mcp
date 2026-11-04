@@ -110,7 +110,7 @@ case "$last" in "$FAIL_CP_UNDER"/*) echo "stub: cp refused" >&2; exit 1 ;; esac
 exec /bin/cp "$@"
 EOF2
 /bin/chmod u+x "$TMP/cpstub/cp"
-refused "a copy into the install directory that fails" adhoc "$TMP/good" "" \
+refused "a copy into the install directory that fails" adhoc "$TMP/good" "cannot copy the checked product" \
     PATH="$TMP/cpstub:$PATH" FAIL_CP_UNDER="$TMP/dest-a-copy-into-the-install-directory-that-fails"
 left=$(ls -A "$TMP/dest-a-copy-into-the-install-directory-that-fails")
 [ "$left" = CheICalMCP ] && ok "a failed copy leaves no temp file behind" || bad "a failed copy leaves no temp file behind — left: $left"
@@ -122,6 +122,32 @@ ino_after=$(stat -f %i "$TMP/dest1/CheICalMCP")
     && ok "a reinstall replaces the file with a new, executable inode" \
     || bad "a reinstall replaces the file with a new, executable inode — rc=$rc inode $ino_before -> $ino_after: $out"
 [ "$(ls -A "$TMP/dest1")" = CheICalMCP ] && ok "a reinstall leaves no temp file behind" || bad "a reinstall leaves no temp file behind — $(ls -A "$TMP/dest1")"
+
+# 6c. The installed path must be a file: a directory, or a symlink to one, is refused before
+# anything is copied, and neither is changed (#239 verify round 3).
+mkdir -p "$TMP/dest-dir/CheICalMCP"
+echo keep > "$TMP/dest-dir/CheICalMCP/inside"
+out=$(run_install adhoc "$TMP/good" "$TMP/dest-dir") && rc=0 || rc=$?
+if [ $rc -ne 0 ] && [[ "$out" == *"is a directory"* ]]; then ok "an installed path that is a directory is refused"
+else bad "an installed path that is a directory is refused — rc=$rc: $out"; fi
+[ "$(ls -A "$TMP/dest-dir/CheICalMCP")" = inside ] && ok "the directory is left as it was" \
+    || bad "the directory is left as it was — $(ls -A "$TMP/dest-dir/CheICalMCP")"
+mkdir -p "$TMP/dest-link" "$TMP/link-target"
+echo keep > "$TMP/link-target/inside"
+ln -s "$TMP/link-target" "$TMP/dest-link/CheICalMCP"
+out=$(run_install adhoc "$TMP/good" "$TMP/dest-link") && rc=0 || rc=$?
+if [ $rc -ne 0 ] && [[ "$out" == *"is a directory"* ]]; then ok "an installed path that is a symlink to a directory is refused"
+else bad "an installed path that is a symlink to a directory is refused — rc=$rc: $out"; fi
+[ -L "$TMP/dest-link/CheICalMCP" ] && [ "$(ls -A "$TMP/link-target")" = inside ] \
+    && ok "the symlink and its target are left as they were" \
+    || bad "the symlink and its target are left as they were — $(ls -la "$TMP/dest-link" "$TMP/link-target")"
+
+# 6d. The signature checks read whole lines of `codesign -dv`, not substrings: a stage path that
+# contains "linker-signed" must not make a good ad-hoc signature look linker-signed.
+mkdir -p "$TMP/linker-signed-tmp"
+out=$(run_install adhoc "$TMP/good" "$TMP/dest-anchored" TMPDIR="$TMP/linker-signed-tmp") && rc=0 || rc=$?
+[ $rc -eq 0 ] && [ -x "$TMP/dest-anchored/CheICalMCP" ] && ok "a stage path containing linker-signed does not refuse a good signature" \
+    || bad "a stage path containing linker-signed does not refuse a good signature — rc=$rc: $out"
 
 # 7. developer-id: an identity that is not in the keychain stops before anything is built.
 rm -f "$TMP/calls"
@@ -138,6 +164,11 @@ if [ -n "$REAL_ID" ]; then
         DEVELOPER_ID="$REAL_ID" CHE_ICAL_CODESIGN="$TMP/stub/codesign-fails"
     refused "a signature without the identity's team" developer-id "$TMP/good" "TeamIdentifier" \
         DEVELOPER_ID="$REAL_ID" CHE_ICAL_CODESIGN="$TMP/stub/codesign-noop"
+    # The stage path names the team: a substring check would read it from the Executable= line.
+    REAL_TEAM=$(printf '%s' "$REAL_ID" | sed -nE 's/.*\(([A-Z0-9]{10})\)$/\1/p')
+    mkdir -p "$TMP/TeamIdentifier=$REAL_TEAM"
+    refused "an unsigned product whose path names the team" developer-id "$TMP/good" "TeamIdentifier" \
+        DEVELOPER_ID="$REAL_ID" CHE_ICAL_CODESIGN="$TMP/stub/codesign-noop" TMPDIR="$TMP/TeamIdentifier=$REAL_TEAM"
 else
     echo "- skipped: no Developer ID Application identity in this keychain (developer-id signing cases)"
 fi
