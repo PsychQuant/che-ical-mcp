@@ -750,7 +750,7 @@ extension UndoOperation {
             if !operations.isEmpty, operations.allSatisfy({ if case .deleteReminder = $0 { return true }; return false }) {
                 return "Cannot redo the deletion of \(count) reminder\(count == 1 ? "" : "s"): redo does not delete the restored reminders. Use delete_reminders_batch to delete them again." + nothingWritten
             }
-            return "Cannot redo this batch of \(count) operations: redo does not repeat them. Repeat them with the tools that made them." + nothingWritten
+            return "Cannot redo this batch of \(count) operation\(count == 1 ? "" : "s"): redo does not repeat them. Repeat them with the tools that made them." + nothingWritten
         }
     }
 

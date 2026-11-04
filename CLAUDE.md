@@ -39,19 +39,20 @@ read-after-write confound）。三表面特性表、wrapper failure-cache 坑與
 
 ## Test Naming Convention
 
-`Tests/CheICalMCPTests/` follows three filename suffixes that signal what each test exercises. The suffix is **load-bearing** — pick the right one when adding a new file so reviewers (and Claude) can locate the right test layer fast.
+`Tests/CheICalMCPTests/` follows four filename suffixes that signal what each test exercises. The suffix is **load-bearing** — pick the right one when adding a new file so reviewers (and Claude) can locate the right test layer fast.
 
 | Filename pattern | Layer | What it tests |
 |------------------|-------|---------------|
 | `<Subject>Tests.swift` | Pure unit | Free functions / value types / pure helpers. No `FakeEventKitManager` and no `EventKitManager` *instances* (static-utility access like `EventKitManager.setupCommandHint(binaryPath:)` / `resolvedSetupCommandHint()` in `SetupCommandTests` is fine — it's a type-level probe, not handler integration). Examples: `BatchDeleteFilterTests`, `ReminderCleanupTests`, `EventKitErrorSanitizerTests`, `ParticipantFormattingTests`, `SetupCommandTests`. |
 | `<Subject>HandlerTests.swift` | Handler integration | `handle*` methods from `CheICalMCPServer` driven through `FakeEventKitManager`-equivalent doubles. Tests the handler's full sanitize → dispatch → response shape, not the EventKit manager itself. **Canonical example: [`CleanupHandlerTests.swift`](Tests/CheICalMCPTests/CleanupHandlerTests.swift)** — copy its structure when adding a new handler test. |
 | `<Subject>DispatchTests.swift` | Outer-catch / dispatch | `handleToolCallForTesting` outer-catch and the dispatch JSON envelope. Probes what surfaces when a handler throws an unexpected error type. Examples: `OuterCatchDispatchTests`, `DispatchRoundTripTests`. |
+| `<Subject>WiringTests.swift` | Source-scan wiring pin | Code an in-memory event store cannot run (the order of calls in a store path, which helper a handler goes through), pinned by reading `Sources/` with `Helpers/SourcePins.swift` / `Helpers/SourceScan.swift`. Examples: `UndoBatchWiringTests`, `ReminderUndoWiringTests`. A single source pin inside another `*Tests` file is fine; a file made of them takes this suffix. The helpers' own tests (`SourcePinsTests`, `SourceScanTests`) are pure `*Tests`. |
 
 Helper files (e.g., `FakeEventKitManager.swift`) carry no `*Tests` suffix.
 
 **Helpers/ subdirectory** (`Tests/CheICalMCPTests/Helpers/`, #83): shared test infrastructure that is NOT a test class is exempt from the `*Tests.swift` naming convention. Files here provide cross-test utilities (e.g. `StderrCaptureHarness.swift` centralizing the `dup2`/`Pipe` stderr-capture pattern that the sanitizer cluster's carve-out tests share). The subdirectory's existence signals "library code for tests, not tests itself" — auditors looking for tests should search the parent directory; auditors looking for shared utilities should look here.
 
-When adding a test, ask: am I exercising a pure function (→ `*Tests`), the handler boundary (→ `*HandlerTests`), or the outer dispatch shell (→ `*DispatchTests`)? Mismatched suffix is a `idd-verify` finding worth flagging. Helpers go in `Helpers/` regardless of suffix.
+When adding a test, ask: am I exercising a pure function (→ `*Tests`), the handler boundary (→ `*HandlerTests`), the outer dispatch shell (→ `*DispatchTests`), or wiring only a source read can show (→ `*WiringTests`)? Mismatched suffix is a `idd-verify` finding worth flagging. Helpers go in `Helpers/` regardless of suffix.
 
 ## Test Seam Convention (DI for handlers)
 
