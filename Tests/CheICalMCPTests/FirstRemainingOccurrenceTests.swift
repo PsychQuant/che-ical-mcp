@@ -352,6 +352,31 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
     }
 
+    /// #377: the one other stand-in probe in the event arm. It is the not-found hook of the
+    /// create-undo only (the lookup stays plain, asserted above), runs only after the series
+    /// failed to refresh (`SeriesCreateUndoTests`), and only decides the message: the stand-in is
+    /// never returned as the target.
+    func testTheCreateUndoProbesTheStandInOnlyForItsNotFoundMessage() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func verifiedHistoryTarget("))
+        let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
+        let body = String(source[from.upperBound..<to.lowerBound])
+        XCTAssertTrue(body.contains("missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },"),
+                      "the event arm's not-found hook")
+        XCTAssertEqual(source.components(separatedBy: "createUndoMissingError(").count, 3, "declared once, called once")
+        let helperFrom = try XCTUnwrap(source.range(of: "private func createUndoMissingError("))
+        let helperEnd = try XCTUnwrap(source.range(of: "\n    /// ", range: helperFrom.upperBound..<source.endIndex))
+        let helper = String(source[helperFrom.upperBound..<helperEnd.lowerBound])
+        XCTAssertFalse(helper.contains("\n    func "), "the extraction stays inside the helper")
+        XCTAssertTrue(helper.contains("SeriesCreateUndo.missingError("), "the decision is the tested seam")
+        XCTAssertTrue(helper.contains("stored: stored != nil"), "the object the lookup returned")
+        XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false) != nil"),
+                      "any remaining occurrence, edited-before or not, names the shape")
+        XCTAssertFalse(helper.contains("return stand"), "the stand-in is not a target")
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {

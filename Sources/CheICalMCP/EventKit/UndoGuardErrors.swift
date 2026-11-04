@@ -10,14 +10,20 @@ import Foundation
 /// the item so the order is unit-tested without EventKit (closure seam, like `ExclusionExecutor`).
 /// The EventKit side (which lookup, the series scan, the #204 identity guard) is in
 /// `EventKitManager+UndoGuard.swift`.
+///
+/// `missing` (#377) is asked only when the lookup found nothing (nil) or found an item that did
+/// not refresh (that item), and may name the shape more precisely than `UndoTargetMissingError`'s
+/// generic not-found; nil keeps the generic one. Either way nothing is compared or written.
 enum UndoTargetCheck {
     static func check<Item>(_ expected: UndoPostState, verb: UndoHistoryVerb,
                             lookup: () throws -> Item?, refresh: (Item) -> Bool,
+                            missing: (Item?) -> Error? = { _ in nil },
                             conflicts: (Item) throws -> [String],
                             refusal: ((Item, [String]) -> Error)? = nil) throws -> Item {
-        guard let item = try lookup(), refresh(item) else {
-            throw UndoTargetMissingError(verb: verb, kind: expected.kind, title: expected.title,
-                                         hasIdentifier: !expected.itemID.isEmpty)
+        let found = try lookup()
+        guard let item = found, refresh(item) else {
+            throw missing(found) ?? UndoTargetMissingError(verb: verb, kind: expected.kind, title: expected.title,
+                                                           hasIdentifier: !expected.itemID.isEmpty)
         }
         let changed = try conflicts(item)
         guard changed.isEmpty else {
@@ -153,6 +159,21 @@ struct UndoTargetMissingError: LocalizedError, Sendable {
         } else {
             message = "Cannot \(verb.rawValue): the \(item) was recorded without an identifier, so it cannot be found. Nothing was written and \(kept): \(giveUp)."
         }
+    }
+}
+
+extension UndoTargetMissingError {
+    private init(message: String) { self.message = message }
+
+    /// #377: the undo of `create_event` for a series whose object still resolves but no longer
+    /// refreshes while a later occurrence remains, the shape EventKit leaves when the series'
+    /// first occurrence is deleted (#326, root cause #284). The undo cannot delete the series it
+    /// created (it compares and deletes the series object), and it does not delete the rest through
+    /// a remaining occurrence, so no retry helps. Kept like every not-found
+    /// (`undo-history-discard`); the message names the way on. Author-controlled text, with the
+    /// title through `undoShownTitle`, on the same terms as the other initializer.
+    static func seriesFirstOccurrenceDeleted(title: String) -> UndoTargetMissingError {
+        UndoTargetMissingError(message: "Cannot undo the creation of the recurring event '\(undoShownTitle(title))': the series this undo would delete no longer reads, while later occurrences of it remain, which is what EventKit leaves when the series' first occurrence is deleted. Undo does not delete the rest of the series through one of its remaining occurrences, so no retry can change this. Nothing was written and this history entry was kept. To remove what is left of the series, delete its remaining occurrences with delete_event. Then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
     }
 }
 
