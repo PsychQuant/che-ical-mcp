@@ -43,7 +43,8 @@ final class CalendarDeletionHandlerTests: XCTestCase {
     func testTheDescriptionStatesTheWindowAndTheAnswerFields() throws {
         let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "delete_calendar" })
         let text = tool.description ?? ""
-        for field in ["checked_empty", "searched_from", "searched_to", "reminders_found", "200 years", "0026", "not undoable"] {
+        for field in ["checked_empty", "searched_from", "searched_to", "reminders_found", "200 years", "0026", "not undoable",
+                      "not yet synced", "this server process", "both"] {
             XCTAssertTrue(text.contains(field), "\(field): \(text)")
         }
     }
@@ -66,6 +67,29 @@ final class CalendarDeletionHandlerTests: XCTestCase {
         let body = try json(text)
         XCTAssertEqual(body["reminders_found"] as? Int, 0, text)
         XCTAssertNil(body["searched_from"], text)
+    }
+
+    /// PR #413 round 2: the switch guards an irreversible delete, so null and a misspelled key do
+    /// not fall back to the unchecked delete.
+    func testNullAndUnknownKeysAreRefusedWithNothingDeleted() async throws {
+        let cases: [([String: Value], String)] = [
+            (["id": .string("cal-1"), "require_empty": .null], "require_empty must be true or false"),
+            (["id": .string("cal-1"), "requireEmpty": .bool(true)], "accepts only id and require_empty"),
+            (["id": .string("cal-1"), "require-empty": .bool(true)], "accepts only id and require_empty"),
+        ]
+        for (args, expected) in cases {
+            let fake = CalendarDeletionFake()
+            do {
+                _ = try await call(fake, args)
+                XCTFail("\(args) must be refused")
+            } catch let error as ToolError {
+                XCTAssertTrue("\(error)".contains(expected), "\(args): \(error)")
+                XCTAssertFalse("\(error)".contains("requireEmpty") || "\(error)".contains("require-empty"),
+                               "the caller's key is not echoed into the trusted text: \(error)")
+            }
+            let calls = await fake.calls
+            XCTAssertEqual(calls, [], "\(args): nothing deleted")
+        }
     }
 
     func testRequireEmptyMustBeABoolean() async throws {

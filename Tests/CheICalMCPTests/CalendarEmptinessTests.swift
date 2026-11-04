@@ -144,6 +144,12 @@ final class CalendarEmptinessTests: XCTestCase {
         let fetch = try XCTUnwrap(SourcePins.ranges(of: "await countReminders(in: calendar)", in: code).first)
         let compare = try XCTUnwrap(SourcePins.ranges(of: "generationAfter: writeGeneration", in: code).first)
         let removal = try XCTUnwrap(SourcePins.ranges(of: "eventStore.removeCalendar(", in: code).first)
+        // PR #413 round 2: the store is refreshed before the reads (as the other read paths do), and
+        // the calendar is looked up again after them, before the removal.
+        let refresh = try XCTUnwrap(SourcePins.ranges(of: "refreshIfNeeded()", in: code).first)
+        XCTAssertTrue(check.lowerBound < refresh.lowerBound && refresh.lowerBound < events.lowerBound, "refresh before the reads")
+        let again = try XCTUnwrap(SourcePins.ranges(of: "eventStore.calendar(withIdentifier: identifier) != nil", in: code).first)
+        XCTAssertTrue(compare.lowerBound < again.lowerBound && again.lowerBound < removal.lowerBound, "looked up again before the removal")
         XCTAssertTrue(check.lowerBound < generation.lowerBound && generation.lowerBound < events.lowerBound
                       && events.lowerBound < fetch.lowerBound && fetch.lowerBound < compare.lowerBound
                       && compare.lowerBound < removal.lowerBound, "generation, events, fetch, compare, removal, in that order")
@@ -180,30 +186,41 @@ final class CalendarEmptinessTests: XCTestCase {
         }
 
         // The other stores the server makes: none writes (a write through one would not be counted).
+        // The #283 guard's pattern over `SourceScan.codeOnly` (PR #413 round 2: a narrower pattern
+        // missed `.init()`, `(sources:)` and anything after a raw string, and could not count the
+        // subclass).
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let sources = root.appendingPathComponent("Sources/CheICalMCP")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
-        var made: [String] = []
+        XCTAssertGreaterThan(files.count, 10)
+        var made: [String: Int] = [:]
         for file in files {
             let relative = String(file.path.dropFirst(sources.path.count + 1))
-            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
-            for _ in SourcePins.ranges(ofPattern: #"\bEKEventStore\(\)"#, in: code) { made.append(relative) }
+            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
+            for match in SourcePins.ranges(ofPattern: SharedTestStoreTests.construction, in: code) {
+                made["\(relative) \(code[match].hasPrefix("Counting") ? "CountingEventStore" : "EKEventStore")", default: 0] += 1
+            }
         }
-        XCTAssertEqual(made.sorted(), ["EventKit/AuthorizationStatusSource.swift", "EventKit/NewObjectSave.swift", "SetupRunner.swift"],
-                       "a new EKEventStore elsewhere could write past the count")
+        XCTAssertEqual(made, ["EventKit/EventKitManager.swift CountingEventStore": 1,
+                              "EventKit/AuthorizationStatusSource.swift EKEventStore": 1,
+                              "EventKit/NewObjectSave.swift EKEventStore": 1,
+                              "SetupRunner.swift EKEventStore": 1],
+                       """
+                       The closed list of stores the server builds: the manager's counting one; the authorization \
+                       default (unused when the manager passes its store); NewObjectSave's read-only fresh store; the \
+                       setup's (access request only). A write through any other store would not be counted.
+                       """)
     }
 
     /// The count moves on a write that throws, too (a save may throw after the store took it).
     func testTheStoreCountsAWriteThatThrows() {
-        let store = Self.countingStore
+        let store = SharedTestStore.store
         let before = store.commitCount
         XCTAssertThrowsError(try store.save(EKReminder(eventStore: store), commit: true), "a reminder with no list cannot be saved")
         XCTAssertEqual(store.commitCount, before + 1)
     }
 
-    /// One store for the test target's process, as `SharedTestStore` (#283).
-    private static let countingStore = CountingEventStore()
 
     func testTheGenerationIncludesRefreshMarks() throws {
         let mark = try XCTUnwrap(SourcePins.body(of: "func markNeedsRefresh()", in: try SourcePins.source("EventKit/EventKitManager.swift")))

@@ -636,7 +636,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// (`CalendarEmptiness.checkEvents`), reminders whole (`checkReminders`); a non-empty one, or one
     /// that cannot be counted, is refused and nothing is deleted. The event check runs on this actor
     /// with no suspension; the one suspension is the reminder fetch, across which the write
-    /// generation is compared, so no write by this server lands between the check and
+    /// generation is compared, so no write by this server process lands between the check and
     /// `removeCalendar` (PR #413 verify r1). A write by another app or a sync can still land in
     /// between: EventKit offers no way to delete a calendar only if it is empty.
     @discardableResult
@@ -650,6 +650,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var checked: CalendarEmptiness.Checked?
         if requireEmpty {
+            // As the other read paths: a write this server made is seen (PR #413 round 2).
+            refreshIfNeeded()
             let generation = writeGeneration
             try CalendarEmptiness.checkKinds(holdsEvents: calendar.allowedEntityTypes.contains(.event),
                                              holdsReminders: calendar.allowedEntityTypes.contains(.reminder))
@@ -667,6 +669,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 let counted = await countReminders(in: calendar)
                 try CalendarEmptiness.checkReminders(counted: counted, generationBefore: generation, generationAfter: writeGeneration)
                 reminders = 0
+            }
+            // An events read cannot tell a failure from an empty calendar (`events(matching:)`
+            // answers [] either way); a calendar that no longer resolves after the reads is refused,
+            // since its reads may have answered nothing for that reason (PR #413 round 2).
+            guard eventStore.calendar(withIdentifier: identifier) != nil else {
+                throw EventKitError.calendarNotEmpty(reason: CalendarEmptiness.calendarGoneMessage)
             }
             checked = CalendarEmptiness.Checked(searched: searched, reminders: reminders)
         }

@@ -67,7 +67,10 @@ enum CalendarEmptiness {
 
     /// Throws `EventKitError.calendarNotEmpty` when `window` holds events. Synchronous, so it runs
     /// on its caller's actor with no suspension (PR #413 verify r1). A `count` that throws stops the
-    /// check: a read that cannot answer refuses, it is never taken as empty.
+    /// check; in production that is only `EventRangeQuery`'s span refusal: EventKit's
+    /// `events(matching:)` answers [] when it cannot read, which is indistinguishable from an empty
+    /// calendar (PR #413 round 2). The caller narrows that case by looking the calendar up again
+    /// after the reads (`calendarGoneMessage`); the reminder side can tell (nil, `checkReminders`).
     static func checkEvents(window: EventRangeQuery.Span, count: (Date, Date) throws -> Int) throws {
         if let found = try firstEvents(in: window, count: count) {
             throw EventKitError.calendarNotEmpty(reason: eventsMessage(atLeast: found.atLeast, span: found.span, window: window))
@@ -87,6 +90,10 @@ enum CalendarEmptiness {
         }
         if counted > 0 { throw EventKitError.calendarNotEmpty(reason: remindersMessage(counted)) }
     }
+
+    /// The calendar no longer resolves after the reads, so they may have answered nothing for that
+    /// reason (PR #413 round 2).
+    static let calendarGoneMessage = "Refusing to delete the calendar: require_empty is set and the calendar could not be found again after it was checked, so the check may not have read it. Nothing was deleted."
 
     /// Numbers and dates formatted by this server only: no calendar or event title (#37).
     static func eventsMessage(atLeast: Int, span: EventRangeQuery.Span, window: EventRangeQuery.Span) -> String {

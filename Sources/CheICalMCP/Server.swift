@@ -171,7 +171,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. Only about 200 years either side of now are checked for events (EventKit has no query for every event of a calendar): an event outside them, for example one typed with the year 0026, is not seen, and the calendar is deleted with it. A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list. Without require_empty the answer is {action, id}, as before.",
+                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1255,6 +1255,14 @@ class CheICalMCPServer {
     private func handleDeleteCalendar(arguments: [String: Value]) async throws -> String {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
+        }
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
+        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
+        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
+            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
+        }
+        if case .null? = arguments["require_empty"] {
+            throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
         }
         let requireEmpty = try InputValidation.requireOptionalBool(arguments, key: "require_empty") ?? false
         let checked = try await calendarDeletionSource.deleteCalendar(identifier: id, requireEmpty: requireEmpty)
