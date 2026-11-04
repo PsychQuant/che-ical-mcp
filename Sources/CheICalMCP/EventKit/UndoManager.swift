@@ -122,9 +122,12 @@ struct EventSnapshot {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
-        self.calendarIdentifier = event.calendar.calendarIdentifier
-        self.calendarTitle = event.calendar.title
-        self.calendarSource = event.calendar.source?.title
+        // An event without a calendar is recorded without an identifier (its undo is refused by
+        // `resolveCalendar` with `undoCalendarMissing`'s no-identifier wording, #269); the calendar was read through the implicitly
+        // unwrapped `calendar` and crashed on it (#286, as `ReminderSnapshot` in PR #277).
+        self.calendarIdentifier = event.calendar?.calendarIdentifier ?? ""
+        self.calendarTitle = event.calendar?.title ?? ""
+        self.calendarSource = event.calendar?.source?.title
         self.notes = event.notes
         self.location = event.location
         self.url = event.url
@@ -288,8 +291,7 @@ struct ReminderSnapshot {
     /// it is unit-tested without EventKit (closure seam).
     func resolveList<T>(in lists: [T], identifier: (T) -> String, for kind: ReminderRestoreKind) throws -> T {
         try Self.list(recorded: calendarIdentifier, in: lists, identifier: identifier) {
-            EventKitError.undoListMissing(list: calendarTitle, account: calendarSource, reminder: title,
-                                          hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
+            EventKitError.undoListMissing(reminder: title, hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
         }
     }
 
