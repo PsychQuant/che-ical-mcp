@@ -1055,12 +1055,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // calendar moves the whole series even with span this (device), so one of another account
         // is the cross-account move again; a change of the recurrence rules is series-level too.
         let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        // Read before any field is assigned; also tells the response (#268) not to trust the series
+        // object's identifier after the save.
+        let crossesAccounts = newCalendar.map {
+            FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                         toSourceID: $0.source?.sourceIdentifier)
+        } ?? false
         if FirstRemainingOccurrence.refusesUpdateThroughStandIn(
             viaStandIn: resolved.viaStandIn,
-            changesAccount: newCalendar.map {
-                FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
-                                                             toSourceID: $0.source?.sourceIdentifier)
-            } ?? false,
+            changesAccount: crossesAccounts,
             changesRecurrence: clearRecurrence || recurrenceRule != nil) {
             throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
         }
@@ -1206,15 +1209,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
             recurringKind: recurringKind, postState: { postWriteSnapshot(eventID: $0, saved: event) }))
-        // #268 verify round 2: a save of one occurrence (span this) is known from the objects, not
-        // from the id's shape. Its series identifier is read from the resolved series after the
-        // save (refreshed: a calendar of another account moves the whole series, device note
-        // above); `savedOccurrenceSeries` falls back to the occurrence id's part before /RID=.
+        // #268 verify rounds 2-3: a save of one occurrence (span this) is known from the objects,
+        // not from the id's shape. The series object's identifier counts only when it refreshed and
+        // the save stayed in the account (a calendar of another account moves the whole series,
+        // device note above, and gives it a new id); otherwise `savedOccurrenceSeries` takes the
+        // occurrence id's part before /RID=, or reports the occurrence id as a change.
         let savedIsOccurrence = event !== masterEvent
-        if savedIsOccurrence { _ = masterEvent.refresh() }
+        let masterRefreshed = savedIsOccurrence && masterEvent.refresh()
         let seriesIdentifier = UpdatedIdentifier.savedOccurrenceSeries(
             savedIsOccurrence: event !== masterEvent, span: span,
-            master: savedIsOccurrence ? masterEvent.eventIdentifier : nil,
+            masterRefreshed: masterRefreshed, crossedAccounts: crossesAccounts,
+            master: masterRefreshed ? masterEvent.eventIdentifier : nil,
             occurrence: event.eventIdentifier)
         return (event, seriesIdentifier)
     }

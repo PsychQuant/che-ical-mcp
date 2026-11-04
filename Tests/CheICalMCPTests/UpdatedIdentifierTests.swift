@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -65,39 +66,77 @@ final class UpdatedIdentifierTests: XCTestCase {
         XCTAssertEqual(fields["occurrence_id"] as? String, "OCC")
     }
 
-    // MARK: - which saves are occurrence saves, and their series id
+    // MARK: - which saves are occurrence saves, and their series id (verify round 3: fail toward
+    // "changed", never toward a stale "unchanged")
 
-    func testOnlyAnOccurrenceSavedWithSpanThisHasASeriesIdentifier() {
-        XCTAssertEqual(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: true, span: .thisEvent,
-                                                               master: "S", occurrence: "S/RID=1"), "S")
-        XCTAssertNil(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: true, span: .futureEvents,
-                                                             master: "S", occurrence: "NEW"), "a future split is a new series")
-        XCTAssertNil(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: false, span: .thisEvent,
-                                                             master: "S", occurrence: "S"))
+    private func series(isOccurrence: Bool = true, span: EKSpan = .thisEvent, refreshed: Bool,
+                        crossed: Bool, master: String?, occurrence: String?) -> String? {
+        UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: isOccurrence, span: span,
+                                                masterRefreshed: refreshed, crossedAccounts: crossed,
+                                                master: master, occurrence: occurrence)
     }
 
-    /// The series object after the save comes first; when it has no identifier, the part of the
-    /// occurrence id before `/RID=` (iCloud's shape) is the fallback, and nil without either.
-    func testTheSeriesIdentifierPrefersTheSeriesObjectThenTheOccurrencePrefix() {
-        XCTAssertEqual(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: true, span: .thisEvent,
-                                                               master: "MASTER", occurrence: "OTHER/RID=1"), "MASTER")
+    func testOnlyAnOccurrenceSavedWithSpanThisHasASeriesIdentifier() {
+        XCTAssertEqual(series(refreshed: true, crossed: false, master: "S", occurrence: "S/RID=1"), "S")
+        XCTAssertNil(series(span: .futureEvents, refreshed: true, crossed: false, master: "S", occurrence: "NEW"),
+                     "a future split is a new series")
+        XCTAssertNil(series(isOccurrence: false, refreshed: true, crossed: false, master: "S", occurrence: "S"))
+    }
+
+    /// Refreshed series object, same account: its identifier.
+    func testARefreshedSeriesInTheSameAccountGivesItsIdentifier() {
+        XCTAssertEqual(series(refreshed: true, crossed: false, master: "MASTER", occurrence: "OTHER/RID=1"), "MASTER")
+        XCTAssertEqual(series(refreshed: true, crossed: false, master: "MASTER", occurrence: "UNRELATED"), "MASTER")
+    }
+
+    /// A save that crossed accounts: the series object may keep its old id, so it loses to the
+    /// occurrence's series part; without one, the occurrence id itself (a change, not the old id).
+    func testACrossAccountSaveNeverTrustsTheSeriesObject() {
+        XCTAssertEqual(series(refreshed: true, crossed: true, master: "OLD", occurrence: "NEW/RID=1"), "NEW")
+        XCTAssertEqual(series(refreshed: false, crossed: true, master: "OLD", occurrence: "NEW/RID=1"), "NEW")
+        XCTAssertEqual(series(refreshed: true, crossed: true, master: "OLD", occurrence: "UNRELATED-NEW"), "UNRELATED-NEW")
+        XCTAssertEqual(series(refreshed: false, crossed: true, master: nil, occurrence: "UNRELATED-NEW"), "UNRELATED-NEW")
+    }
+
+    /// A series object that did not refresh is not read: the occurrence's series part, else keep
+    /// the input ("", same account, nothing known).
+    func testAnUnrefreshedSeriesInTheSameAccountFallsBackToThePrefixOrKeepsTheInput() {
+        XCTAssertEqual(series(refreshed: false, crossed: false, master: "STALE", occurrence: "S/RID=1"), "S")
+        XCTAssertEqual(series(refreshed: false, crossed: false, master: "STALE", occurrence: "UNRELATED"), "")
+        XCTAssertEqual(series(refreshed: false, crossed: false, master: nil, occurrence: nil), "")
+    }
+
+    /// A refreshed series object without an identifier, same account: prefix, else keep the input.
+    func testARefreshedSeriesWithoutAnIdentifierFallsBackToThePrefixOrKeepsTheInput() {
         for master in [nil, ""] as [String?] {
-            XCTAssertEqual(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: true, span: .thisEvent,
-                                                                   master: master, occurrence: "NEW/RID=1"), "NEW")
-            XCTAssertNil(UpdatedIdentifier.savedOccurrenceSeries(savedIsOccurrence: true, span: .thisEvent,
-                                                                 master: master, occurrence: "UNRELATED"))
+            XCTAssertEqual(series(refreshed: true, crossed: false, master: master, occurrence: "S/RID=1"), "S")
+            XCTAssertEqual(series(refreshed: true, crossed: false, master: master, occurrence: "UNRELATED"), "")
         }
     }
 
-    /// The wiring in `EventKitManager.updateEvent` (no in-memory store can run it): the flag is
-    /// the object identity of the saved event and the resolved series, with the call's span.
+    /// End to end with `responseFields`: a crossed save with an unrelated occurrence id reports
+    /// that id as the new `id` (changed), never the old one.
+    func testACrossedSaveWithAnUnrelatedOccurrenceIdIsReportedAsAChange() {
+        let seriesId = series(refreshed: true, crossed: true, master: "CAL:SERIES", occurrence: "NEW-OCC")
+        let fields = UpdatedIdentifier.responseFields(input: "CAL:SERIES", saved: "NEW-OCC", seriesIdentifier: seriesId)
+        XCTAssertEqual(fields["id"] as? String, "NEW-OCC")
+        XCTAssertEqual(fields["id_changed"] as? Bool, true)
+        XCTAssertEqual(fields["previous_id"] as? String, "CAL:SERIES")
+        XCTAssertEqual(fields["occurrence_id"] as? String, "NEW-OCC")
+    }
+
+    /// The wiring in `EventKitManager.updateEvent` (no in-memory store can run it).
     func testUpdateEventDerivesTheSeriesFromTheSavedObjectIdentity() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        XCTAssertTrue(flat.contains("UpdatedIdentifier.savedOccurrenceSeries( savedIsOccurrence: event !== masterEvent, span: span,"), flat.suffix(600).description)
-        XCTAssertTrue(flat.contains("occurrence: event.eventIdentifier)"))
+        XCTAssertTrue(flat.contains("let masterRefreshed = savedIsOccurrence && masterEvent.refresh()"), "refresh result kept")
+        XCTAssertTrue(flat.contains("UpdatedIdentifier.savedOccurrenceSeries( savedIsOccurrence: event !== masterEvent, span: span, masterRefreshed: masterRefreshed, crossedAccounts: crossesAccounts, master: masterRefreshed ? masterEvent.eventIdentifier : nil, occurrence: event.eventIdentifier)"),
+                      String(flat.suffix(900)))
+        // The same cross-account value the stand-in refusal uses, computed once before any write.
+        XCTAssertTrue(flat.contains("let crossesAccounts = newCalendar.map { FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier, toSourceID: $0.source?.sourceIdentifier) } ?? false"))
+        XCTAssertTrue(flat.contains("changesAccount: crossesAccounts,"))
         let save = try XCTUnwrap(flat.range(of: "try eventStore.save(event, span: span)"))
-        let series = try XCTUnwrap(flat.range(of: "UpdatedIdentifier.savedOccurrenceSeries("))
-        XCTAssertLessThan(save.lowerBound, series.lowerBound, "read after the save")
+        let seriesCall = try XCTUnwrap(flat.range(of: "UpdatedIdentifier.savedOccurrenceSeries("))
+        XCTAssertLessThan(save.lowerBound, seriesCall.lowerBound, "read after the save")
     }
 }

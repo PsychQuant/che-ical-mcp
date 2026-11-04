@@ -37,15 +37,25 @@ enum UpdatedIdentifier {
     /// The series identifier of a save of one occurrence, or nil when the save was not one
     /// (`savedIsOccurrence`: the saved object is an occurrence, not the resolved series; span
     /// "future" from an occurrence starts a new series, whose own id the save reports).
-    /// - Parameters:
-    ///   - master: the resolved series object's identifier, read after the save.
-    ///   - occurrence: the saved occurrence's identifier. Fallback only when `master` is nil or
-    ///     empty: its part before /RID= (iCloud's shape); nil when it has no such part.
+    ///
+    /// It fails toward "changed", never toward a stale "unchanged" (PR #387 verify round 3): a
+    /// series object read before a save that moved the series to another account may keep its old
+    /// identifier (#226: the move gives a new one), as may one that did not refresh.
+    /// - The series object is used only when it refreshed and the save stayed in the account.
+    /// - Otherwise the series part of the saved occurrence id (before /RID=, iCloud's shape).
+    /// - Without that part: after a cross-account save, the occurrence id itself, so the response
+    ///   reports a change rather than the old id; in the same account, "" (keep the input).
     static func savedOccurrenceSeries(savedIsOccurrence: Bool, span: EKSpan,
+                                      masterRefreshed: Bool, crossedAccounts: Bool,
                                       master: String?, occurrence: String?) -> String? {
         guard savedIsOccurrence, span == .thisEvent else { return nil }
-        if let master, !master.isEmpty { return master }
-        guard let occurrence, let marker = occurrence.range(of: "/RID=") else { return nil }
-        return String(occurrence[..<marker.lowerBound])
+        if masterRefreshed, !crossedAccounts, let master, !master.isEmpty { return master }
+        if let occurrence, let marker = occurrence.range(of: "/RID=") {
+            return String(occurrence[..<marker.lowerBound])
+        }
+        if crossedAccounts, let occurrence, !occurrence.isEmpty { return occurrence }
+        // Same account and nothing known about the series: its identifier did not change.
+        // (A cross-account save without any saved identifier lands here too: nothing to report.)
+        return ""
     }
 }
