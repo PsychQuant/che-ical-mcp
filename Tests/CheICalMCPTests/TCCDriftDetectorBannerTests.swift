@@ -333,10 +333,10 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // in the class to spawn the binary. Running `--version` once, to exit, keeps that cost
         // out of the arrival clock below, which is meant to time the banner path only.
         let warmUp = try spawnAndCaptureStderr(binary: binary, arguments: ["--version"])
-        XCTAssertFalse(
-            warmUp.timedOut,
-            "The untimed `--version` warm-up hit the cap; this failure is in the warm-up, not the timed banner spawn"
-        )
+        // #366: an overrun on a host loaded past 4 per core is a skip, otherwise a failure naming the load.
+        try HostLoad.live.checkNotTimedOut(
+            warmUp.timedOut, bound: 10,
+            "The untimed `--version` warm-up (this failure is in the warm-up, not the timed banner spawn)")
         XCTAssertEqual(
             warmUp.terminationStatus, 0,
             "The untimed `--version` warm-up exited non-zero; this failure is in the warm-up, not the timed banner spawn"
@@ -355,15 +355,14 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             run.stderr.contains(resolvedBinaryPath),
             "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(run.stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
         )
-        XCTAssertFalse(run.timedOut, "The banner should arrive before the 10 s cap")
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 10, "The banner spawn (the banner should arrive before the cap)")
         let arrival = try XCTUnwrap(
             run.untilMatchedAfter,
             "The banner header and the resolved binary path never both reached stderr, so there is no arrival time to check"
         )
-        XCTAssertLessThan(
-            arrival, 5.0,
-            "Banner must arrive within the latency tripwire (#127 target 200ms; bound 5.0s, above the production path's own worst case, #233). Arrived after: \(String(format: "%.3f", arrival))s"
-        )
+        try HostLoad.live.checkWithinBound(
+            arrival, bound: 5.0,
+            "Banner arrival, latency tripwire (#127 target 200ms; bound above the production path's own worst case, #233)")
     }
 
     /// #343: server mode re-execs itself (POSIX_SPAWN_SETEXEC + disclaim) before any
