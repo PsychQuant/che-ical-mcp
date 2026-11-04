@@ -289,6 +289,59 @@ final class TCCDriftDetectorTests: XCTestCase {
             "banner --setup hint must reference the resolved running binary path")
     }
 
+    // #368 — a self-attributed `restricted` status is a policy; `--setup` cannot change it.
+
+    func testFormatBannerRestrictedCalendar_namesThePolicyAndOffersNoSetup() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: true
+        )
+
+        XCTAssertTrue(banner.contains("Calendar access is restricted by a policy"), banner)
+        XCTAssertTrue(banner.contains("configuration profile or Screen Time"), banner)
+        XCTAssertTrue(banner.contains("allow Calendar access for CheICalMCP"), banner)
+        XCTAssertFalse(banner.contains("' --setup"), "no runnable --setup command for a policy: \(banner)")
+        XCTAssertFalse(banner.contains("Calendar access not granted — grant via"), banner)
+    }
+
+    func testFormatBannerNotRestricted_keepsTheSetupLine() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: false
+        )
+
+        XCTAssertTrue(banner.contains("Calendar access not granted — grant via: '\(runningPath)' --setup"), banner)
+        XCTAssertFalse(banner.contains("restricted by a policy"), banner)
+    }
+
+    func testFormatBannerRestrictedWithHostSignal_printsNoSecondRestrictedLine() {
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(
+                signals: [.hostRestrictedByPolicy(host: .claudeCode(version: "2.1.206"), hostPath: "/x/claude")],
+                skipReasons: []),
+            version: "1.12.0",
+            runningBinaryPath: runningPath,
+            pid: 12345,
+            bundleID: bundleID,
+            calendarAccessGranted: false,
+            calendarRestricted: true
+        )
+
+        XCTAssertFalse(banner.contains("[banner] Calendar access is restricted by a policy"),
+            "the host signal already explains the restriction: \(banner)")
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+    }
+
     func testFormatBannerNoSetupHintWhenCalendarGranted() {
         let banner = TCCDriftDetector.formatBanner(
             report: DriftReport(signals: [], skipReasons: []),

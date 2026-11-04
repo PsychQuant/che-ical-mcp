@@ -120,10 +120,9 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           Calendar:   \(statusString(calStatus))
           Reminders:  \(statusString(remStatus))
 
-        Reset TCC + re-prompt (run from Terminal, NOT over SSH):
-          tccutil reset Calendar \(bundleID)
-          tccutil reset Reminders \(bundleID)
-          \(EventKitManager.setupCommandHint(binaryPath: absolute))
+        \(EventKitManager.printTCCPathRepromptSection(
+            bundleID: bundleID, binaryPath: absolute,
+            calendarStatus: calStatus, remindersStatus: remStatus))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -268,7 +267,8 @@ func emitStartupBanner() {
         runningBinaryPath: resolvedPath,
         pid: ProcessInfo.processInfo.processIdentifier,
         bundleID: bundleID,
-        calendarAccessGranted: calendarGranted
+        calendarAccessGranted: calendarGranted,
+        calendarRestricted: calendarStatus == .restricted
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }
