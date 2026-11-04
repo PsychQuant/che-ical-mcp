@@ -1173,7 +1173,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose zone was read. A reminder's id gives nil here and not found from the write (#260).
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
         try await ensureCalendarAccess()
-        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event.timeZone
+        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
+    }
+
+    /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
+    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
+    /// `moveEvent`) both take it from here, so they cannot drift apart.
+    static func occurrenceZone(of event: EKEvent) -> TimeZone? {
+        event.timeZone
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
@@ -1212,7 +1219,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // record is classified by are taken before the removal.
         let snapshots: DeletedEventSnapshots
         if hadRules, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: masterEvent.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
@@ -1694,7 +1701,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: master.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master)) else {
                 throw EventKitError.moveRefused(reason: "No occurrence of this event falls on occurrence_date.")
             }
             subject = occurrence

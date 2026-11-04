@@ -80,8 +80,9 @@ final class OccurrenceDateInputTests: XCTestCase {
         }
     }
 
-    /// No zone (event not found, or no zone set) keeps today's reading in the host zone; the
-    /// write then reports not found.
+    /// No zone keeps the reading in the host zone: for an event not found the write then reports
+    /// not found (unless the event appeared in between); for an event with no zone set (all-day
+    /// or floating) the search also uses the host zone, so both sides agree.
     func testNoZoneFallsBackToTheHostZone() async throws {
         let date = try await OccurrenceDateInput.resolve("2026-12-06", iso: iso, span: "this") { nil }
         XCTAssertEqual(date, try FlexibleDate.parse("2026-12-06", iso: iso))

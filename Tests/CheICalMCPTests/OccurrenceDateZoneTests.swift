@@ -31,13 +31,13 @@ final class OccurrenceDateZoneTests: XCTestCase {
     /// edited-before refusal, since only the zone is needed and the write applies its own.
     func testTheZoneComesFromTheRefreshedEvent() throws {
         let body = try managerMethod()
-        XCTAssertTrue(body.contains("freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event.timeZone"))
+        XCTAssertTrue(body.contains("freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap"))
         XCTAssertFalse(body.contains("storedEvent("), "the stored object is not refreshed")
     }
 
     /// The handler's whole call, comments removed and whitespace collapsed (string literals kept).
-    private func call(in marker: String) throws -> String {
-        let file = try SourceScan.sourcesDirectory().appendingPathComponent("Server.swift")
+    private func call(in marker: String, file relative: String = "Server.swift") throws -> String {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent(relative)
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
         return try XCTUnwrap(SourceScan.body(of: marker, in: code))
     }
@@ -49,7 +49,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
     /// supplement to the value tests.
     func testDeleteEventResolvesTheDateThroughTheSharedSteps() throws {
         let body = try call(in: "private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {")
-        let expected = #"let occurrenceDate: Date\? = try await OccurrenceDateInput\.resolve\( arguments\["occurrence_date"\]\?\.stringValue, iso: dateFormatter, span: spanStr, zoneLookup: \{ try await self\.eventKitManager\.occurrenceDateTimeZone\(identifier: eventId\) \}\)"#
+        let expected = #"let occurrenceDate: Date\? = try await OccurrenceDateInput\.resolve\( arguments\["occurrence_date"\]\?\.stringValue, iso: dateFormatter, span: spanStr, zoneLookup: \{ try await self\.eventDeletionSource\.occurrenceDateTimeZone\(identifier: eventId\) \}\)"#
         XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: body).count, 1, "the exact call")
         XCTAssertFalse(body.contains("parseFlexibleDate("))
         XCTAssertEqual(body.components(separatedBy: "occurrenceDateTimeZone(").count - 1, 1, "looked up in that call only")
@@ -66,6 +66,28 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let expected = #"occurrenceDates\[index\] = try await OccurrenceDateInput\.resolve\( text, iso: dateFormatter, span: span\.rawValue, zoneLookup: \{ try await self\.eventCopySource\.eventTimeZone\(identifier: id\) \}\)"#
         XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: move).count, 1, "the exact call")
         XCTAssertEqual(move.components(separatedBy: "eventTimeZone(").count - 1, 1, "looked up in that call only")
+    }
+
+    /// Round 3: the parse side and the search side read one zone, `occurrenceZone(of:)`. Pinned as
+    /// exact expressions, each exactly once: the lookup's whole body (no `catch`, no `try?`, its
+    /// result not replaced), the helper, the `EventCopySource` delegation, and the
+    /// `findOccurrence` call of `deleteEvent` and of `moveEvent` (the only one in each).
+    func testParseAndSearchShareOneZone() throws {
+        let manager = "EventKit/EventKitManager.swift"
+        let lookup = try call(in: "func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {", file: manager)
+        XCTAssertEqual(lookup.trimmingCharacters(in: .whitespaces),
+                       "try await ensureCalendarAccess() return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }")
+        XCTAssertFalse(lookup.contains("catch"))
+        let helper = try call(in: "static func occurrenceZone(of event: EKEvent) -> TimeZone? {", file: manager)
+        XCTAssertEqual(helper.trimmingCharacters(in: .whitespaces), "event.timeZone")
+        let delegation = try call(in: "func eventTimeZone(identifier: String) async throws -> TimeZone? {", file: "EventCopySource.swift")
+        XCTAssertEqual(delegation.trimmingCharacters(in: .whitespaces), "try await occurrenceDateTimeZone(identifier: identifier)")
+        let delete = try call(in: "func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {", file: manager)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: delete).count, 1)
+        XCTAssertEqual(delete.components(separatedBy: "findOccurrence(").count - 1, 1)
+        let move = try call(in: "func moveEvent( identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span, toCalendarName: String, toCalendarSource: String? ) async throws -> (result: EventMoveResult, title: String?) {", file: manager)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master))", in: move).count, 1)
+        XCTAssertEqual(move.components(separatedBy: "findOccurrence(").count - 1, 1)
     }
 
     /// The zone lookup resolves the event without the edited-before refusal and the write may

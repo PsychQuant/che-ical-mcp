@@ -46,6 +46,7 @@ class CheICalMCPServer {
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
     private let eventCopySource: any EventCopySource
+    private let eventDeletionSource: any EventDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -83,6 +84,7 @@ class CheICalMCPServer {
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
          eventCopySource: any EventCopySource = EventKitManager.shared,
+         eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -94,6 +96,7 @@ class CheICalMCPServer {
         self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
+        self.eventDeletionSource = eventDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -1490,15 +1493,15 @@ class CheICalMCPServer {
         let spanStr = arguments["span"]?.stringValue ?? "this"
         let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
             arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
-            zoneLookup: { try await self.eventKitManager.occurrenceDateTimeZone(identifier: eventId) })
+            zoneLookup: { try await self.eventDeletionSource.occurrenceDateTimeZone(identifier: eventId) })
 
         if spanStr == "all" {
-            try await eventKitManager.deleteEventSeries(identifier: eventId)
+            try await eventDeletionSource.deleteEventSeries(identifier: eventId)
             return try actionResult(["action": "deleted", "id": eventId, "span": "all"])
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
-        try await eventKitManager.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
+        try await eventDeletionSource.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
         return try actionResult(["action": "deleted", "id": eventId, "span": spanStr])
     }
 

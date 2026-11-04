@@ -23,8 +23,9 @@ private actor CopyFake: EventCopySource {
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
 
-    func eventTimeZone(identifier: String) async -> TimeZone? {
-        identifier.hasPrefix("ny-") ? TimeZone(identifier: "America/New_York") : nil
+    func eventTimeZone(identifier: String) async throws -> TimeZone? {
+        if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
+        return identifier.hasPrefix("ny-") ? TimeZone(identifier: "America/New_York") : nil
     }
 
     struct MoveCall: Equatable { let identifier: String; let occurrenceDate: Date?; let span: EventMovePolicy.Span }
@@ -282,6 +283,21 @@ final class EventCopyHandlerTests: XCTestCase {
         ny.timeZone = TimeZone(identifier: "America/New_York")!
         let calls = await fake.moveCalls
         XCTAssertEqual(calls.first?.occurrenceDate, ny.date(from: DateComponents(year: 2026, month: 10, day: 21)))
+    }
+
+    /// #270 round 3: an access error from the zone lookup reaches the caller before any move.
+    func testAnAccessErrorFromTheZoneLookupStopsTheBatchBeforeAnyMove() async throws {
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        do {
+            _ = try await move(server, ["event_ids": .array([.string("good"), .string("denied")]),
+                                        "occurrence_dates": .array([.null, .string("2026-10-21")])])
+            XCTFail("the access error must surface")
+        } catch let error as EventKitError {
+            guard case .accessDenied = error else { return XCTFail("\(error)") }
+        }
+        let calls = await fake.moveCalls
+        XCTAssertEqual(calls, [])
     }
 
     /// Round 1 #10: a present but non-array occurrence_dates is rejected, not ignored.

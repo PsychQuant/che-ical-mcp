@@ -9,8 +9,10 @@ import Foundation
 ///   with span all), so the zone is not looked up; the value is still checked as a date;
 /// - a value with an explicit offset needs no zone, so the lookup is not called;
 /// - otherwise the lookup is called; an error from it (calendar access) is thrown before anything
-///   is parsed, so the date is never read in the host zone instead, and a nil zone (event not
-///   found, no zone set) keeps the host zone, and the write then reports not found.
+///   is parsed, so the date is never read in the host zone instead. A nil zone keeps the host
+///   zone: for an event not found, the write then reports not found (unless the event appeared
+///   in between); for an event with no zone set (all-day or floating), the search side also uses
+///   the host zone (`findOccurrence` with a nil zone), so both sides agree.
 /// A call without occurrence_date runs no access check, refresh or stand-in scan for it.
 enum OccurrenceDateInput {
     static func resolve(_ string: String?, iso: ISO8601DateFormatter, span: String,
