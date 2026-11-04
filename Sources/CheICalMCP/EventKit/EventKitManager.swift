@@ -1161,15 +1161,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and
-    /// `move_events_batch`: the zone of the event the write will resolve (nil if not found or no
-    /// zone set). Access is ensured first (#270): before access was ever granted the lookup finds
-    /// nothing and the date would be read in the server zone. A denial surfaces from the write
-    /// itself, so it is not reported here. The event is resolved the way the write resolves it,
-    /// refreshed (#271): a stored object can keep its old zone after an edit made elsewhere. No
-    /// edited-before refusal, since only the zone is needed; the write applies its own. A
-    /// reminder's id gives nil here and not found from the write (#260).
-    func occurrenceDateTimeZone(identifier: String) async -> TimeZone? {
-        try? await ensureCalendarAccess()
+    /// `move_events_batch` (`OccurrenceDateInput.resolve` asks for it only when the value needs a
+    /// zone): the zone of the event the write will resolve (nil if not found or no zone set).
+    /// Access is ensured first (#270): before access was ever granted the lookup finds nothing and
+    /// the date would be read in the server zone. A failed check is thrown, the same error the
+    /// write's own check reports, instead of falling back to the host zone (verify LOW). The event
+    /// is resolved the way the write resolves it, refreshed (#271): a stored object can keep its
+    /// old zone after an edit made elsewhere. No edited-before refusal, since only the zone is
+    /// needed; the write applies its own, and that refusal only ever turns the pick into nil
+    /// (`FirstRemainingOccurrence.pick`), so whenever the write resolves an event it is the one
+    /// whose zone was read. A reminder's id gives nil here and not found from the write (#260).
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
+        try await ensureCalendarAccess()
         return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event.timeZone
     }
 

@@ -16,8 +16,9 @@ protocol EventCopySource: Sendable {
     func copyEventValue(identifier: String, toCalendarName: String, toCalendarSource: String?, deleteOriginal: Bool) async throws -> EventCopyValue
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
                         toCalendarName: String, toCalendarSource: String?) async throws -> EventMoveValue
-    /// The event's own time zone, for parsing occurrence dates the way `delete_event` does.
-    func eventTimeZone(identifier: String) async -> TimeZone?
+    /// The event's own time zone, for parsing occurrence dates the way `delete_event` does. Throws
+    /// when calendar access fails (#270 verify), rather than returning a host-zone fallback.
+    func eventTimeZone(identifier: String) async throws -> TimeZone?
 }
 extension EventKitManager: EventCopySource {
     func copyEventValue(identifier: String, toCalendarName: String, toCalendarSource: String?, deleteOriginal: Bool) async throws -> EventCopyValue {
@@ -31,10 +32,10 @@ extension EventKitManager: EventCopySource {
         return EventCopyValue(eventIdentifier: copied.event.eventIdentifier, title: copied.event.title,
                               notCarriedOver: copied.notCarriedOver)
     }
-    func eventTimeZone(identifier: String) async -> TimeZone? {
+    func eventTimeZone(identifier: String) async throws -> TimeZone? {
         // The same lookup as delete_event (#270): access ensured first (verify round 2 #2), then
         // the refreshed event (#271).
-        await occurrenceDateTimeZone(identifier: identifier)
+        try await occurrenceDateTimeZone(identifier: identifier)
     }
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
                         toCalendarName: String, toCalendarSource: String?) async throws -> EventMoveValue {
