@@ -38,6 +38,16 @@ struct HostLoad {
     static let defaultThreshold = 4.0
 
     let read: () -> Snapshot
+    /// Where a regression is reported. XCTFail in use; `HostLoadTests` injects a recorder so the
+    /// regression -> failure mapping is asserted directly (an XCTExpectFailure around the call was
+    /// also satisfied by a thrown XCTSkip, so it could not tell the two apart).
+    let fail: (String, StaticString, UInt) -> Void
+
+    init(read: @escaping () -> Snapshot,
+         fail: @escaping (String, StaticString, UInt) -> Void = { XCTFail($0, file: $1, line: $2) }) {
+        self.read = read
+        self.fail = fail
+    }
 
     static let live = HostLoad(read: {
         var averages = [Double](repeating: 0, count: 1)
@@ -72,7 +82,7 @@ struct HostLoad {
         switch verdict {
         case .withinBound: return
         case .cannotJudge(let message): throw XCTSkip(message, file: file, line: line)
-        case .regression(let message): XCTFail(message, file: file, line: line)
+        case .regression(let message): fail(message, file, line)
         }
     }
 }
