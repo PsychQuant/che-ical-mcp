@@ -64,7 +64,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 |------|-------------|
 | `list_calendars` | List all calendars and reminder lists (includes source_type) |
 | `create_calendar` | Create a new calendar. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
-| `delete_calendar` | Delete a calendar |
+| `delete_calendar` | Delete a calendar or reminder list (not undoable). `require_empty: true` refuses one that holds any event (checked only about 200 years either side of now; a passed check returns `checked_empty`, `searched_from` / `searched_to`) or any reminder (#328) |
 | `update_calendar` | Rename a calendar or change its color (v0.9.0) |
 
 </details>

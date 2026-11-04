@@ -695,7 +695,13 @@ final class NewObjectSaveTests: XCTestCase {
         let discards = try matches(#"discard: ?\{ ?try \w+\.(?:remove\( ?reminder|removeCalendar\( ?calendar) ?, ?commit: ?false ?\) ?\}"#, in: code)
         XCTAssertEqual(staged.count, discards.count, "every commit: false is a reminder or list discard")
         XCTAssertEqual(discards.count, 2)
-        XCTAssertEqual(try matches(#"commit: ?(?!true\b|false\b)[^ ,)]"#, in: code).count, 0, "commit flags are literals")
+        // #328: `CountingEventStore`'s overrides pass the caller's flag on to `super` (`commit: commit`);
+        // they stage nothing themselves, and `CalendarEmptinessTests` pins that each only counts and
+        // forwards. Every other flag is a literal.
+        let forwarded = try matches(#"try super\.\w+\([^)]*commit: commit\)"#, in: code).count
+        XCTAssertEqual(forwarded, 6, "the six CountingEventStore overrides that take a flag")
+        XCTAssertEqual(try matches(#"commit: ?(?!true\b|false\b)[^ ,)]"#, in: code).count, 2 * forwarded,
+                       "commit flags are literals, apart from the overrides' parameter and forwarding")
         XCTAssertEqual(try matches(#"span: ?[^,)]*, ?commit: ?false"#, in: code).count, 0)
         XCTAssertEqual(try matches(#"\.reset\( ?\)"#, in: code).count, 0)
     }

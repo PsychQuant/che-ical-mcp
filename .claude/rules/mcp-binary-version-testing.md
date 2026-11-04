@@ -299,3 +299,19 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
    updates that touched a recurring event」拒絕，紀錄被丟棄，什麼都沒寫。
 
 整串搬移（item 2）的 undo 見上方第 10 步（#369）。結果記在 #335。結束後刪掉拋棄式日曆。
+
+## Release gate：delete_calendar 的 require_empty（#328）
+
+#328 的空檢查（`CalendarEmptiness`、`CountingEventStore`）的純邏輯有單元測試，但「EventKit 對空清單回 `[]`、
+讀不到才回 nil」「本機 EventKit 資料裡看得到 150 年前後的事件」這些前提只能在裝置上確認。這是 stateless 的，
+**出 #328 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表；不用 AppleScript），只在名稱含
+`#328` 的拋棄式日曆與清單上：
+
+1. 空清單：`delete_calendar` 帶 `require_empty: true` → 刪除，回 `checked_empty: true`、`reminders_found: 0`。
+2. 空日曆：同上 → 刪除，回 `searched_from` / `searched_to`；記下整個呼叫的時間（PR #413 時中位數約 0.24–0.31 s）。
+3. 只有一筆已完成提醒的清單 → 拒絕（`holds 1 reminder(s), completed ones included`），清單還在。
+4. 只在 2150 年與 1850 年各有一個事件的日曆 → 拒絕，日曆與兩個事件都還在（另一次 `--cli` 讀回）。
+5. 不帶 `require_empty`、日曆裡有事件 → 照舊刪除，回 `{action, id}`。
+
+結果記在 #328。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#328` 的殘留。
+

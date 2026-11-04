@@ -48,6 +48,7 @@ class CheICalMCPServer {
     private let eventCopySource: any EventCopySource
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
+    private let calendarDeletionSource: any CalendarDeletionSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
@@ -82,6 +83,7 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
+         calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
@@ -96,6 +98,7 @@ class CheICalMCPServer {
         self.eventCopySource = eventCopySource
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
+        self.calendarDeletionSource = calendarDeletionSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
@@ -169,13 +172,17 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar by its identifier.",
+                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "id": .object([
                             "type": .string("string"),
                             "description": .string("The calendar identifier")
+                        ]),
+                        "require_empty": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Refuse to delete when the calendar holds events within searched_from..searched_to (about 200 years each side of now), or the list holds reminders. Default false.")
                         ])
                     ]),
                     "required": .array([.string("id")])
@@ -1265,8 +1272,27 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        try await eventKitManager.deleteCalendar(identifier: id)
-        return try actionResult(["action": "deleted", "id": id])
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
+        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
+        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
+            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
+        }
+        if case .null? = arguments["require_empty"] {
+            throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
+        }
+        let requireEmpty = try InputValidation.requireOptionalBool(arguments, key: "require_empty") ?? false
+        let checked = try await calendarDeletionSource.deleteCalendar(identifier: id, requireEmpty: requireEmpty)
+        var result: [String: Any] = ["action": "deleted", "id": id]
+        if let checked {
+            // #328: what was searched, so "empty" never reads as empty outside the window.
+            result["checked_empty"] = true
+            if let searched = checked.searched {
+                result["searched_from"] = EventRangeQuery.localText(searched.start)
+                result["searched_to"] = EventRangeQuery.localText(searched.end)
+            }
+            if let reminders = checked.reminders { result["reminders_found"] = reminders }
+        }
+        return try actionResult(result)
     }
 
     // MARK: - Event Handlers
