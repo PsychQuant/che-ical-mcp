@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Allow clients to explicitly abandon a blocked top undo record using stable identity, while preserving older history, redo records and in-flight operation safety.
+Allow clients to explicitly abandon a blocked top undo record using stable identity, while preserving older history, redo records and in-flight operation safety. Redo writes again only completions; for a create, delete, update or move it answers with the tool that repeats the operation. That is the intended design (#295), not a missing replay: replaying those writes would be a change to this contract.
 
 ## Requirements
 

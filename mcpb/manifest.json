@@ -149,7 +149,7 @@
     },
     {
       "name": "redo",
-      "description": "Redo the last undone operation (only completions are written again; for any other record redo writes nothing, answers success: false with the tool to use, and that entry is removed from the redo history; a completion redo is refused when the reminder changed since the undo)"
+      "description": "Redo the last undone operation (only completions are written again; for any other record redo writes nothing, answers success: false with the tool to use, and that entry is removed from the redo history; redo does not replay a create, delete, update or move by design; a completion redo is refused when the reminder changed since the undo)"
     },
     {
       "name": "undo_history",
