@@ -3,7 +3,8 @@ import Foundation
 
 /// An `EventWriteSource` for the event write handler tests (#268, #372). Identifiers and titles
 /// select the outcome:
-/// - update with `calendarSource == "Other"`: saved under `moved-<id>` (a cross-account move);
+/// - update with `calendarSource == "Other"`: saved under `moved-<id>` (a cross-account move), and
+///   refused with `occurrenceDate` and span this (nothing recorded in `updates`);
 /// - update with `occurrenceDate` and span this: a detached occurrence `occurrence-<seconds>` of the
 ///   series (`seriesIdentifier`); with span future: a new series `split-<id>`;
 /// - update of an id starting with `allday-`: the stored event is all-day, 2027-04-10 (host zone);
@@ -18,6 +19,11 @@ actor FakeEventWriteSource: EventWriteSource {
     }
 
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
+        // Verify round 4: an occurrence edit with a calendar of another account is refused before
+        // anything is written, as `EventKitManager.updateEvent` does.
+        if request.occurrenceDate != nil, request.span == .thisEvent, !request.applyToAll, request.calendarSource == "Other" {
+            throw EventKitError.moveRefused(reason: EventKitManager.occurrenceAcrossAccountsReason)
+        }
         updates.append(request)
         let series = request.calendarSource == "Other" ? "moved-" + request.identifier : request.identifier
         var id = series

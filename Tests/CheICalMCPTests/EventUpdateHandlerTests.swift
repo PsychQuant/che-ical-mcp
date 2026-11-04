@@ -45,16 +45,21 @@ final class EventUpdateHandlerTests: XCTestCase {
         XCTAssertTrue(occurrence.hasPrefix("occurrence-"), occurrence)
     }
 
-    /// Verify round 2: an occurrence edit with a calendar of another account moves the whole series.
-    func testAnOccurrenceEditThatMovesTheSeriesReportsTheNewSeriesIdentifier() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
-        let result = try await update(server, ["event_id": .string("series"), "calendar_name": .string("Work"),
-                                               "calendar_source": .string("Other"),
-                                               "occurrence_date": .string("2027-06-14T09:00:00+08:00")])
-        XCTAssertEqual(result["id"] as? String, "moved-series")
-        XCTAssertEqual(result["id_changed"] as? Bool, true)
-        XCTAssertEqual(result["previous_id"] as? String, "series")
-        XCTAssertNotNil(result["occurrence_id"] as? String)
+    /// Verify round 4: an occurrence edit with a calendar of another account (which moves the
+    /// whole series) is refused, and nothing is written.
+    func testAnOccurrenceEditWithACalendarOfAnotherAccountIsRefused() async throws {
+        let fake = FakeEventWriteSource()
+        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        do {
+            _ = try await update(server, ["event_id": .string("series"), "calendar_name": .string("Work"),
+                                          "calendar_source": .string("Other"),
+                                          "occurrence_date": .string("2027-06-14T09:00:00+08:00")])
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertTrue("\(error)".contains("moves the whole series") || error.localizedDescription.contains("moves the whole series"), "\(error)")
+        }
+        let updates = await fake.updates
+        XCTAssertTrue(updates.isEmpty, "nothing written")
     }
 
     /// span future from a later occurrence: the new series' id, no occurrence_id.
