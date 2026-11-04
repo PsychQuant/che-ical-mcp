@@ -6,8 +6,9 @@ import XCTest
 /// fails with `error_ekcaderrordomain_1021`. Comments and string literals do not count.
 final class SharedTestStoreTests: XCTestCase {
     private static let helper = "Helpers/SharedTestStore.swift"
-    /// `EKEventStore()`, `EKEventStore.init()` and `EKEventStore(sources: …)`, with any spacing.
-    private static let construction = #"\bEKEventStore\s*(\.\s*init\s*)?\("#
+    /// `EKEventStore()`, `EKEventStore.init()` and `EKEventStore(sources: …)`, and a typed
+    /// `: EKEventStore = .init()` (also `!` / `?`, PR #390 round 2), with any spacing.
+    private static let construction = #"\bEKEventStore\s*(\.\s*init\s*)?\(|\bEKEventStore\s*[!?]?\s*=\s*\.\s*init\s*\("#
 
     private func testFiles() throws -> [(name: String, code: String)] {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -48,7 +49,9 @@ final class SharedTestStoreTests: XCTestCase {
     /// The pattern catches the spellings a new fixture may use and nothing in a comment or string.
     func testThePatternCatchesEverySpelling() {
         for spelling in ["let s = EKEventStore()", "let s = EKEventStore ()", "let s = EKEventStore.init()",
-                         "let s = EKEventStore(sources: [])", "f(EKReminder(eventStore: EKEventStore()))"] {
+                         "let s = EKEventStore(sources: [])", "f(EKReminder(eventStore: EKEventStore()))",
+                         "private let s: EKEventStore = .init()", "var s: EKEventStore! = .init()",
+                         "var s: EKEventStore? = .init(sources: [])", "let s : EKEventStore=.init ()"] {
             XCTAssertEqual(Self.constructions(in: spelling), 1, spelling)
         }
         for ignored in ["// EKEventStore()", "let s = \"EKEventStore()\"", "/* EKEventStore() */", "let s: EKEventStore = shared",
