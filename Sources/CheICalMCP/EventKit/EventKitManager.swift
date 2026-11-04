@@ -679,6 +679,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Reject inverted / zero-duration timed events (symmetric with updateEvent — #160).
         try Self.validateTimeRange(start: startDate, end: endDate, isAllDay: isAllDay)
 
+        // #364 / #348: an all-day pair is written as (start of the first day, last day 23:59:59),
+        // so the reading does not depend on the order of assignments below, and the duplicate
+        // check keys on the day rather than on a time of day.
+        let (startDate, endDate) = isAllDay
+            ? try AllDayRange.normalize(start: startDate, end: endDate, calendar: Calendar.gregorian(in: .current))
+            : (startDate, endDate)
+
         // #190 — defense-in-depth behind the handler guard (zero mutation).
         if isAllDay, timezone != nil {
             throw EventKitError.allDayTimezoneConflict
@@ -1008,27 +1015,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         if let t = title { event.title = t }
 
-        // Handle time updates carefully to prevent invalid state (startDate > endDate)
-        // When only startDate is provided, preserve the original duration
-        if let newStart = startDate {
-            let originalDuration = event.endDate.timeIntervalSince(event.startDate)
-            event.startDate = newStart
-            if endDate == nil {
-                // Preserve original event duration when only start time changes
-                event.endDate = newStart.addingTimeInterval(originalDuration)
-            }
+        // Dates: decided from the state the event will be in after this update (#364 T3), checked
+        // with the shared guard (#160), and for an all-day result normalized to whole days (#364 /
+        // #348). When only the start changes, a timed event keeps its duration and an all-day event
+        // its number of days.
+        let datePlan = try AllDayRange.planUpdate(
+            storedStart: event.startDate, storedEnd: event.endDate, storedAllDay: event.isAllDay,
+            newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
+            calendar: Calendar.gregorian(in: .current))
+        if let dates = datePlan.datesToWrite {
+            event.startDate = dates.start
+            event.endDate = dates.end
         }
-        if let newEnd = endDate {
-            event.endDate = newEnd
-        }
-
-        // Validate time range (shared guard with createEvent — #160)
-        try Self.validateTimeRange(
-            start: event.startDate,
-            end: event.endDate,
-            isAllDay: event.isAllDay,
-            hint: "When changing the date, provide both start_time and end_time."
-        )
 
         if let n = notes { event.notes = n }
         if let l = location { event.location = l }

@@ -30,7 +30,61 @@ enum AllDayRange {
                 "The all-day event would end on \(formatter.string(from: lastDay)), before its first day \(formatter.string(from: firstDay)). "
                 + "Pass the day after the last day as end_time (an exclusive end), or the first day itself for a one-day event.")
         }
-        let dayAfter = calendar.date(byAdding: .day, value: 1, to: lastDay) ?? lastDay.addingTimeInterval(86_400)
-        return (firstDay, dayAfter.addingTimeInterval(-1))
+        return (firstDay, lastSecond(of: lastDay, calendar: calendar))
+    }
+
+    /// What `update_event` writes for the dates, decided from the state the event will be in after
+    /// the update (the requested `all_day`, else the stored one), not the state before it. #364 T3:
+    /// the range used to be checked with the stored flag, so turning a timed event into a one-day
+    /// all-day event with start = end was refused.
+    struct UpdatePlan {
+        let start: Date
+        let end: Date
+        let isAllDay: Bool
+        /// The dates to assign, or nil when the request leaves them as they are.
+        let datesToWrite: (start: Date, end: Date)?
+    }
+
+    static func planUpdate(
+        storedStart: Date, storedEnd: Date, storedAllDay: Bool,
+        newStart: Date?, newEnd: Date?, requestedAllDay: Bool?,
+        calendar: Calendar
+    ) throws -> UpdatePlan {
+        let isAllDay = requestedAllDay ?? storedAllDay
+        let turnsAllDay = isAllDay && !storedAllDay
+        guard newStart != nil || newEnd != nil || turnsAllDay else {
+            return UpdatePlan(start: storedStart, end: storedEnd, isAllDay: isAllDay, datesToWrite: nil)
+        }
+
+        let start = newStart ?? storedStart
+        let end: Date
+        if let newEnd {
+            end = newEnd
+        } else if let newStart, isAllDay, storedAllDay {
+            // An all-day event moved by its start keeps its number of days, not its seconds.
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: storedStart),
+                                               to: calendar.startOfDay(for: storedEnd)).day ?? 0
+            let firstDay = calendar.startOfDay(for: newStart)
+            end = lastSecond(of: calendar.date(byAdding: .day, value: days, to: firstDay) ?? firstDay, calendar: calendar)
+        } else if let newStart {
+            // Preserve the original duration when only the start changes.
+            end = newStart.addingTimeInterval(storedEnd.timeIntervalSince(storedStart))
+        } else {
+            end = storedEnd
+        }
+
+        if isAllDay {
+            let days = try normalize(start: start, end: end, calendar: calendar)
+            return UpdatePlan(start: days.start, end: days.end, isAllDay: true, datesToWrite: days)
+        }
+        try EventKitManager.validateTimeRange(
+            start: start, end: end, isAllDay: false,
+            hint: "When changing the date, provide both start_time and end_time.")
+        return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: (start, end))
+    }
+
+    private static func lastSecond(of day: Date, calendar: Calendar) -> Date {
+        let dayAfter = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
+        return dayAfter.addingTimeInterval(-1)
     }
 }

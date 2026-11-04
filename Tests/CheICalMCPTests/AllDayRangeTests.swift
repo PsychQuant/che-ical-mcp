@@ -108,6 +108,66 @@ final class AllDayRangeTests: XCTestCase {
         XCTAssertEqual([r.first, r.last], ["02-11", "02-11"])
     }
 
+    // MARK: planUpdate — the dates update_event writes
+
+    private func plan(storedStart: Date, storedEnd: Date, storedAllDay: Bool,
+                      newStart: Date? = nil, newEnd: Date? = nil, requestedAllDay: Bool? = nil) throws -> AllDayRange.UpdatePlan {
+        try AllDayRange.planUpdate(storedStart: storedStart, storedEnd: storedEnd, storedAllDay: storedAllDay,
+                                   newStart: newStart, newEnd: newEnd, requestedAllDay: requestedAllDay,
+                                   calendar: calendar)
+    }
+
+    func testPlanUpdateTimedToOneDayAllDayWithStartEqualToEndIsAccepted() throws {   // T3
+        let p = try plan(storedStart: at(2027, 3, 21, 10), storedEnd: at(2027, 3, 21, 11), storedAllDay: false,
+                         newStart: at(2027, 3, 21), newEnd: at(2027, 3, 21), requestedAllDay: true)
+        XCTAssertTrue(p.isAllDay)
+        XCTAssertEqual(p.start, at(2027, 3, 21))
+        XCTAssertEqual(p.end, at(2027, 3, 21, 23, 59, 59))
+    }
+
+    func testPlanUpdateOfAnAllDayEventUsesTheExclusiveEnd() throws {                 // U1
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                         newStart: at(2027, 3, 1), newEnd: at(2027, 3, 3))
+        XCTAssertEqual(p.end, at(2027, 3, 2, 23, 59, 59))
+    }
+
+    func testPlanUpdateStartOnlyKeepsTheNumberOfDays() throws {                      // S2
+        let p = try plan(storedStart: at(2027, 3, 28), storedEnd: at(2027, 3, 29, 23, 59, 59), storedAllDay: true,
+                         newStart: at(2027, 4, 1, 10))
+        XCTAssertEqual(p.start, at(2027, 4, 1))
+        XCTAssertEqual(p.end, at(2027, 4, 2, 23, 59, 59))
+    }
+
+    func testPlanUpdateFlagOnlyTurnsATimedEventIntoItsDay() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 11), storedAllDay: false,
+                         requestedAllDay: true)
+        XCTAssertEqual(p.start, at(2027, 3, 25))
+        XCTAssertEqual(p.end, at(2027, 3, 25, 23, 59, 59))
+    }
+
+    func testPlanUpdateOfATimedEventKeepsItsTimesAndChecksThem() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 11), storedAllDay: false,
+                                      newStart: at(2027, 3, 25, 12)  , newEnd: at(2027, 3, 25, 12)))
+        XCTAssertNoThrow(try {
+            let p = try self.plan(storedStart: self.at(2027, 3, 25, 10), storedEnd: self.at(2027, 3, 25, 11), storedAllDay: false,
+                                  newStart: self.at(2027, 3, 26, 10))
+            XCTAssertFalse(p.isAllDay)
+            XCTAssertEqual(p.end, self.at(2027, 3, 26, 11))
+        }())
+    }
+
+    func testPlanUpdateAllDayToTimedKeepsTheGivenTimes() throws {
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                         newStart: at(2027, 3, 1, 9), newEnd: at(2027, 3, 1, 10), requestedAllDay: false)
+        XCTAssertFalse(p.isAllDay)
+        XCTAssertEqual([p.start, p.end], [at(2027, 3, 1, 9), at(2027, 3, 1, 10)])
+    }
+
+    func testPlanUpdateOfAnAllDayEventWithoutDateChangesLeavesItsDates() throws {
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 2, 23, 59, 59), storedAllDay: true)
+        XCTAssertNil(p.datesToWrite, "nothing about the dates was requested, so nothing is written")
+    }
+
     // MARK: a day that is not 24 hours long
 
     func testADSTDayEndsAtItsOwnLastSecond() throws {
