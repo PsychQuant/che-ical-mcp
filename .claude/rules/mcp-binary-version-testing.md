@@ -122,5 +122,83 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
    拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
+   另在該來源的兩個拋棄式日曆做第 10 步（經 stand-in 的整串搬移之 undo，#369）：它靠搬移後舊的系列物件
+   回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「still resolves, but neither the series nor an
+   occurrence that could stand in for it can be read」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
+   也在該來源的拋棄式日曆做第 11 步（#377）：它靠舊的系列物件 refresh 失敗、仍掃得到最早剩下的場次，且該場次
+   的開始時間晚於 create 紀錄的開始時間（`created.startDate`），這只在 iCloud 看過（2026-11-04）。若 undo 以
+   「although an occurrence of it can still be read」的中性訊息拒絕，就是該來源最早剩下的（未單獨修改的）場次
+   沒有晚於紀錄的開始時間，要回報。已知限制（低可能性，不修）：第一個場次還在但被單獨改過、而系列物件又因別的
+   原因 refresh 失敗時，掃描會跳過它（detached），訊息會把它說成「第一個場次被刪」。
+10. **經 stand-in 的整串搬移之 undo（#369）**：系列的建立與刪第一個場次要用 `--cli`（各自獨立的 process）做，
+    不要在 session MCP 上做，讓這兩個寫入不進 session 的 undo stack，最上面兩筆才會是 (b) 列的那兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
+    (a) `--cli`：在 A 建每週 5 次的系列 → `--cli`：`delete_event` span `this` 刪第一個場次；
+    (b) session MCP：在 A 建一筆一次性事件 → `move_events_batch` 用系列的 bare id、span `all` 搬到 B
+        （`in_place`、id 不變、B 有 4 個場次）。此時 `undo_history` 最上面兩筆由上而下是
+        「Moved event」、「Created event: <一次性事件>」；同一個 session 先做過第 1–9 步時，
+        它們下面還有那些步驟留下的紀錄，這是預期的；
+    (c) `undo`：4 個場次回到 A、id 不變 → `undo`：刪掉那筆一次性事件（堆疊沒被卡住）。
+    (d) 已經在 Calendar.app 搬回去的情況：重做 (a)(b)，undo 之前先在 Calendar.app 把整個系列搬回 A →
+        `undo` 要被接受，而且什麼都沒改：所有場次仍在 A、id 不變。這一項依賴兩件沒驗過的事：Calendar.app 搬回後
+        bare id 仍解析得到，以及舊的系列物件改回報 A。若 undo 以上面第 9 步引的 residual not-found 拒絕（什麼都沒寫、
+        紀錄保留），記錄下來回報到 #369，當成已知限制，不是安全問題；以其他方式寫入才是 bug。
+    再做一次 edited-before 形狀：(a) 之後用 `--cli` 的 `update_event` span `this` 單獨改第一個剩下的場次，
+    再做 (b)(c)，4 個場次（含被改過的）都回到 A。
+    **系列的 create-undo 會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，
+    create-undo 會以「Cannot undo the creation of the recurring event … first occurrence is deleted」拒絕、什麼都
+    沒寫、紀錄保留（#377，見第 11 步），會卡住下面的紀錄，所以 (a) 才要放在 `--cli` 做。2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 做過 (b)(c) 與 edited-before 形狀，
+    跨 process 的 `list_events` 確認結果；出版前在重啟後的 session MCP 上重做一次。跨帳號搬回（拒絕、紀錄保留）
+    沒有在裝置上驗過：只在有第二個帳號的拋棄式日曆時做。
+11. **第一個場次被刪掉之後，系列的 create-undo（#377）**：拋棄式日曆（名稱含 `#377`）。session MCP：建每週 5 次的
+    系列 → `delete_event` span `this` 刪第一個場次 → `undo`（delete-undo：把那個場次還原成一次性事件）→ `undo`：
+    要以「Cannot undo the creation of the recurring event '…': the series this undo would delete no longer reads,
+    while a later occurrence of it remains …」拒絕，什麼都沒寫（`list_events` 仍是 4 個系列場次加 1 個一次性事件），
+    `undo_history` 最上面仍是「Created event」。訊息的最後一句要是「…call undo with discard_id set to its id; the series
+    can then be deleted by hand if it should still go.」，不點名任何刪除工具（刪不刪是使用者的事）。照訊息的順序走：
+    先 `undo` 帶該筆的 `discard_id` 移除它；之後測試者**自己**用 `delete_event` span `all`、系列的 bare id 刪掉剩下的
+    場次（成功，`undo_history` 最上面變成這筆 delete）。順序反過來會失敗：delete 的紀錄會蓋在 create 上面，
+    `discard_id` 只能移除最上面那筆。
+    若回的是原本的「not found under its recorded identifier」，就是系列的 bare id 在該來源上已經解析不到（不是 #326
+    的形狀），探測位置要移；若回的是「although an occurrence of it can still be read」的中性訊息，就是 stand-in 的開始
+    時間沒有晚於紀錄裡的開始時間（`created.startDate`）；兩種都回報到 #377。
+    **edited-before 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 的 `update_event` span `this` 改第二個
+    場次的標題（兩個寫入都不進 session 的 undo stack）→ session `undo`：同樣的拒絕（stand-in 是第三個場次）→
+    `discard_id` 移除 → `delete_event` span `all` 會以 edited-before 拒絕（訊息說可以怎麼逐一刪），這是預期的。
+    **edited-after 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 改第三個場次（在 stand-in 之後）的標題 →
+    session `undo`：同樣的拒絕 → `discard_id` 移除 → 測試者自己 `delete_event` span `all`：**連被單獨改過的第三個場次也
+    一起刪掉**。這是 `delete_event` 的預期行為（它不做 create-undo 的 `modified_occurrences` 檢查），不是 undo 的；也正是
+    訊息不點名刪除工具、把刪除留給使用者手動做的原因。
+    2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過這三個形狀（含 discard 再 delete 的順序，
+    跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）；出版前在重啟後
+    的 session MCP 上重做一次。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
+
+## Release gate：timed → all-day 只帶 start_time 的天數（#374）
+
+#374 的規則（只帶 `start_time` 把 timed 事件改成 all-day 時，保留 timed 範圍碰到的天數）只有
+`AllDayRange.planUpdate` 的單元測試；寫入的是 #364 裝置檢查已涵蓋的 normalized all-day pair，
+所以這是確認、不是新的前提。**出 #374 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`
+（stateless，見上表），只在名稱含 `#374` 的拋棄式日曆上：
+
+1. 建一個 timed 事件 `22:00` 到隔天 `02:00`；
+2. `update_event` 帶 `all_day: true, start_time: <某個日期>`（不帶 `end_time`）；
+3. `list_events` 讀回：是兩天的 all-day 事件（第一天 `00:00` 到第二天 `23:59:59`）。
+
+結果記在 #374。結束後刪掉拋棄式日曆。
+
+## Release gate：update_event 存檔失敗後的 rollback（#373）
+
+#373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
+實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
+之後），只用名稱含 `#373` 的拋棄式日曆：
+
+1. 在拋棄式日曆建一個一次性事件；
+2. 對它做一次 EventKit 會拒絕的 `update_event`（例如帶新標題，加上 `calendar_name` 指向一個唯讀日曆，
+   像訂閱的節日日曆），確認回傳錯誤；
+3. 在同一個 session 對同一個事件做一次只改 `notes` 的 `update_event`；
+4. `list_events` 讀回：標題仍是原本的標題、仍在拋棄式日曆，只有 notes 改了。
+
+結果記在 #373 與 #274。結束後刪掉拋棄式日曆。

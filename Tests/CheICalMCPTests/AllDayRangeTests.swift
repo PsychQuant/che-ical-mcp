@@ -219,6 +219,94 @@ final class AllDayRangeTests: XCTestCase {
         }
     }
 
+    // MARK: #373 — all-day → timed with only one of start_time / end_time
+
+    /// #373: a start-only `all_day: false` on an all-day event used to keep the stored length, so a
+    /// one-day event (00:00 – 23:59:59) became a timed event of 23 h 59 min 59 s. It is refused and
+    /// asks for both times.
+    func testPlanUpdateAllDayToTimedWithOnlyStartTimeIsRefused() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                                      newStart: at(2027, 3, 1, 9), requestedAllDay: false)) { error in
+            XCTAssertTrue("\(error)".contains("start_time and end_time for the timed event"), "\(error)")
+        }
+    }
+
+    /// #373: an end-only `all_day: false` used to keep the stored start (00:00 of the day), so the
+    /// event became a timed event starting at midnight. Same refusal, naming both fields.
+    func testPlanUpdateAllDayToTimedWithOnlyEndTimeIsRefused() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                                      newEnd: at(2027, 3, 1, 10), requestedAllDay: false)) { error in
+            let text = "\(error)"
+            XCTAssertTrue(text.contains("start_time") && text.contains("end_time"), text)
+        }
+    }
+
+    /// #373: the guard is only for the flip. A start-only move of an event that stays timed still
+    /// keeps its duration (the documented update_event behaviour).
+    func testPlanUpdateStartOnlyOfATimedEventStillKeepsItsDuration() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 11), storedAllDay: false,
+                         newStart: at(2027, 3, 26, 14), requestedAllDay: false)
+        XCTAssertEqual([p.start, p.end], [at(2027, 3, 26, 14), at(2027, 3, 26, 15)])
+    }
+
+    // MARK: #374 — timed → all-day with only start_time keeps the days the timed range touched
+
+    /// #374: a stored 22:00 – 02:00 event touches two days. `all_day: true, start_time: <date>` used
+    /// to keep the 4 h, so a date-only start (00:00) gave 00:00 – 04:00, one day.
+    func testPlanUpdateTimedToAllDayStartOnlyKeepsTheDaysTheTimedRangeTouched() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 22), storedEnd: at(2027, 3, 26, 2), storedAllDay: false,
+                         newStart: at(2027, 4, 1), requestedAllDay: true)
+        XCTAssertTrue(p.isAllDay)
+        XCTAssertEqual([p.start, p.end], [at(2027, 4, 1), at(2027, 4, 2, 23, 59, 59)])
+    }
+
+    /// #374: the day count does not depend on the time of day of the new start.
+    func testPlanUpdateTimedToAllDayStartOnlyIgnoresTheTimeOfDayOfTheNewStart() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 22), storedEnd: at(2027, 3, 26, 2), storedAllDay: false,
+                         newStart: at(2027, 4, 1, 23), requestedAllDay: true)
+        XCTAssertEqual([p.start, p.end], [at(2027, 4, 1), at(2027, 4, 2, 23, 59, 59)])
+        let q = try plan(storedStart: at(2027, 3, 25, 22), storedEnd: at(2027, 3, 26, 2), storedAllDay: false,
+                         newStart: at(2027, 4, 1, 1), requestedAllDay: true)
+        XCTAssertEqual([q.start, q.end], [at(2027, 4, 1), at(2027, 4, 2, 23, 59, 59)])
+    }
+
+    /// #374: an end exactly at the next midnight is a boundary, so 22:00 – 00:00 is one day.
+    func testPlanUpdateTimedToAllDayStartOnlyCountsAMidnightEndAsExclusive() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 22), storedEnd: at(2027, 3, 26), storedAllDay: false,
+                         newStart: at(2027, 4, 1, 23), requestedAllDay: true)
+        XCTAssertEqual([p.start, p.end], [at(2027, 4, 1), at(2027, 4, 1, 23, 59, 59)])
+    }
+
+    /// #374: a zero-length timed event (start = end) counts as one day.
+    func testPlanUpdateTimedToAllDayStartOnlyOfAZeroLengthEventIsOneDay() throws {
+        let p = try plan(storedStart: at(2027, 3, 25, 10), storedEnd: at(2027, 3, 25, 10), storedAllDay: false,
+                         newStart: at(2027, 4, 1, 15), requestedAllDay: true)
+        XCTAssertEqual([p.start, p.end], [at(2027, 4, 1), at(2027, 4, 1, 23, 59, 59)])
+    }
+
+    /// #374: the start-only call and the flag-only call count the same days for the same stored range.
+    func testPlanUpdateTimedToAllDayStartOnlyAgreesWithTheFlagOnlyCall() throws {
+        let storedStart = at(2027, 3, 25, 22), storedEnd = at(2027, 3, 27, 2)
+        let flagOnly = try plan(storedStart: storedStart, storedEnd: storedEnd, storedAllDay: false, requestedAllDay: true)
+        let moved = try plan(storedStart: storedStart, storedEnd: storedEnd, storedAllDay: false,
+                             newStart: at(2027, 3, 25, 23), requestedAllDay: true)
+        XCTAssertEqual([flagOnly.start, flagOnly.end], [at(2027, 3, 25), at(2027, 3, 27, 23, 59, 59)])
+        XCTAssertEqual([moved.start, moved.end], [flagOnly.start, flagOnly.end])
+    }
+
+    /// #374 in a zone that starts DST at midnight (America/Santiago, 2026-09-06 begins at 01:00):
+    /// 22:00 on 09-05 to 02:00 on 09-06 is 3 h of elapsed time but touches two days.
+    func testPlanUpdateTimedToAllDayStartOnlyKeepsTheDaysAcrossAMidnightDSTDay() throws {
+        let santiago = TimeZone(identifier: "America/Santiago")!
+        let sc = Calendar.gregorian(in: santiago)
+        func d(_ m: Int, _ dd: Int, _ h: Int = 0) -> Date { sc.date(from: DateComponents(year: 2026, month: m, day: dd, hour: h))! }
+        let p = try AllDayRange.planUpdate(storedStart: d(9, 5, 22), storedEnd: d(9, 6, 2), storedAllDay: false,
+                                           newStart: d(9, 20), newEnd: nil, requestedAllDay: true, calendar: sc)
+        let f = sc.dateComponents([.month, .day], from: p.start)
+        let l = sc.dateComponents([.month, .day], from: p.end)
+        XCTAssertEqual([f.month, f.day, l.month, l.day], [9, 20, 9, 21], "two days stay two days")
+    }
+
     // MARK: a day that is not 24 hours long
 
     /// #364 verify round 2: zones that start DST at midnight begin that day at 01:00, so "one day

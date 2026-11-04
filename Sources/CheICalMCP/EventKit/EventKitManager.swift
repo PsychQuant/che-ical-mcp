@@ -945,6 +945,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     static let standInAllEditedReason = "This series' first occurrence was deleted and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
+    /// The fixed reason for refusing the undo of a whole-series move whose way back goes through
+    /// the stand-in to another account (#369). The record is kept, as every refusal outside the
+    /// spec's discard scenarios is (`undo-history-discard`).
+    static let standInUndoAccountReason = "Cannot undo the move: this series' first occurrence was deleted, so moving the whole series back to its original calendar in another account (a create plus a delete from its first remaining occurrence) is not supported. Nothing was written and this history entry was kept. Move the series back in Calendar, or move single occurrences with their occurrence date and span 'this'; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     /// The fixed reason for refusing a series-level update (calendar of another account,
     /// recurrence rules) through the stand-in (#326).
     private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
@@ -1033,8 +1037,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
         }
 
-        if let t = title { event.title = t }
-
+        // #373 verify (PR #379): every check that can refuse the update runs here, before the first
+        // field of the event is assigned. A refusal after an assignment left the rejected values on
+        // the cached EKEvent, where a later save in the same process could write them.
+        //
         // Dates: decided from the state the event will be in after this update (#364 T3), checked
         // with the shared guard (#160), and for an all-day result normalized to whole days (#364 /
         // #348). When only the start changes, a timed event keeps its duration and an all-day event
@@ -1043,6 +1049,49 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             storedStart: event.startDate, storedEnd: event.endDate, storedAllDay: event.isAllDay,
             newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
             calendar: Calendar.gregorian(in: .current))
+
+        // #190 — resolved-state check: whether all-day came from this request or
+        // the stored event, pairing it with a non-nil timezone strips the flag.
+        // clear_timezone remains legal (nil-ing the tz of an all-day event is fine).
+        // The plan's flag is the one the event ends with (requested, else stored).
+        if datePlan.isAllDay, timezone != nil, !clearTimezone {
+            throw EventKitError.allDayTimezoneConflict
+        }
+
+        // Validate recurrence weekday consistency (#5) — check when:
+        // 1. A new recurrence rule is being set, OR
+        // 2. start_time or timezone changed on an event that already has weekly recurrence
+        // Skip entirely if clearRecurrence is true (event becoming non-recurring)
+        // Read from the values the event will have after this update: the planned start, in the
+        // zone WeekdayCheck.zone picks (the host zone for an all-day result).
+        let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
+        let existingWeeklyDays: [Int]? = {
+            guard !clearRecurrence, // skip if clearing recurrence
+                  recurrenceRule == nil, // only check existing rules if not replacing
+                  startDate != nil || timezone != nil, // only if start/tz changed
+                  let rules = event.recurrenceRules,
+                  let firstRule = rules.first,
+                  firstRule.frequency == .weekly,
+                  let ekDays = firstRule.daysOfTheWeek, !ekDays.isEmpty
+            else { return nil }
+            return ekDays.map { $0.dayOfTheWeek.rawValue }
+        }()
+
+        let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
+        if let days = daysToValidate, !days.isEmpty {
+            let weekday = WeekdayCheck.weekday(
+                of: datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
+                requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
+            if !days.contains(weekday) {
+                let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                let startDay = dayNames[weekday]
+                let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
+                throw EventKitError.weekdayMismatch(startDay: startDay, expectedDays: expectedDays)
+            }
+        }
+
+        if let t = title { event.title = t }
+
         if let dates = datePlan.datesToWrite {
             // The planned flag goes first (#364 verify round 4, device): timed dates assigned while
             // the event is still all-day are read as whole days, so 22:00 → 00:00 came back as two
@@ -1055,13 +1104,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let n = notes { event.notes = n }
         if let l = location { event.location = l }
         if let a = isAllDay { event.isAllDay = a }
-
-        // #190 — resolved-state check: whether all-day came from this request or
-        // the stored event, pairing it with a non-nil timezone strips the flag.
-        // clear_timezone remains legal (nil-ing the tz of an all-day event is fine).
-        if event.isAllDay, timezone != nil, !clearTimezone {
-            throw EventKitError.allDayTimezoneConflict
-        }
 
         if let urlString = url, let eventURL = URL(string: urlString) {
             event.url = eventURL
@@ -1093,36 +1135,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
 
-        // Validate recurrence weekday consistency (#5) — check when:
-        // 1. A new recurrence rule is being set, OR
-        // 2. start_time or timezone changed on an event that already has weekly recurrence
-        // Skip entirely if clearRecurrence is true (event becoming non-recurring)
-        let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
-        let existingWeeklyDays: [Int]? = {
-            guard !clearRecurrence, // skip if clearing recurrence
-                  recurrenceRule == nil, // only check existing rules if not replacing
-                  startDate != nil || timezone != nil, // only if start/tz changed
-                  let rules = event.recurrenceRules,
-                  let firstRule = rules.first,
-                  firstRule.frequency == .weekly,
-                  let ekDays = firstRule.daysOfTheWeek, !ekDays.isEmpty
-            else { return nil }
-            return ekDays.map { $0.dayOfTheWeek.rawValue }
-        }()
-
-        let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
-        if let days = daysToValidate, !days.isEmpty {
-            var cal = Calendar.current
-            if let tz = timezone ?? event.timeZone { cal.timeZone = tz }
-            let weekday = cal.component(.weekday, from: event.startDate)
-            if !days.contains(weekday) {
-                let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                let startDay = dayNames[weekday]
-                let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
-                throw EventKitError.weekdayMismatch(startDay: startDay, expectedDays: expectedDays)
-            }
-        }
-
         // Update recurrence rule
         if clearRecurrence {
             event.recurrenceRules = nil
@@ -1142,7 +1154,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.structuredLocation = structured
         }
 
-        try eventStore.save(event, span: span)
+        // #373 verify round 2: a failed save (a read-only calendar, an alarm or recurrence EventKit
+        // rejects) would leave every field assigned above on the cached event, where a later save
+        // in this process could write it. Discard every unsaved change before rethrowing, as the
+        // move path does.
+        do {
+            try eventStore.save(event, span: span)
+        } catch {
+            event.rollback()
+            throw error
+        }
         markNeedsRefresh()
         // #236: an update that touched a recurring event is recorded only as a marker; its undo is
         // refused (RecurringUpdateKind). The rules after the update come from the request: a
@@ -2438,7 +2459,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
-            // event is still in the calendar it was moved to (#236).
+            // event is still in the calendar it was moved to (#236). A series is resolved as the
+            // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
             let event = try await verifiedEvent(of: operation, verb: .undo)
             guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
                 throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
