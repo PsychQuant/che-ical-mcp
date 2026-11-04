@@ -229,11 +229,9 @@ final class EventRangeQueryTests: XCTestCase {
 
     /// The local form the handler reports `searched_from` / `searched_to` in, so the refusal and
     /// those fields cannot disagree.
+    /// #304: the host-zone wall clock, Gregorian with ASCII digits whatever the host locale.
     func testLocalTextIsTheResponseDateForm() {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = TimeZone.current
-        XCTAssertEqual(EventRangeQuery.localText(start), formatter.string(from: start))
+        XCTAssertEqual(EventRangeQuery.localText(start), GregorianLocalText.of(start))
     }
 
     /// find_duplicate_events over a range wider than the old cut stops at about the old worst case

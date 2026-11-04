@@ -17,12 +17,9 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
     private let tools: [(String, [String: Value])] = [("list_reminders", [:]),
                                                       ("search_reminders", ["keyword": .string("R")])]
 
-    /// The `*_local` strings use the server's host-zone formatter, as `due_date_local` does.
+    /// The `*_local` strings are the host-zone wall clock, Gregorian with ASCII digits (#304).
     private func hostLocal(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = TimeZone.current
-        return formatter.string(from: date)
+        GregorianLocalText.of(date)
     }
 
     private func item(_ tool: String, _ args: [String: Value], _ snapshot: ReminderReadSnapshot) async throws -> [String: Any] {

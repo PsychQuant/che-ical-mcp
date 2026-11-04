@@ -185,12 +185,10 @@ enum EventRangeQuery {
     }
 
     /// The local form the responses use (`searched_from`, `searched_to`, the `*_local` fields), so
-    /// a refusal and those fields state the same range.
+    /// a refusal and those fields state the same range. Gregorian with ASCII digits whatever the
+    /// host locale (#304).
     static func localText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = TimeZone.current
-        return formatter.string(from: date)
+        DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone.current).string(from: date)
     }
 
     /// The most dry-run preview rows over `searched`: bounded only where the range is wider than

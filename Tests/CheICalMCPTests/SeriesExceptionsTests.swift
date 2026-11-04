@@ -246,7 +246,9 @@ final class SeriesExceptionsTests: XCTestCase {
         // 2028-05-08 00:00 UTC: the wall-clock date read as UTC. The slot of the recreated
         // series is local midnight of that day, so the RID must be reinterpreted in the host zone.
         var comps = DateComponents(); comps.year = 2028; comps.month = 5; comps.day = 8
-        let localMidnight = Calendar.current.date(from: comps)!      // independent derivation of the expected slot
+        // Independent derivation of the expected slot, in the Gregorian calendar the decode uses
+        // (#306: `Calendar.current` under a Buddhist host read 2028 as Buddhist 2028).
+        let localMidnight = Calendar.gregorian(in: .current).date(from: comps)!
         let edited = SeriesExceptionsPlanner.ObservedOccurrence(
             ids: .init(eventIdentifier: "SERIES/RID=863049600", externalIdentifier: "UID/RID=863049600"),
             isDetached: true, occurrenceDate: localMidnight, startDate: localMidnight,

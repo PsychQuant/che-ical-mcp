@@ -7,8 +7,12 @@ final class ExclusionWindowValidationTests: XCTestCase {
 
     private let tz = TimeZone(identifier: "America/Toronto")!
 
+    /// #306: `en_US_POSIX`, as the production parser (`FlexibleDate.formatter`) sets it; without
+    /// it a Buddhist host read 2026 as a Buddhist year. No explicit calendar, so an impossible
+    /// date still fails to parse instead of rolling over (#299).
     private func date(_ s: String) -> Date {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         f.timeZone = tz
         return f.date(from: s)!
