@@ -1788,12 +1788,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         copy.isAllDay = source.isAllDay
         copy.timeZone = source.timeZone
         copy.calendar = calendar
-        // #272: the source's availability when the target calendar supports it (#245's rule;
-        // decided after the calendar is set, since support depends on it). Otherwise the
+        // #272: the source's availability when the target calendar supports it (#245's support
+        // rule; decided after the calendar is set, since support depends on it). Otherwise the
         // calendar's default stays, and `fieldsNotCarriedOver` lists `availability`.
-        if let value = EventSnapshot.availabilityToWrite(recorded: source.availability,
-                                                         supported: calendar.supportedEventAvailabilities,
-                                                         current: copy.availability) {
+        if let value = EventSnapshot.availabilityForCopy(source: source.availability,
+                                                         supported: calendar.supportedEventAvailabilities) {
             copy.availability = value
         }
         // #230: whole alarms; rebuilt from offsets, absolute and location alarms landed at the
@@ -1823,7 +1822,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                            copyAvailability: EKEventAvailability) -> [String] {
         var lost: [String] = []
         if hasCoordinates { lost.append("structured_location") }
-        if sourceAvailability != copyAvailability { lost.append("availability") }
+        // A source without availability (`.notSupported`: subscribed, holiday or local
+        // calendars) had nothing to lose (#272 verify).
+        if sourceAvailability != .notSupported, sourceAvailability != copyAvailability { lost.append("availability") }
         return lost
     }
 

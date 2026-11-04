@@ -42,28 +42,29 @@ final class EventMoveFieldsTests: XCTestCase {
                        ["structured_location", "availability"])
     }
 
-    /// #272: a copy keeps the source's availability when the target calendar supports it, so
-    /// the copy's value equals the source's and nothing is listed; a target that does not
-    /// support it keeps its default, and the difference is listed.
-    func testAvailabilityTheCopyKeptIsNotListed() {
+    /// #272 verify (MEDIUM 2): a source with no availability (`.notSupported`: subscribed,
+    /// holiday or local calendars) had nothing to lose, so a copy that reads the target's default
+    /// is not reported. This also changes the move fallback and split, which listed it before.
+    func testNoAvailabilityOnTheSourceIsNotReportedAsLost() {
         XCTAssertEqual(EventKitManager.lostFields(hasCoordinates: false,
-                                                  sourceAvailability: .free, copyAvailability: .free), [])
-        XCTAssertEqual(EventKitManager.lostFields(hasCoordinates: false,
-                                                  sourceAvailability: .tentative, copyAvailability: .tentative), [])
+                                                  sourceAvailability: .notSupported, copyAvailability: .busy), [])
+        XCTAssertEqual(EventKitManager.lostFields(hasCoordinates: true,
+                                                  sourceAvailability: .notSupported, copyAvailability: .free),
+                       ["structured_location"])
     }
 
-    /// #272: `makeCopy` writes availability with #245's rule, after the calendar is set (support
-    /// depends on the calendar), and only as the rule decided. An in-memory event ignores
-    /// `availability`, so the wiring is pinned in the source; the write was checked on device.
+    /// #272: `makeCopy` writes availability with `availabilityForCopy`, after the calendar is set
+    /// (support depends on the calendar), and the value it returns is what is written. An
+    /// in-memory event ignores `availability`, so the wiring is pinned in the source (the decision
+    /// is tested on values in `EventAvailabilityTests`); the write was checked on device.
     func testMakeCopyWritesAvailabilityAfterTheCalendarWithTheSupportRule() throws {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "static func makeCopy(of source: EKEvent,", in: source))
         let calendar = try XCTUnwrap(SourcePins.ranges(ofPattern: #"copy\.calendar\s*=\s*calendar\b"#, in: body).first)
-        let rule = try XCTUnwrap(SourcePins.ranges(ofPattern: #"EventSnapshot\.availabilityToWrite\(recorded:\s*source\.availability,\s*supported:\s*calendar\.supportedEventAvailabilities,\s*current:\s*copy\.availability\)"#, in: body).first)
-        let writes = SourcePins.ranges(ofPattern: #"copy\.availability\s*=(?!=)"#, in: body)
-        XCTAssertEqual(writes.count, 1, "written in one place")
-        XCTAssertLessThan(calendar.lowerBound, rule.lowerBound, "decided after the calendar is set")
-        if let write = writes.first { XCTAssertLessThan(rule.lowerBound, write.lowerBound, "written as the rule decided") }
+        let guarded = try XCTUnwrap(SourcePins.ranges(ofPattern: #"if\s+let\s+value\s*=\s*EventSnapshot\.availabilityForCopy\(source:\s*source\.availability,\s*supported:\s*calendar\.supportedEventAvailabilities\)\s*\{\s*copy\.availability\s*=\s*value\s*\}"#, in: body).first,
+                                    "the decided value is written, inside the guard")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"copy\.availability\s*=(?!=)"#, in: body).count, 1, "written in one place")
+        XCTAssertLessThan(calendar.lowerBound, guarded.lowerBound, "decided after the calendar is set")
     }
 
     /// #272: a plain `copy_event` reports what the saved copy did not keep, with the same rule as

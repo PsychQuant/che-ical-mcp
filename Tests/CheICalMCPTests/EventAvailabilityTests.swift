@@ -60,6 +60,22 @@ final class EventAvailabilityTests: XCTestCase {
         XCTAssertNil(EventSnapshot.availabilityToWrite(recorded: .free, supported: [], current: .notSupported))
     }
 
+    /// #272 verify (INFO): a copy is a new, unsaved event, so the value it reads before the save
+    /// says nothing about what will be stored; the copy's value is written whenever the target
+    /// calendar supports it, also when it equals that reading (unlike `availabilityToWrite`).
+    func testACopyWritesEverySupportedValue() {
+        XCTAssertEqual(EventSnapshot.availabilityForCopy(source: .busy, supported: [.busy, .free]), .busy)
+        XCTAssertNil(EventSnapshot.availabilityToWrite(recorded: .busy, supported: [.busy, .free], current: .busy))
+        XCTAssertEqual(EventSnapshot.availabilityForCopy(source: .free, supported: [.busy, .free]), .free)
+        XCTAssertEqual(EventSnapshot.availabilityForCopy(source: .unavailable, supported: all), .unavailable)
+    }
+
+    func testACopyWritesNothingTheTargetDoesNotSupport() {
+        XCTAssertNil(EventSnapshot.availabilityForCopy(source: .tentative, supported: [.busy, .free]))
+        XCTAssertNil(EventSnapshot.availabilityForCopy(source: .free, supported: []))
+        XCTAssertNil(EventSnapshot.availabilityForCopy(source: .notSupported, supported: all))
+    }
+
     func testNothingIsWrittenWhenNothingWasRecordedOrTheValueIsAlreadyThere() {
         XCTAssertNil(EventSnapshot.availabilityToWrite(recorded: .notSupported, supported: all, current: .busy))
         XCTAssertNil(EventSnapshot.availabilityToWrite(recorded: .free, supported: all, current: .free))
