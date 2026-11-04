@@ -315,7 +315,9 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 - **`timezone`** 接受 IANA 時區識別碼（如 `Europe/Berlin`、`America/New_York`、`Asia/Taipei`）
 - 提供 `timezone` 時，無 offset 的時間字串會以該時區解釋
+  - 例外是 `update_event` 的 `occurrence_date`：它指的是事件現在的某一次發生，沒有 offset 時以事件目前的時區解讀，與 `delete_event`、`move_events_batch` 相同（#383、#270）
 - 事件輸出的 `timezone` 欄位和 `start_date_local`/`end_date_local` 會使用事件自身時區
+- 事件輸出另有 `item_timezone`（#386）：事件自己存的時區識別碼（通常是 IANA），事件沒有存時區時（浮動事件；全天事件都是浮動的）為 `null`。這類事件的 `timezone` 會退回主機時區，所以要靠 `item_timezone` 才分得出它和存在主機時區的事件。帶 `display_timezone` 時，`*_local` 字串改用該時區，兩個欄位都不變
 - 支援 `create_event`、`update_event`、`create_events_batch`
 - 復原/重做會保留個別時區設定
 

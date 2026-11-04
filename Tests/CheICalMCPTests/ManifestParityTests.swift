@@ -239,6 +239,28 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #386: the four event read tools name `item_timezone` (the event's own zone, null when
+    /// floating) and say what `timezone` is, in defineTools() and in the manifest; the
+    /// `detail_level` summary list and the `fields` list name the field too.
+    func testEventReadToolsDescribeItemTimezone() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let tools = CheICalMCPServer.defineTools()
+        for name in ["list_events", "search_events", "list_events_quick", "check_conflicts"] {
+            let tool = tools.first { $0.name == name }
+            let declared = tool?.description ?? ""
+            XCTAssertTrue(declared.contains("item_timezone (the event's own time zone; null when floating, all-day events included)"), "defineTools() \(name): \(declared)")
+            XCTAssertTrue(declared.contains("timezone is the event's time zone, or the host time zone when the event is floating"), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("item_timezone (the event's own time zone, null when floating)"), "mcpb/manifest.json \(name): \(summary)")
+            guard name != "check_conflicts" else { continue }
+            let schema = "\(String(describing: tool?.inputSchema))"
+            XCTAssertTrue(schema.contains("end_date_local, timezone, item_timezone, is_all_day, calendar — plus location when set"), "detail_level of \(name)")
+            XCTAssertTrue(schema.contains("Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day,"), "fields of \(name)")
+        }
+    }
+
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
     /// removes absolute-date alarms; both places a client reads about the three writers say so.
     func testReminderWritersDescribeTheBareDateForm() throws {

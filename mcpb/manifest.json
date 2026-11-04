@@ -53,7 +53,7 @@
     },
     {
       "name": "list_events",
-      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 146,000 days, about 400 years)"
+      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "create_event",
@@ -89,11 +89,11 @@
     },
     {
       "name": "search_events",
-      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit (ranges up to 146,000 days, about 400 years)"
+      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "list_events_quick",
-      "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit"
+      "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit; reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "create_events_batch",
@@ -101,7 +101,7 @@
     },
     {
       "name": "check_conflicts",
-      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years)"
+      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "copy_event",

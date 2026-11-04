@@ -314,7 +314,9 @@ Set the display timezone for individual events — essential for multi-timezone 
 
 - **`timezone`** parameter accepts IANA identifiers (e.g., `Europe/Berlin`, `America/New_York`, `Asia/Taipei`)
 - When `timezone` is provided, naive datetimes (without offset) are interpreted in that timezone
+  - except `update_event`'s `occurrence_date`, which names an occurrence of the event as it is now: without an offset it is read in the event's current time zone, as on `delete_event` and `move_events_batch` (#383, #270)
 - Event output includes the event's own timezone in `timezone` field and formats `start_date_local`/`end_date_local` accordingly
+- Event output also reports `item_timezone` (#386): the event's own time zone identifier (usually IANA), or `null` when the event stores no time zone (a floating event; all-day events are floating). `timezone` falls back to the host time zone for those, so `item_timezone` is what tells them apart from an event stored in the host zone. With `display_timezone`, the `*_local` strings are in that zone; neither field changes
 - Available on `create_event`, `update_event`, and `create_events_batch`
 - Undo/redo preserves per-event timezone
 
