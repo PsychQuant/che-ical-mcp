@@ -981,6 +981,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// recurrence rules) through the stand-in (#326).
     private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
 
+    /// #268 (PR #387 verify round 4): an edit of one occurrence (span this) with a calendar of
+    /// another account. A new calendar moves the whole series even with span this (device), and a
+    /// cross-account move gives it a new identifier (#226), which this server cannot read back
+    /// reliably from an occurrence save and which was not checked on a device; the call is refused
+    /// before any field is written. A calendar whose account cannot be read counts as another
+    /// account (`FirstRemainingOccurrence.movesAcrossAccounts`), as for the stand-in refusal.
+    static func refusesOccurrenceEditAcrossAccounts(onOccurrence: Bool, span: EKSpan, crossesAccounts: Bool) -> Bool {
+        onOccurrence && span == .thisEvent && crossesAccounts
+    }
+
+    static let occurrenceAcrossAccountsReason = "Moving to a calendar in another account moves the whole series, so it cannot be combined with an edit of one occurrence (occurrence_date with span 'this'). To move the series, call update_event with span 'all' and no occurrence_date, or move_events_batch; to edit the occurrence, leave calendar_name out. A calendar whose account cannot be read counts as another account. Nothing was written."
+
     func updateEvent(
         identifier: String,
         title: String? = nil,
@@ -1001,7 +1013,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
-    ) async throws -> EKEvent {
+    ) async throws -> (event: EKEvent, seriesIdentifier: String?) {
         try await ensureCalendarAccess()
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
@@ -1055,14 +1067,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // calendar moves the whole series even with span this (device), so one of another account
         // is the cross-account move again; a change of the recurrence rules is series-level too.
         let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        // Read before any field is assigned; also tells the response (#268) not to trust the series
+        // object's identifier after the save.
+        // The calendar the event is already in moves nothing, even when its account cannot be read
+        // (#268 final review).
+        let crossesAccounts = newCalendar.map {
+            $0.calendarIdentifier != event.calendar?.calendarIdentifier
+                && FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
+                                                                toSourceID: $0.source?.sourceIdentifier)
+        } ?? false
         if FirstRemainingOccurrence.refusesUpdateThroughStandIn(
             viaStandIn: resolved.viaStandIn,
-            changesAccount: newCalendar.map {
-                FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: event.calendar?.source?.sourceIdentifier,
-                                                             toSourceID: $0.source?.sourceIdentifier)
-            } ?? false,
+            changesAccount: crossesAccounts,
             changesRecurrence: clearRecurrence || recurrenceRule != nil) {
             throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
+        }
+        // #268 verify round 4: an occurrence edit that would move the series to another account.
+        // An occurrence addressed by its own detached id resolves as masterEvent itself; it is an
+        // occurrence edit all the same (final review), as the undo classifier below counts it.
+        if Self.refusesOccurrenceEditAcrossAccounts(
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) {
+            throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason)
         }
 
         // #373 verify (PR #379): every check that can refuse the update runs here, before the first
@@ -1206,7 +1231,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
             recurringKind: recurringKind, postState: { postWriteSnapshot(eventID: $0, saved: event) }))
-        return event
+        // #268 verify rounds 2-4: a save of one occurrence (span this) is known from the objects,
+        // not from the id's shape; one with a calendar of another account was refused above. The
+        // series object's identifier counts only when it refreshed and is a real series object (the
+        // stand-in is an occurrence); otherwise `savedOccurrenceSeries` takes the occurrence id's
+        // part before /RID=, or keeps the input.
+        let savedIsOccurrence = event !== masterEvent
+        let masterRefreshed = savedIsOccurrence && !resolved.viaStandIn && masterEvent.refresh()
+        let seriesIdentifier = UpdatedIdentifier.savedOccurrenceSeries(
+            savedIsOccurrence: event !== masterEvent, span: span,
+            masterRefreshed: masterRefreshed,
+            master: masterRefreshed ? masterEvent.eventIdentifier : nil,
+            occurrence: event.eventIdentifier)
+        return (event, seriesIdentifier)
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and

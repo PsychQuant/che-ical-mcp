@@ -33,7 +33,9 @@ private actor WriteFake: ReminderWriteSource {
             sync = ReminderDateSync.Report(startDate: .shifted, absoluteAlarmsShifted: 1, absoluteAlarmsRemoved: 0, aligned: true)
         }
         return ReminderUpdateResult(
-            reminder: ReminderWriteSnapshot(id: request.identifier, title: request.title ?? "Saved", notes: request.notes),
+            // #268: a move to a list in another account ("Other") comes back with a new identifier.
+            reminder: ReminderWriteSnapshot(id: request.calendarSource == "Other" ? "moved-" + request.identifier : request.identifier,
+                                            title: request.title ?? "Saved", notes: request.notes),
             dateSync: touchedDue ? sync : nil)
     }
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
@@ -80,6 +82,23 @@ final class ReminderWriteHandlerTests: XCTestCase {
         let requests = await fake.updated
         XCTAssertEqual(requests[0].notes, "replacement\n#old")
         XCTAssertEqual(requests[1].notes, "original")
+    }
+    // #268: the response reports the identifier after the save, and says when it changed.
+    func testUpdateToAListInAnotherAccountReportsTheNewIdentifier() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "calendar_name": .string("List"), "calendar_source": .string("Other")]))
+        XCTAssertEqual(result["id"] as? String, "moved-r")
+        XCTAssertEqual(result["id_changed"] as? Bool, true)
+        XCTAssertEqual(result["previous_id"] as? String, "r")
+    }
+    func testUpdateThatKeepsTheIdentifierSaysItDidNotChange() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "title": .string("Renamed")]))
+        XCTAssertEqual(result["id"] as? String, "r")
+        XCTAssertEqual(result["id_changed"] as? Bool, false)
+        XCTAssertNil(result["previous_id"])
     }
     // #227: the response says what moved with the due date.
     func testUpdateResponseReportsDateSyncWhenTheDueDateMoves() async throws {

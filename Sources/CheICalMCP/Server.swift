@@ -46,6 +46,7 @@ class CheICalMCPServer {
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
     private let eventCopySource: any EventCopySource
+    private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
@@ -84,6 +85,7 @@ class CheICalMCPServer {
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
          eventCopySource: any EventCopySource = EventKitManager.shared,
+         eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
@@ -96,6 +98,7 @@ class CheICalMCPServer {
         self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
+        self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
@@ -268,8 +271,8 @@ class CheICalMCPServer {
                     "type": .string("object"),
                     "properties": .object([
                         "title": .object(["type": .string("string"), "description": .string("Event title")]),
-                        "start_time": .object(["type": .string("string"), "description": .string("Start time in ISO8601 format with timezone (e.g., 2026-01-30T14:00:00+08:00). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
-                        "end_time": .object(["type": .string("string"), "description": .string("End time in ISO8601 format with timezone (e.g., 2026-01-30T15:00:00+08:00). For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day.")]),
+                        "start_time": .object(["type": .string("string"), "description": .string("Start time in ISO8601 format with timezone (e.g., 2026-01-30T14:00:00+08:00). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day; when it does, the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing)).")]),
+                        "end_time": .object(["type": .string("string"), "description": .string("End time in ISO8601 format with timezone (e.g., 2026-01-30T15:00:00+08:00). For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing).")]),
                         "notes": .object(["type": .string("string"), "description": .string("Optional event notes")]),
                         "location": .object(["type": .string("string"), "description": .string("Optional event location")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
@@ -283,7 +286,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Mon & Fri."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -339,22 +342,22 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "event_id": .object(["type": .string("string"), "description": .string("The event identifier")]),
                         "title": .object(["type": .string("string"), "description": .string("New title")]),
-                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). If only start_time is provided, a timed event keeps its duration (an event that is all-day after the update keeps the number of days its range touches, an end at exactly midnight not counting that day (the same rule as end_time), counted in this Mac's time zone; turning an all-day event into a timed one needs both start_time and end_time and is refused with only one of them). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
-                        "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration; turning an all-day event into a timed one needs both start_time and end_time. For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. The same rule applies whether the event is already all-day or becomes all-day in this call.")]),
+                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). If only start_time is provided, a timed event keeps its duration (an event that is all-day after the update keeps the number of days its range touches, an end at exactly midnight not counting that day (the same rule as end_time), counted in this Mac's time zone; turning an all-day event into a timed one needs both start_time and end_time and is refused with only one of them). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day; when it does, the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing)).")]),
+                        "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration; turning an all-day event into a timed one needs both start_time and end_time. For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing). The same rule applies whether the event is already all-day or becomes all-day in this call.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar")]),
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Mon & Fri."),
+                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -585,7 +588,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -602,7 +605,7 @@ class CheICalMCPServer {
                             "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -803,8 +806,8 @@ class CheICalMCPServer {
                                 "type": .string("object"),
                                 "properties": .object([
                                     "title": .object(["type": .string("string")]),
-                                    "start_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day).")]),
-                                    "end_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day.")]),
+                                    "start_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day; when it does, the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing)).")]),
+                                    "end_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing).")]),
                                     "notes": .object(["type": .string("string")]),
                                     "location": .object(["type": .string("string")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required)")]),
@@ -1377,7 +1380,7 @@ class CheICalMCPServer {
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
         let structuredLocation = parseStructuredLocation(from: arguments)
 
-        let result = try await eventKitManager.createEvent(
+        let result = try await eventWriteSource.createEventValue(EventCreateRequest(
             title: title,
             startDate: startDate,
             endDate: endDate,
@@ -1391,7 +1394,7 @@ class CheICalMCPServer {
             recurrenceRule: recurrenceRule,
             structuredLocation: structuredLocation,
             timezone: timezone
-        )
+        ))
 
         // #182 — response contract: normalized excluded days + count. Present whenever
         // the request carried the field (including [] and idempotent skipped retries —
@@ -1406,6 +1409,14 @@ class CheICalMCPServer {
             payload["excluded_occurrence_dates"] = excluded.map { EventKitManager.formatExclusionDay($0, timezone: timezone) }
             payload["exclusion_count"] = excluded.count
         }
+        // #372: an all-day date whose written offset puts it on another day than this Mac's zone
+        // (created and skipped alike).
+        if isAllDay {
+            let host = Calendar.gregorian(in: .current)
+            payload.merge(AllDayOffsetWarning.responseFields(
+                AllDayOffsetWarning.warnings(start: startDate, startText: startStr, end: endDate, endText: endStr, host: host),
+                hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
+        }
         return try actionResult(payload)
     }
 
@@ -1418,8 +1429,10 @@ class CheICalMCPServer {
         let timezone = try parseTimezone(from: arguments)
 
         let title = arguments["title"]?.stringValue
-        let startDate: Date? = try arguments["start_time"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
-        let endDate: Date? = try arguments["end_time"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
+        let startText = arguments["start_time"]?.stringValue
+        let endText = arguments["end_time"]?.stringValue
+        let startDate: Date? = try startText.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
+        let endDate: Date? = try endText.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
         let notes = arguments["notes"]?.stringValue
         let location = arguments["location"]?.stringValue
         let url = arguments["url"]?.stringValue
@@ -1457,7 +1470,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
 
-        let event = try await eventKitManager.updateEvent(
+        let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
             title: title,
             startDate: startDate,
@@ -1477,9 +1490,22 @@ class CheICalMCPServer {
             applyToAll: spanStr == "all",
             timezone: timezone,
             clearTimezone: clearTimezone
-        )
+        ))
 
-        return try actionResult(["action": "updated", "title": event.title ?? "", "id": eventId])
+        // #268: the identifier after the save (a move to another account's calendar changes it).
+        var response: [String: Any] = ["action": "updated", "title": event.title ?? ""]
+        response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier,
+                                                        seriesIdentifier: event.seriesIdentifier)) { $1 }
+        // #372: only when the event is all-day after the update, and only for the fields the call
+        // gave; the other end of the range is the saved event's.
+        if event.isAllDay, startDate != nil || endDate != nil {
+            let host = Calendar.gregorian(in: .current)
+            response.merge(AllDayOffsetWarning.responseFields(
+                AllDayOffsetWarning.warnings(start: startDate ?? event.startDate, startText: startText,
+                                             end: endDate ?? event.endDate, endText: endText, host: host),
+                hostZone: host.timeZone)) { $1 }
+        }
+        return try actionResult(response)
     }
 
     private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {
@@ -1856,7 +1882,9 @@ class CheICalMCPServer {
             realignToDue: realignToDue
         ))
 
-        var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? "", "id": reminderId]
+        var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
+        // #268: the identifier after the save (a move to another account's list may change it).
+        response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
         // they agree with it, also for a call with only realign_to_due.
         if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
@@ -2514,7 +2542,7 @@ class CheICalMCPServer {
                 let batchLocation = eventDict["location"]?.stringValue
                 try InputValidation.validateEventTextInput(title: title, notes: batchNotes, location: batchLocation, url: nil)
 
-                let result = try await eventKitManager.createEvent(
+                let result = try await eventWriteSource.createEventValue(EventCreateRequest(
                     title: title,
                     startDate: startDate,
                     endDate: endDate,
@@ -2528,7 +2556,7 @@ class CheICalMCPServer {
                     recurrenceRule: batchRecurrence,
                     structuredLocation: batchStructuredLocation,
                     timezone: batchTimezone
-                )
+                ))
                 var entry: [String: Any] = [
                     "index": index,
                     "success": true,
@@ -2543,6 +2571,13 @@ class CheICalMCPServer {
                 if let excluded = batchRecurrence?.excludedOccurrenceDates {
                     entry["excluded_occurrence_dates"] = excluded.map { EventKitManager.formatExclusionDay($0, timezone: batchTimezone) }
                     entry["exclusion_count"] = excluded.count
+                }
+                // #372: per item, for created and skipped items alike.
+                if itemAllDay {
+                    let host = Calendar.gregorian(in: .current)
+                    entry.merge(AllDayOffsetWarning.responseFields(
+                        AllDayOffsetWarning.warnings(start: startDate, startText: startStr, end: endDate, endText: endStr, host: host),
+                        hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
                 }
                 results.append(entry)
             } catch {
@@ -2581,13 +2616,13 @@ class CheICalMCPServer {
         let createdIds = Set(results.compactMap { $0["event_id"] as? String })
         for title in batchTitles {
             do {
-                let similar = try await eventKitManager.findSimilarEvents(title: title, limit: 3)
+                let similar = try await eventWriteSource.similarEventValues(title: title, limit: 3)
                 for event in similar {
                     if let eid = event.eventIdentifier, createdIds.contains(eid) { continue }
                     similarHints.append([
                         "matched_title": title,
                         "existing_title": event.title ?? "",
-                        "existing_calendar": event.calendar.title,
+                        "existing_calendar": event.calendarTitle,
                         "existing_date": dateFormatter.string(from: event.startDate),
                         "existing_date_local": localDateFormatter.string(from: event.startDate)
                     ])
