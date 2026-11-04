@@ -36,7 +36,8 @@ enum OccurrenceDay {
             let units: Set<Calendar.Component> = [.era, .year, .month, .day]
             return hostCalendar.dateComponents(units, from: start) == requestedCalendar.dateComponents(units, from: date)
         }
-        guard let window = window(containing: date, in: zone) else { return false }
+        // A nil zone is the host's day; `host` (not the process zone) so the rule is testable on any host.
+        guard let window = window(containing: date, in: zone ?? host) else { return false }
         return window.start <= start && start < window.end
     }
 
@@ -48,7 +49,8 @@ enum OccurrenceDay {
     /// earlier start to the later end); the rule above still decides. With `zone` nil it is the
     /// host's day.
     static func candidateWindow(containing date: Date, in zone: TimeZone?, host: TimeZone = .current) -> (start: Date, end: Date)? {
-        guard let search = window(containing: date, in: zone) else { return nil }
+        // PR #394 CI (UTC host): a nil zone read the process zone here and `host` below.
+        guard let search = window(containing: date, in: zone ?? host) else { return nil }
         var requestedCalendar = Calendar.current
         requestedCalendar.timeZone = zone ?? host
         var hostCalendar = Calendar.current

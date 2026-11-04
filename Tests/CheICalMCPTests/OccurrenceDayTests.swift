@@ -92,6 +92,20 @@ final class OccurrenceDayStartRuleTests: XCTestCase {
     }
 
     /// The window is half-open: a start at the day's first instant is on it, one at the next midnight is not.
+    /// PR #394 CI: with a nil zone both functions use the `host` they are given, not the process
+    /// zone (CI runs in UTC; the candidate window's nil-zone case assumed a Taipei host).
+    func testANilZoneIsTheGivenHostsDay() throws {
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        let requested = TestZones.midnight("2026-12-06", in: tokyo).addingTimeInterval(3600)
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(occurrenceStart: TestZones.midnight("2026-12-06", in: tokyo),
+                                                         isAllDay: false, requested: requested, in: nil, host: tokyo))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: TestZones.midnight("2026-12-07", in: tokyo),
+                                                          isAllDay: false, requested: requested, in: nil, host: tokyo))
+        let window = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: nil, host: tokyo))
+        XCTAssertEqual(window.start, TestZones.midnight("2026-12-06", in: tokyo))
+        XCTAssertEqual(window.end, TestZones.midnight("2026-12-07", in: tokyo))
+    }
+
     func testTheDayIsHalfOpen() throws {
         let requested = TestZones.midnight("2026-12-06", in: newYork)
         let window = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: newYork))
