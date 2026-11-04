@@ -372,9 +372,13 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertFalse(helper.contains("\n    func "), "the extraction stays inside the helper")
         XCTAssertTrue(helper.contains("SeriesCreateUndo.missingError("), "the decision is the tested seam")
         XCTAssertTrue(helper.contains("stored: stored != nil"), "the object the lookup returned")
-        XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false) != nil"),
-                      "any remaining occurrence, edited-before or not, names the shape")
-        XCTAssertFalse(helper.contains("return stand"), "the stand-in is not a target")
+        XCTAssertTrue(helper.contains("recurring: stored?.hasRecurrenceRules ?? false"), "the stored object's rules")
+        XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)"),
+                      "any remaining occurrence, edited-before or not")
+        XCTAssertTrue(helper.contains("standIn.startDate > stored.startDate"),
+                      "the shape is named only when the stand-in starts after the series' recorded start")
+        XCTAssertTrue(helper.contains("stored: EKEvent?) -> Error? {"), "the helper returns an error, never an event")
+        XCTAssertFalse(helper.contains("return standIn\n"), "the stand-in is not a target")
     }
 
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally

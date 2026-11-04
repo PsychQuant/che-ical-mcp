@@ -179,15 +179,19 @@ extension EventKitManager {
     }
 
     /// #377: the not-found message of an event undo, asked only after the lookup found nothing or
-    /// an object that did not refresh. For the undo of a create on a series whose first occurrence
-    /// was deleted, any remaining occurrence (edited-before or not) names that shape; it is never
-    /// the target. The decision is `SeriesCreateUndo.missingError`; nil keeps the plain not-found.
+    /// an object that did not refresh. For the undo of a create on a series, the earliest remaining
+    /// occurrence (edited-before or not) and whether it starts after the series' recorded start
+    /// pick the wording; the occurrence is never the target. The decision is
+    /// `SeriesCreateUndo.missingError`; nil keeps the plain not-found.
     private func createUndoMissingError(of operation: UndoOperation, verb: UndoHistoryVerb, id: String,
                                         stored: EKEvent?) -> Error? {
-        SeriesCreateUndo.missingError(of: operation, verb: verb, stored: stored != nil, hasStandIn: {
-            guard let stored else { return false }
-            return firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false) != nil
-        })
+        SeriesCreateUndo.missingError(
+            of: operation, verb: verb, stored: stored != nil, recurring: stored?.hasRecurrenceRules ?? false,
+            standInStartsAfterSeriesStart: {
+                guard let stored,
+                      let standIn = firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false) else { return nil }
+                return standIn.startDate > stored.startDate
+            })
     }
 
     /// D4 pre-flight for one member of a batch (nested batches are walked).

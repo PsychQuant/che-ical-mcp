@@ -10,14 +10,29 @@ import Foundation
 /// (#369): it compares the recorded snapshot of the series object, which a middle occurrence never
 /// matches, and its delete would start from that occurrence. It refuses instead, naming the shape.
 enum SeriesCreateUndo {
-    /// - any record other than the undo of a `create_event`: nil (no scan);
-    /// - nothing stored under the identifier: nil, the plain not-found (no scan);
-    /// - stored, but no remaining occurrence (`hasStandIn` false): nil, the plain not-found;
-    /// - stored and a remaining occurrence: `UndoTargetMissingError.seriesFirstOccurrenceDeleted`,
-    ///   kept like every not-found.
-    static func missingError(of operation: UndoOperation, verb: UndoHistoryVerb, stored: Bool,
-                             hasStandIn: () -> Bool) -> Error? {
-        guard verb == .undo, case .createEvent(_, let title, _) = operation, stored, hasStandIn() else { return nil }
-        return UndoTargetMissingError.seriesFirstOccurrenceDeleted(title: title)
+    /// - any record other than the undo of a `create_event`, nothing stored under the identifier,
+    ///   or a stored event that does not repeat: nil, the plain not-found (no scan);
+    /// - a stored series with no remaining occurrence that can stand in (none left, or every one
+    ///   left edited on its own, which the pick skips): the #369 residual wording, which names the
+    ///   possible causes;
+    /// - a stand-in that starts after the series' recorded start, the slot a deleted first
+    ///   occurrence leaves: `seriesFirstOccurrenceDeleted`, which names that shape;
+    /// - a stand-in that does not: `seriesUnreadable`, which claims no cause and no permanence.
+    /// All are `UndoTargetMissingError`, kept like every not-found.
+    ///
+    /// `standInStartsAfterSeriesStart` is asked last and only for a stored series: nil when no
+    /// occurrence stands in.
+    static func missingError(of operation: UndoOperation, verb: UndoHistoryVerb, stored: Bool, recurring: Bool,
+                             standInStartsAfterSeriesStart: () -> Bool?) -> Error? {
+        guard verb == .undo, case .createEvent(_, let title, _) = operation, stored, recurring else { return nil }
+        switch standInStartsAfterSeriesStart() {
+        case nil:
+            return UndoTargetMissingError(verb: verb, kind: .event, title: title, hasIdentifier: true,
+                                          seriesWithoutStandIn: true)
+        case true?:
+            return UndoTargetMissingError.seriesFirstOccurrenceDeleted(title: title)
+        case false?:
+            return UndoTargetMissingError.seriesUnreadable(title: title)
+        }
     }
 }
