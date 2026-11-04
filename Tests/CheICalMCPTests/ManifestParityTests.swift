@@ -261,6 +261,20 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #383 verify: update_event's occurrence_date says which zone it is read in, for both forms,
+    /// and the floating case; the description of the tool names occurrence_start; the manifest too.
+    func testUpdateEventDescribesTheOccurrenceDateZone() throws {
+        let tool = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
+        let schema = "\(String(describing: tool?.inputSchema))"
+        XCTAssertTrue(schema.contains("Without an offset it is read in the event's current time zone, not in timezone (the zone the event gets); with an offset it is used as given, and its day is taken in the event's current time zone too. A floating or all-day series uses this Mac's time zone."), schema)
+        XCTAssertTrue((tool?.description ?? "").contains("adds occurrence_start, the start of the occurrence occurrence_date matched"), tool?.description ?? "")
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let summary = entries.first { $0["name"] as? String == "update_event" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("occurrence_start for the occurrence occurrence_date matched"), summary)
+    }
+
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
     /// removes absolute-date alarms; both places a client reads about the three writers say so.
     func testReminderWritersDescribeTheBareDateForm() throws {

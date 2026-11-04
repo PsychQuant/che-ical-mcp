@@ -166,7 +166,8 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         let update = try XCTUnwrap(source.range(of: "func updateEvent("))
-        let body = String(source[update.upperBound...].prefix(9000))
+        // The window is only a bound for the search; widened for #383 verify's occurrence_start capture.
+        let body = String(source[update.upperBound...].prefix(12000))
         let refusal = try XCTUnwrap(body.range(of: "FirstRemainingOccurrence.refusesUpdateThroughStandIn("))
         let firstField = try XCTUnwrap(body.range(of: "if let t = title { event.title = t }"))
         XCTAssertLessThan(refusal.lowerBound, firstField.lowerBound, "before the first field of the event is assigned")

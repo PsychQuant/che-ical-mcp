@@ -89,4 +89,68 @@ final class UpdateOccurrenceDateZoneHandlerTests: XCTestCase {
         let lookups = await fake.zoneLookups
         XCTAssertEqual(lookups, [])
     }
+
+    // MARK: - Verify round 1 (PR #392)
+
+    private func call(_ fake: FakeEventWriteSource, _ args: [String: Value]) async throws -> [String: Any] {
+        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let raw = try await server.executeToolCall(name: "update_event", arguments: args)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    /// The access error from the zone lookup reaches the caller, and nothing is written.
+    func testAnAccessErrorReachesTheCallerBeforeAnyWrite() async throws {
+        let fake = FakeEventWriteSource(occurrenceZone: TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day)))
+        do {
+            _ = try await call(fake, ["event_id": .string("denied"), "occurrence_date": .string(day)])
+            XCTFail("the access error must surface")
+        } catch let error as EventKitError {
+            guard case .accessDenied = error else { return XCTFail("\(error)") }
+        }
+        let updates = await fake.updates
+        XCTAssertEqual(updates.count, 0)
+    }
+
+    /// A parameter error that needs no calendar is reported before the zone lookup (which ensures
+    /// calendar access and reads the store): a malformed call does not touch EventKit.
+    func testMalformedParametersAreRefusedWithoutAZoneLookup() async throws {
+        let malformed: [[String: Value]] = [
+            ["timezone": .string("Europe/London"), "clear_timezone": .bool(true)],
+            ["alarms_minutes_offsets": .array([.string("ten")])],
+            ["clear_recurrence": .string("yes")],
+            ["clear_timezone": .string("yes")],
+            ["recurrence": .object(["frequency": .string("hourly")])],
+        ]
+        for extra in malformed {
+            let fake = FakeEventWriteSource(occurrenceZone: TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day)))
+            var args: [String: Value] = ["event_id": .string("series"), "occurrence_date": .string(day)]
+            args.merge(extra) { $1 }
+            do {
+                _ = try await call(fake, args)
+                XCTFail("expected a refusal for \(extra)")
+            } catch {}
+            let lookups = await fake.zoneLookups
+            XCTAssertEqual(lookups, [], "\(extra)")
+        }
+    }
+
+    /// The response names the start of the occurrence the date matched, with the offset of the
+    /// event's zone, so a caller can see which day was edited.
+    func testTheResponseReportsTheMatchedOccurrenceStart() async throws {
+        let eventZone = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day))
+        let fake = FakeEventWriteSource(occurrenceZone: eventZone)
+        let result = try await call(fake, ["event_id": .string("series"), "title": .string("Renamed"),
+                                           "occurrence_date": .string(day)])
+        let expected = OccurrenceStart.string(TestZones.midnight(day, in: eventZone), zone: eventZone)
+        XCTAssertEqual(result["occurrence_start"] as? String, expected)
+        XCTAssertTrue(expected.hasPrefix(day + "T00:00:00"), expected)
+    }
+
+    func testNoOccurrenceStartWithoutAMatchedOccurrence() async throws {
+        let fake = FakeEventWriteSource(occurrenceZone: TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day)))
+        let plain = try await call(fake, ["event_id": .string("e1"), "title": .string("Renamed")])
+        XCTAssertNil(plain["occurrence_start"])
+        let all = try await call(fake, ["event_id": .string("series"), "span": .string("all"), "occurrence_date": .string(day)])
+        XCTAssertNil(all["occurrence_start"])
+    }
 }

@@ -342,7 +342,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -421,7 +421,7 @@ class CheICalMCPServer {
                         ]),
                         "occurrence_date": .object([
                             "type": .string("string"),
-                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'). A value without an offset is read in the event's current time zone, not in timezone (the zone the event gets). Required when span is 'this' or 'future' on recurring events.")
+                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'). Without an offset it is read in the event's current time zone, not in timezone (the zone the event gets); with an offset it is used as given, and its day is taken in the event's current time zone too. A floating or all-day series uses this Mac's time zone. Required when span is 'this' or 'future' on recurring events.")
                         ])
                     ]),
                     "required": .array([.string("event_id")])
@@ -1443,12 +1443,6 @@ class CheICalMCPServer {
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
         let spanStr = arguments["span"]?.stringValue ?? "this"
-        // #383: a value without offset is read in the event's current zone, the zone updateEvent's
-        // findOccurrence takes the day boundary in, as delete_event and move_events_batch do (#270);
-        // not in `timezone`, the zone the event gets after the update.
-        let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
-            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
-            zoneLookup: { try await self.eventWriteSource.occurrenceDateTimeZone(identifier: eventId) })
         let span: EKSpan
         switch spanStr {
         case "future": span = .futureEvents
@@ -1473,6 +1467,14 @@ class CheICalMCPServer {
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
+
+        // #383: a value without offset is read in the event's current zone, the zone updateEvent's
+        // findOccurrence takes the day boundary in, as delete_event and move_events_batch do (#270);
+        // not in `timezone`, the zone the event gets after the update. Last, after every check that
+        // needs no calendar (verify round 1): the lookup ensures calendar access and reads the store.
+        let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
+            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
+            zoneLookup: { try await self.eventWriteSource.occurrenceDateTimeZone(identifier: eventId) })
 
         let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
@@ -1500,6 +1502,10 @@ class CheICalMCPServer {
         var response: [String: Any] = ["action": "updated", "title": event.title ?? ""]
         response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier,
                                                         seriesIdentifier: event.seriesIdentifier)) { $1 }
+        // #383 verify: the start of the occurrence occurrence_date matched, before the update.
+        if let matched = event.matchedOccurrence {
+            response["occurrence_start"] = OccurrenceStart.string(matched.start, zone: matched.zone)
+        }
         // #372: only when the event is all-day after the update, and only for the fields the call
         // gave; the other end of the range is the saved event's.
         if event.isAllDay, startDate != nil || endDate != nil {
