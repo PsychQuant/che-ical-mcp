@@ -206,7 +206,7 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(declared.contains("item_timezone (the reminder's own time zone; null when floating)"), "defineTools() \(name): \(declared)")
             XCTAssertTrue(declared.contains("timezone is the host time zone, the zone of the *_local strings"), "defineTools() \(name): \(declared)")
             let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
-            XCTAssertTrue(summary.contains("item_timezone"), "mcpb/manifest.json \(name): \(summary)")
+            XCTAssertTrue(summary.contains("item_timezone (the reminder's own time zone, null when floating)"), "mcpb/manifest.json \(name): \(summary)")
         }
     }
 

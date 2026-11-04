@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`list_reminders` and `search_reminders` report each reminder's own time zone as `item_timezone`** (#241): the per-reminder `timezone` was always the host zone, whatever zone the reminder stores, so a floating reminder (no stored zone, the kind iCloud Web shifts, #134 / #237) looked the same as one zoned in the host zone. The new `item_timezone` is the reminder's `EKCalendarItem.timeZone`: an IANA identifier, or `null` when the reminder is floating. `timezone` keeps its value and is now documented as what it always was: the host zone, the zone of the `*_local` strings. No existing key changes value or type. The tool descriptions say both.
+- **`list_reminders` and `search_reminders` report each reminder's own time zone as `item_timezone`** (#241): the per-reminder `timezone` was always the host zone, whatever zone the reminder stores, so a floating reminder (no stored zone, the kind iCloud Web shifts, #134 / #237) looked the same as one zoned in the host zone. The new `item_timezone` is the reminder's `EKCalendarItem.timeZone`: a time zone identifier (usually IANA), or `null` when the reminder stores no zone, which covers date-only and undated reminders too; a floating timed reminder is `item_timezone` null with `due.time` set. With a due date it matches `due.timezone`. Clients that reject unknown fields must update their decoders. `timezone` keeps its value and is now documented as what it always was: the host zone, the zone of the `*_local` strings. No existing key changes value or type. The tool descriptions say both.
 
 ### Changed
 
