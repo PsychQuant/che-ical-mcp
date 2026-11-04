@@ -9,7 +9,7 @@ import XCTest
 final class EventSnapshotTests: XCTestCase {
     /// An `EKEvent` whose store was deallocated reads back no alarms, so the store lives
     /// as long as the test.
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private let absoluteDate = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func makeEvent() -> EKEvent {

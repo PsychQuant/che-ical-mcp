@@ -30,7 +30,7 @@ final class EventMoveUndoStandInTests: XCTestCase {
     /// the series object, which a middle occurrence never matches; the other records do not
     /// write to an existing event or are refused before any lookup.
     func testNoOtherRecordResolvesThroughTheStandIn() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let event = EKEvent(eventStore: store)
         event.calendar = EKCalendar(for: .event, eventStore: store)
         event.title = "Standup"

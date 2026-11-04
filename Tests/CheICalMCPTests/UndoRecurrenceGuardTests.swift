@@ -7,7 +7,7 @@ import XCTest
 /// `nil` the same; the rules themselves compare as sets, with the
 /// end to the second (to the day for an all-day event). In memory only, so no TCC prompt.
 final class UndoRecurrenceGuardTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var calendar = EKCalendar(for: .event, eventStore: store)
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 

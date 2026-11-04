@@ -7,7 +7,7 @@ import XCTest
 /// alarm as its `relativeOffset` alone turned absolute-date and location alarms (both report
 /// offset 0) into alarms at the start or due time, and email alarms into display alarms.
 final class AlarmSnapshotTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private let absoluteDate = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func locationAlarm() -> EKAlarm {

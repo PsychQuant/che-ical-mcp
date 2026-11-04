@@ -6,7 +6,7 @@ import XCTest
 /// #226: when a move falls back to copy + delete, the response lists the fields the source
 /// had that the copy did not keep — only the ones the source actually had.
 final class EventMoveFieldsTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private func alarms(_ event: EKEvent) -> Set<AlarmSnapshot> {
         Set((event.alarms ?? []).map(AlarmSnapshot.init(from:)))

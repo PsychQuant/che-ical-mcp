@@ -8,7 +8,7 @@ import XCTest
 /// checked (`UndoTargetCheck`, the part of every undo arm that runs before the write), and the
 /// errors a refusal produces. In memory only, so no TCC prompt.
 final class UndoRefusalTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var calendarA = EKCalendar(for: .event, eventStore: store)
     private lazy var calendarB = EKCalendar(for: .event, eventStore: store)
     private lazy var calendarC = EKCalendar(for: .event, eventStore: store)

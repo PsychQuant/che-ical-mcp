@@ -142,7 +142,7 @@ final class NewObjectSaveTests: XCTestCase {
     /// copy a store hands back (due without a time or zone, start at 00:00 of the day, as on device),
     /// so a date-only create found after a save that threw counts as saved, not as differing.
     func testADateOnlyReminderComparesEqualToTheStoredCopy() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let written = EKReminder(eventStore: store)
         _ = ReminderDateSync.setDueDay(written, to: DateComponents(year: 2026, month: 10, day: 18))
         let stored = EKReminder(eventStore: store)
@@ -155,7 +155,7 @@ final class NewObjectSaveTests: XCTestCase {
     /// The names a `store_differs` can hold are exactly the keys `Fields` compares, which the tool
     /// descriptions list.
     func testTheFieldNamesAreTheComparedKeys() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         XCTAssertEqual(Set(NewObjectSave.Fields(reminder: EKReminder(eventStore: store)).values.keys), Set(NewObjectSave.reminderFieldNames))
         XCTAssertEqual(Set(NewObjectSave.Fields(list: EKCalendar(for: .reminder, eventStore: store)).values.keys), Set(NewObjectSave.listFieldNames))
     }
@@ -179,7 +179,7 @@ final class NewObjectSaveTests: XCTestCase {
     /// date-only due has no time), the due date's time zone, and how many alarms and recurrence
     /// rules it has. A list: its title and account. A missing value reads as empty.
     func testTheFieldsAreTheOnesTheSaveWritesThatReadBackSimply() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.title = "a"
         XCTAssertEqual(NewObjectSave.Fields(reminder: reminder), .init([

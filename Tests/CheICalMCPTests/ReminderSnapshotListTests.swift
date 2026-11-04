@@ -9,7 +9,7 @@ import XCTest
 /// undo looks up the calendar (#208), and a missing list is refused with a message naming it.
 final class ReminderSnapshotListTests: XCTestCase {
     /// The snapshot reads the list from the reminder, so the store lives as long as the test.
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private let now = Date(timeIntervalSince1970: 1_900_000_000)
 
     private func list(_ title: String) -> EKCalendar {

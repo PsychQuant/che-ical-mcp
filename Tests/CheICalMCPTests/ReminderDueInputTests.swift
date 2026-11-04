@@ -224,7 +224,7 @@ final class ReminderDueInputTests: XCTestCase {
     // MARK: - #301: which duplicate is reported does not depend on fetch order
 
     private func reminder(_ due: DateComponents) -> EKReminder {
-        let r = EKReminder(eventStore: EKEventStore())
+        let r = EKReminder(eventStore: SharedTestStore.store)
         r.title = "R"
         r.dueDateComponents = due
         return r

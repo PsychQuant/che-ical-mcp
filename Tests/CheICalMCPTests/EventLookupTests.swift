@@ -8,7 +8,7 @@ import XCTest
 /// the item's kind with `calendarItem(withIdentifier:)` first and never calls the event lookup for
 /// a reminder.
 final class EventLookupTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private final class Calls {
         var calendarItem: [String] = []

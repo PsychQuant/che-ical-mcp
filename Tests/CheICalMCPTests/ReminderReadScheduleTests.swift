@@ -11,7 +11,7 @@ final class ReminderReadScheduleTests: XCTestCase {
     private let taipei = TimeZone(identifier: "Asia/Taipei")!
 
     private func makeReminder() -> EKReminder {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
         return reminder

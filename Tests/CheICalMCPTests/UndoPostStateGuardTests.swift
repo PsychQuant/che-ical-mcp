@@ -12,7 +12,7 @@ import XCTest
 final class UndoPostStateGuardTests: XCTestCase {
     /// An item whose store was deallocated reads back no alarms, so the store lives as long as
     /// the test.
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var calendarA = EKCalendar(for: .event, eventStore: store)
     private lazy var calendarB = EKCalendar(for: .event, eventStore: store)
     private lazy var listA = EKCalendar(for: .reminder, eventStore: store)

@@ -3,10 +3,11 @@ import EventKit
 
 /// #236: undo records now carry the post-write state, so tests that only need *a* record build
 /// one from an in-memory item here (never fetched or saved, so no TCC prompt). Every fixture is
-/// built on one shared store: a store per call grew with the tests, and too many stores in one
-/// process make EventKit refuse the real one other tests use (#283; PR #282 round 6, findings 7, 17).
+/// built on the test target's one store, `SharedTestStore.store`: a store per call grew with the
+/// tests, and too many stores in one process make EventKit refuse the real one other tests use
+/// (#283; PR #282 round 6, findings 7, 17).
 enum UndoSnapshotFixtures {
-    private static let store = EKEventStore()
+    private static var store: EKEventStore { SharedTestStore.store }
 
     /// `calendarTitle` names the event's calendar; `weeklyOccurrences` makes it a weekly series of
     /// that many, whose delete-undo recreates it from its rules (#278).

@@ -35,7 +35,7 @@ final class ReminderDateSyncTests: XCTestCase {
     }
 
     private func makeReminder() -> EKReminder {
-        EKReminder(eventStore: EKEventStore())
+        EKReminder(eventStore: SharedTestStore.store)
     }
 
     // MARK: - Shift
@@ -315,7 +315,7 @@ final class ReminderDateSyncTests: XCTestCase {
 
     /// Finding 7: the whole chain — snapshot, update, undo — returns the reminder to its state.
     func testUndoSnapshotTakenBeforeSetDueRestoresTheOriginalDates() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
         let oldDue = date(2026, 10, 4, 10, in: taipei)
@@ -673,7 +673,7 @@ final class ReminderDateSyncTests: XCTestCase {
     /// Undo through the `.updateReminder` snapshot (start date and absolute alarms, #227) brings a
     /// realigned reminder back to its diverged state.
     func testUndoSnapshotTakenBeforeRealignRestoresTheDivergedDates() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
         let oldDue = date(2026, 10, 8, 10, in: taipei)
@@ -946,7 +946,7 @@ final class ReminderDateSyncTests: XCTestCase {
     /// Verify 10: undo of an update on a floating reminder returns the item to floating. Writing the
     /// recorded floating due resets the item zone #237 assigned.
     func testUndoSnapshotReturnsAFloatingReminderToFloating() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)
         reminder.dueDateComponents = DateComponents(year: 2026, month: 10, day: 7)

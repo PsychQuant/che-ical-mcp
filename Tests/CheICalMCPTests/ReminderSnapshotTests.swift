@@ -13,7 +13,7 @@ final class ReminderSnapshotTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_900_000_000)
     /// An item whose store was deallocated reads back no alarms, so the store lives as long
     /// as the test.
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private func components(_ y: Int, _ m: Int, _ d: Int, _ h: Int) -> DateComponents {
         DateComponents(timeZone: taipei, year: y, month: m, day: d, hour: h, minute: 0)
