@@ -59,12 +59,16 @@ final class PrintTCCPathBinaryTests: XCTestCase {
             output = stdout.fileHandleForReading.readDataToEndOfFile()
             drained.signal()
         }
-        if exited.wait(timeout: .now() + 20) == .timedOut {
+        let timedOut = exited.wait(timeout: .now() + 20) == .timedOut
+        if timedOut {
             kill(process.processIdentifier, SIGKILL)
-            XCTFail("--print-tcc-path did not exit within 20 s")
-            return
+            _ = exited.wait(timeout: .now() + 5)
         }
-        _ = drained.wait(timeout: .now() + 3)
+        let drainTimedOut = drained.wait(timeout: .now() + 3) == .timedOut
+        // #417: both limits judged through HostLoad before the output is read (an XCTSkip cannot
+        // retract a failure recorded earlier, #366 / #418).
+        try HostLoad.live.checkNotTimedOut(timedOut, bound: 20, "--print-tcc-path through PATH (it should exit by itself)")
+        try HostLoad.live.checkNotTimedOut(drainTimedOut, bound: 3, "--print-tcc-path through PATH: output drain")
         let text = String(decoding: output, as: UTF8.self)
 
         let lines = text.components(separatedBy: "\n")

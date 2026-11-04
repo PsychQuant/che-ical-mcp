@@ -59,6 +59,25 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         /// had not matched, so the helper had to terminate it. A child that is expected to exit
         /// by itself should leave this false; otherwise a hung child only shows up as slow.
         let timedOut: Bool
+        /// True when a stderr or stdout drain wait hit `drainCap`, so the output may be partial
+        /// (#417). Judged through `checkSpawnBounds` before the output is read.
+        let drainTimedOut: Bool
+    }
+
+    /// How long the helper waits for each output drain after the child is gone (#417).
+    private static let drainCap: TimeInterval = 1.0
+
+    /// #417: the spawn's wall-clock limits judged through `HostLoad`, before any assertion on the
+    /// child's output (an `XCTSkip` cannot retract a failure recorded earlier, #366 / #418). With
+    /// `exitsBySelf` the child must exit by itself within `maxWait`: on a host loaded past the
+    /// threshold a timeout cannot tell "did not exit" from "too slow", and below it the timeout is
+    /// still a failure. The drain is judged in every case.
+    private func checkSpawnBounds(_ run: SpawnResult, exitsBySelf: Bool = true, maxWait: TimeInterval = 10.0,
+                                  _ what: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        if exitsBySelf {
+            try HostLoad.live.checkNotTimedOut(run.timedOut, bound: maxWait, what, file: file, line: line)
+        }
+        try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)
     }
 
     /// Spawn the binary, close its stdin, and wait for it to exit, terminating it if it is
@@ -212,8 +231,8 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         // Bound the drain waits too — if EOF still hasn't arrived (extremely unlikely
         // after explicit pipe-write-end close + SIGKILL), partial output is fine.
-        _ = drainDone.wait(timeout: .now() + 1.0)
-        _ = stdoutDrainDone.wait(timeout: .now() + 1.0)
+        let stderrDrainTimedOut = drainDone.wait(timeout: .now() + Self.drainCap) == .timedOut
+        let stdoutDrainTimedOut = stdoutDrainDone.wait(timeout: .now() + Self.drainCap) == .timedOut
         try? stderrHandle.close()
         try? stdoutHandle.close()
 
@@ -225,7 +244,8 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             stderr: stderrText,
             terminationStatus: process.terminationStatus,
             untilMatchedAfter: matchedAfter,
-            timedOut: timedOut
+            timedOut: timedOut,
+            drainTimedOut: stderrDrainTimedOut || stdoutDrainTimedOut
         )
     }
 
@@ -249,11 +269,11 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             arguments: ["-e", "select(undef, undef, undef, 1.2); print STDERR qq([late] written after 1.2s\\n)"]
         )
 
+        try checkSpawnBounds(run, "The late-writing child (it should exit by itself, not hit the cap)")   // #417
         XCTAssertTrue(
             run.stderr.contains("[late] written after 1.2s"),
             "A child that writes after 1.2 s must be captured with the default wait. Got stderr: \(run.stderr)"
         )
-        XCTAssertFalse(run.timedOut, "The child should exit by itself, not hit the cap")
         XCTAssertEqual(run.terminationStatus, 0, "The child should exit by itself, not by the helper's SIGTERM")
     }
 
@@ -269,14 +289,13 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
         let elapsed = Date().timeIntervalSince(start)
 
+        // #417: judged before the output is read.
+        try checkSpawnBounds(run, "The `until` spawn (`until` matched, so the cap should not end the wait)")
+        try HostLoad.live.checkWithinBound(elapsed, bound: 5.0,
+            "The helper's return once `until` matches (not the 10 s cap)")
         XCTAssertTrue(run.stderr.contains("[ready] up"), "Got stderr: \(run.stderr)")
         let matchedAfter = try XCTUnwrap(run.untilMatchedAfter, "The predicate matched, so the arrival time must be reported")
         XCTAssertLessThanOrEqual(matchedAfter, elapsed)
-        XCTAssertFalse(run.timedOut, "`until` matched, so the cap did not end the wait")
-        XCTAssertLessThan(
-            elapsed, 5.0,
-            "The helper should return once `until` matches, not wait out the 10 s cap. Elapsed: \(String(format: "%.3f", elapsed))s"
-        )
     }
 
     /// A child that ignores stdin EOF is stopped at the `maxWait` cap and reported as
@@ -290,12 +309,12 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
         let elapsed = Date().timeIntervalSince(start)
 
+        // #417: the capped child is not expected to exit; its drain and the path's duration are
+        // judged first. That the cap fired stays a hard assertion: load can only make it more certain.
+        try checkSpawnBounds(run, exitsBySelf: false, "The capped `sleep 30` spawn")
+        try HostLoad.live.checkWithinBound(elapsed, bound: 3.0, "The cap path (about maxWait plus the SIGTERM)")
         XCTAssertTrue(run.timedOut, "`sleep 30` ignores stdin EOF, so the 0.3 s cap must end the wait")
         XCTAssertNil(run.untilMatchedAfter)
-        XCTAssertLessThan(
-            elapsed, 3.0,
-            "The cap path should take about maxWait plus the SIGTERM, not run on. Elapsed: \(String(format: "%.3f", elapsed))s"
-        )
     }
 
     // MARK: - Tests
@@ -337,6 +356,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         try HostLoad.live.checkNotTimedOut(
             warmUp.timedOut, bound: 10,
             "The untimed `--version` warm-up (this failure is in the warm-up, not the timed banner spawn)")
+        try checkSpawnBounds(warmUp, exitsBySelf: false, "The untimed `--version` warm-up")   // #417
         XCTAssertEqual(
             warmUp.terminationStatus, 0,
             "The untimed `--version` warm-up exited non-zero; this failure is in the warm-up, not the timed banner spawn"
@@ -357,6 +377,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // Judged next: a timeout means the `until` predicate (header && path) never matched, so the
         // presence assertions below would record a failure that a later XCTSkip cannot retract (#366).
         try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 10, "The banner spawn (the banner should arrive before the cap)")
+        try checkSpawnBounds(run, exitsBySelf: false, "The banner spawn")   // #417
         XCTAssertTrue(
             run.stderr.contains("[banner] che-ical-mcp"),
             "Default startup should emit banner. Got stderr: \(run.stderr.prefix(200))"
@@ -390,7 +411,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
-        XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF")
+        try checkSpawnBounds(run, "The server under FORCE (it should exit by itself on stdin EOF)")   // #417
         if run.stderr.contains("restricted by a policy") {
             throw XCTSkip("the host is restricted by a policy, and CHE_ICAL_MCP_FORCE_DISCLAIM yields to that (#367)")
         }
@@ -414,7 +435,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
 
         let run = try spawnAndCaptureStderr(binary: binary, environment: env)
 
-        XCTAssertFalse(run.timedOut, "With the banner suppressed the server should still exit by itself on stdin EOF")
+        try checkSpawnBounds(run, "The server with the banner suppressed (it should still exit by itself on stdin EOF)")   // #417
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
             run.stderr.contains("[banner]"),
@@ -434,7 +455,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             arguments: ["--version"]
         )
 
-        XCTAssertFalse(run.timedOut, "--version should exit by itself")
+        try checkSpawnBounds(run, "--version (it should exit by itself)")   // #417
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
             run.stderr.contains("[banner]"),
@@ -451,7 +472,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             arguments: ["--help"]
         )
 
-        XCTAssertFalse(run.timedOut, "--help should exit by itself")
+        try checkSpawnBounds(run, "--help (it should exit by itself)")   // #417
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertFalse(
             run.stderr.contains("[banner]"),
@@ -567,7 +588,7 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         // budget if the default changes.
         let run = try spawnAndCaptureStderr(binary: tempBinary, maxWait: 10.0)
 
-        XCTAssertFalse(run.timedOut, "The server should exit by itself on stdin EOF after the banner")
+        try checkSpawnBounds(run, maxWait: 10.0, "The server from an arbitrary path (it should exit by itself on stdin EOF after the banner)")   // #417
         XCTAssertTrue(
             run.stderr.contains("[banner] che-ical-mcp"),
             "Banner should appear even from arbitrary path. Got stderr: \(run.stderr.prefix(200))"

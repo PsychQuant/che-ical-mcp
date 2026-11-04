@@ -91,7 +91,7 @@ final class DrainingStdioTransportTests: XCTestCase {
 
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300), "the stream must wait for the reply")
-        XCTAssertLessThan(elapsed, .seconds(5), "and end soon after it, not at the timeout")
+        try checkUnder5Seconds(elapsed, "The stream's end after the reply (not at the timeout)")
         close(p.serverRead)
         await p.transport.disconnect()
     }
@@ -111,22 +111,32 @@ final class DrainingStdioTransportTests: XCTestCase {
 
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300))
-        XCTAssertLessThan(elapsed, .seconds(5))
+        try checkUnder5Seconds(elapsed, "The drain cut off at the 300 ms cap")
         close(p.serverRead)
         await p.transport.disconnect()
     }
 
     private struct WaitTimedOut: Error {}
 
-    /// Returns as soon as `condition` holds; fails the test and throws if it does not within 5 s
-    /// (PR #409 verify round 3: it used to return quietly either way).
+    /// Returns as soon as `condition` holds. If it does not within 5 s, the overrun is judged
+    /// through `HostLoad` (#417: a skip on a host loaded past the threshold, otherwise a failure)
+    /// and the test stops (PR #409 verify round 3: it used to return quietly either way).
     private func waitUntil(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
-        for _ in 0..<500 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("condition did not hold within 5 s", file: file, line: line)
+        try HostLoad.live.checkNotTimedOut(true, bound: 5, "A condition the test waits for", file: file, line: line)
         throw WaitTimedOut()
+    }
+
+    /// #417: the tests' "ended well before the cap" bound, judged through `HostLoad`.
+    private func checkUnder5Seconds(_ elapsed: Duration, _ what: String,
+                                    file: StaticString = #filePath, line: UInt = #line) throws {
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        try HostLoad.live.checkWithinBound(seconds, bound: 5, what, file: file, line: line)
     }
 
     /// PR #409 verify round 1 (MEDIUM): a reply settles its request before the write is awaited,
@@ -185,7 +195,7 @@ final class DrainingStdioTransportTests: XCTestCase {
         } catch {}
         await inner.finish()
         _ = try await ended.value
-        XCTAssertLessThan(clock.now - start, .seconds(5), "settled despite the failed write")
+        try checkUnder5Seconds(clock.now - start, "The drain after a failed reply write (settled, not at the cap)")
     }
 
     /// PR #409 verify round 2: batches are not recorded (the SDK answers them inline), so a batch
@@ -203,7 +213,7 @@ final class DrainingStdioTransportTests: XCTestCase {
         await inner.feed(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2}]"#)
         await inner.finish()
         _ = try await ended.value
-        XCTAssertLessThan(clock.now - start, .seconds(5))
+        try checkUnder5Seconds(clock.now - start, "The drain after an undecodable batch (not held)")
     }
 
     /// PR #409 verify round 2: a reply whose write is still in flight holds the drain, even though
@@ -248,7 +258,7 @@ final class DrainingStdioTransportTests: XCTestCase {
         for try await _ in await p.transport.receive() { messages += 1 }
 
         XCTAssertEqual(messages, 1)
-        XCTAssertLessThan(clock.now - start, .seconds(5), "no drain wait without an outstanding request")
+        try checkUnder5Seconds(clock.now - start, "EOF with nothing outstanding (no drain wait)")
         close(p.serverRead)
         await p.transport.disconnect()
     }

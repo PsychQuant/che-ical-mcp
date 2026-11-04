@@ -165,8 +165,12 @@ final class HostLoadTests: XCTestCase {
         XCTAssertFalse(bannerTest.contains("maxWait:"), "the banner spawns use the default cap")
         XCTAssertTrue(banner.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
         XCTAssertFalse(disclaim.contains("XCTAssertFalse(run.timedOut") || disclaim.contains("XCTAssertFalse(host.timedOut"))
-        XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 7)
-        XCTAssertTrue(disclaim.contains("timeout: TimeInterval = 15) throws -> Run {"), "the 15 s bound is unchanged")
+        // #417: the seven call sites go through `checkRunBounds` (its two `checkNotTimedOut` calls:
+        // the 15 s bound and the drain); `HostLoadWiringTests` pins the call sites and their order.
+        XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
+        XCTAssertEqual(disclaim.components(separatedBy: "try checkRunBounds(").count - 1, 7)
+        XCTAssertTrue(disclaim.contains("static let printTCCPathTimeout: TimeInterval = 15"), "the 15 s bound is unchanged")
+        XCTAssertTrue(disclaim.contains("timeout: TimeInterval = printTCCPathTimeout) throws -> Run {"), "the default is that bound")
         // Every `timeout:` in the file is one of the seven known ones (runBounded's parameter and its
         // three waits, runPrintTCCPath's 15 s default and its forward, the hang test's 1 s), so no
         // call site overrides the 15 s bound, whatever its arguments look like.

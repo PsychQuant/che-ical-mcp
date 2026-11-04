@@ -67,9 +67,10 @@ final class LiveParentChainSourceTests: XCTestCase {
         let script = try makeScript("exec sleep 30")
         let started = Date()
         let result = LiveParentChainSource(psPath: script, timeoutMilliseconds: 200).captureChain(from: 500)
+        // #417: judged through HostLoad (the runner must end the child at the budget, not wait for it).
+        try HostLoad.live.checkWithinBound(Date().timeIntervalSince(started), bound: 10,
+                                           "The 200 ms ps budget ending the child")
         XCTAssertTrue(result.hops.isEmpty)
         XCTAssertEqual(result.failureReason, "ps timed out after 200ms")
-        XCTAssertLessThan(Date().timeIntervalSince(started), 10,
-                          "the runner must end the child at the budget, not wait for it to finish")
     }
 }

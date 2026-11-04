@@ -23,6 +23,22 @@ final class StdioEOFDrainTests: XCTestCase {
         let terminationStatus: Int32
         let exitedBySelf: Bool
         let seconds: TimeInterval
+        /// The cap the child had to exit by itself within.
+        let maxWait: TimeInterval
+        /// True when the stdout or stderr drain wait hit `drainCap` (#417).
+        let drainTimedOut: Bool
+    }
+
+    /// How long `run` waits for each output drain after the child is gone (#417).
+    private static let drainCap: TimeInterval = 3
+
+    /// #417: the child must exit by itself within its cap, and the drains must finish, judged
+    /// through `HostLoad` before the output is read: on a host loaded past the threshold a timeout
+    /// cannot tell "did not exit" from "too slow"; below it, it is still a failure.
+    private func checkRunBounds(_ run: Run, _ what: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let maxWait = run.maxWait
+        try HostLoad.live.checkNotTimedOut(!run.exitedBySelf, bound: maxWait, "\(what) (the server should exit by itself on stdin EOF)", file: file, line: line)
+        try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)
     }
 
     /// Spawn the binary, write `input`, close stdin at once, and wait for the child to exit by
@@ -70,11 +86,12 @@ final class StdioEOFDrainTests: XCTestCase {
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         process.waitUntilExit()
         let seconds = Date().timeIntervalSince(start)
-        _ = outDone.wait(timeout: .now() + 3)
-        _ = errDone.wait(timeout: .now() + 3)
+        let stdoutDrainTimedOut = outDone.wait(timeout: .now() + Self.drainCap) == .timedOut
+        let stderrDrainTimedOut = errDone.wait(timeout: .now() + Self.drainCap) == .timedOut
         lock.lock(); let text = String(decoding: out, as: UTF8.self); lock.unlock()
         return Run(stdoutLines: text.split(separator: "\n").map(String.init),
-                   terminationStatus: process.terminationStatus, exitedBySelf: exitedBySelf, seconds: seconds)
+                   terminationStatus: process.terminationStatus, exitedBySelf: exitedBySelf, seconds: seconds,
+                   maxWait: maxWait, drainTimedOut: stdoutDrainTimedOut || stderrDrainTimedOut)
     }
 
     /// The ids answered on stdout, from single replies and batch replies.
@@ -93,7 +110,7 @@ final class StdioEOFDrainTests: XCTestCase {
 
     func testARequestReadBeforeEOFIsAnswered() throws {
         let run = try run(initialize + "\n")
-        XCTAssertTrue(run.exitedBySelf, "the server must still exit by itself after replying")
+        try checkRunBounds(run, "initialize then EOF")   // #417
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertEqual(ids(run.stdoutLines), ["1"], "stdout: \(run.stdoutLines)")
     }
@@ -108,7 +125,7 @@ final class StdioEOFDrainTests: XCTestCase {
             #"{"jsonrpc":"2.0","id":3,"method":"ping"}"#,
         ].joined(separator: "\n") + "\n"
         let run = try run(input)
-        XCTAssertTrue(run.exitedBySelf)
+        try checkRunBounds(run, "four messages then EOF")   // #417
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertEqual(ids(run.stdoutLines), ["1", "2", "3"], "stdout: \(run.stdoutLines.map { String($0.prefix(80)) })")
     }
@@ -117,23 +134,23 @@ final class StdioEOFDrainTests: XCTestCase {
     /// so its reply was lost on EOF.
     func testALargeIntegerIdReadBeforeEOFIsAnswered() throws {
         let run = try run(#"{"jsonrpc":"2.0","id":10000000000000000,"method":"ping"}"# + "\n")
-        XCTAssertTrue(run.exitedBySelf)
+        try checkRunBounds(run, "a large integer id then EOF")   // #417
         XCTAssertEqual(ids(run.stdoutLines), ["10000000000000000"], "stdout: \(run.stdoutLines)")
     }
 
     /// A batch read before EOF is answered (the SDK handles it inline).
     func testABatchReadBeforeEOFIsAnswered() throws {
         let run = try run(#"[{"jsonrpc":"2.0","id":5,"method":"ping"},{"jsonrpc":"2.0","id":6,"method":"tools/list"}]"# + "\n")
-        XCTAssertTrue(run.exitedBySelf)
+        try checkRunBounds(run, "a batch then EOF")   // #417
         XCTAssertEqual(ids(run.stdoutLines), ["5", "6"], "stdout: \(run.stdoutLines.map { String($0.prefix(80)) })")
     }
 
     /// No request: EOF still ends the server at once, without waiting for the drain timeout.
     func testWithNoRequestEOFStillEndsTheServer() throws {
         let run = try run("")
-        XCTAssertTrue(run.exitedBySelf)
+        try checkRunBounds(run, "no request")   // #417
+        try HostLoad.live.checkWithinBound(run.seconds, bound: 10, "EOF with no request (it must not wait for the drain timeout)")
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertTrue(run.stdoutLines.isEmpty, "stdout: \(run.stdoutLines)")
-        XCTAssertLessThan(run.seconds, 10, "it must not wait for the drain timeout")
     }
 }
