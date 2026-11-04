@@ -2150,8 +2150,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// (empty after a save or when it holds the reminder as written), for the caller to name
     /// through `NewObjectSave.differingFieldsNote`.
     ///
-    /// #281: a save that returns is checked in this store: refreshed, then asked whether the list
-    /// (by the identifier the reminder had before the save) and the reminder still resolve. A save
+    /// #281: a save that returns is checked in this store, as it is (no refresh; see
+    /// `NewObjectSave`): does the list (by the identifier the reminder had before the save) and the
+    /// reminder still resolve. A save
     /// into a list deleted elsewhere between the caller's list lookup and this save returns without
     /// error and writes nothing; it reads as a gone list and an unresolvable reminder, and
     /// `NewObjectSave.ListDeletedDuringSave` is thrown (`restoring` picks the delete-undo wording),
@@ -2160,7 +2161,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let listID = reminder.calendar?.calendarIdentifier
         return try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
                               verified: {
-                                  eventStore.refreshSourcesIfNecessary()
                                   try NewObjectSave.confirmWritten(
                                       listGone: listID.map { eventStore.calendar(withIdentifier: $0) == nil } ?? false,
                                       itemResolves: eventStore.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil,

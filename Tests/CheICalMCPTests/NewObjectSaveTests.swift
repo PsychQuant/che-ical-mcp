@@ -69,7 +69,7 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// #281: the decision. On device (iCloud, 2026-11-05) a reminder saved into a list deleted
     /// through another store returned from `save`, and right after it the saving store read both
-    /// the list and the reminder as nil (2 of 2); after a normal save both read present (1 of 1).
+    /// the list and the reminder as nil (4 of 4); after a normal save both read present (1 of 1).
     /// Only that pair is "not written". A list that reads gone while the reminder resolves, or a
     /// reminder that does not resolve while its list does (a transient read), counts as written:
     /// turning a real save into a reported failure would invite a retry that writes a second copy.
@@ -515,10 +515,10 @@ final class NewObjectSaveTests: XCTestCase {
             XCTAssertEqual(try matches(#"\.save\( ?\#(name) ?,"#, in: body).count, 0, body)
         }
         let wrapper = try segment(of: code, from: "func saveNewReminder(")
-        // #281: after a save that returned, the saving store is refreshed and asked whether the
-        // list (by the identifier it had before the save) and the reminder still resolve.
+        // #281: after a save that returned, the saving store is asked, without a refresh, whether
+        // the list (by the identifier it had before the save) and the reminder still resolve.
         XCTAssertEqual(try matches(#"^\{ ?let listID = reminder\.calendar\?\.calendarIdentifier ?return try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
-                                   + #"verified: ?\{ ?\w+\.refreshSourcesIfNecessary\( ?\) ?try NewObjectSave\.confirmWritten\( ?listGone: ?listID\.map ?\{ ?\w+\.calendar\( ?withIdentifier: ?\$0 ?\) ?== ?nil ?\} ?\?\? ?false ?, ?itemResolves: ?\w+\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?!= ?nil ?, ?restoring: ?restoring ?\) ?\} ?, ?"#
+                                   + #"verified: ?\{ ?try NewObjectSave\.confirmWritten\( ?listGone: ?listID\.map ?\{ ?\w+\.calendar\( ?withIdentifier: ?\$0 ?\) ?== ?nil ?\} ?\?\? ?false ?, ?itemResolves: ?\w+\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?!= ?nil ?, ?restoring: ?restoring ?\) ?\} ?, ?"#
                                    + freshCheck("reminderCheck", "reminder")
                                    + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?"#
                                    + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\) ?\}$"#,

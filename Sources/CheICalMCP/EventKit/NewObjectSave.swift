@@ -150,22 +150,39 @@ import EventKit
 /// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
 /// through another store after the list was looked up. `save(_:commit: true)` returned without an
 /// error and the reminder existed nowhere (a store made afterwards found nothing; on device,
-/// iCloud, once on 2026-10-07 and 3 of 3 on 2026-11-05). Right after such a save the saving store
-/// read the list (`calendar(withIdentifier:)`) as nil (3 of 3) and the reminder
-/// (`calendarItem(withIdentifier:)`) as nil (2 of 2, the runs that read it), both also after
-/// `refreshSourcesIfNecessary`; after a normal save it read both as present (1 of 1). So `saveNewReminder` passes `verified`, which refreshes this store and
-/// throws `ListDeletedDuringSave` only for that pair (`reminderWritten`). The shape needs the
-/// deletion to land between the list lookup and the save inside one call: through the server, a
-/// list deleted elsewhere before a call was already gone when that call looked it up
-/// (`create_reminder` refused with calendar-not-found right after the deletion and 3 s later; a
-/// delete-undo refused with `undoListMissing`), since `findCalendar` reads the lists live. The
-/// in-call race itself was not staged through the server (it needs a hook between the lookup and
-/// the save). Not checked: other sources than iCloud, and a new reminder list saved into a source
-/// deleted elsewhere (`createCalendar` passes no `verified`).
+/// iCloud, once on 2026-10-07 and 5 of 5 on 2026-11-05). Right after such a save, without any
+/// refresh, the saving store read the list (`calendar(withIdentifier:)`) as nil (5 of 5) and the
+/// reminder (`calendarItem(withIdentifier:)`) as nil (4 of 4, the runs that read it); after a
+/// normal save it read both as present (1 of 1). So `saveNewReminder` passes `verified`, which
+/// throws `ListDeletedDuringSave` only for that pair (`reminderWritten`). It reads the store as it
+/// is and does not call `refreshSourcesIfNecessary`: the pair already read nil without one, and
+/// nothing on device shows a refresh making a deletion visible that the store has not seen.
 ///
-/// Every outcome is one line on stderr; the lines for a found item and for a failed removal name
-/// the save's error by domain and code. The caller gets the save's error unless a new store finds
-/// the object.
+/// After such a save the same store saves normally (2026-11-05, iCloud, 2 of 2): a second reminder
+/// into another list and an unrelated event, both saved and committed through the store whose
+/// save wrote nothing, did not throw and were found by a store made afterwards, and the reminder
+/// that was not written did not appear in any list, also after those later commits. Those saves
+/// ran 15 to 17 ms after the deletion was committed through the other store; the earlier runs
+/// saved right after it without timing.
+///
+/// Boundary: the check sees only what the saving store has seen. A deletion that store has not yet
+/// seen when `verified` runs reads as a list that is still there, so the save is reported as created
+/// (the #281 symptom, now only in that window). On device the store had seen the deletion every
+/// time (above), and how late a deletion can become visible was not measured.
+///
+/// The shape needs the deletion to land between the list lookup and the save inside one call:
+/// through the server, a list deleted elsewhere before a call was already gone when that call
+/// looked it up (`create_reminder` refused with calendar-not-found right after the deletion and
+/// 3 s later; a delete-undo refused with `undoListMissing`), since `findCalendar` reads the lists
+/// live. The in-call race itself was not staged through the server (it needs a hook between the
+/// lookup and the save). Not checked: other sources than iCloud, and a new reminder list saved
+/// into a source deleted elsewhere (`createCalendar` passes no `verified`).
+///
+/// Every outcome of a failed save is one line on stderr; the lines for a found item and for a
+/// failed removal name the save's error by domain and code. The caller gets the save's error
+/// unless a new store finds the object. A save that returned and fails `verified` writes no stderr
+/// line and runs no new store or removal: the caller gets `verified`'s error
+/// (`ListDeletedDuringSave` for a reminder).
 enum NewObjectSave {
     /// What `run` reports after a failed save, once, after the removal (if any) has run. A plain
     /// discard that succeeded after the new store did not find the object is not reported.
@@ -330,7 +347,7 @@ enum NewObjectSave {
 
     /// #281: whether a reminder whose save returned was written, from what the saving store reads
     /// right after it. Only a list that reads gone together with a reminder that does not resolve
-    /// is "not written": the pair seen on device for a save into a list deleted elsewhere (2 of 2
+    /// is "not written": the pair seen on device for a save into a list deleted elsewhere (4 of 4
     /// runs that read both), while a normal save read both present (1 of 1). Either one alone counts as written, so a
     /// transient read cannot turn a real save into a reported failure and a retry into a second copy.
     static func reminderWritten(listGone: Bool, itemResolves: Bool) -> Bool {
