@@ -418,6 +418,75 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertFalse(partial.message.contains("not only the one that failed"), "one item left: \(partial.message)")
     }
 
+    // MARK: - #407: a failed member that shares its title says which one it is
+
+    private func partialError(_ members: [UndoOperation], completed: Int, _ error: Error = SaveFailed.failed) throws
+        -> UndoBatchPartiallyUndoneError {
+        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: completed, underlying: error),
+                                                     describe: { _ in "eventkit_error_1" })
+        return try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+    }
+
+    private func standupOccurrence(_ start: String, allDay: Bool = false) -> UndoOperation {
+        let formatter = ISO8601DateFormatter()
+        return .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup", startDate: formatter.date(from: start), allDay: allDay),
+                          notCarriedOver: [])
+    }
+
+    /// The issue's example: the Mon, Tue and Wed occurrences of "Standup"; undo restores Wed, then
+    /// Tue fails. The text names Tue by its start, in the host zone with its offset.
+    func testAFailedOccurrenceSharingItsTitleIsNamedByItsStart() throws {
+        let members = ["2026-11-02T01:00:00Z", "2026-11-03T01:00:00Z", "2026-11-04T01:00:00Z"].map { standupOccurrence($0) }
+        let partial = try partialError(members, completed: 1)
+        let tue = DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ssXXXXX", zone: .current)
+            .string(from: ISO8601DateFormatter().date(from: "2026-11-03T01:00:00Z")!)
+        XCTAssertTrue(partial.message.contains("The restore of 'Standup' (starting \(tue)) may have left something written"), partial.message)
+        XCTAssertFalse(partial.message.contains("2026-11-04T"), "the restored Wed is not named: \(partial.message)")
+
+        let lookup = try partialError(members, completed: 1, EventKitError.undoCalendarMissing(event: "Standup", hasIdentifier: true, kind: .recreateDeletedOccurrence))
+        XCTAssertTrue(lookup.message.contains("'Standup' (starting \(tue)) failed before anything of it was written"), lookup.message)
+    }
+
+    /// An all-day member is named by its day only.
+    func testAnAllDayMemberSharingItsTitleIsNamedByItsDay() throws {
+        let start = DateFormatter.machineReadable("yyyy-MM-dd", zone: .current).date(from: "2026-11-03")!
+        let members: [UndoOperation] = [
+            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start, allDay: true)),
+            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start.addingTimeInterval(86_400), allDay: true)),
+        ]
+        let partial = try partialError(members, completed: 1)
+        XCTAssertTrue(partial.message.contains("The restore of 'Offsite' (starting 2026-11-03) may have left"), partial.message)
+    }
+
+    /// Reminders sharing a title are named by their due date (as recorded: a date, or a date and
+    /// time); one without a due date keeps the title alone.
+    func testAFailedReminderSharingItsTitleIsNamedByItsDueDate() throws {
+        let dated = DateComponents(year: 2026, month: 11, day: 3)
+        let timed = DateComponents(year: 2026, month: 11, day: 4, hour: 9, minute: 30)
+        let partial = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated)),
+                                        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed))],
+                                       completed: 1)
+        XCTAssertTrue(partial.message.contains("The restore of 'Pay rent' (due 2026-11-03) may have left"), partial.message)
+        let timedFails = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed)),
+                                           .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
+                                          completed: 1)
+        XCTAssertTrue(timedFails.message.contains("The restore of 'Pay rent' (due 2026-11-04T09:30) may have left"), timedFails.message)
+        let undated = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")),
+                                        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
+                                       completed: 1)
+        XCTAssertTrue(undated.message.contains("The restore of 'Pay rent' may have left"), undated.message)
+    }
+
+    /// Distinct titles keep today's text, and the title sharing is counted across nested members.
+    func testOnlyASharedTitleAddsTheStart() throws {
+        let distinct = try partialError([standupOccurrence("2026-11-02T01:00:00Z"), deleted("Review")], completed: 0)
+        XCTAssertTrue(distinct.message.contains("The restore of 'Review' may have left"), distinct.message)
+        XCTAssertFalse(distinct.message.contains("(starting"), distinct.message)
+        let nestedShare = try partialError([.batch([standupOccurrence("2026-11-02T01:00:00Z")]), standupOccurrence("2026-11-03T01:00:00Z")],
+                                           completed: 0)
+        XCTAssertTrue(nestedShare.message.contains("The restore of 'Standup' (starting "), nestedShare.message)
+    }
+
     /// PR #390 round 1: the check-first sentence names the item that failed (its title shown
     /// through `undoShownTitle`), and a failure the restore raises before it writes anything (its
     /// calendar or list not found) says no second copy can come of it instead.

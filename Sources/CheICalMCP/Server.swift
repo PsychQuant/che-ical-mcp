@@ -49,6 +49,8 @@ class CheICalMCPServer {
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let calendarDeletionSource: any CalendarDeletionSource
+    /// #331: the date-range listing and batch deletes of `delete_events_batch`.
+    private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -82,6 +84,7 @@ class CheICalMCPServer {
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
+         eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -96,6 +99,7 @@ class CheICalMCPServer {
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
+        self.eventBatchDeletionSource = eventBatchDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -2851,7 +2855,7 @@ class CheICalMCPServer {
             // #185 — routed through the manager's batch method so the whole call is
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
             let uniqueIds = Array(Set(items.map(\.identifier)))
-            let result = try await eventKitManager.deleteEventSeriesBatch(identifiers: uniqueIds)
+            let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(identifiers: uniqueIds)
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -2868,7 +2872,7 @@ class CheICalMCPServer {
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
-        let result = try await eventKitManager.deleteEventsBatch(items: items, span: span, slots: slots)
+        let result = try await eventBatchDeletionSource.deleteEventsBatch(items: items, span: span, slots: slots)
         var response: [String: Any] = [
             "dry_run": false,
             "mode": mode,
@@ -2963,7 +2967,7 @@ class CheICalMCPServer {
                 "searched_to": EventRangeQuery.localText(searched.end)
             ]
 
-            let events = try await eventKitManager.listEvents(
+            let events = try await eventBatchDeletionSource.listEventsForDeletion(
                 startDate: searched.start,
                 endDate: searched.end,
                 calendarName: calendarName,
@@ -2972,7 +2976,7 @@ class CheICalMCPServer {
             // Items with per-occurrence dates (supports multiple occurrences of same series); with
             // span "future", in slot order (verify rounds 3-5).
             let deletionItems = EventRangeQuery.deletionItems(
-                events.map { (identifier: $0.eventIdentifier, start: $0.startDate, slot: $0.occurrenceDate) }, span: spanStr
+                events.map { (identifier: $0.identifier, start: $0.start, slot: $0.slot) }, span: spanStr
             )
             let batchItems = deletionItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
             // #325 verify rounds 1-3: over a range wider than EventKit's old cut (every one-sided
@@ -2991,9 +2995,9 @@ class CheICalMCPServer {
                 let previewed = previewLimit.map { Array(events.prefix($0)) } ?? events
                 let preview = previewed.map { event -> [String: Any] in
                     [
-                        "event_id": event.eventIdentifier ?? "",
-                        "start_date_local": localDateFormatter.string(from: event.startDate),
-                        "end_date_local": localDateFormatter.string(from: event.endDate)
+                        "event_id": event.identifier ?? "",
+                        "start_date_local": localDateFormatter.string(from: event.start),
+                        "end_date_local": localDateFormatter.string(from: event.end)
                     ]
                 }
                 var response: [String: Any] = [
