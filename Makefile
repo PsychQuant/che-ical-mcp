@@ -1,5 +1,6 @@
 BINARY_NAME := CheICalMCP
-INSTALL_DIR ?= $(HOME)/bin
+# `:=`, so only `make install INSTALL_DIR=...` changes it (an exported INSTALL_DIR does not).
+INSTALL_DIR := $(HOME)/bin
 
 # Swift 6 Concurrency Guard:
 # Try native build first; fall back to Swift 5 language mode if upstream
@@ -88,11 +89,12 @@ release-signed: verify-release-ready
 # Both install targets go through scripts/install-local.sh (#239): it builds for the
 # host architecture, takes the product from `swift build --show-bin-path`, checks it
 # (exactly the host architecture, --version equal to AppVersion.current) and only then
-# replaces the installed file. It no longer copies the fixed release path, which under
+# replaces the installed file; signing and its checks run on the staged copy, so a
+# failure leaves the installed file as it was. It no longer copies the fixed release path, which under
 # swiftbuild is a directory every --arch build writes to (build-mcpb.sh leaves x86_64 there).
-# INSTALL_DIR=/some/dir installs elsewhere (default ~/bin).
+# `make install INSTALL_DIR=/some/dir` installs elsewhere (default ~/bin).
 install:
-	INSTALL_DIR="$(INSTALL_DIR)" ./scripts/install-local.sh adhoc $(FALLBACK_FLAGS)
+	./scripts/install-local.sh adhoc "$(INSTALL_DIR)" $(FALLBACK_FLAGS)
 	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME) (ad-hoc signed — dev only)"
 
 # Dev install with Developer ID signature (no notarization). Slower than
@@ -131,7 +133,7 @@ verify-developer-id:
 	   For dev install on macOS 26 you only need DEVELOPER_ID — NOTARY_PROFILE is unused here.}
 
 install-signed: verify-developer-id
-	INSTALL_DIR="$(INSTALL_DIR)" ./scripts/install-local.sh developer-id $(FALLBACK_FLAGS)
+	./scripts/install-local.sh developer-id "$(INSTALL_DIR)" $(FALLBACK_FLAGS)
 	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME) (Developer ID signed, NOT notarized — dev only)"
 	@echo "ℹ macOS 26 TCC dialogs WILL trigger because the binary has Developer ID + hardened runtime."
 	@echo "ℹ For distribution to other users, use 'make release-signed' instead (adds notarization)."
