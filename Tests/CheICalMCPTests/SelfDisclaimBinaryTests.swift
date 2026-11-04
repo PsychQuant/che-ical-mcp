@@ -138,7 +138,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
         try skipIfThePolicyKeptTheHost(run)
-        XCTAssertFalse(run.timedOut, "--print-tcc-path did not exit within the bound")
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout), "no TCC attribution block in:\n\(run.stdout)")
         XCTAssertTrue(line.hasPrefix("  \(run.pid)  "), "pid must survive the re-exec; got \(line)")
@@ -150,7 +150,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // re-exec it causes used to be silent.
         try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
-        XCTAssertFalse(run.timedOut)
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         try skipIfThePolicyKeptTheHost(run)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
     }
@@ -164,7 +164,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // usable" while both fresh children read fullAccess), after a thousand in-process tests.
         try requireHostAttributedChild()
         let host = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
-        XCTAssertFalse(host.timedOut)
+        try HostLoad.live.checkNotTimedOut(host.timedOut, bound: 15, "--print-tcc-path (opted-out oracle)")   // #366
         let usable = ["Calendar", "Reminders"].allSatisfy { service in
             host.stdout.components(separatedBy: "\n").contains {
                 $0.hasPrefix("  \(service):") && $0.contains(" fullAccess")
@@ -174,7 +174,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let restricted = reportsRestricted(host.stdout)
 
         let run = try runPrintTCCPath()
-        XCTAssertFalse(run.timedOut)
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertEqual(
@@ -187,7 +187,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_NO_DISCLAIM": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])
-        XCTAssertFalse(run.timedOut)
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "opt-out must leave the host responsible; got \(line)")
@@ -201,7 +201,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_DISCLAIMED": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])
-        XCTAssertFalse(run.timedOut)
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "sentinel must skip the re-exec; got \(line)")
@@ -214,7 +214,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // Verify round 3 row 10: the --setup and codesign commands were double-quoted, where
         // `$(…)` and backticks in a path still expand when pasted.
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
-        XCTAssertFalse(run.timedOut)
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         let lines = run.stdout.components(separatedBy: "\n")
         XCTAssertTrue(lines.contains { $0.hasPrefix("  '") && $0.hasSuffix("' --setup") }, run.stdout)
         XCTAssertTrue(lines.contains { $0.hasPrefix("  codesign -dv '") && $0.hasSuffix("'") }, run.stdout)
