@@ -104,6 +104,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 
 **Date-only reminders (#267):** a `due_date` given as a bare date (`2026-10-18`) to `create_reminder`, `create_reminders_batch` or `update_reminder` makes a date-only reminder, a date with no time, as Reminders.app makes one; read back, its `due.time` is `null`. On `update_reminder` the start date is set to that day, also one set apart from the due date, and absolute-date alarms are removed, because Reminders.app displays the earliest one and would go on showing its time (checked on device); relative and location alarms are kept, and `date_sync.absolute_alarms_removed` counts what went. Giving a timed reminder its own date removes the time. A due date with a time works as before. A bare-date `create_reminder` (and each created row of `create_reminders_batch`) reads the saved reminder back and returns `date_sync`, as `update_reminder` does: `date_sync.aligned` is `false` when the due came back with a time, came back missing, or the reminder could not be re-read (#301). A written due that reads back missing also gives `aligned: false` on `update_reminder`, where `aligned` used to be left out. In `list_reminders`, a date-only reminder is overdue only once its day has ended in the host time zone, and in `list_reminders` and `search_reminders` its `due_date` / `due_date_local` read as 00:00 of that day in the host time zone (#297).
 
+**A reminder's own time zone (#241):** `list_reminders` and `search_reminders` report it as `item_timezone`, an IANA identifier, or `null` when the reminder is floating (stores no time zone). The per-reminder `timezone` is the host time zone, the zone of the `*_local` strings, not the reminder's.
+
 </details>
 
 <details>

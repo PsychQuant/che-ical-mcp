@@ -103,6 +103,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **純日期提醒事項（#267）：** `create_reminder`、`create_reminders_batch`、`update_reminder` 的 `due_date` 只給日期（`2026-10-18`）時，會寫成純日期提醒：有日期、沒有時間，和在 Reminders.app 建立的一樣；讀回時 `due.time` 是 `null`。`update_reminder` 會把 start date 設為那一天（原本刻意設在別天的也一樣），並移除絕對時間鬧鐘，因為 Reminders.app 顯示的是最早一個絕對時間鬧鐘，留著它就會繼續顯示時間（已在實機確認）；相對鬧鐘與位置鬧鐘保留，`date_sync.absolute_alarms_removed` 會回報移除了幾個。有時間的提醒事項給它同一天的日期，就是把時間拿掉。帶時間的到期日行為不變。只給日期的 `create_reminder`（以及 `create_reminders_batch` 建立成功的每一列）會讀回存好的提醒並回傳 `date_sync`，和 `update_reminder` 一樣：到期日讀回時帶了時間、讀回時不見了，或提醒無法重新讀取時，`date_sync.aligned` 為 `false`（#301）。`update_reminder` 寫入的到期日讀回時不見了，同樣得到 `aligned: false`；以前這種情況不回報 `aligned`。在 `list_reminders` 裡，純日期提醒要等那一天在主機時區結束才算逾期；`list_reminders` 與 `search_reminders` 的 `due_date` / `due_date_local` 則是那一天主機時區的 00:00（#297）。
 
+**提醒事項自身的時區（#241）：** `list_reminders` 與 `search_reminders` 以 `item_timezone` 回報提醒事項自己存的時區（IANA 識別碼）；浮動提醒（沒有存時區）為 `null`。每筆提醒的 `timezone` 是主機時區，也就是 `*_local` 字串所用的時區，不是提醒事項自己的時區。
+
 </details>
 
 <details>
