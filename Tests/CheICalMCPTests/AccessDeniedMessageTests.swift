@@ -145,6 +145,9 @@ final class AccessDeniedMessageTests: XCTestCase {
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("non-interactive session detected"))
         XCTAssertTrue(msg.contains(hint), "non-interactive message uses the injected setup hint")
+        // #357 verify: the pane has no + button; an app is listed once it requests access.
+        XCTAssertFalse(msg.contains("manually add"), msg)
+        XCTAssertTrue(msg.contains("if it is not listed, step 1 adds it"), msg)
     }
 
     func testGenericBranch_unchanged() {

@@ -104,7 +104,7 @@ As a last resort, only if access is still refused after that: `tccutil reset Cal
 If `--setup` keeps failing, you can grant access manually:
 
 1. Open **System Settings → Privacy & Security → Calendar**
-2. Look for **CheICalMCP** in the list; toggle it on. If it's not listed, click **+** and navigate to the path from Step 2.
+2. Look for **CheICalMCP** in the list; toggle it on. If it's not listed, run `"$BINARY" --setup` (Step 3): the access request adds it, since an app appears in this pane only after it requests access.
 3. Repeat for **Privacy & Security → Reminders**.
 4. Restart Claude Desktop.
 

@@ -139,7 +139,7 @@ Over SSH, or anywhere without a GUI session (a launchd daemon) or launched direc
 
 System Settings → Privacy & Security → Calendar:
 - Look for CheICalMCP, toggle on
-- If not listed, click `+`, navigate to the binary path from Step 1
+- If not listed, run `"$BINARY" --setup` (Step 5): the access request adds it, since an app appears in this pane only after it requests access
 - Also confirm the host-layer entry (Step 3) is present and ON
 
 Repeat for Reminders.

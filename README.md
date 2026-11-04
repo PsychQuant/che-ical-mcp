@@ -516,7 +516,7 @@ CheICalMCP --setup
 >
 > **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (no `TERM` / direct launchd child) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
 >
-> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, manually add CheICalMCP in **System Settings → Privacy & Security → Calendar/Reminders**.
+> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, switch CheICalMCP on in **System Settings → Privacy & Security → Calendar/Reminders**; if it is not listed, run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path) from Terminal — the access request adds it.
 
 ---
 

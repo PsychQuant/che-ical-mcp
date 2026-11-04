@@ -13,6 +13,10 @@ enum TCCRemedyAssertions {
         _ text: String, file: StaticString = #filePath, line: UInt = #line
     ) {
         XCTAssertFalse(text.contains("−"), "no − (remove) button exists in the pane: \(text)", file: file, line: line)
+        // Nor a + button (observed on one Mac, macOS 27): an app is listed only after it
+        // requests access, so "add CheICalMCP" there is not something a user can do.
+        XCTAssertFalse(text.contains("manually add"), "the pane has no add button: \(text)", file: file, line: line)
+        XCTAssertFalse(text.contains("click +"), "the pane has no add button: \(text)", file: file, line: line)
         XCTAssertFalse(text.contains("com.checheng.CheICalMCP`"), "no bundle-id reset: \(text)", file: file, line: line)
         for row in text.components(separatedBy: "\n") where row.contains("tccutil reset") {
             XCTAssertFalse(row.contains("com.checheng"), "tccutil reset with the bundle id: \(row)", file: file, line: line)
