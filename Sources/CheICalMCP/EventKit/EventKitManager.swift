@@ -602,6 +602,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private func findDuplicateEvent(
         title: String,
         startDate: Date,
+        isAllDay: Bool,
         calendar: EKCalendar
     ) -> EKEvent? {
         // Search within a 1-minute window around the start date
@@ -613,7 +614,26 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             calendars: [calendar]
         )
         let events = eventStore.events(matching: predicate)
-        return events.first { $0.title == title }
+        return events.first {
+            Self.isCreateDuplicate(title: title, start: startDate, isAllDay: isAllDay,
+                                   candidateTitle: $0.title, candidateStart: $0.startDate,
+                                   candidateAllDay: $0.isAllDay)
+        }
+    }
+
+    /// Whether an event found around the start counts as the one `create_event` was asked to make.
+    /// #364 verify round 1: an all-day create's start is midnight after normalization, and a
+    /// same-titled all-day event on the previous day (ending 23:59:59) overlaps the search window,
+    /// so for an all-day create only an all-day event starting at the same instant matches.
+    /// Round 2: a timed create matches only a timed event, since every all-day event on that day
+    /// overlaps the window too.
+    static func isCreateDuplicate(
+        title: String, start: Date, isAllDay: Bool,
+        candidateTitle: String?, candidateStart: Date?, candidateAllDay: Bool
+    ) -> Bool {
+        guard candidateTitle == title else { return false }
+        guard isAllDay else { return !candidateAllDay }
+        return candidateAllDay && candidateStart == start
     }
 
     func listEvents(
@@ -633,17 +653,26 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return try events(from: startDate, to: endDate, calendars: calendars)
     }
 
-    /// Validates that a timed event's start is strictly before its end.
-    ///
-    /// All-day events are exempt (their day-range / same-instant representation is valid).
+    /// Validates that a timed event's start is strictly before its end, and that an all-day
+    /// event's last day is not before its first day (#364 / #348, through `AllDayRange`; start = end
+    /// is one day).
     /// Shared by `createEvent` and `updateEvent` so both reject inverted / zero-duration
     /// timed events consistently — previously only `updateEvent` guarded this, letting
     /// `createEvent` persist invalid events (#160).
     ///
     /// - Parameter hint: optional caller-specific guidance appended to the error message
     ///   (e.g. `updateEvent`'s "provide both start_time and end_time" advice).
-    static func validateTimeRange(start: Date, end: Date, isAllDay: Bool, hint: String? = nil) throws {
-        guard start >= end, !isAllDay else { return }
+    static func validateTimeRange(
+        start: Date, end: Date, isAllDay: Bool, hint: String? = nil,
+        calendar: Calendar = Calendar.gregorian(in: .current)
+    ) throws {
+        // #348 step 5 / #364: an all-day event is checked by its days (an end day before the start
+        // day is refused; start = end is one day). It used to be exempt entirely.
+        if isAllDay {
+            _ = try AllDayRange.normalize(start: start, end: end, calendar: calendar)
+            return
+        }
+        guard start >= end else { return }
         let formatter = ISO8601DateFormatter()
         var message = "Start time (\(formatter.string(from: start))) must be before end time (\(formatter.string(from: end)))."
         if let hint { message += " " + hint }
@@ -670,6 +699,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Reject inverted / zero-duration timed events (symmetric with updateEvent — #160).
         try Self.validateTimeRange(start: startDate, end: endDate, isAllDay: isAllDay)
 
+        // #364 / #348: an all-day pair is written as (start of the first day, last day 23:59:59),
+        // so the reading does not depend on the order of assignments below, and the duplicate
+        // check keys on the day rather than on a time of day.
+        let (startDate, endDate) = isAllDay
+            ? try AllDayRange.normalize(start: startDate, end: endDate, calendar: Calendar.gregorian(in: .current))
+            : (startDate, endDate)
+
         // #190 — defense-in-depth behind the handler guard (zero mutation).
         if isAllDay, timezone != nil {
             throw EventKitError.allDayTimezoneConflict
@@ -689,7 +725,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
 
         // Idempotency: check for existing event with same title + start time on same calendar
-        if let existing = findDuplicateEvent(title: title, startDate: startDate, calendar: calendar) {
+        if let existing = findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar) {
             // #182 — idempotency with exclusions: identical retry (every requested
             // date already absent from the existing series) → skipped; any requested
             // date still present → conflict (differing exclusion set). Extra
@@ -999,27 +1035,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         if let t = title { event.title = t }
 
-        // Handle time updates carefully to prevent invalid state (startDate > endDate)
-        // When only startDate is provided, preserve the original duration
-        if let newStart = startDate {
-            let originalDuration = event.endDate.timeIntervalSince(event.startDate)
-            event.startDate = newStart
-            if endDate == nil {
-                // Preserve original event duration when only start time changes
-                event.endDate = newStart.addingTimeInterval(originalDuration)
-            }
+        // Dates: decided from the state the event will be in after this update (#364 T3), checked
+        // with the shared guard (#160), and for an all-day result normalized to whole days (#364 /
+        // #348). When only the start changes, a timed event keeps its duration and an all-day event
+        // its number of days.
+        let datePlan = try AllDayRange.planUpdate(
+            storedStart: event.startDate, storedEnd: event.endDate, storedAllDay: event.isAllDay,
+            newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
+            calendar: Calendar.gregorian(in: .current))
+        if let dates = datePlan.datesToWrite {
+            // The planned flag goes first (#364 verify round 4, device): timed dates assigned while
+            // the event is still all-day are read as whole days, so 22:00 → 00:00 came back as two
+            // days. The normalized all-day pair reads the same in either state.
+            event.isAllDay = datePlan.isAllDay
+            event.startDate = dates.start
+            event.endDate = dates.end
         }
-        if let newEnd = endDate {
-            event.endDate = newEnd
-        }
-
-        // Validate time range (shared guard with createEvent — #160)
-        try Self.validateTimeRange(
-            start: event.startDate,
-            end: event.endDate,
-            isAllDay: event.isAllDay,
-            hint: "When changing the date, provide both start_time and end_time."
-        )
 
         if let n = notes { event.notes = n }
         if let l = location { event.location = l }

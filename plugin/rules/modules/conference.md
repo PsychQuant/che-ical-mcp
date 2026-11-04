@@ -35,7 +35,7 @@ Use that calendar for the umbrella and every session. The one exception is the u
 | `title` | the conference's **official name** (as the program writes it) |
 | `all_day` | `true` (no `timezone`: all-day events are floating days) |
 | `start_time` | the first day as a **date only**, `YYYY-MM-DD` |
-| `end_time` | the **day after the last day**, date only (an exclusive boundary) |
+| `end_time` | the **day after the last day**, date only (an exclusive boundary), on create and when an update moves the umbrella's dates (#364: the server reads both the same way) |
 | `location` | the venue |
 | `notes` | a day-by-day overview, then the marker lines (section 6) |
 | `alarms_minutes_offsets` | not passed (the module adds no reminder to the umbrella) |
@@ -104,7 +104,7 @@ The second line says `umbrella` on the umbrella and `session` on every session. 
 
 **Always:**
 
-- `create_event` answers `action: skipped`, with the existing event's id, when an event in that calendar has the same title and covers the new start (the server looks 30 seconds either side of it), even if that event starts earlier. Compare the skipped event's `start_date_local` with the item's start. Same start and a module event of this set: *unchanged*. No marker: a hand-built event; leave it alone and offer it for adoption in the mapping table, never writing to it before the user says yes. Any other case (another set's marker, or a different start, such as a declined time correction whose old event still covers the new start): the item is not created; the report counts it as *kept* and names the event that holds its place.
+- `create_event` answers `action: skipped`, with the existing event's id, when an event of the same kind in that calendar has the same title and covers the new start (the server looks 30 seconds either side of it), even if that event starts earlier: for a timed session another timed event, for the all-day umbrella only an all-day event that starts on the same day (#364). Compare the skipped event's `start_date_local` with the item's start. Same start and a module event of this set: *unchanged*. No marker: a hand-built event; leave it alone and offer it for adoption in the mapping table, never writing to it before the user says yes. Any other case (another set's marker, or a different start, such as a declined time correction whose old event still covers the new start): the item is not created; the report counts it as *kept* and names the event that holds its place.
 - When an update changes a start time, rewrite the home-zone time in `notes` too (device check 2026-10-25: a time update leaves old `notes` text untouched).
 - When an update changes registration, set the reminders the new state calls for: dropping `（未報名）` sets `[15]` (`[60, 15]` for the user's own talk); adding it sets `[]`. This is the only update that touches alarms.
 - An update never changes an event's calendar or recurrence.

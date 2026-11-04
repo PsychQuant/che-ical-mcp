@@ -169,6 +169,30 @@ final class TimeValidationTests: XCTestCase {
         )
     }
 
+    /// #348 step 5 / #364: all-day events were exempt entirely, so an end day before the start
+    /// day was written. The guard now checks the days through `AllDayRange`.
+    func testValidateTimeRange_allDay_endDayBeforeStartDay_throws() {
+        let taipei = Calendar.gregorian(in: TimeZone(identifier: "Asia/Taipei")!)
+        let start = taipei.date(from: DateComponents(year: 2027, month: 2, day: 11))!
+        let end = taipei.date(from: DateComponents(year: 2027, month: 2, day: 10, hour: 12))!
+        XCTAssertThrowsError(
+            try EventKitManager.validateTimeRange(start: start, end: end, isAllDay: true, calendar: taipei)
+        ) { error in
+            guard case EventKitError.invalidTimeRange = error else {
+                return XCTFail("expected EventKitError.invalidTimeRange, got \(error)")
+            }
+        }
+    }
+
+    func testValidateTimeRange_allDay_endEarlierOnTheStartDay_doesNotThrow() {
+        let taipei = Calendar.gregorian(in: TimeZone(identifier: "Asia/Taipei")!)
+        let start = taipei.date(from: DateComponents(year: 2027, month: 2, day: 11, hour: 10))!
+        let end = taipei.date(from: DateComponents(year: 2027, month: 2, day: 11, hour: 8))!
+        XCTAssertNoThrow(
+            try EventKitManager.validateTimeRange(start: start, end: end, isAllDay: true, calendar: taipei)
+        )
+    }
+
     func testValidateTimeRange_endAfterStart_timed_doesNotThrow() {
         XCTAssertNoThrow(
             try EventKitManager.validateTimeRange(start: date160(14), end: date160(15), isAllDay: false)

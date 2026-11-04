@@ -29,7 +29,7 @@ Failures that raise an error can live in a README — the reader will look it up
 | Mechanism | Covers | Does not cover |
 |---|---|---|
 | `quick-event` command | parse → list calendars → **conflict check** → create | source derivation, correction tracking, evidence |
-| `create_event` built-in idempotency | same-calendar repeat of (title, start ±30s) | the same activity after its start time changed |
+| `create_event` built-in idempotency | same-calendar repeat of (title, start ±30s, same kind: timed, or all-day on the same day) | the same activity after its start time changed |
 | `find_duplicate_events` tool | duplicates **across** calendars | within one calendar (it skips same-calendar pairs by design) |
 | `calendar-management` skill | tool catalogue and common workflows | the judgements below |
 
@@ -177,7 +177,7 @@ After every successful archive, write the mapping back to `state/archives.json` 
 
 ### Why the built-in idempotency is not enough
 
-`create_event` already refuses same-calendar duplicates, keyed on **(title, start time ±30s, calendar)**. After a reschedule from Aug 12 14:00 to Aug 13 15:30 the start time no longer matches, so that key sees a *new* event — it creates the second one and leaves the superseded event in place.
+`create_event` already refuses same-calendar duplicates, keyed on **(title, start time ±30s, calendar, same kind)** (#364: a timed create matches only a timed event, an all-day create only an all-day event starting on the same day). After a reschedule from Aug 12 14:00 to Aug 13 15:30 the start time no longer matches, so that key sees a *new* event — it creates the second one and leaves the superseded event in place.
 
 The source identifier does not move when the time does. That is the whole reason to key on it.
 

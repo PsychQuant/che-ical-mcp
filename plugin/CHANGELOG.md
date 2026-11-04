@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server now reads a date-only all-day end the same way on both tools. Their description of `create_event` `skipped` changes too: a timed session is skipped only by a same-titled timed event, and an all-day umbrella or stay only by a same-titled all-day event starting on the same day. The lodging module no longer passes the last night when it updates a stay that is already all-day. Its read-back after every dates write stays, and with a server older than #364 it corrects the one extra night. Needs the binary that ships #364.
+
 ## [1.23.0] - 2026-11-01
 
 - **The skill, `/check-tcc` and the plugin docs describe the status-aware self-disclaim rule** (#343): the server keeps the host's grant only when it has full access to both Calendar and Reminders, or when a policy restricts the host (#367); any other host, Claude Code included, re-execs onto CheICalMCP's own grant, which `--setup` creates. After upgrading, run `~/bin/CheICalMCP --setup` once in the foreground if CheICalMCP is not granted yet, then restart the client. `--print-tcc-path` says when a host's grant is kept on purpose; the banner and the access-denied message give the same steps. Not verified: the natural re-exec under a session Claude Code starts through `ClaudeCode.app`.
