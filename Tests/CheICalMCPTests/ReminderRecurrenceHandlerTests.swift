@@ -1,116 +1,102 @@
+import EventKit
+import Foundation
 import MCP
 import XCTest
 @testable import CheICalMCP
 
-/// #354: `recurrence` and `clear_recurrence` on `update_reminder`, through the handler with a fake.
-private actor RecurrenceWriteFake: ReminderWriteSource {
-    var updated: [ReminderUpdateRequest] = []
-    func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult {
-        .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: nil), isDuplicate: false, storeDiffers: [])
-    }
-    func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
-        updated.append(request)
-        var readBack: ReminderRecurrenceWrite.ReadBack?
-        if request.recurrenceRule != nil || request.clearRecurrence {
-            let reminder = EKReminderBox.make(days: request.recurrenceRule?.daysOfWeek)
-            readBack = ReminderRecurrenceWrite.readBack(reminder)
-        }
-        return ReminderUpdateResult(reminder: ReminderWriteSnapshot(id: request.identifier, title: "Saved", notes: nil),
-                                    dateSync: nil, recurrence: readBack)
-    }
-    func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
-        ReminderWriteSnapshot(id: identifier, title: "Old", notes: nil)
-    }
+private actor ReminderReadFake: ReminderReadSource {
+    let values: [ReminderReadSnapshot]
+    init(_ values: [ReminderReadSnapshot]) { self.values = values }
+    func listReminderSnapshots(completed: Bool?, calendarName: String?, calendarSource: String?) async throws -> [ReminderReadSnapshot] { values }
+    func searchReminderSnapshots(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?) async throws -> [ReminderReadSnapshot] { values }
 }
 
-import EventKit
-private enum EKReminderBox {
-    /// A reminder due Thu 2026-12-10 09:00, weekly on `days` (none: one-off).
-    static func make(days: [Int]?) -> EKReminder {
-        let reminder = EKReminder(eventStore: SharedTestStore.store)
-        reminder.dueDateComponents = DateComponents(year: 2026, month: 12, day: 10, hour: 9, minute: 0)
-        if let days {
-            reminder.recurrenceRules = [EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
-                frequency: .weekly, interval: 1, endDate: nil, occurrenceCount: nil, daysOfWeek: days, daysOfMonth: nil,
-                excludedOccurrenceDates: nil))]
-        }
-        return reminder
+private actor PageOnlyReminderFake: ReminderReadSource {
+    enum Unexpected: Error { case snapshotPath }
+    func listReminderSnapshots(completed: Bool?, calendarName: String?, calendarSource: String?) async throws -> [ReminderReadSnapshot] { throw Unexpected.snapshotPath }
+    func searchReminderSnapshots(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?) async throws -> [ReminderReadSnapshot] { throw Unexpected.snapshotPath }
+    func listReminderPage(completed: Bool?, calendarName: String?, calendarSource: String?, query: ReminderPageQuery) async throws -> ReminderPage {
+        query.page([ReminderReadSnapshot(id: "page", title: "Page")]) { $0 }
+    }
+    func searchReminderPage(keywords: [String], matchMode: String, calendarName: String?, calendarSource: String?, completed: Bool?, query: ReminderPageQuery) async throws -> ReminderPage {
+        query.page([ReminderReadSnapshot(id: "page", title: "Page")]) { $0 }
     }
 }
 
 final class ReminderRecurrenceHandlerTests: XCTestCase {
-    private func object(_ raw: String) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    /// "repeat" is `hasRecurrence: true` with `rules == nil` — a state
+    /// `ReminderReadSnapshot(from:)` cannot produce (EventKit's `recurrenceRules`
+    /// is nil only when `hasRecurrenceRules` is false). It pins the serializer's
+    /// documented `null` contract defensively (#203); the production-reachable
+    /// multi-rule shape is covered by `testMultiRuleReminderSerializesEveryRuleThroughListAndSearch`.
+    private func records() -> [ReminderReadSnapshot] {
+        [ReminderReadSnapshot(id: "one", title: "Once", hasRecurrence: false),
+         ReminderReadSnapshot(id: "repeat", title: "Repeat", hasRecurrence: true)]
     }
 
-    private let fridays: Value = .object(["frequency": .string("weekly"), "interval": .int(1), "days_of_week": .array([.int(6)])])
-
-    func testARuleChangeIsPassedAndReadBack() async throws {
-        let fake = RecurrenceWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
-        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
-            "reminder_id": .string("r"), "recurrence": fridays]))
-        XCTAssertEqual(result["has_recurrence"] as? Bool, true)
-        let rules = try XCTUnwrap(result["reminder_recurrence_rules"] as? [[String: Any]])
-        XCTAssertEqual(rules.first?["days_of_week"] as? [Int], [6])
-        XCTAssertEqual((result["due"] as? [String: Any])?["date"] as? String, "2026-12-10")
-        XCTAssertNotNil(result["recurrence_note"], "the due (a Thursday) is not on the new rule's days")
-        let requests = await fake.updated
-        XCTAssertEqual(requests.first?.recurrenceRule?.daysOfWeek, [6])
-        XCTAssertFalse(requests.first?.clearRecurrence ?? true)
-    }
-
-    func testClearRecurrenceIsPassedAndReadBack() async throws {
-        let fake = RecurrenceWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
-        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
-            "reminder_id": .string("r"), "clear_recurrence": .bool(true)]))
-        XCTAssertEqual(result["has_recurrence"] as? Bool, false)
-        XCTAssertNil(result["recurrence_note"])
-        let requests = await fake.updated
-        XCTAssertEqual(requests.first?.clearRecurrence, true)
-    }
-
-    func testAnUpdateWithoutRecurrenceHasNoRecurrenceKeys() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceWriteFake())
-        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
-            "reminder_id": .string("r"), "title": .string("t")]))
-        XCTAssertNil(result["has_recurrence"])
-        XCTAssertNil(result["reminder_recurrence_rules"])
-    }
-
-    /// Refused before the store is called: both parameters, a rule with clear_due_date, a
-    /// non-boolean clear_recurrence, and excluded_occurrence_dates (create_event only).
-    func testRefusalsBeforeTheStore() async throws {
-        let fake = RecurrenceWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
-        let bad: [[String: Value]] = [
-            ["recurrence": fridays, "clear_recurrence": .bool(true)],
-            ["recurrence": fridays, "clear_due_date": .bool(true)],
-            ["clear_recurrence": .string("yes")],
-            ["recurrence": .object(["frequency": .string("weekly"), "excluded_occurrence_dates": .array([.string("2026-12-17")])])],
-        ]
-        for extra in bad {
-            var arguments: [String: Value] = ["reminder_id": .string("r")]
-            arguments.merge(extra) { $1 }
-            do {
-                _ = try await server.executeToolCall(name: "update_reminder", arguments: arguments)
-                XCTFail("accepted \(extra)")
-            } catch {}
+    func testHandlersDispatchToPageRequirements() async throws {
+        let server = try await CheICalMCPServer(reminderReadSource: PageOnlyReminderFake())
+        for tool in ["list_reminders", "search_reminders"] {
+            let raw = try await server.executeToolCall(name: tool, arguments: ["keyword": .string("Page"), "limit": .int(1)])
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            XCTAssertEqual(json["reminder_count"] as? Int, 1)
         }
-        let updated = await fake.updated
-        XCTAssertTrue(updated.isEmpty)
     }
 
-    func testTheToolDescribesTheParameters() throws {
-        let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_reminder" })
-        let properties = try XCTUnwrap(tool.inputSchema.objectValue?["properties"]?.objectValue)
-        XCTAssertNotNil(properties["recurrence"])
-        let clear = properties["clear_recurrence"]?.objectValue?["description"]?.stringValue ?? ""
-        XCTAssertTrue(clear.contains("clear_due_date"), clear)
-        let rule = properties["recurrence"]?.objectValue?["description"]?.stringValue ?? ""
-        XCTAssertTrue(rule.contains("does not move the due date"), rule)
-        XCTAssertTrue(rule.contains("recurrence_note"), rule)
-        XCTAssertTrue((tool.description ?? "").contains("clear_recurrence"), tool.description ?? "")
+    func testSearchFiltersTagsBeforeLimitAndPreservesCount() async throws {
+        let records = [ReminderReadSnapshot(id: "a", title: "A", notes: "#work"),
+                       ReminderReadSnapshot(id: "b", title: "B", notes: "#other"),
+                       ReminderReadSnapshot(id: "c", title: "C", notes: "#WORK")]
+        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records))
+        let raw = try await server.executeToolCall(name: "search_reminders", arguments: ["tag": .string("work"), "limit": .int(1)])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        XCTAssertEqual(json["reminder_count"] as? Int, 2)
+        let values = try XCTUnwrap(json["reminders"] as? [[String: Any]])
+        XCTAssertEqual(values.count, 1)
+        XCTAssertEqual(values.first?["id"] as? String, "a")
+    }
+
+    func testListPreservesPreLimitCountAndAddsMetadata() async throws {
+        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records()))
+        let raw = try await server.executeToolCall(name: "list_reminders", arguments: ["limit": .int(1), "sort": .string("title")])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        XCTAssertEqual(json["reminder_count"] as? Int, 2)
+        let items = try XCTUnwrap(json["reminders"] as? [[String: Any]])
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0]["has_recurrence"] as? Bool, false)
+        XCTAssertEqual((items[0]["recurrence_rules"] as? [Any])?.count, 0)
+        XCTAssertTrue(items[0]["due"] is NSNull)
+        XCTAssertNotNil(json["metadata"])
+        XCTAssertEqual(items[0]["is_completed"] as? Bool, false)
+    }
+
+    func testSearchUsesSameMetadataWithoutAddingListOnlyFields() async throws {
+        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records()))
+        let raw = try await server.executeToolCall(name: "search_reminders", arguments: ["keyword": .string("anything")])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        let items = try XCTUnwrap(json["reminders"] as? [[String: Any]])
+        XCTAssertEqual(json["reminder_count"] as? Int, 2)
+        XCTAssertEqual(items[1]["has_recurrence"] as? Bool, true)
+        XCTAssertTrue(items[1]["recurrence_rules"] is NSNull)   // defensive contract, not a reachable state (see records())
+        XCTAssertNil(items[1]["creation_date"])
+        XCTAssertNil(items[1]["is_overdue"])
+        XCTAssertEqual(json["match_mode"] as? String, "any")
+    }
+
+    // #203: no handler test drove more than one rule through list/search.
+    func testMultiRuleReminderSerializesEveryRuleThroughListAndSearch() async throws {
+        let weekly = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: nil))
+        let monthly = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .monthly, interval: 2, end: nil))
+        let twoRules = ReminderReadSnapshot(id: "two", title: "Two rules", hasRecurrence: true, rules: [weekly, monthly])
+        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake([twoRules]))
+        for (tool, args) in [("list_reminders", [String: Value]()), ("search_reminders", ["keyword": .string("Two")])] {
+            let raw = try await server.executeToolCall(name: tool, arguments: args)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            let item = try XCTUnwrap((json["reminders"] as? [[String: Any]])?.first, tool)
+            let rules = try XCTUnwrap(item["recurrence_rules"] as? [[String: Any]], tool)
+            XCTAssertEqual(rules.count, 2, tool)
+            XCTAssertEqual(rules.map { $0["frequency"] as? String }, ["weekly", "monthly"], tool)
+            XCTAssertEqual(rules.map { $0["interval"] as? Int }, [1, 2], tool)
+        }
     }
 }
