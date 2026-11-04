@@ -42,7 +42,7 @@ final class EventUndoRollbackTests: XCTestCase {
     func testTheArmReaderSeesEachArmAndOnlyThatArm() throws {
         let body = try executeUndoBody()
         let update = try arm("updateEvent", in: body)
-        XCTAssertTrue(update.contains("applySnapshot(oldSnapshot"), "the update-undo arm restores the old snapshot")
+        XCTAssertTrue(update.contains("oldSnapshot.apply(to: event"), "the update-undo arm restores the old snapshot")
         XCTAssertFalse(update.contains("recurringUpdateRefusal"), "the update-undo arm stops before the next case")
         let move = try arm("moveEvent", in: body)
         XCTAssertTrue(move.contains("fromCalendarIdentifier"), "the move-undo arm moves the event back")
