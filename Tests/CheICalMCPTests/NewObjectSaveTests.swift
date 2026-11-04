@@ -545,9 +545,10 @@ final class NewObjectSaveTests: XCTestCase {
         // The names of fields the store holds differently travel with the success: into the
         // create's result, and onto the undo message. #301 / #308: a dated create is read back in
         // between (`ReminderCreateWrite.readBack`, which does not throw; a timed one may save again
-        // through the #237 fallback), and its report rides with the result.
+        // through the #237 fallback), and its report rides with the result. #333: so do the relative
+        // alarms read off the saved reminder.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?, ?storedRelativeAlarms: ?alarmOffsets\.map ?\{ ?_ in ReminderRelativeAlarms\.storedMinutesBefore\( ?reminder ?\) ?\} ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
