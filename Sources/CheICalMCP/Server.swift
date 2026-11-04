@@ -421,7 +421,7 @@ class CheICalMCPServer {
                         ]),
                         "occurrence_date": .object([
                             "type": .string("string"),
-                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28'). Required when span is 'this' or 'future' on recurring events.")
+                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'). A value without an offset is read in the event's current time zone, not in timezone (the zone the event gets). Required when span is 'this' or 'future' on recurring events.")
                         ])
                     ]),
                     "required": .array([.string("event_id")])
@@ -1442,9 +1442,13 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
-        let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
-
         let spanStr = arguments["span"]?.stringValue ?? "this"
+        // #383: a value without offset is read in the event's current zone, the zone updateEvent's
+        // findOccurrence takes the day boundary in, as delete_event and move_events_batch do (#270);
+        // not in `timezone`, the zone the event gets after the update.
+        let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
+            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
+            zoneLookup: { try await self.eventWriteSource.occurrenceDateTimeZone(identifier: eventId) })
         let span: EKSpan
         switch spanStr {
         case "future": span = .futureEvents

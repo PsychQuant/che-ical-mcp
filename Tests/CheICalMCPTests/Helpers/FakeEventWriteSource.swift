@@ -8,10 +8,22 @@ import Foundation
 /// - update with `occurrenceDate` and span this: a detached occurrence `occurrence-<seconds>` of the
 ///   series (`seriesIdentifier`); with span future: a new series `split-<id>`;
 /// - update of an id starting with `allday-`: the stored event is all-day, 2027-04-10 (host zone);
-/// - create titled `duplicate`: answered as a duplicate.
+/// - create titled `duplicate`: answered as a duplicate;
+/// - `occurrenceDateTimeZone`: answers `occurrenceZone` (#383) and records the identifier asked for.
 actor FakeEventWriteSource: EventWriteSource {
     private(set) var updates: [EventUpdateRequest] = []
     private(set) var creates: [EventCreateRequest] = []
+    private(set) var zoneLookups: [String] = []
+    private let occurrenceZone: TimeZone?
+
+    init(occurrenceZone: TimeZone? = nil) {
+        self.occurrenceZone = occurrenceZone
+    }
+
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
+        zoneLookups.append(identifier)
+        return occurrenceZone
+    }
 
     static let host = Calendar.gregorian(in: .current)
     static var storedStart: Date {

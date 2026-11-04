@@ -92,6 +92,25 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertEqual(move.components(separatedBy: "findOccurrence(").count - 1, 1)
     }
 
+    /// #383: `update_event` resolves occurrence_date through the same call, with the shared lookup
+    /// on its write seam, and `updateEvent` searches in `occurrenceZone(of:)`; before, the date was
+    /// read in the request's `timezone` (or the host zone) and searched in `timezone ?? event zone`.
+    /// The value side is tested in `UpdateOccurrenceDateZoneHandlerTests`; these pins cover the
+    /// manager, which an in-memory store cannot run here.
+    func testUpdateEventResolvesAndSearchesInTheSharedZone() throws {
+        let body = try call(in: "private func handleUpdateEvent(arguments: [String: Value]) async throws -> String {")
+        let expected = #"let occurrenceDate: Date\? = try await OccurrenceDateInput\.resolve\( arguments\["occurrence_date"\]\?\.stringValue, iso: dateFormatter, span: spanStr, zoneLookup: \{ try await self\.eventWriteSource\.occurrenceDateTimeZone\(identifier: eventId\) \}\)"#
+        XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: body).count, 1, "the exact call")
+        XCTAssertEqual(body.components(separatedBy: "occurrenceDateTimeZone(").count - 1, 1, "looked up in that call only")
+        XCTAssertFalse(body.contains(#"arguments["occurrence_date"]?.stringValue.map"#), "the old host-zone parse")
+        let manager = "EventKit/EventKitManager.swift"
+        let update = try call(in: "func updateEvent( identifier: String, title: String? = nil, startDate: Date? = nil, endDate: Date? = nil, notes: String? = nil, location: String? = nil, url: String? = nil, calendarName: String? = nil, calendarSource: String? = nil, isAllDay: Bool? = nil, alarmOffsets: [Int]? = nil, recurrenceRule: RecurrenceRuleInput? = nil, clearRecurrence: Bool = false, structuredLocation: StructuredLocationInput? = nil, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil, applyToAll: Bool = false, timezone: TimeZone? = nil, clearTimezone: Bool = false ) async throws -> (event: EKEvent, seriesIdentifier: String?) {", file: manager)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: update).count, 1)
+        XCTAssertEqual(update.components(separatedBy: "findOccurrence(").count - 1, 1)
+        let conformance = try call(in: "extension EventKitManager: EventWriteSource {", file: "EventWriteSource.swift")
+        XCTAssertFalse(conformance.contains("func occurrenceDateTimeZone("), "the write seam uses the shared method itself")
+    }
+
     /// The zone lookup resolves the event without the edited-before refusal and the write may
     /// resolve it with it; both pick the same stand-in, because the refusal only ever turns the
     /// pick into nil (verify LOW). So whenever the write resolves an event at all, the zone came

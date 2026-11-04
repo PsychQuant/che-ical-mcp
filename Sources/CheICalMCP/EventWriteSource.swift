@@ -70,6 +70,10 @@ protocol EventWriteSource: Sendable {
     /// `create_events_batch`'s advisory lookup of existing events with a similar title (kept on the
     /// seam so a handler test does not read the host's calendars).
     func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue]
+    /// #383: the zone `update_event` reads an offset-less `occurrence_date` in, the zone its search
+    /// takes the day boundary in (`EventKitManager.occurrenceDateTimeZone`, shared with
+    /// `delete_event` and `move_events_batch` since #270).
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone?
 }
 
 /// An existing event `create_events_batch` names as similar to a batch title.

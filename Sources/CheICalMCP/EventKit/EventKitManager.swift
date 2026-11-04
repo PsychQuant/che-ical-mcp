@@ -1046,7 +1046,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             // Span future at the stand-in itself is the same whole-series save (verify round 3).
@@ -1263,8 +1263,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
-    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
-    /// `moveEvent`) read the same field through here, so a code change cannot make them differ; a
+    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent`,
+    /// `moveEvent` and, since #383, `updateEvent`) read the same field through here, so a code change cannot make them differ; a
     /// zone edit landing between the lookup and the write still can (accepted, round 2).
     static func occurrenceZone(of event: EKEvent) -> TimeZone? {
         event.timeZone
