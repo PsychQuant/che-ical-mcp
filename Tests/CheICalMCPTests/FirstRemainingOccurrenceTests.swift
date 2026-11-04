@@ -327,15 +327,24 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
         let body = String(source[from.upperBound..<to.lowerBound])
         let gate = try XCTUnwrap(body.range(of: "if operation.resolvesThroughStandIn {"), "the stand-in sits behind the predicate")
-        let call = try XCTUnwrap(body.range(of: "seriesMoveUndoTarget("), "resolved by the series-move helper")
-        XCTAssertLessThan(gate.lowerBound, call.lowerBound)
+        let close = try XCTUnwrap(body.range(of: "\n                    }\n", range: gate.upperBound..<body.endIndex))
+        let gated = String(body[gate.upperBound..<close.lowerBound])
+        XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(expected, verb: verb)"), "the helper is called inside the gate")
+        let outside = String(body[..<gate.lowerBound]) + String(body[close.upperBound...])
+        XCTAssertFalse(outside.contains("seriesMoveUndoTarget("), "and nowhere else in the event arm")
+        XCTAssertTrue(outside.contains("return storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
         XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
         XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
         let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
         let helper = String(source[helperFrom.upperBound...].prefix(1600))
         XCTAssertTrue(helper.contains("freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"), "resolved as the move resolved")
-        XCTAssertTrue(helper.contains("refusesMoveThroughStandIn("), "a move back to another account keeps the refusal")
-        XCTAssertTrue(body.contains("storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
+        // The store facts reach the decision (`SeriesMoveUndoDecisionTests`) from the right objects.
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.decide("), "the decision is the tested seam")
+        XCTAssertTrue(helper.contains("viaStandIn: $0.viaStandIn"), "the resolution's own origin")
+        XCTAssertTrue(helper.contains("sourceID: $0.event.calendar?.source?.sourceIdentifier"), "the stand-in's account")
+        XCTAssertTrue(helper.contains("calendarID: $0.event.calendar?.calendarIdentifier"), "the stand-in's calendar")
+        XCTAssertTrue(helper.contains("sourceID: $0.source?.sourceIdentifier"), "the original calendar's account")
+        XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "the original calendar from the record")
     }
 
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
