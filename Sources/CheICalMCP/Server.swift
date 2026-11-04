@@ -48,6 +48,7 @@ class CheICalMCPServer {
     private let eventCopySource: any EventCopySource
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
+    private let calendarDeletionSource: any CalendarDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -80,6 +81,7 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
+         calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -93,6 +95,7 @@ class CheICalMCPServer {
         self.eventCopySource = eventCopySource
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
+        self.calendarDeletionSource = calendarDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -164,13 +167,17 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar by its identifier.",
+                description: "Delete a calendar (or reminder list) by its identifier. Not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted. Events are searched about 200 years each side of now (EventKit has no query for every event of a calendar); a passed check returns searched_from and searched_to, and an event outside them is not seen. Without require_empty the calendar is deleted as before.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "id": .object([
                             "type": .string("string"),
                             "description": .string("The calendar identifier")
+                        ]),
+                        "require_empty": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Refuse to delete when the calendar holds events within searched_from..searched_to (about 200 years each side of now), or the list holds reminders. Default false.")
                         ])
                     ]),
                     "required": .array([.string("id")])
@@ -1245,8 +1252,19 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        try await eventKitManager.deleteCalendar(identifier: id)
-        return try actionResult(["action": "deleted", "id": id])
+        let requireEmpty = try InputValidation.requireOptionalBool(arguments, key: "require_empty") ?? false
+        let checked = try await calendarDeletionSource.deleteCalendar(identifier: id, requireEmpty: requireEmpty)
+        var result: [String: Any] = ["action": "deleted", "id": id]
+        if let checked {
+            // #328: what was searched, so "empty" never reads as empty outside the window.
+            result["checked_empty"] = true
+            if let searched = checked.searched {
+                result["searched_from"] = EventRangeQuery.localText(searched.start)
+                result["searched_to"] = EventRangeQuery.localText(searched.end)
+            }
+            if let reminders = checked.reminders { result["reminders_found"] = reminders }
+        }
+        return try actionResult(result)
     }
 
     // MARK: - Event Handlers
