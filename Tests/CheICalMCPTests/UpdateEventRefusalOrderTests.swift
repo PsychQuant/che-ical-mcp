@@ -48,8 +48,12 @@ final class UpdateEventRefusalOrderTests: XCTestCase {
     /// have after the update, which for an all-day result is the host zone (WeekdayCheckZoneTests).
     func testTheWeekdayCheckUsesThePlannedAllDayState() throws {
         let text = try updateEventBodyBeforeSave().joined(separator: "\n").filter { !$0.isWhitespace }
-        XCTAssertTrue(text.contains("WeekdayCheck.weekday(of:datePlan.datesToWrite?.start??event.startDate,resultIsAllDay:datePlan.isAllDay,"),
-                      "updateEvent passes the planned start and the planned all-day state to WeekdayCheck")
+        // Every argument is pinned (#373 verify round 3): the planned start, the planned all-day
+        // state, the requested zone, the clear flag, the stored zone and the host calendar.
+        XCTAssertTrue(text.contains("WeekdayCheck.weekday(of:datePlan.datesToWrite?.start??event.startDate,"
+                                    + "resultIsAllDay:datePlan.isAllDay,requested:timezone,clearTimezone:clearTimezone,"
+                                    + "stored:event.timeZone,host:Calendar.current)"),
+                      "updateEvent passes the values the event will have after the update to WeekdayCheck")
     }
 
     /// #373 verify round 2 (DA): a save that fails (a read-only calendar, an alarm or recurrence
