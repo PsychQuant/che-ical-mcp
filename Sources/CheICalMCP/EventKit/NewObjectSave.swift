@@ -16,7 +16,9 @@ import EventKit
 ///   names of those fields. The caller goes on as above and names them, always through
 ///   `differingFieldsNote`: `store_differs` and a `note` in a create's response
 ///   (`responseFields`), the note after the restore in delete-undo's message (`undoSuffix`, the
-///   title shown through `undoShownTitle` so it cannot pass for the note), and in a batch undo one
+///   title shown through `undoShownTitle`, so it cannot close its quotes or start a line and the
+///   real note is always outside them; inside its quotes a title can still read like the note,
+///   and a literal U+2019 looks like a replaced quote), and in a batch undo one
 ///   entry per restored reminder with differing fields, the first five and then a count
 ///   (`UndoRestoredDifference.sentences`, which joins the entries itself, built from the names
 ///   `EventKitManager.restoreDeletedReminder` returns, never from message text). Names only, never
@@ -24,9 +26,10 @@ import EventKit
 ///   the commit and the check (the only device case was the second: a rename through another
 ///   store); a partial write was not seen. The caller has the item's identifier and, for a
 ///   create, its undo entry. A retried delete-undo cannot make a second copy, since its record is
-///   consumed. A retried create can: its duplicate check matches the title, list and due date,
-///   which may be among the differing fields, so the create note says that creating it again with
-///   the same parameters may make a second copy.
+///   consumed. A retried create can: `create_reminder`'s duplicate check matches the title, list
+///   and due date, and `create_calendar`'s the title and type, and the title, list or due date may
+///   be among the differing fields, so the create note says that creating it again with the same
+///   parameters may make a second copy.
 /// - not found: the object is discarded and the save's error rethrown. The caller is told the save
 ///   failed, and taking the object out keeps the store consistent with that answer. Left in, it
 ///   would be written by the next save of any tool with no undo record (#261), and a retried
@@ -315,9 +318,9 @@ enum NewObjectSave {
     }
 
     /// What a create response adds: `store_differs` (the names) and a `note`. Empty when none.
-    /// The note warns that a retry may duplicate the item: the duplicate checks of
-    /// `create_reminder` and `create_calendar` match the title, list and due date, which may be
-    /// among the fields the store holds differently.
+    /// The note warns that a retry may duplicate the item: `create_reminder`'s duplicate check
+    /// matches the title, list and due date, and `create_calendar`'s the title and type, and the
+    /// title, list or due date may be among the fields the store holds differently.
     static func responseFields(_ fields: [String]) -> [String: Any] {
         guard let note = differingFieldsNote(fields) else { return [:] }
         return ["store_differs": fields, "note": "Saved, but \(note). Creating it again with the same parameters may make a second copy."]

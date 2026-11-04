@@ -2573,8 +2573,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// The message of a delete-undo: the restore, then `NewObjectSave.undoSuffix` naming the fields
     /// the store holds differently, if any. The title is shown through `undoShownTitle` (quotes
-    /// replaced, control characters dropped, capped), so a title that holds the note's wording
-    /// stays inside its quotes and cannot pass for the note (`NewObjectSaveTests`).
+    /// replaced, control characters dropped, capped at 120 scalars), so it cannot close its quotes
+    /// or start a line, and the real note is always outside the quotes (`NewObjectSaveTests`).
+    /// Inside its quotes a title can still read like the note, and a literal U+2019 in it looks the
+    /// same as a replaced quote.
     static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
         "Undone: restored reminder '\(undoShownTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
     }

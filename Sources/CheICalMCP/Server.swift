@@ -986,7 +986,7 @@ class CheICalMCPServer {
             // Reminder Batch Operations
             Tool(
                 name: "create_reminders_batch",
-                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder, and that row's result carries date_sync, as create_reminder's does.",
+                description: "PREFERRED: Create multiple reminders in a single call. Use this instead of calling create_reminder multiple times - it's faster and more reliable. Returns detailed results for each reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy. A due_date given as a bare date (YYYY-MM-DD) makes a date-only reminder, as in create_reminder, and that row's result carries date_sync, as create_reminder's does.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
