@@ -36,6 +36,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     let eventStore: EKEventStore
     private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
+    /// #322: a test's `SeriesExceptionsStoreSource` (`forTesting(probe:seriesExceptionsStore:)`);
+    /// nil in production, where the delete-undo exceptions layer runs on this manager's own store
+    /// (`seriesExceptionsStore`).
+    let seriesExceptionsStoreOverride: (any SeriesExceptionsStoreSource)?
 
     static let shared = EventKitManager()
 
@@ -47,10 +51,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// - Parameter authorizationSource: Probe for TCC state reads + access requests.
     ///   Default wires `LiveAuthorizationStatusSource` sharing the same `EKEventStore`
     ///   instance so request attribution matches data-ops.
-    fileprivate init(authorizationSource: AuthorizationStatusSource? = nil) {
+    fileprivate init(authorizationSource: AuthorizationStatusSource? = nil,
+                     seriesExceptionsStore: (any SeriesExceptionsStoreSource)? = nil) {
         let store = EKEventStore()
         self.eventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
+        self.seriesExceptionsStoreOverride = seriesExceptionsStore
     }
 
     #if DEBUG
@@ -59,6 +65,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `EventKitManager.shared` — see fileprivate `init` above for the singleton invariant. (#115)
     static func forTesting(probe: AuthorizationStatusSource) -> EventKitManager {
         EventKitManager(authorizationSource: probe)
+    }
+
+    /// #322: also runs the delete-undo exceptions layer (`SeriesExceptionsUndo`: the `.deleteEvent`
+    /// and `.deleteOccurrence` undo arms, the exceptions record and restore) on `seriesExceptionsStore`.
+    static func forTesting(probe: AuthorizationStatusSource,
+                           seriesExceptionsStore: any SeriesExceptionsStoreSource) -> EventKitManager {
+        EventKitManager(authorizationSource: probe, seriesExceptionsStore: seriesExceptionsStore)
     }
     #endif
 
@@ -2471,35 +2484,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
-            // Undo delete = recreate from snapshot; a series from its rules only (#285), which the
-            // text says. #261: no discard; in the failure classes tried on device, a failed new
-            // event was not written by a later save (see NewObjectSave).
-            let event = EKEvent(eventStore: eventStore)
-            try applySnapshot(snapshot, to: event)
-            try eventStore.save(event, span: .thisEvent)
-            markNeedsRefresh()
-            // #285: a series whose exceptions were recorded gets them back (all or nothing).
-            var outcome: SeriesExceptionsRestorer.Outcome?
-            if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
-                outcome = try restoreSeriesExceptions(exceptions, of: event)
-            }
-            return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: event.eventIdentifier ?? "unknown",
-                                                      exceptionsOutcome: outcome)
+            // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam).
+            return try undoDeletedEvent(snapshot)
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
-            // #244: the snapshot holds no rules, so the occurrence comes back as a one-off event at
-            // its slot, beside what is left of the series (EventKit cannot put it back in).
-            // #285: not when the series already holds the slot (it was recreated from its rules
-            // by an undo of the whole-series delete, which brings every slot back).
-            if try seriesHoldsSlot(of: snapshot) {
-                return UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title)
-            }
-            let event = EKEvent(eventStore: eventStore)
-            try applySnapshot(snapshot, to: event)
-            try eventStore.save(event, span: .thisEvent)
-            markNeedsRefresh()
-            return UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: event.eventIdentifier ?? "unknown",
-                                                           notCarriedOver: notCarriedOver)
+            // #244: a one-off at the occurrence's slot, unless the series already holds it (#285);
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteOccurrence` (#322 seam).
+            return try undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
 
         case .deleteFollowingOccurrences(let title):
             // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
@@ -2669,19 +2661,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// #285: saves `event` (new) as a one-off from `snapshot` (an occurrence edited on its own, restored
-    /// beside the series recreated from its rules). Takes the event so a caller can clean it up if the
-    /// save throws after the store took the write.
-    func saveOneOff(_ event: EKEvent, from snapshot: EventSnapshot) throws -> EKEvent {
-        try applySnapshot(snapshot, to: event)
-        try eventStore.save(event, span: .thisEvent)
-        return event
-    }
-
     /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
     /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
     /// reminders).
-    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
+    func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent) throws {
         let originalCalendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
         snapshot.apply(to: event, calendar: originalCalendar)
     }

@@ -227,8 +227,12 @@ final class UndoBatchWiringTests: XCTestCase {
 
         // The restore side of each lookup. The reminder write path itself is pinned by
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
-        let apply = Substring(try Self.body("private func applySnapshot(_ snapshot: EventSnapshot", in: Self.manager))
+        let apply = Substring(try Self.body("func applySnapshot(_ snapshot: EventSnapshot", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })"), in: apply))
+        // #322: the delete-undo arms write through `SeriesExceptionsStoreSource.apply`, which in
+        // production is that same `applySnapshot`.
+        let store = Substring(try Self.body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift"))
+        XCTAssertNotNil(Self.offset(of: Self.call("applySnapshot: { try self.applySnapshot($0, to: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
         let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))

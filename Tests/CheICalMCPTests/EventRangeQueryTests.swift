@@ -271,7 +271,10 @@ final class EventRangeQueryTests: XCTestCase {
         let allowed: [String: Set<String>] = [
             "EventKit/EventRangeQuery.swift": ["events"],
             "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence"],
-            "EventKit/EventKitManager+SeriesExceptions.swift": ["captureSeriesExceptions", "restoreSeriesExceptions", "seriesHoldsSlot"],
+            // #322: the delete-undo exceptions layer's two EventKit queries, moved here from
+            // EventKitManager+SeriesExceptions.swift; its callers pass the scan window, a listing
+            // range of it, or the slot of one occurrence (`SeriesExceptionsUndo`).
+            "EventKit/SeriesExceptionsStoreSource.swift": ["enumerateEvents", "slotHolders"],
             // #326: the stand-in search lists the series' own scan window and a year each side, a
             // range the server derives from the series, not one a caller gave.
             "EventKit/FirstRemainingOccurrence.swift": ["seriesOccurrences"],

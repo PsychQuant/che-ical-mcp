@@ -414,18 +414,21 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operation)")
     }
 
-    /// The whole-event arm of `executeUndo` reports through that text (pinned: it needs an
-    /// authorized store to run).
+    /// The whole-event arm of `executeUndo` reports through that text. Since #322 the arm runs
+    /// `SeriesExceptionsUndo.undoDeleteEvent`, which `SeriesExceptionsUndoHandlerTests` runs against
+    /// a fake store; this pin keeps the arm on it and the message in it.
     func testTheWholeEventUndoArmReportsTheRulesRestore() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let message = SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: body)
-        XCTAssertEqual(message.count, 1)
-        if let message = message.first {
-            XCTAssertGreaterThan(message.lowerBound, arm.lowerBound)
-            XCTAssertLessThan(message.lowerBound, next.lowerBound, "in the whole-event arm")
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+undoDeletedEvent\(snapshot\)"#, in: body)
+        XCTAssertEqual(call.count, 1)
+        if let call = call.first {
+            XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
+            XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
+        let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to
