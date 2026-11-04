@@ -17,6 +17,9 @@ private actor CopyFake: EventCopySource {
         if identifier == "save-fail" { throw Failure.failed }
         if identifier == "reminder-id" { throw EventKitError.eventNotFound(identifier: identifier) }
         if identifier == "refused-alarms" { throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]) }
+        if identifier == "free-to-busy-only" {
+            return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier, notCarriedOver: ["availability"])
+        }
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
 
@@ -214,6 +217,29 @@ final class EventCopyHandlerTests: XCTestCase {
         let result = try await copyMove("fallback")
         XCTAssertEqual(result["method"] as? String, "copied")
         XCTAssertEqual(result["not_carried_over"] as? [String], ["structured_location"])
+    }
+
+    private func plainCopy(_ id: String) async throws -> [String: Any] {
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let raw = try await server.executeToolCall(name: "copy_event", arguments: [
+            "event_id": .string(id), "target_calendar": .string("Work")])
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    /// #272: a plain copy that could not keep availability (the target calendar does not support
+    /// the value) says so, with the same key as a move.
+    func testPlainCopyReportsNotCarriedOver() async throws {
+        let result = try await plainCopy("free-to-busy-only")
+        XCTAssertEqual(result["action"] as? String, "copied")
+        XCTAssertEqual(result["not_carried_over"] as? [String], ["availability"])
+        XCTAssertNil(result["method"], "method and id_changed are for a move")
+    }
+
+    /// #272: a plain copy that kept everything lists nothing.
+    func testPlainCopyThatKeptEverythingListsNothing() async throws {
+        let result = try await plainCopy("good")
+        XCTAssertEqual(result["action"] as? String, "copied")
+        XCTAssertNil(result["not_carried_over"])
     }
 
     /// Round 2 #5: copy_event to the event's own calendar did nothing; say so.

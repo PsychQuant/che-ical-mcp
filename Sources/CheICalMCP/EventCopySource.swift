@@ -4,6 +4,8 @@ struct EventCopyValue: Sendable {
     let title: String?
     /// Set when copy_event moved the event (`delete_original`), #226.
     var move: EventMoveResult? = nil
+    /// A plain copy's fields the saved copy did not keep (#272); a move reports them in `move`.
+    var notCarriedOver: [String] = []
 }
 /// #226: one move's outcome plus the event title for the response.
 struct EventMoveValue: Sendable {
@@ -24,9 +26,10 @@ extension EventKitManager: EventCopySource {
                                                        toCalendarSource: toCalendarSource)
             return EventCopyValue(eventIdentifier: moved.result.eventIdentifier, title: moved.title, move: moved.result)
         }
-        let event = try await copyEvent(identifier: identifier, toCalendarName: toCalendarName,
-                                        toCalendarSource: toCalendarSource)
-        return EventCopyValue(eventIdentifier: event.eventIdentifier, title: event.title)
+        let copied = try await copyEvent(identifier: identifier, toCalendarName: toCalendarName,
+                                         toCalendarSource: toCalendarSource)
+        return EventCopyValue(eventIdentifier: copied.event.eventIdentifier, title: copied.event.title,
+                              notCarriedOver: copied.notCarriedOver)
     }
     func eventTimeZone(identifier: String) async -> TimeZone? {
         // The same lookup as delete_event (#270): access ensured first (verify round 2 #2), then

@@ -1607,12 +1607,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
     /// fields it keeps, and `EventCopyOperation.saveCopy` for a refused copy. Moves go through
-    /// `moveEvent` / `moveEventForCopyTool` (#226).
+    /// `moveEvent` / `moveEventForCopyTool` (#226). Returns the saved copy and the fields it did
+    /// not keep (#272), read after the save with the move paths' rule.
     func copyEvent(
         identifier: String,
         toCalendarName: String,
         toCalendarSource: String? = nil
-    ) async throws -> EKEvent {
+    ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
         try await ensureCalendarAccess()
         guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
@@ -1629,7 +1630,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                         logFailure: { Self.logCopyFailure(handler: "copyEvent", identifier: identifier, error: $0) }) {
             try eventStore.save(newEvent, span: .thisEvent)
         }
-        return newEvent
+        return (newEvent, Self.fieldsNotCarriedOver(from: sourceEvent, to: newEvent))
     }
 
     /// A refused copy that carries location, email or sound alarms is reported by name
@@ -1767,7 +1768,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return targetCalendar
     }
 
-    /// The fields a copy keeps. Recurrence and attendees are not among them; the move
+    /// The fields a copy keeps, availability included when the target calendar supports the
+    /// value (#272). Recurrence and attendees are not among them; the move
     /// policy refuses before a copy would drop those (#226). `alarms` replaces the source's
     /// own: the copy-out passes `copyOutAlarms`, which puts a split occurrence's absolute
     /// alarms at its start.
@@ -1783,6 +1785,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         copy.isAllDay = source.isAllDay
         copy.timeZone = source.timeZone
         copy.calendar = calendar
+        // #272: the source's availability when the target calendar supports it (#245's rule;
+        // decided after the calendar is set, since support depends on it). Otherwise the
+        // calendar's default stays, and `fieldsNotCarriedOver` lists `availability`.
+        if let value = EventSnapshot.availabilityToWrite(recorded: source.availability,
+                                                         supported: calendar.supportedEventAvailabilities,
+                                                         current: copy.availability) {
+            copy.availability = value
+        }
         // #230: whole alarms; rebuilt from offsets, absolute and location alarms landed at the
         // event start and email alarms became display alarms.
         for alarm in alarms ?? (source.alarms ?? []).map(AlarmSnapshot.init(from:)) {
