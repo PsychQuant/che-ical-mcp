@@ -32,8 +32,9 @@ protocol EventKitManaging: Sendable {
 
 /// EventKit wrapper for Calendar and Reminders operations
 actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionSource {
-    // Internal for same-actor feature extensions; still actor-isolated.
-    let eventStore: EKEventStore
+    // Internal for same-actor feature extensions; still actor-isolated. It counts its own commits
+    // (`CountingEventStore`, #328).
+    let eventStore: CountingEventStore
     private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
     /// #322: a test's `SeriesExceptionsStoreSource` (`forTesting(probe:seriesExceptionsStore:)`);
@@ -53,7 +54,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ///   instance so request attribution matches data-ops.
     fileprivate init(authorizationSource: AuthorizationStatusSource? = nil,
                      seriesExceptionsStore: (any SeriesExceptionsStoreSource)? = nil) {
-        let store = EKEventStore()
+        let store = CountingEventStore()
         self.eventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
         self.seriesExceptionsStoreOverride = seriesExceptionsStore
@@ -424,7 +425,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Mark that EventKit sources need to be refreshed (called after write operations)
     func markNeedsRefresh() {
         needsRefresh = true
+        refreshMarks &+= 1
     }
+
+    private var refreshMarks = 0
+
+    /// #328 (PR #413 verify r1 and security review): moves with every commit made through this
+    /// manager's store, in the same synchronous step as the commit (`CountingEventStore`), and with
+    /// every `markNeedsRefresh` (a few reads too, which only makes the check refuse more often).
+    /// `deleteCalendar(requireEmpty:)` compares it across its one suspension, so a write committed
+    /// during it is seen even when its writer marks the store stale later (in a `defer`, or after
+    /// its own `await`).
+    var writeGeneration: Int { eventStore.commitCount &+ refreshMarks }
 
     // MARK: - Calendars
 
@@ -620,7 +632,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return calendar
     }
 
-    func deleteCalendar(identifier: String) async throws {
+    /// #328: with `requireEmpty`, the calendar is checked first: events over the stated window
+    /// (`CalendarEmptiness.checkEvents`), reminders whole (`checkReminders`); a non-empty one, or one
+    /// that cannot be counted, is refused and nothing is deleted. The event check runs on this actor
+    /// with no suspension; the one suspension is the reminder fetch, across which the write
+    /// generation is compared, so no write by this server process lands between the check and
+    /// `removeCalendar` (PR #413 verify r1). A write by another app or a sync can still land in
+    /// between: EventKit offers no way to delete a calendar only if it is empty.
+    @discardableResult
+    func deleteCalendar(identifier: String, requireEmpty: Bool = false) async throws -> CalendarEmptiness.Checked? {
         try await ensureCalendarAccess()
         try await ensureReminderAccess()
 
@@ -628,8 +648,50 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.calendarNotFound(identifier: identifier)
         }
 
+        var checked: CalendarEmptiness.Checked?
+        if requireEmpty {
+            // As the other read paths: a write this server made is seen (PR #413 round 2).
+            refreshIfNeeded()
+            let generation = writeGeneration
+            try CalendarEmptiness.checkKinds(holdsEvents: calendar.allowedEntityTypes.contains(.event),
+                                             holdsReminders: calendar.allowedEntityTypes.contains(.reminder))
+            var searched: EventRangeQuery.Span?
+            if calendar.allowedEntityTypes.contains(.event) {
+                let window = CalendarEmptiness.window(now: Date())
+                // Each probe query is at most 1459 days + 1 s (`CalendarEmptiness.probeSpanDays`), so
+                // `events(from:to:calendars:)` (the one path a range reaches EventKit by, #325) runs
+                // one query for it.
+                try CalendarEmptiness.checkEvents(window: window, count: { try events(from: $0, to: $1, calendars: [calendar]).count })
+                searched = window
+            }
+            var reminders: Int?
+            if calendar.allowedEntityTypes.contains(.reminder) {
+                let counted = await countReminders(in: calendar)
+                try CalendarEmptiness.checkReminders(counted: counted, generationBefore: generation, generationAfter: writeGeneration)
+                reminders = 0
+            }
+            // An events read cannot tell a failure from an empty calendar (`events(matching:)`
+            // answers [] either way); a calendar that no longer resolves after the reads is refused,
+            // since its reads may have answered nothing for that reason (PR #413 round 2).
+            guard eventStore.calendar(withIdentifier: identifier) != nil else {
+                throw EventKitError.calendarNotEmpty(reason: CalendarEmptiness.calendarGoneMessage)
+            }
+            checked = CalendarEmptiness.Checked(searched: searched, reminders: reminders)
+        }
+
         try eventStore.removeCalendar(calendar, commit: true)
         markNeedsRefresh()
+        return checked
+    }
+
+    /// The number of reminders in `calendar`, completed ones included; nil when the fetch returns
+    /// nothing (it failed), which the check refuses (PR #413 verify r1).
+    private func countReminders(in calendar: EKCalendar) async -> Int? {
+        await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: [calendar])) { reminders in
+                continuation.resume(returning: reminders?.count)
+            }
+        }
     }
 
     // MARK: - Events
@@ -2944,6 +3006,8 @@ enum EventKitError: LocalizedError {
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
     case seriesExceptionsRestoreFailed(reason: String)
+    /// #328: `delete_calendar` with `require_empty` found the calendar not empty; nothing deleted.
+    case calendarNotEmpty(reason: String)
     /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
     /// refuse. Raised for any failure of such a save, so the message names the alarms as a
     /// possible cause only and gives no instruction (round 3: a caller that followed one would
@@ -3060,6 +3124,8 @@ enum EventKitError: LocalizedError {
         case .standInRefused(let reason):
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
+            return reason
+        case .calendarNotEmpty(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."

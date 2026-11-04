@@ -49,7 +49,7 @@
     },
     {
       "name": "delete_calendar",
-      "description": "Delete a calendar by its identifier"
+      "description": "Delete a calendar or reminder list (not undoable); require_empty refuses a non-empty one, events checked only about 200 years either side of now (answer: checked_empty, searched_from, searched_to or reminders_found)"
     },
     {
       "name": "list_events",

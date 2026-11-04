@@ -129,7 +129,10 @@ create_event({
 1. list_calendars()                       → Identify source/target
 2. find_duplicate_events(calendars, date_range)  → Check for duplicates
 3. move_events_batch(event_ids, target_calendar) → Move events
+4. delete_calendar(id, require_empty: true)      → Remove the emptied source (#328)
 ```
+
+`delete_calendar` cannot be undone. Pass `require_empty: true` unless the user asked to delete a calendar together with its events: it refuses a calendar that holds any event (searched about 200 years each side of now; the answer's `searched_from` / `searched_to` say how far) or a list that holds any reminder, and deletes nothing.
 
 ## Source Disambiguation
 

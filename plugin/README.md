@@ -109,7 +109,7 @@ Or just ask naturally:
 - `list_calendars` - List all calendars
 - `create_calendar` - Create new calendar
 - `update_calendar` - Update calendar metadata
-- `delete_calendar` - Delete calendar
+- `delete_calendar` - Delete calendar or reminder list (not undoable); `require_empty: true` refuses a non-empty one (#328)
 
 ### Events (12)
 - `list_events` / `list_events_quick` — list by range or shortcut
