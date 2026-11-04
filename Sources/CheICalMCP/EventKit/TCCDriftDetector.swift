@@ -282,7 +282,7 @@ struct TCCDriftDetector {
                 lines.append("[drift] TCC.db \(safeLabel) entry path mismatch:")
                 lines.append("[drift]   this binary: \(safePath)")
                 lines.append("[drift]   TCC entry:   \(safeRecorded)")
-                if let pane = settingsPaneName(forService: service) {
+                if settingsPaneName(forService: service) != nil {
                     // Whitelist hit. Two cases:
                     //   (a) path has no control chars → emit a copy-paste-ready POSIX
                     //       command via `shellSingleQuote` (B3). The result is safe on
@@ -293,12 +293,14 @@ struct TCCDriftDetector {
                     //       shell quoting (`\` inside `'\''` would double — round-2 R1).
                     //       Surface the path safely via `safePath` (already escaped) and
                     //       a manual-remediation hint instead.
-                    // #357: no `tccutil reset <service> <bundle id>` — it fails with -10814 for
-                    // a bare binary (no LaunchServices registration, README erratum).
+                    // #357 verify: the recorded row belongs to another path (another install).
+                    // Switching it does nothing for this binary and can break that install,
+                    // and both installs show as "CheICalMCP" in the pane: this binary's
+                    // `--setup` only. (No `tccutil reset <service> <bundle id>` either: -10814.)
                     if pathHasControlChars(runningPath) {
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation required: switch CheICalMCP off and on in System Settings → Privacy & Security → \(pane), or remove it with the − button, then run the binary at \(safePath) with --setup)")
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation required: run the binary at \(safePath) with --setup)")
                     } else {
-                        lines.append("[drift]   → switch CheICalMCP off and on in System Settings → Privacy & Security → \(pane), or remove it with the − button, then: \(shellSingleQuote(runningPath)) --setup")
+                        lines.append("[drift]   → \(shellSingleQuote(runningPath)) --setup   (grants this binary; the entry above belongs to another path, leave it)")
                     }
                 } else {
                     // Unknown service: don't emit a copy-pasteable command (avoid being a
@@ -331,14 +333,16 @@ struct TCCDriftDetector {
                 }
                 // Same control-char / whitelist gating as the tccPathMismatch case: emit a
                 // copy-paste command only for a recognized service and a clean path.
-                // #357: the entry that pins the old requirement is removed with the − button;
-                // switching it off and on can keep the pinned requirement (#154).
+                // #357 verify: switch the entry off and on (the pane has no − button), then
+                // `--setup`; the bare reset, which clears every app's grant, only as the last resort.
                 if let pane = settingsPaneName(forService: service) {
+                    let toggle = EventKitManager.switchOffAndOnStep(pane: pane)
                     if pathHasControlChars(runningBinaryPath) {
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation: remove CheICalMCP with the − button in System Settings → Privacy & Security → \(pane), then re-grant from a Developer-ID / notarized build by running the binary at \(safePath) with --setup)")
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation: \(toggle), then re-grant from a Developer-ID / notarized build by running the binary at \(safePath) with --setup)")
                     } else {
-                        lines.append("[drift]   → remove CheICalMCP with the − button in System Settings → Privacy & Security → \(pane), then: \(shellSingleQuote(runningBinaryPath)) --setup   (re-grant from a Developer-ID / notarized build, #154)")
+                        lines.append("[drift]   → \(toggle), then: \(shellSingleQuote(runningBinaryPath)) --setup   (re-grant from a Developer-ID / notarized build, #154)")
                     }
+                    lines.append("[drift]   → \(EventKitManager.lastResortReset(service: pane))")
                 } else {
                     let safeService = EventKitErrorSanitizer.escapeForStderr(service)
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")

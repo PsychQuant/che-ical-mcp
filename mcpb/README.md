@@ -87,13 +87,17 @@ Quit and reopen Claude Desktop. Calendar tool calls should now succeed.
 
 ### Dialog doesn't appear at all
 
-TCC may have a stale `denied` record blocking the new prompt. Clear it in System Settings and retry:
+TCC may have a stale `denied` record blocking the new prompt. Refresh it in System Settings and retry:
 
-1. Open **System Settings → Privacy & Security → Calendar** (then **Reminders**).
-2. Select **CheICalMCP** and remove it with the **−** button (switching it off and on can keep a stale code requirement).
+1. Open **System Settings → Privacy & Security → Calendar** (then **Reminders**). Each app has an on/off switch and an **Options…** button, and a Claude Code install (`~/bin`) also shows as `CheICalMCP` (observed on macOS 27).
+2. Switch **CheICalMCP** off and on (or use its **Options…** menu).
 3. Re-run Step 3.
 
-> Do not use `tccutil reset Calendar com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration (#357). A bare `tccutil reset Calendar` (no bundle id) wipes Calendar grants for every app on the Mac.
+If the startup banner reports a **path mismatch** instead, the recorded entry belongs to another install: leave it and just re-run Step 3 for this binary.
+
+As a last resort, only if access is still refused after that: `tccutil reset Calendar` (or `Reminders`) **without** a bundle id is the only full reset, and it clears that permission for **every app** on the Mac, so each one asks again.
+
+> Do not use `tccutil reset Calendar com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration (#357).
 
 ### Alt method — manually toggle in System Settings
 
@@ -108,7 +112,7 @@ If `--setup` keeps failing, you can grant access manually:
 
 > **Corrected #114**: pre-v1.9.0 this section claimed cdhash invalidation was the cause. That hypothesis was disproved by #108 Phase 1 smoke (TCC grants survived 5 binary swaps because csreq is stable across cdhash for the same Developer-ID identity). The real silent-failure mode was the in-process `has*Access` cache anti-pattern, structurally fixed in v1.9.0 (#108 Phase 2): every Calendar/Reminders call now reads fresh TCC state instead of trusting a cached boolean.
 
-If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, clear the stale entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and re-grant. Stale-cache silent failures cannot happen with the per-call gate.
+If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, refresh the stale entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and re-grant. Stale-cache silent failures cannot happen with the per-call gate.
 
 If you're on **v1.8.x or earlier** AND seeing this symptom, upgrading to v1.9.0+ is the structural fix; the manual Steps 1–4 remediation is a stopgap for that older release line. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis and the disproved-hypothesis audit trail.
 
@@ -121,7 +125,7 @@ You may see an extra entry in **System Settings → Privacy & Security → Calen
 
 ### Verifying the fix worked
 
-After Step 4, run the Step 1 SQL query again. You should now see two rows with `auth_value=2` and a recent `last_modified` timestamp matching today's date. If the timestamp didn't update, Step 3 didn't actually trigger the prompt — reset via the troubleshooting snippet and retry.
+After Step 4, run the Step 1 SQL query again. You should now see two rows with `auth_value=2` and a recent `last_modified` timestamp matching today's date. If the timestamp didn't update, Step 3 didn't actually trigger the prompt — refresh the entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and retry.
 
 ## See also
 

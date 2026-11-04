@@ -20,14 +20,15 @@ final class PrintTCCPathSectionTests: XCTestCase {
     }
 
     // #357: `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare
-    // binary, so the section is "Re-prompt" and points at System Settings instead.
-    func testSection_offersNoTccutil_andPointsAtSystemSettings() {
+    // binary, so the section is "Re-prompt" and points at System Settings instead; the bare
+    // reset appears only as the last resort (verify round), and the pane has no − button.
+    func testSection_offersNoBundleIDReset_andPointsAtSystemSettings() {
         for status in [EKAuthorizationStatus.notDetermined, .denied, .restricted, .fullAccess] {
             let s = section(status, status)
-            XCTAssertFalse(s.contains("tccutil"), s)
             XCTAssertTrue(s.hasPrefix("Re-prompt"), s)
             XCTAssertTrue(s.contains("System Settings → Privacy & Security"), s)
-            XCTAssertTrue(s.contains("− button"), s)
+            TCCRemedyAssertions.assertStaleGrantRemedy(s, service: "Calendar")
+            XCTAssertTrue(s.contains("tccutil reset Reminders`"), s)
         }
     }
 

@@ -141,11 +141,11 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        // #357: remove the entry that pins the old requirement (a toggle can keep it), then --setup.
-        XCTAssertTrue(banner.contains("− button"), banner)
+        // #357 verify: switch the entry off and on (or Options…), then --setup; the bare reset
+        // only as the last resort. The pane has no − button.
+        TCCRemedyAssertions.assertStaleGrantRemedy(banner, service: "Calendar")
         XCTAssertTrue(banner.contains("System Settings → Privacy & Security → Calendar"), banner)
         XCTAssertTrue(banner.contains("' --setup"), banner)
-        XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }
 
@@ -173,7 +173,11 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
             report: report, version: "1.13.0", runningBinaryPath: runningPath,
             pid: 4242, bundleID: "com.checheng.CheICalMCP"
         )
-        XCTAssertFalse(banner.contains("tccutil reset kTCCServiceBogus"))
+        // Restated on the #357 remedy: no runnable command, no pane or reset named after the
+        // unknown service.
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+        XCTAssertFalse(banner.contains("Privacy & Security → kTCCService"), banner)
+        XCTAssertFalse(banner.contains("tccutil reset kTCCService"), banner)
         XCTAssertTrue(banner.contains("manual remediation"))
     }
 }

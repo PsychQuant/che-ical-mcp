@@ -10,9 +10,10 @@ import XCTest
 /// TCC status was already `.denied` at the gate, a bare `--setup` cannot re-prompt (the
 /// status-first check only requests on `.notDetermined`). The message must NOT lead with
 /// `--setup` there — it must name the real blocker (anthropics/claude-code#63032) and the
-/// paths that actually work (Claude Code plugin path, removing the stale System Settings
-/// entry before `--setup`, `.ics` import). `tccutil reset <service> com.checheng.CheICalMCP`
-/// was step 2 until #357: it fails with -10814 for a bare binary (no LaunchServices record).
+/// paths that actually work (Claude Code plugin path, switching the stale System Settings
+/// entry off and on before `--setup`, `.ics` import). `tccutil reset <service>
+/// com.checheng.CheICalMCP` was step 2 until #357: it fails with -10814 for a bare binary (no
+/// LaunchServices record); the bare `tccutil reset <service>` stays only as the last resort.
 final class AccessDeniedMessageTests: XCTestCase {
 
     private let hint = "\"/buried/path/CheICalMCP\" --setup"
@@ -50,13 +51,12 @@ final class AccessDeniedMessageTests: XCTestCase {
 
         XCTAssertTrue(msg.contains("claude plugin install che-ical-mcp@psychquant-claude-plugins"),
             "must point at the working Claude Code plugin install path")
-        // #357 (deliberate change to the #158 pin): the heal is removing the stale row in
-        // System Settings with the − button, then `--setup`; `tccutil reset <service>
-        // com.checheng.CheICalMCP` fails with -10814 for a bare binary and is no longer offered.
-        XCTAssertFalse(msg.contains("tccutil"), "the -10814 command must not be offered: \(msg)")
+        // #357 (deliberate change to the #158 pin): the heal is switching the stale row off and
+        // on in System Settings (the pane has no − button, verify round), then `--setup`;
+        // `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary.
+        TCCRemedyAssertions.assertStaleGrantRemedy(msg, service: "Calendar")
         XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"),
             "must point at the Calendar pane, type-correct")
-        XCTAssertTrue(msg.contains("− button"), "must say to remove the stale entry, not only toggle it")
         XCTAssertTrue(msg.contains("then re-run \(hint)"), "the re-grant is this binary's --setup")
         XCTAssertTrue(msg.contains(".ics"), "must mention the `.ics` import fallback")
     }
@@ -69,13 +69,15 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(reminders.contains("System Settings → Privacy & Security → Reminders"),
             "Reminders denial must point at the Reminders pane")
         XCTAssertFalse(reminders.contains("Privacy & Security → Calendar"))
+        TCCRemedyAssertions.assertStaleGrantRemedy(reminders, service: "Reminders")
     }
 
-    // MARK: - #357: no surface offers `tccutil reset`
+    // MARK: - #357: no surface offers `tccutil reset` with the bundle id
 
-    /// `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary,
-    /// and a bare `tccutil reset Calendar` wipes every app's grant: no branch may offer either.
-    func testNoAccessDeniedBranchOffersTccutil() {
+    /// `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary;
+    /// a bare `tccutil reset <service>` clears every app's grant, so it may appear only as the
+    /// last resort with that consequence stated; and the pane has no − button.
+    func testNoAccessDeniedBranchOffersABundleIDResetOrAMinusButton() {
         let attributions: [ResponsibleHostKind?] = [
             nil, .selfBinary, .claudeCode(version: "2.1.309"), .appBundle(name: "Visual Studio Code"),
             .otherExecutable(path: "/sbin/launchd"), .unknown]
@@ -87,17 +89,17 @@ final class AccessDeniedMessageTests: XCTestCase {
                             type: type, isSSH: ssh, isNonInteractive: nonInteractive, isMCPB: mcpb,
                             deniedByStatus: denied, setupHint: hint, attribution: attribution,
                             restrictedByPolicy: restricted)
-                        XCTAssertFalse(msg.contains("tccutil"), msg)
+                        TCCRemedyAssertions.assertNoBundleIDResetAndNoMinusButton(msg)
                     }
                 } } }
             } }
         }
     }
 
-    func testUnknownAuthStateMessage_offersNoTccutil() {
+    func testUnknownAuthStateMessage_givesTheStaleGrantRemedy() {
         let msg = EventKitError.unknownAuthState(type: "Calendar", statusValue: 99).errorDescription ?? ""
-        XCTAssertFalse(msg.contains("tccutil"), msg)
-        XCTAssertTrue(msg.contains("System Settings → Privacy & Security"), msg)
+        TCCRemedyAssertions.assertStaleGrantRemedy(msg, service: "Calendar")
+        XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"), msg)
     }
 
     // MARK: - First-run .mcpb (notDetermined path) — --setup still IS the fix

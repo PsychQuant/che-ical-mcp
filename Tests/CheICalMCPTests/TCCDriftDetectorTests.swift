@@ -358,8 +358,9 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
-    // #357: no banner line offers `tccutil reset`, for any signal and either kind of path.
-    func testFormatBanner_noSignalOffersTccutil() {
+    // #357: no banner line offers `tccutil reset` with the bundle id or a − button, for any
+    // signal and either kind of path.
+    func testFormatBanner_noSignalOffersABundleIDResetOrAMinusButton() {
         let signals: [DriftSignal] = [
             .tccPathMismatch(service: "kTCCServiceCalendar", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
             .tccPathMismatch(service: "kTCCServiceReminders", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
@@ -373,7 +374,7 @@ final class TCCDriftDetectorTests: XCTestCase {
                 let banner = TCCDriftDetector.formatBanner(
                     report: DriftReport(signals: signals, skipReasons: []), version: "1.0.0",
                     runningBinaryPath: path, pid: 1, bundleID: bundleID, calendarAccessGranted: granted)
-                XCTAssertFalse(banner.contains("tccutil"), banner)
+                TCCRemedyAssertions.assertNoBundleIDResetAndNoMinusButton(banner)
             }
         }
     }
@@ -419,9 +420,12 @@ final class TCCDriftDetectorTests: XCTestCase {
 
         // Per-signal lines + their actionable hints.
         XCTAssertTrue(banner.contains("TCC.db Calendar entry path mismatch"))
-        // #357: the remedy is System Settings, then this binary's --setup (no tccutil reset).
-        XCTAssertTrue(banner.contains("System Settings → Privacy & Security → Calendar"), banner)
-        XCTAssertTrue(banner.contains("'\(runningPath)' --setup"), banner)
+        // #357 verify: the row belongs to another path (another install), so toggling it does
+        // nothing for this binary and can break the other install: lead with this binary's
+        // --setup only.
+        XCTAssertTrue(banner.contains("[drift]   → '\(runningPath)' --setup"), banner)
+        XCTAssertFalse(banner.contains("off and on"), banner)
+        XCTAssertFalse(banner.contains("System Settings"), banner)
         XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("3 stale CheICalMCP processes running"))
         XCTAssertTrue(banner.contains("pkill -f"))
@@ -589,10 +593,11 @@ final class TCCDriftDetectorTests: XCTestCase {
             bundleID: bundleID
         )
 
-        XCTAssertFalse(
-            banner.contains("tccutil reset"),
-            "must not emit `tccutil reset` for non-whitelisted service"
-        )
+        // Restated on the #357 remedy: no runnable --setup command and no pane named after
+        // the unknown service.
+        XCTAssertFalse(banner.contains("' --setup"), "no runnable command for an unknown service: \(banner)")
+        XCTAssertFalse(banner.contains("Privacy & Security → kTCCService"), banner)
+        XCTAssertFalse(banner.contains("tccutil reset"), banner)
         XCTAssertTrue(
             banner.contains("unrecognized TCC service"),
             "must emit manual-remediation hint instead"

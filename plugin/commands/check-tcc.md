@@ -33,7 +33,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings, or remove its entry with the − button and re-grant with `--setup` (see `troubleshoot-tcc` skill Step 4–5; `tccutil reset` with the bundle id fails with -10814 for this binary, #357) |
+   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings (off and on, or its Options… menu, for a stale entry), then re-grant with `--setup` (see `troubleshoot-tcc` skill Step 4–5; `tccutil reset` with the bundle id fails with -10814 for this binary, #357; the bare reset clears every app's grant and is the last resort) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
