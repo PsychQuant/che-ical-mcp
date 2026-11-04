@@ -29,12 +29,13 @@ final class OccurrenceDayTests: XCTestCase {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
         let body = try XCTUnwrap(SourceScan.body(of: "func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {", in: code))
-        XCTAssertEqual(SourcePins.ranges(of: "guard let window = OccurrenceDay.window(containing: date, in: timeZone) else { return nil } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)", in: body).count, 1)
+        // PR #394 verify round 1: the predicate covers the candidate window (search day and host day).
+        XCTAssertEqual(SourcePins.ranges(of: "guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return nil } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)", in: body).count, 1)
         XCTAssertFalse(body.contains("startOfDay"), "the window is computed in one place")
         // Final review: a line inserted above the pinned text (shadowing `date` or `timeZone`)
         // survived a substring pin. The body must open with the window and never rebind either.
         let trimmed = body.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "{" || $0 == " " })
-        XCTAssertTrue(trimmed.hasPrefix("guard let window = OccurrenceDay.window(containing: date, in: timeZone)"), String(trimmed.prefix(160)))
+        XCTAssertTrue(trimmed.hasPrefix("guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone)"), String(trimmed.prefix(160)))
         for rebinding in ["let date", "var date", "let timeZone", "var timeZone", "date =", "timeZone ="] {
             XCTAssertFalse(body.contains(rebinding), "findOccurrence rebinds an input: \(rebinding)")
         }
@@ -139,5 +140,65 @@ final class OccurrenceDayStartRuleTests: XCTestCase {
         let rule = try XCTUnwrap(body.range(of: "OccurrenceDay.startsOnRequestedDay("))
         let pick = try XCTUnwrap(body.range(of: "target = event"))
         XCTAssertLessThan(rule.lowerBound, pick.lowerBound, "the rule gates the pick")
+    }
+}
+
+/// PR #394 verify round 1: the enumeration window and the all-day exact-start case.
+final class OccurrenceDayCandidateWindowTests: XCTestCase {
+    private let kiritimati = TimeZone(identifier: "Pacific/Kiritimati")!   // +14
+    private let pagoPago = TimeZone(identifier: "Pacific/Pago_Pago")!      // -11
+    private let taipei = TimeZone(identifier: "Asia/Taipei")!
+    private let newYork = TimeZone(identifier: "America/New_York")!
+
+    /// Finding 1 (codex): host and search zone 25 hours apart. The host's all-day Dec 6
+    /// [Dec 5 10:00Z, Dec 6 10:00Z) does not overlap the search zone's Dec 6
+    /// [Dec 6 11:00Z, Dec 7 11:00Z), so a predicate over the search window never enumerated it.
+    /// The candidate window covers both days, and the rule accepts that occurrence.
+    func testTheCandidateWindowReachesTheHostDayOfAnAllDayOccurrence() throws {
+        let requested = TestZones.midnight("2026-12-06", in: pagoPago)
+        let allDayStart = TestZones.midnight("2026-12-06", in: kiritimati)
+        let allDayEnd = TestZones.midnight("2026-12-07", in: kiritimati)
+        let search = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: pagoPago))
+        XCTAssertFalse(allDayStart < search.end && allDayEnd > search.start, "the premise: no overlap with the search window")
+        let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: pagoPago, host: kiritimati))
+        XCTAssertTrue(allDayStart < candidate.end && allDayEnd > candidate.start, "the candidate window reaches it")
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(occurrenceStart: allDayStart, isAllDay: true, requested: requested,
+                                                         in: pagoPago, host: kiritimati))
+        // The reverse pair too (host behind the search zone).
+        let reverse = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: TestZones.midnight("2026-12-06", in: kiritimati),
+                                                                  in: kiritimati, host: pagoPago))
+        XCTAssertTrue(TestZones.midnight("2026-12-06", in: pagoPago) < reverse.end
+                      && TestZones.midnight("2026-12-07", in: pagoPago) > reverse.start)
+    }
+
+    /// The candidate window always contains the search window (every timed occurrence the rule
+    /// accepts is enumerated), and is the search window when the zones agree.
+    func testTheCandidateWindowContainsTheSearchWindow() throws {
+        for (zone, host) in [(newYork, taipei), (taipei, newYork), (kiritimati, pagoPago), (pagoPago, kiritimati), (taipei, taipei)] {
+            let requested = TestZones.midnight("2026-12-06", in: zone).addingTimeInterval(5 * 3600)
+            let search = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: zone))
+            let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: zone, host: host))
+            XCTAssertLessThanOrEqual(candidate.start, search.start)
+            XCTAssertGreaterThanOrEqual(candidate.end, search.end)
+            let hostDay = (TestZones.midnight("2026-12-06", in: host), TestZones.midnight("2026-12-07", in: host))
+            XCTAssertLessThanOrEqual(candidate.start, hostDay.0, "\(zone.identifier) / \(host.identifier)")
+            XCTAssertGreaterThanOrEqual(candidate.end, hostDay.1, "\(zone.identifier) / \(host.identifier)")
+            if zone == host { XCTAssertEqual(candidate.start, search.start); XCTAssertEqual(candidate.end, search.end) }
+        }
+        let nilZone = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: TestZones.midnight("2026-12-06", in: taipei), in: nil, host: taipei))
+        XCTAssertEqual(nilZone.start, TestZones.midnight("2026-12-06", in: taipei))
+        XCTAssertEqual(nilZone.end, TestZones.midnight("2026-12-07", in: taipei))
+    }
+
+    /// Finding 3: `delete_events_batch` passes an item's own start with the series zone. An all-day
+    /// exception of a timed New York series starts at host midnight (Taipei), whose New York day is
+    /// the day before; the exact start still matches it.
+    func testAnAllDayOccurrenceMatchesItsExactStart() {
+        let start = TestZones.midnight("2026-12-06", in: taipei)
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(occurrenceStart: start, isAllDay: true, requested: start,
+                                                         in: newYork, host: taipei))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: start, isAllDay: true,
+                                                          requested: start.addingTimeInterval(-86_400), in: newYork, host: taipei),
+                       "another instant still goes by the day: Dec 5 00:00 Taipei is Dec 4 in New York")
     }
 }

@@ -1276,7 +1276,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
     /// one series, and the first enumerated one is not necessarily the one asked for.
     func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
-        guard let window = OccurrenceDay.window(containing: date, in: timeZone) else { return nil }
+        // PR #394 verify round 1: the search day and the host day, so an all-day occurrence (a host day) is enumerated.
+        guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return nil }
         let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
 
         var target: EKEvent?

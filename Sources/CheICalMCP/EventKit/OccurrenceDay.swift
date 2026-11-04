@@ -20,17 +20,42 @@ enum OccurrenceDay {
     /// - timed: its start lies in `[window.start, window.end)` of `date`'s day in `zone`;
     /// - all-day: its start's day in this Mac's zone (all-day dates are floating whole days stored
     ///   from host midnight, #364) equals `date`'s day in `zone`. By start instant alone, a zone
-    ///   behind the host would match the next day's all-day occurrence.
-    /// Every occurrence starting in the window overlaps it, so the predicate loses none of them.
-    static func startsOnRequestedDay(occurrenceStart: Date?, isAllDay: Bool, requested date: Date, in zone: TimeZone?) -> Bool {
+    ///   behind the host would match the next day's all-day occurrence. An all-day occurrence whose
+    ///   start is exactly `date` matches too (PR #394 verify round 1): `delete_events_batch` passes
+    ///   an item's own start with the series zone, and host midnight can be the day before there.
+    /// `findOccurrence` enumerates over `candidateWindow`, which holds every occurrence this accepts.
+    static func startsOnRequestedDay(occurrenceStart: Date?, isAllDay: Bool, requested date: Date, in zone: TimeZone?,
+                                     host: TimeZone = .current) -> Bool {
         guard let start = occurrenceStart else { return false }
         if isAllDay {
+            if start == date { return true }
+            var hostCalendar = Calendar.current
+            hostCalendar.timeZone = host
             var requestedCalendar = Calendar.current
-            if let zone { requestedCalendar.timeZone = zone }
+            requestedCalendar.timeZone = zone ?? host
             let units: Set<Calendar.Component> = [.era, .year, .month, .day]
-            return Calendar.current.dateComponents(units, from: start) == requestedCalendar.dateComponents(units, from: date)
+            return hostCalendar.dateComponents(units, from: start) == requestedCalendar.dateComponents(units, from: date)
         }
         guard let window = window(containing: date, in: zone) else { return false }
         return window.start <= start && start < window.end
+    }
+
+    /// PR #394 verify round 1 (codex): the window `findOccurrence` asks EventKit for. A timed
+    /// occurrence the rule accepts starts inside `window(containing: date, in: zone)`, so it overlaps
+    /// it; an all-day one lies on `date`'s day taken in the host zone, which is more than a day away
+    /// from the search zone's day when the two zones are over 24 hours apart (host +14, search -11),
+    /// so it did not overlap and was never enumerated. The candidate window spans both days (the
+    /// earlier start to the later end); the rule above still decides. With `zone` nil it is the
+    /// host's day.
+    static func candidateWindow(containing date: Date, in zone: TimeZone?, host: TimeZone = .current) -> (start: Date, end: Date)? {
+        guard let search = window(containing: date, in: zone) else { return nil }
+        var requestedCalendar = Calendar.current
+        requestedCalendar.timeZone = zone ?? host
+        var hostCalendar = Calendar.current
+        hostCalendar.timeZone = host
+        let day = requestedCalendar.dateComponents([.era, .year, .month, .day], from: date)
+        guard let hostStart = hostCalendar.date(from: day),
+              let hostEnd = hostCalendar.date(byAdding: .day, value: 1, to: hostStart) else { return nil }
+        return (min(search.start, hostStart), max(search.end, hostEnd))
     }
 }
