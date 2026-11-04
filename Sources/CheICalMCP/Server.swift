@@ -211,7 +211,7 @@ class CheICalMCPServer {
             // Event Tools
             Tool(
                 name: "list_events",
-                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error.",
+                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -248,7 +248,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
@@ -257,7 +257,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -342,7 +342,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -421,7 +421,7 @@ class CheICalMCPServer {
                         ]),
                         "occurrence_date": .object([
                             "type": .string("string"),
-                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28'). Required when span is 'this' or 'future' on recurring events.")
+                            "description": .string("For recurring events: the date of the specific occurrence to modify (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'). Without an offset it is read in the event's current time zone, not in timezone (the zone the event gets); with an offset it is used as given, and its day is taken in the event's current time zone too. A floating or all-day series uses this Mac's time zone. Required when span is 'this' or 'future' on recurring events.")
                         ])
                     ]),
                     "required": .array([.string("event_id")])
@@ -701,7 +701,7 @@ class CheICalMCPServer {
             // Feature 2: Search Events (enhanced with multi-keyword support)
             Tool(
                 name: "search_events",
-                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error.",
+                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -727,7 +727,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
@@ -736,7 +736,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ])
                 ]),
@@ -746,7 +746,7 @@ class CheICalMCPServer {
             // Feature 3: Quick Time Range
             Tool(
                 name: "list_events_quick",
-                description: "List events with quick time range shortcuts. Supports international week definitions.",
+                description: "List events with quick time range shortcuts. Supports international week definitions. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -775,7 +775,7 @@ class CheICalMCPServer {
                         "detail_level": .object([
                             "type": .string("string"),
                             "enum": .array([.string("summary"), .string("standard")]),
-                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
+                            "description": .string("Response detail: 'summary' (id, title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar — plus location when set) or 'standard' (all fields, default). Use 'summary' to reduce token usage; pass an explicit 'fields' array for finer-grained selection.")
                         ]),
                         "display_timezone": .object([
                             "type": .string("string"),
@@ -784,7 +784,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
                         ])
                     ]),
                     "required": .array([.string("range")])
@@ -852,7 +852,7 @@ class CheICalMCPServer {
             // Feature 5: Conflict Check
             Tool(
                 name: "check_conflicts",
-                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error.",
+                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating, the zone of the *_local strings.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1442,8 +1442,6 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
-        let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: timezone) }
-
         let spanStr = arguments["span"]?.stringValue ?? "this"
         let span: EKSpan
         switch spanStr {
@@ -1469,6 +1467,14 @@ class CheICalMCPServer {
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
+
+        // #383: a value without offset is read in the event's current zone, the zone updateEvent's
+        // findOccurrence takes the day boundary in, as delete_event and move_events_batch do (#270);
+        // not in `timezone`, the zone the event gets after the update. Last, after every check that
+        // needs no calendar (verify round 1): the lookup ensures calendar access and reads the store.
+        let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
+            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
+            zoneLookup: { try await self.eventWriteSource.occurrenceDateTimeZone(identifier: eventId) })
 
         let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
@@ -1496,6 +1502,10 @@ class CheICalMCPServer {
         var response: [String: Any] = ["action": "updated", "title": event.title ?? ""]
         response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier,
                                                         seriesIdentifier: event.seriesIdentifier)) { $1 }
+        // #383 verify: the start of the occurrence occurrence_date matched, before the update.
+        if let matched = event.matchedOccurrence {
+            response["occurrence_start"] = OccurrenceStart.string(matched.start, zone: matched.zone)
+        }
         // #372: only when the event is all-day after the update, and only for the fields the call
         // gave; the other end of the range is the saved event's.
         if event.isAllDay, startDate != nil || endDate != nil {
@@ -3089,6 +3099,9 @@ class CheICalMCPServer {
             "end_date": dateFormatter.string(from: event.formatEndDate),
             "end_date_local": formatLocal(event.formatEndDate, in: tz),
             "timezone": (event.formatSourceTimeZone ?? TimeZone.current).identifier,
+            // #386: the event's own zone, null when it stores none (floating, all-day included);
+            // `timezone` above falls back to the host zone, so alone it cannot tell the two apart.
+            "item_timezone": event.formatSourceTimeZone?.identifier ?? NSNull(),
             "is_all_day": event.formatIsAllDay,
             "calendar": event.formatCalendarTitle
         ]

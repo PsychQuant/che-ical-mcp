@@ -1013,7 +1013,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
-    ) async throws -> (event: EKEvent, seriesIdentifier: String?) {
+    ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {
         try await ensureCalendarAccess()
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
@@ -1040,13 +1040,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // When applyToAll is true, operate on master event directly (correct for "all" series updates).
         // "this" or "future" on recurring → require occurrence_date to find the right occurrence.
         let event: EKEvent
+        // #383 verify: the occurrence occurrence_date matched, read before any field is assigned,
+        // reported as occurrence_start so the caller can see which day was edited.
+        var matchedOccurrence: MatchedOccurrence?
         if !masterEvent.hasRecurrenceRules {
             event = masterEvent
         } else if applyToAll {
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             // Span future at the stand-in itself is the same whole-series save (verify round 3).
@@ -1055,6 +1058,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 occurrenceStart: occurrence.startDate, standInStart: masterEvent.startDate) {
                 throw EventKitError.standInRefused(reason: Self.standInSplitReason)
             }
+            matchedOccurrence = MatchedOccurrence(start: occurrence.startDate, zone: Self.occurrenceZone(of: masterEvent))
             event = occurrence
         } else {
             throw EventKitError.invalidTimeRange(
@@ -1243,7 +1247,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             masterRefreshed: masterRefreshed,
             master: masterRefreshed ? masterEvent.eventIdentifier : nil,
             occurrence: event.eventIdentifier)
-        return (event, seriesIdentifier)
+        return (event, seriesIdentifier, matchedOccurrence)
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and
@@ -1263,8 +1267,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
-    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
-    /// `moveEvent`) read the same field through here, so a code change cannot make them differ; a
+    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent`,
+    /// `moveEvent` and, since #383, `updateEvent`) read the same field through here, so a code change cannot make them differ; a
     /// zone edit landing between the lookup and the write still can (accepted, round 2).
     static func occurrenceZone(of event: EKEvent) -> TimeZone? {
         event.timeZone
