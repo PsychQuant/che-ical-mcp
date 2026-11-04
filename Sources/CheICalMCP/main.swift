@@ -266,7 +266,8 @@ func emitStartupBanner() {
         pid: ProcessInfo.processInfo.processIdentifier,
         bundleID: bundleID,
         calendarAccessGranted: calendarGranted,
-        calendarRestricted: calendarStatus == .restricted
+        calendarRestricted: calendarStatus == .restricted,
+        remindersNeedSetup: remindersStatus != .fullAccess && remindersStatus != .restricted
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }

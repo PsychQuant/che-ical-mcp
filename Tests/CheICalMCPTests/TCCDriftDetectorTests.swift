@@ -309,6 +309,22 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(banner.contains("Calendar access not granted — grant via"), banner)
     }
 
+    /// Verify DA (#368): with Calendar restricted, a Reminders grant that `--setup` can still
+    /// create keeps its own `--setup` line.
+    func testFormatBannerRestrictedCalendar_ungrantedReminders_keepsAReminderSetupLine() {
+        func banner(_ remindersNeedSetup: Bool) -> String {
+            TCCDriftDetector.formatBanner(
+                report: DriftReport(signals: [], skipReasons: []), version: "1.12.0",
+                runningBinaryPath: runningPath, pid: 12345, bundleID: bundleID,
+                calendarAccessGranted: false, calendarRestricted: true,
+                remindersNeedSetup: remindersNeedSetup)
+        }
+        let needs = banner(true)
+        XCTAssertTrue(needs.contains("Calendar access is restricted by a policy"), needs)
+        XCTAssertTrue(needs.contains("Reminders access not granted — grant via: '\(runningPath)' --setup"), needs)
+        XCTAssertFalse(banner(false).contains("Reminders access not granted"))
+    }
+
     func testFormatBannerNotRestricted_keepsTheSetupLine() {
         let banner = TCCDriftDetector.formatBanner(
             report: DriftReport(signals: [], skipReasons: []),

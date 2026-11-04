@@ -203,7 +203,8 @@ struct TCCDriftDetector {
         pid: Int32,
         bundleID: String,
         calendarAccessGranted: Bool = true,
-        calendarRestricted: Bool = false
+        calendarRestricted: Bool = false,
+        remindersNeedSetup: Bool = false
     ) -> String {
         // CWE-117 / stderr-injection defense (verify finding B1, three-reviewer
         // consensus): every interpolated value reaching stderr passes through
@@ -251,6 +252,15 @@ struct TCCDriftDetector {
             // Screen Time). `--setup` shows no prompt for it, so no command is printed — the
             // same wording family as the access-denied message's restricted branch.
             lines.append("[banner] Calendar access is restricted by a policy (configuration profile or Screen Time); --setup cannot change it — ask whoever manages this Mac to allow Calendar access for CheICalMCP")
+            // #368 verify (DA): the policy covers Calendar only; a Reminders grant that
+            // `--setup` can still create keeps its own line.
+            if remindersNeedSetup {
+                if pathHasControlChars(runningBinaryPath) {
+                    lines.append("[banner] Reminders access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Reminders for binary at \(safePath)")
+                } else {
+                    lines.append("[banner] Reminders access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup")
+                }
+            }
         } else if !calendarAccessGranted, !hostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
                 lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
