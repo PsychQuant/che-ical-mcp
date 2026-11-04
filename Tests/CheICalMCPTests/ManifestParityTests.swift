@@ -173,29 +173,55 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertEqual(offending, [], "served tool text must not contain & < > (#166)")
     }
 
-    /// #231: `alarms[].minutes_before` flips EventKit's sign (EventKit: negative =
-    /// before), so both places a client first reads about the field state the sign.
     /// #261: the create tools say that a save reported as an error but found saved succeeds, and
     /// that `store_differs` names the differing fields with the exact keys `NewObjectSave.Fields`
     /// compares; undo says its message names them. Both in defineTools() and in the manifest.
+    /// #291 item 6: the keys are read from the list in the store_differs sentence and compared
+    /// with the constants both ways, so a key missing from the list and a key the list adds both fail.
     func testCreateAndUndoDescriptionsNameTheStoreDiffersKeys() throws {
         let data = try Data(contentsOf: try locateManifest())
         let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let entries = manifest?["tools"] as? [[String: Any]] ?? []
         func declared(_ name: String) -> String { CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? "" }
         func summary(_ name: String) -> String { entries.first { $0["name"] as? String == name }?["description"] as? String ?? "" }
-        for key in NewObjectSave.reminderFieldNames {
-            XCTAssertTrue(declared("create_reminder").contains("`\(key)`"), "create_reminder lists \(key)")
+        for (name, keys) in [("create_reminder", NewObjectSave.reminderFieldNames), ("create_calendar", NewObjectSave.listFieldNames)] {
+            for (place, text) in [("defineTools()", declared(name)), ("mcpb/manifest.json", summary(name))] {
+                XCTAssertEqual(Self.storeDiffersKeys(in: text), keys, "\(place) \(name): \(text)")
+            }
         }
-        for key in NewObjectSave.listFieldNames {
-            XCTAssertTrue(declared("create_calendar").contains("`\(key)`"), "create_calendar lists \(key)")
-        }
+        // #291 item 5: a retried create's duplicate check may not match an item the store holds
+        // differently, so every create that can answer store_differs warns of a second copy.
+        let warning = "again with the same parameters may make a second copy"
         for name in ["create_reminder", "create_reminders_batch", "create_calendar"] {
             XCTAssertTrue(declared(name).contains("store_differs") && declared(name).contains("note"), "defineTools() \(name)")
             XCTAssertTrue(summary(name).contains("store_differs"), "mcpb/manifest.json \(name): \(summary(name))")
+            for (place, text) in [("defineTools()", declared(name)), ("mcpb/manifest.json", summary(name))] {
+                XCTAssertTrue(text.contains(warning), "\(place) \(name): \(text)")
+            }
         }
         XCTAssertTrue(declared("undo").contains("names those fields"), declared("undo"))
         XCTAssertTrue(summary("undo").contains("names the fields"), summary("undo"))
+    }
+
+    /// The keys listed after "store_differs lists their keys, from ": backticked names joined by
+    /// ", " or " and ", up to the first other text. Nil without that sentence.
+    static func storeDiffersKeys(in text: String) -> [String]? {
+        guard let start = text.range(of: "store_differs lists their keys, from ") else { return nil }
+        var rest = text[start.upperBound...]
+        var keys: [String] = []
+        while rest.hasPrefix("`"), let close = rest.dropFirst().firstIndex(of: "`") {
+            keys.append(String(rest[rest.index(after: rest.startIndex)..<close]))
+            rest = rest[rest.index(after: close)...]
+            guard let separator = [", ", " and "].first(where: { rest.hasPrefix($0) && rest.dropFirst($0.count).hasPrefix("`") }) else { break }
+            rest = rest.dropFirst(separator.count)
+        }
+        return keys
+    }
+
+    func testTheKeyListReaderStopsAtTheEndOfTheList() {
+        XCTAssertEqual(Self.storeDiffersKeys(in: "x store_differs lists their keys, from `a`, `b c` and `d`, and note says `e`."), ["a", "b c", "d"])
+        XCTAssertEqual(Self.storeDiffersKeys(in: "store_differs lists their keys, from `a` and `b`, and `c`"), ["a", "b"])
+        XCTAssertNil(Self.storeDiffersKeys(in: "store_differs names `a`"))
     }
 
     /// #377 verify: the undo of a series created here whose first occurrence was deleted later is
@@ -211,6 +237,8 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("a series created here whose first occurrence was deleted later is refused until the user discards it"), summary)
     }
 
+    /// #231: `alarms[].minutes_before` flips EventKit's sign (EventKit: negative =
+    /// before), so both places a client first reads about the field state the sign.
     func testReminderReadToolsStateTheSignOfMinutesBefore() throws {
         let sign = "positive = before the due date, negative = after"
         let data = try Data(contentsOf: try locateManifest())
@@ -348,7 +376,7 @@ final class ManifestParityTests: XCTestCase {
             ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
              "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the scan window",
              "a series deleted whole comes back from its rules with its exceptions inside the scan window restored"),
-            ("#261: a delete_reminder undo names the fields the store holds differently, in a batch too",
+            ("#261: a single delete_reminder undo names the fields the store holds differently (the batch clause follows)",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
             ("#248 (#261): a batch undo names the first five restored reminders whose store differs, then counts, finished or part-way",

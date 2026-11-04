@@ -4,7 +4,7 @@ import XCTest
 
 final class ReminderCompletionInstantTests: XCTestCase {
     func testRepeatedCompletionKeepsOriginalInstant() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         let original = Date(timeIntervalSince1970: 100)
         reminder.isCompleted = true
         reminder.completionDate = original
@@ -13,7 +13,7 @@ final class ReminderCompletionInstantTests: XCTestCase {
         XCTAssertEqual(reminder.completionDate, original)
     }
     func testCompletionTransitionUsesNowAndReopeningClearsIt() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         let now = Date(timeIntervalSince1970: 200)
         ReminderCompletionWrite.applyRequest(to: reminder, completed: true, now: now)
         XCTAssertEqual(reminder.completionDate, now)

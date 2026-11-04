@@ -208,7 +208,7 @@ final class ReminderCompletionUndoTests: XCTestCase {
 
     func testSnapshotFromEKReminderCapturesTheCompletionInstant() {
         // In-memory EKReminder; nothing is fetched or saved, so no TCC prompt.
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.title = "Done"
         reminder.completionDate = Self.recordedCompletion
         let snapshot = ReminderCompletionSnapshot(from: reminder)
@@ -246,7 +246,7 @@ final class ReminderCompletionUndoTests: XCTestCase {
     func testApplyWritesTheRecordedInstantOverEventKitsOwnStamp() {
         // The write the fix actually performs, on an in-memory EKReminder: setting
         // isCompleted makes EventKit stamp "now"; the recorded instant must win.
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         ReminderCompletionWrite(isCompleted: true, completionDate: Self.recordedCompletion).apply(to: reminder)
         XCTAssertTrue(reminder.isCompleted)
         XCTAssertEqual(reminder.completionDate, Self.recordedCompletion)
@@ -256,7 +256,7 @@ final class ReminderCompletionUndoTests: XCTestCase {
     }
 
     func testReminderSnapshotCapturesTheCompletionInstant() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         reminder.calendar = EKCalendar(for: .reminder, eventStore: store)   // in-memory; the snapshot reads calendar.title
         reminder.title = "Edited later"

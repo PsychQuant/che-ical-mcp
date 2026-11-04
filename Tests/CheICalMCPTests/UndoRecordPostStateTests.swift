@@ -5,7 +5,7 @@ import XCTest
 /// #236: which state each undo / redo arm checks before it writes. One test per arm of the
 /// diagnosis table; the arms that write to no existing item check nothing.
 final class UndoRecordPostStateTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var calendar = EKCalendar(for: .event, eventStore: store)
     private lazy var list = EKCalendar(for: .reminder, eventStore: store)
     private let instant = Date(timeIntervalSince1970: 1_800_000_000)

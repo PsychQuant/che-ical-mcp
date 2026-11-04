@@ -45,7 +45,7 @@
     },
     {
       "name": "create_calendar",
-      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently)"
+      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title` and `account`, and creating it again with the same parameters may make a second copy)"
     },
     {
       "name": "delete_calendar",
@@ -73,7 +73,7 @@
     },
     {
       "name": "create_reminder",
-      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently)"
+      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy)"
     },
     {
       "name": "update_reminder",
@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags support; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does)"
+      "description": "Create multiple reminders at once (with tags support; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy)"
     },
     {
       "name": "delete_reminders_batch",

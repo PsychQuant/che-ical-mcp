@@ -7,7 +7,7 @@ import XCTest
 /// EKEvent ignores `availability` (it stays `.notSupported`), so these tests work on values; the
 /// write itself is checked on device.
 final class EventAvailabilityTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var calendar = EKCalendar(for: .event, eventStore: store)
 
     private func snapshot(availability: EKEventAvailability, title: String = "Focus") -> EventSnapshot {

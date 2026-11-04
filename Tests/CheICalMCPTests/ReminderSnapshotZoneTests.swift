@@ -21,7 +21,7 @@ final class ReminderSnapshotZoneTests: XCTestCase {
     /// from `.current` cannot pass for the recorded one.
     private let newYork = TimeZone(identifier: "America/New_York")!
     private let now = Date(timeIntervalSince1970: 1_900_000_000)
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private lazy var list = EKCalendar(for: .reminder, eventStore: store)
 
     private func makeReminder() -> EKReminder {

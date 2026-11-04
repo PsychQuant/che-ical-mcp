@@ -6,7 +6,7 @@ import XCTest
 /// identifier (#226, on device). The undo record has to carry the identifier the event has after
 /// the save, or the undo looks the event up under the old one and fails as not found.
 final class EventUpdateRecordTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private func snapshot(title: String) -> EventSnapshot {
         let event = EKEvent(eventStore: store)

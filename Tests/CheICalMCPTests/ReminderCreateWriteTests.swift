@@ -10,7 +10,7 @@ import XCTest
 final class ReminderCreateWriteTests: XCTestCase {
     /// Not the host zone, so a zone taken from `.current` cannot pass for the written one.
     private let newYork = TimeZone(identifier: "America/New_York")!
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private func newReminder() -> EKReminder {
         let reminder = EKReminder(eventStore: store)

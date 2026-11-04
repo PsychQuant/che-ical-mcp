@@ -95,7 +95,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo fails on its first write (#248)
 - **WHEN** the first write of a batch undo fails and other members have not been attempted
-- **THEN** no member is confirmed restored and the later members are not attempted; the failing member may still have been written (an event whose save failed after the store took it) or left pending (a reminder whose removal after a failed save also failed), so the error asks to check before running undo again; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error would drop that member and keep the others
+- **THEN** no member is confirmed restored and the later members are not attempted; the error names the failing member (its recorded title, quotes replaced and capped); unless that member failed because its calendar or list was not found, which happens before anything is written (then the error says a retry adds no copy of it, #292), its restore may have left something written (an event whose save failed after the store took it, a reminder left pending when its removal after a failed save also failed, a series restore that was rolled back), so the error asks to check before running undo again; the record stays under the same id with the failing member placed to run last, so the next undo tries the others first; a permanent member error would drop that member and keep the others
 
 #### Scenario: Batch undo restores a reminder the store holds differently (#248, #261)
 - **WHEN** a batch undo recreates a reminder whose save reported a failure, and a new store finds it with compared fields differing from what was saved
@@ -103,7 +103,7 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 
 #### Scenario: Batch undo of one member left fails (#248)
 - **WHEN** a batch undo has one member left to run, no other member is restored by that undo, and that member's write fails
-- **THEN** the member error stands and the record stays as it was, under the same id, as for a single record; as on a first write, the failing member is not confirmed restored but may still have been written or left pending, and that error does not ask to check first; a permanent member error discards the record
+- **THEN** the record stays as it was, under the same id; as on a first write, the failing member is not confirmed restored but may still have been written or left pending, so the error says no item is confirmed restored, names the member, asks to check before running undo again (unless the member's error came before any write: its calendar or list was not found), and gives the member's own error last (#292); a permanent member error stands alone and discards the record
 
 #### Scenario: Rule of a created series shortened
 - **WHEN** undo of `create_event` finds the series' rule shortened (one rule before and after, the same pattern, a smaller count, an earlier end, or an end where there was none), as an update or delete of an occurrence and the following ones leaves it

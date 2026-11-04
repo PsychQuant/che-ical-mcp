@@ -2650,8 +2650,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// lists first and only then creates the reminder (#277), saves it through `saveNewReminder`,
     /// and returns its recorded title with the compared fields a new store holds differently
     /// (none when the save succeeded or the store holds it as written). A save that threw but that
-    /// a new store finds counts as the restore, so the record is consumed and a retry cannot make
-    /// a second copy. The names are data: callers build their note from them, never from text.
+    /// a new store finds counts as the restore, so a retry cannot make a second copy: a single
+    /// undo's record is consumed, and in a batch the member counts as restored and is left out of
+    /// the entry that is kept (#248). The names are data: callers build their note from them, never from text.
     func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String]) {
         let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
         let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder", restoring: true)
@@ -2661,8 +2662,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// The message of a delete-undo: the restore, then `NewObjectSave.undoSuffix` naming the fields
     /// the store holds differently, if any. The title is shown through `undoShownTitle` (quotes
-    /// replaced, control characters dropped, capped), so a title that holds the note's wording
-    /// stays inside its quotes and cannot pass for the note (`NewObjectSaveTests`).
+    /// replaced, control characters dropped, capped at 120 scalars), so it cannot close its quotes
+    /// or start a line, and the real note is always outside the quotes (`NewObjectSaveTests`).
+    /// Inside its quotes a title can still read like the note, and a literal U+2019 in it looks the
+    /// same as a replaced quote.
     static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String {
         "Undone: restored reminder '\(undoShownTitle(restored.title))'" + NewObjectSave.undoSuffix(restored.storeDiffers)
     }

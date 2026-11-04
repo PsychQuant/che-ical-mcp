@@ -7,7 +7,7 @@ import XCTest
 /// single-occurrence delete recreated the whole series beside the original (on device: 3
 /// occurrences, delete one, 2, undo, 5). The record now says what the delete removed.
 final class DeleteUndoTests: XCTestCase {
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
     private let firstStart = Date(timeIntervalSince1970: 1_800_000_000)
     private let week: TimeInterval = 7 * 86_400
 

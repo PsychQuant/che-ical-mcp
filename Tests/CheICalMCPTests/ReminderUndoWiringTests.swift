@@ -19,11 +19,12 @@ final class ReminderUndoWiringTests: XCTestCase {
         try source("EventKitManager.swift")
     }
 
-    /// The text from `start` up to the first `end` after it, without comments.
+    /// The text from `start` up to the first `end` after it, without comments. Fails when either
+    /// marker is missing (#291 item 7: a missing end used to give the rest of the file).
     private func slice(_ source: String, from start: String, to end: String) throws -> String {
         let lower = try XCTUnwrap(source.range(of: start), "missing \(start)")
-        let upper = source.range(of: end, range: lower.upperBound..<source.endIndex)?.lowerBound ?? source.endIndex
-        return Self.strippingComments(String(source[lower.lowerBound..<upper]))
+        let upper = try XCTUnwrap(source.range(of: end, range: lower.upperBound..<source.endIndex), "missing \(end) after \(start)")
+        return Self.strippingComments(String(source[lower.lowerBound..<upper.lowerBound]))
     }
 
     /// Drops `//` and `/* */` comments, keeping string literals. A single-line string cannot span
@@ -101,16 +102,16 @@ final class ReminderUndoWiringTests: XCTestCase {
         let undo = try slice(try managerSource(), from: "func executeUndo(", to: "func executeRedo(")
         // #261: the delete arm (single and batch) recreates through `restoreDeletedReminder`.
         XCTAssertTrue(undo.contains("case .deleteReminder(let snapshot):\n            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))"), undo)
-        // Each slice ends where its arm or function ends: the next case, or the closing brace of
-        // `restoreDeletedReminder`.
-        let arms = [("func restoreDeletedReminder(",
-                     "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })",
-                     "\n    }\n"),
-                    ("case .updateReminder(_, let oldSnapshot, _):",
-                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })",
-                     "\n        case .")]
-        for (start, call, end) in arms {
-            let arm = try slice(undo, from: start, to: end)
+        // Each slice ends where its arm or function ends: the next case, or, for
+        // `restoreDeletedReminder`, the brace that closes it (#291 item 7: brace-matched, so the
+        // slice cannot run on into the next declaration).
+        let restore = try XCTUnwrap(SourcePins.body(of: "func restoreDeletedReminder(", in: try managerSource()),
+                                    "missing func restoreDeletedReminder(")
+        let arms = [(restore,
+                     "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })"),
+                    (try slice(undo, from: "case .updateReminder(_, let oldSnapshot, _):", to: "\n        case ."),
+                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })")]
+        for (arm, call) in arms {
             XCTAssertFalse(arm.contains("func restoredReminderMessage"), arm)
             let callRange = try XCTUnwrap(arm.range(of: call), arm)
             let before = arm[..<callRange.lowerBound]

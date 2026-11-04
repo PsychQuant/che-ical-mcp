@@ -4,7 +4,7 @@ import XCTest
 
 final class ReminderPageTests: XCTestCase {
     func testOnlySelectedPageIsMaterialized() {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let input = (0..<2000).map { index in
             let reminder = EKReminder(eventStore: store)
             reminder.title = String(index)
@@ -43,7 +43,7 @@ final class ReminderPageTests: XCTestCase {
         XCTAssertEqual(page.reminders.map(\.calendarItemIdentifier), ["b"])
     }
     func testNilCalendarSnapshotIsSafe() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.title = "orphan"
         XCTAssertNil(reminder.calendar)
         XCTAssertEqual(ReminderReadSnapshot(from: reminder).calendar.title, "")

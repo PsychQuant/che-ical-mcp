@@ -59,7 +59,10 @@ private func isHiddenInUndoText(_ scalar: Unicode.Scalar) -> Bool {
 
 /// The title as the undo history, an "Undone:" / "Redone:" text or a redo instruction shows it:
 /// hidden characters dropped (`isHiddenInUndoText`), nothing else changed (PR #259 round 7: these
-/// texts are not trusted error messages, so quotes stay and the title is not cut).
+/// texts are not trusted error messages, so quotes stay and the title is not cut). Two "Undone:"
+/// texts show the title through `undoShownTitle` instead, because a note can follow it: the undo of
+/// `delete_reminder` ("Undone: restored reminder '…'", #261) and the batch entries naming a
+/// restored reminder whose store differs (`UndoRestoredDifference`).
 func undoVisibleTitle(_ title: String) -> String {
     String(String.UnicodeScalarView(EventKitErrorSanitizer.sanitizeForInterpolation(title).unicodeScalars
         .filter { !isHiddenInUndoText($0) }))

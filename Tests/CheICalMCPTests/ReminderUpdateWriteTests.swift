@@ -27,7 +27,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
 
     /// As v1.17/v1.18 left it: due moved to Oct 8, start and alarm still on Oct 4.
     private func divergedReminder() -> EKReminder {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.dueDateComponents = components(date(10, 8, 10))
         reminder.startDateComponents = components(date(10, 4, 10))
         reminder.addAlarm(EKAlarm(absoluteDate: date(10, 4, 10)))
@@ -87,7 +87,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
     }
 
     func testTheCalendarResolvedBeforehandIsApplied() throws {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let reminder = EKReminder(eventStore: store)
         let list = EKCalendar(for: .reminder, eventStore: store)
 
@@ -133,7 +133,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
 
     /// The no-due refusal holds inside `apply` as well, before anything is written.
     func testApplyRefusesRealignWithNoDueBeforeWriting() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.title = "Old"
         var saves = 0
 
@@ -175,7 +175,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
     /// re-read first (`refresh()`), so an edit made in Reminders.app is the base; `false` means it
     /// is gone, the #236 convention.
     func testFreshReminderReReadsBeforeHandingTheReminderOut() throws {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         var refreshed: [EKReminder] = []
 
         let fresh = try ReminderUpdateWrite.freshReminder(identifier: "r", lookup: { _ in reminder },
@@ -187,7 +187,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
     }
 
     func testFreshReminderTreatsAFailedReReadAsNotFound() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
 
         XCTAssertThrowsError(try ReminderUpdateWrite.freshReminder(identifier: "gone", lookup: { _ in reminder },
                                                                    refresh: { _ in false })) { error in
@@ -205,7 +205,7 @@ final class ReminderUpdateWriteTests: XCTestCase {
 
     /// As Reminders.app makes a timed reminder: a start and an absolute alarm at the due.
     private func timedReminder() -> EKReminder {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.dueDateComponents = components(date(10, 18, 17))
         reminder.startDateComponents = components(date(10, 18, 17))
         reminder.addAlarm(EKAlarm(absoluteDate: date(10, 18, 17)))

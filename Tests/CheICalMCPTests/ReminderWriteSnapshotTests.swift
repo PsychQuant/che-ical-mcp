@@ -11,7 +11,7 @@ final class ReminderWriteSnapshotTests: XCTestCase {
         _ = (get, update, create)
     }
     func testWriteResultIsAValueIndependentOfLaterMutation() {
-        let reminder = EKReminder(eventStore: EKEventStore())
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
         reminder.title = "Before"
         reminder.notes = "body\n#tag"
         let value = ReminderWriteSnapshot(from: reminder)

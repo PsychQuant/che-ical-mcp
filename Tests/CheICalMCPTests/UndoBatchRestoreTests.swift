@@ -399,11 +399,86 @@ final class UndoBatchRestoreTests: XCTestCase {
         }
     }
 
-    func testAFailureOfTheOnlyMemberRethrowsTheMemberErrorUnchanged() {
+    /// #292 item 3: the only member left fails before anything is restored. The record is put back
+    /// as it was, and the error, like every part-way error, says that the member's save may have
+    /// written it, so a retry can add a second copy, and gives the member's own error last. It used
+    /// to be the member error alone, which says nothing of the second copy.
+    func testAFailureOfTheOnlyMemberAsksToCheckFirstAndEndsWithTheMemberError() throws {
         let failure = UndoOperation.batchUndoFailure(members: [deleted("A")],
                                                      interrupted: .init(completed: 0, underlying: SaveFailed.failed),
-                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
-        XCTAssertTrue(failure is SaveFailed, "nothing was written and nothing else waits: \(failure)")
+                                                     describe: { _ in "eventkit_error_1" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(titles(partial.remaining), ["A"], "the record as it was")
+        XCTAssertEqual(partial.restoredCount, 0)
+        XCTAssertEqual(partial.failing, .runsLast)
+        XCTAssertTrue(partial.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), partial.message)
+        XCTAssertTrue(partial.message.contains("running undo again can add a second copy: check first."), partial.message)
+        XCTAssertTrue(partial.message.hasSuffix(": eventkit_error_1"), partial.message)
+        XCTAssertFalse(partial.message.contains("0 item") || partial.message.contains("the other"), partial.message)
+        XCTAssertFalse(partial.message.contains("not only the one that failed"), "one item left: \(partial.message)")
+    }
+
+    /// PR #390 round 1: the check-first sentence names the item that failed (its title shown
+    /// through `undoShownTitle`), and a failure the restore raises before it writes anything (its
+    /// calendar or list not found) says no second copy can come of it instead.
+    func testThePartialErrorNamesTheFailedItemAndWhetherItCanHaveBeenWritten() throws {
+        func partial(_ members: [UndoOperation], _ error: Error) throws -> UndoBatchPartiallyUndoneError {
+            let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 0, underlying: error),
+                                                         describe: { _ in "eventkit_error_1" })
+            return try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        }
+        let saved = try partial([deleted("Bob's lunch")], SaveFailed.failed)
+        XCTAssertTrue(saved.message.contains("The restore of 'Bob\u{2019}s lunch' may have left something written"), saved.message)
+        XCTAssertTrue(saved.message.contains("running undo again can add a second copy: check first."), saved.message)
+
+        let lookups: [Error] = [EventKitError.calendarNotFound(identifier: "cal-1"),
+                                EventKitError.calendarNotFoundWithSource(name: "Work", source: "iCloud"),
+                                EventKitError.undoListMissing(reminder: "R", hasIdentifier: true,
+                                                              kind: .recreateDeleted)]
+        for error in lookups {
+            for members in [[reminderDeleted("R")], [deleted("A"), reminderDeleted("R")]] {
+                let lookup = try partial(members, error)
+                XCTAssertTrue(lookup.message.contains("'R' failed before anything of it was written"), "\(error): \(lookup.message)")
+                XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
+            }
+        }
+        // #269: an event's recorded calendar not found (`undoCalendarMissing`) comes before any
+        // write too, with and without a recorded identifier.
+        for hasIdentifier in [true, false] {
+            let error = EventKitError.undoCalendarMissing(event: "E", hasIdentifier: hasIdentifier, kind: .recreateDeleted)
+            for members in [[deleted("E")], [deleted("A"), deleted("E")]] {
+                let lookup = try partial(members, error)
+                XCTAssertTrue(lookup.message.contains("'E' failed before anything of it was written"), "\(error): \(lookup.message)")
+                XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
+            }
+        }
+
+        // #323 (PR #406): the part-way text names what the restored members did, from their outcomes,
+        // next to the failed item and whether it can have been written.
+        for (error, written) in [(SaveFailed.failed as Error, true),
+                                 (EventKitError.undoCalendarMissing(event: "E", hasIdentifier: true, kind: .recreateDeleted), false)] {
+            let failure = UndoOperation.batchUndoFailure(members: [deleted("E"), occurrence("O")],
+                                                         interrupted: .init(completed: 1, underlying: error),
+                                                         events: [.occurrenceOneOff(notCarriedOver: ["absolute_alarms"])],
+                                                         describe: { _ in "eventkit_error_1" })
+            let composed = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+            XCTAssertTrue(composed.message.contains("For the items restored: Not carried over: absolute_alarms"), composed.message)
+            XCTAssertEqual(composed.message.contains("The restore of 'E' may have left something written"), written, composed.message)
+            XCTAssertEqual(composed.message.contains("'E' failed before anything of it was written"), !written, composed.message)
+            XCTAssertTrue(composed.message.hasSuffix(": eventkit_error_1"), composed.message)
+        }
+
+        // PR #390 round 2: a one-member batch whose series restore failed and was rolled back
+        // (#285/#405) is an after-write failure, but neither a save that the store took nor a
+        // reminder left pending: the sentence names no such cause.
+        let series = try partial([deleted("S")], EventKitError.seriesExceptionsRestoreFailed(reason: "x"))
+        XCTAssertTrue(series.message.contains("The restore of 'S' may have left something written, so running undo again can add a second copy: check first."), series.message)
+        XCTAssertFalse(series.message.contains("the store took it") || series.message.contains("removal after a failed save"), series.message)
+
+        // A nested batch's remainder has no one title: the sentence stays general.
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
+        let nested = try partial([.batch([deleted("Y")])], inner)
+        XCTAssertTrue(nested.message.contains("Its restore may have left something written"), nested.message)
     }
 
     /// A permanent member error (`UnrecoverableUndoError`) means that member can never be restored.
@@ -755,8 +830,9 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     /// A batch holding a member that may not run last keeps the recorded order: after a write the
-    /// failing member stays in its place and runs first again; with nothing written the member error
-    /// stands and the record is put back whole.
+    /// failing member stays in its place and runs first again; with nothing written the record is put
+    /// back whole, and the error says no item is confirmed restored and asks to check first (#292
+    /// items 2 and 3).
     func testMembersThatMayNotRunLastKeepTheirRecordedOrder() throws {
         let members = ["A", "B", "C"].map(edited)
         let failure = UndoOperation.batchUndoFailure(members: members,
@@ -770,7 +846,37 @@ final class UndoBatchRestoreTests: XCTestCase {
         let nothing = UndoOperation.batchUndoFailure(members: members,
                                                      interrupted: .init(completed: 0, underlying: SaveFailed.failed),
                                                      describe: { _ in "eventkit_error_1" })
-        XCTAssertTrue(nothing is SaveFailed, "\(nothing)")
+        let whole = try XCTUnwrap(nothing as? UndoBatchPartiallyUndoneError, "\(nothing)")
+        XCTAssertEqual(whole.failing, .inRecordedOrder)
+        XCTAssertEqual(ids(whole.remaining), ["A", "B", "C"], "the record as it was")
+        XCTAssertTrue(whole.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), whole.message)
+        XCTAssertTrue(whole.message.contains("check first"), whole.message)
+    }
+
+    /// #292 item 2: with no item restored, neither shape counts "0 items" or speaks of restored
+    /// ones. Both are reached only through a nested batch whose own partial error restored nothing
+    /// (no tool records one today): kept in recorded order, and run last as the only member left.
+    func testANestedFailureWithNothingRestoredSaysNoItemIsConfirmedRestored() throws {
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Z"), deleted("Y")], restoredCount: 0,
+                                                  memberError: "eventkit_error_1")
+        let nested = UndoOperation.batch([deleted("Y"), deleted("Z")])
+        let shapes: [(members: [UndoOperation], failing: UndoBatchPartiallyUndoneError.FailingMember)] = [
+            ([edited("A"), nested], .inRecordedOrder),
+            ([nested], .runsLast),
+        ]
+        for (members, failing) in shapes {
+            let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 0, underlying: inner),
+                                                         describe: { _ in "unused" })
+            let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+            XCTAssertEqual(partial.failing, failing)
+            XCTAssertEqual(partial.restoredCount, 0)
+            XCTAssertTrue(partial.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), partial.message)
+            for wrong in ["0 items", "0 item", "the other", "part-way", "restored ones"] {
+                XCTAssertFalse(partial.message.contains(wrong), "\(failing): \(wrong): \(partial.message)")
+            }
+            XCTAssertTrue(partial.message.contains("check first"), partial.message)
+            XCTAssertTrue(partial.message.hasSuffix(": eventkit_error_1"), partial.message)
+        }
     }
 
     /// The reminder batch builder records only reminder deletes (#243).
@@ -787,13 +893,14 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// PR #282 round 5, findings 1, 6, 9: a failed save may have written the item (an event that
     /// committed and then threw; a reminder whose removal after the failure failed), so the text
     /// says a retry can add a second copy. A reminder that a new store finds counts as restored
-    /// (#280 round 7), so it is not one of them.
+    /// (#280 round 7), so it is not one of them. Since PR #390 round 2 the text names no cause, so it
+    /// also holds for a series restore that was rolled back (#285).
     func testThePartialErrorSaysARetryCanAddASecondCopy() {
         for restoredCount in [0, 2] {
             let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: restoredCount,
                                                       memberError: "eventkit_error_1")
             XCTAssertTrue(error.message.contains("running undo again can add a second copy"), error.message)
-            XCTAssertTrue(error.message.contains("an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed"), error.message)
+            XCTAssertTrue(error.message.contains("Its restore may have left something written"), error.message)
             XCTAssertFalse(error.message.contains("differs"), error.message)
         }
     }
@@ -981,12 +1088,13 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// the outer members restored before it and the nested batch's own restored members are both
     /// named, outer first, and the cap counts them together.
     func testANestedFailureNamesTheOuterAndTheInnerRestoredDifferences() throws {
+        // #292 item 4a: four outer reminders restored (`completed: 4`), each with its difference.
         let outer = (1...4).map { UndoRestoredDifference(title: "O\($0)", storeDiffers: ["due"]) }
         let innerDiffering = (1...3).map { UndoRestoredDifference(title: "I\($0)", storeDiffers: ["notes"]) }
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 3, memberError: "eventkit_error_1",
                                                   restoredDiffering: innerDiffering)
-        let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")]), reminderDeleted("R")]
-        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 1, underlying: inner),
+        let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")])] + (1...4).map { reminderDeleted("O\($0)") }
+        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 4, underlying: inner),
                                                      differing: outer, describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
         XCTAssertEqual(partial.restoredDiffering, outer + innerDiffering, "outer first, then the nested batch's")

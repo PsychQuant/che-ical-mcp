@@ -5,7 +5,7 @@ import XCTest
 final class EventCopyOperationTests: XCTestCase {
     enum Failure: Error { case save, remove }
     private func snapshot() -> EventSnapshot {
-        let store = EKEventStore()
+        let store = SharedTestStore.store
         let event = EKEvent(eventStore: store)
         event.title = "Source"
         event.startDate = Date(timeIntervalSince1970: 100)

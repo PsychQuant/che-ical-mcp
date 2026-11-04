@@ -213,8 +213,10 @@ extension UndoRestoreDestinationMissingError: TrustedErrorMessage {}
 /// restored members a second time. Where the failing member goes is `failing`.
 ///
 /// The message is author-controlled text plus `memberError`, which is either a sanitized code or
-/// the verbatim message of a `TrustedErrorMessage` (`EventKitErrorSanitizer.writeFailureLog`). That
-/// is the condition under which this type conforms to `TrustedErrorMessage`.
+/// the verbatim message of a `TrustedErrorMessage` (`EventKitErrorSanitizer.writeFailureLog`), and
+/// the recorded titles of items (the failed one, the restored ones whose store differs), shown
+/// through `undoShownTitle`. That is the condition under which this type conforms to
+/// `TrustedErrorMessage`.
 struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// Where the member whose write failed is in `remaining`.
     enum FailingMember: Sendable {
@@ -247,9 +249,14 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     let message: String
     var errorDescription: String? { message }
 
+    /// `failingTitle`: the recorded title of the member that failed (nil for a nested batch's
+    /// remainder), shown through `undoShownTitle`. `failedBeforeWrite`: its error is one the restore
+    /// raises before it writes anything (`UndoOperation.failsBeforeAnyWrite`), so no second copy can
+    /// come of it (PR #390 round 1).
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
          restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = [],
-         restoredEvents: [UndoEventOutcome] = []) {
+         restoredEvents: [UndoEventOutcome] = [],
+         failingTitle: String? = nil, failedBeforeWrite: Bool = false) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
@@ -266,6 +273,10 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             let kept = remaining.count == 1 ? "the 1 item never attempted" : "the \(remaining.count) items never attempted"
             let start = restoredCount == 0 ? "Undo of this batch stopped with no item confirmed restored:" : "Undo of this batch stopped part-way: \(restoredText) restored, then"
             what = "\(start) one item cannot be restored by any retry and was dropped from this history entry; its own error, which names it, follows. The entry was kept with only \(kept), under the same id, so running undo again restores those and not the others a second time."
+        case .runsLast where restoredCount == 0 && remaining.count == 1:
+            // #292 items 2b, 3: the only member left (a nested batch's remainder counts as one), so
+            // there is no other item to try first.
+            what = "Undo of this batch stopped with no item confirmed restored: restoring what is left of it failed. This history entry was kept, under the same id, so running undo again tries it again, unless its calendar or list is now missing or read-only: then the next undo refuses it before it writes anything."
         case .runsLast where restoredCount == 0:
             let others = remaining.count - 1
             what = "Undo of this batch stopped with no item confirmed restored: restoring one item failed. This history entry was kept, under the same id, with that item moved to the end, so running undo again tries the other \(others == 1 ? "item" : "\(others) items") first, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
@@ -273,6 +284,9 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the last one failed. This history entry was kept with only the item that failed, under the same id, so running undo again tries that item and does not restore the restored ones a second time, unless its calendar or list is now missing or read-only: then the next undo refuses it before it writes anything."
         case .runsLast:
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only the \(remaining.count) items not yet restored, under the same id, and the item that failed comes last, so running undo again does not restore the restored ones a second time and tries the item that failed after the others, unless its calendar or list is now missing or read-only: then the next undo refuses the whole batch before it writes anything."
+        case .inRecordedOrder where restoredCount == 0:
+            // #292 item 2a: nothing restored, so nothing to leave out of the entry.
+            what = "Undo of this batch stopped with no item confirmed restored: restoring one item failed. This history entry was kept, under the same id, in its recorded order, so running undo again tries the item that failed first."
         case .inRecordedOrder:
             let left = remaining.count == 1 ? "the item that failed" : "the \(remaining.count) items not yet restored"
             what = "Undo of this batch stopped part-way: \(restoredText) restored, then restoring the next one failed. This history entry was kept with only \(left), under the same id, in their recorded order, so running undo again tries the item that failed first and does not restore the restored ones a second time."
@@ -286,7 +300,17 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .dropped:
             giveUp = " To give up the rest of this undo, ask the user; if they agree, read undo_history and call undo with discard_id set to its id."
         case .runsLast, .inRecordedOrder:
-            giveUp = " Its save may have written it anyway (an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed), so running undo again can add a second copy: check first. If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+            let item = failingTitle.map { "'\(undoShownTitle($0))'" }
+            let written: String
+            if failedBeforeWrite {
+                written = " \(item ?? "The item that failed") failed before anything of it was written (its calendar or list was not found), so running undo again does not add a copy of it."
+            } else {
+                // PR #390 round 2: no cause named, so the sentence holds for every failure after the
+                // restore began (a save the store took, a reminder left pending, a series restore
+                // rolled back, #285).
+                written = " \(item.map { "The restore of \($0)" } ?? "Its restore") may have left something written, so running undo again can add a second copy: check first."
+            }
+            giveUp = written + " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
                 + (remaining.count > 1 ? " That drops every item not yet restored, not only the one that failed." : "")
         }
         message = what + loss + giveUp + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(memberError)"
@@ -311,15 +335,18 @@ extension UndoOperation {
     ///   when it keeps failing. When one may not (no batch records such a kind today), the recorded
     ///   order is kept and the failing member runs first again.
     /// - When no member was restored and the record would not change (no other member waits, or the
-    ///   order is kept), the member error stands and the record is put back whole, as for a single
-    ///   record; the failing member may still have been written, which that error does not say.
+    ///   order is kept), the record is put back whole too, through the same partial error: the
+    ///   failing member may still have been written, so its text asks to check first, and the
+    ///   member's own error follows it (#292 item 3; the member error used to stand alone, and it
+    ///   does not say this).
     ///
     /// Every partial error carries the members this call restored, so what they did not carry over
     /// is named once (PR #278 round 3).
     ///
     /// A failing member that is itself a batch stopped part-way is replaced by its own remainder (no
     /// nested batch is recorded today). `describe` gives the member error for the message; it is
-    /// called only when the record is narrowed or reordered.
+    /// called for every partial error, and not when the member error stands alone (a permanent one
+    /// with nothing restored and nothing waiting).
     static func batchUndoFailure(members: [UndoOperation], interrupted: UndoBatchRunner.Interrupted,
                                  differing: [UndoRestoredDifference] = [], events: [UndoEventOutcome] = [],
                                  describe: (Error) -> String) -> Error {
@@ -337,11 +364,16 @@ extension UndoOperation {
         // Every branch reports the restored members and their differences the same way (PR #282
         // round 6, finding 18: two branches used to pass them on separately, and dropping them
         // there went unnoticed).
+        // The failed member's title, and whether its error came before any write (PR #390 round 1);
+        // a nested batch's remainder has neither.
+        let failingTitle = inner == nil ? members[failedIndex].restoredItemTitle : nil
+        let failedBeforeWrite = inner == nil && failsBeforeAnyWrite(interrupted.underlying)
         func partial(_ remaining: [UndoOperation], _ failing: UndoBatchPartiallyUndoneError.FailingMember,
                      _ memberError: String) -> UndoBatchPartiallyUndoneError {
             UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
                                           failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering,
-                                          restoredEvents: restoredEvents)
+                                          restoredEvents: restoredEvents,
+                                          failingTitle: failingTitle, failedBeforeWrite: failedBeforeWrite)
         }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }
@@ -349,11 +381,38 @@ extension UndoOperation {
         }
         let failing: UndoOperation = inner.map { .batch($0.remaining) } ?? members[failedIndex]
         let runsLast = ([failing] + unattempted).allSatisfy(\.mayRunLastAfterAFailure)
-        if inner == nil, interrupted.completed == 0, unattempted.isEmpty || !runsLast { return interrupted.underlying }
         let memberError = inner?.memberError ?? describe(interrupted.underlying)
         return runsLast
             ? partial([failing] + unattempted, .runsLast, memberError)
             : partial(unattempted + [failing], .inRecordedOrder, memberError)
+    }
+
+    /// PR #390 round 1: the "calendar or list not found" errors a member's restore raises before it
+    /// writes anything, so its failure cannot have left a copy: its calendar (`calendarNotFound`,
+    /// `calendarNotFoundWithSource`, #269's `undoCalendarMissing`) or its reminder list
+    /// (`undoListMissing`). A closed list, and only these: the text says the calendar or list was not
+    /// found. Other errors that also write nothing (an access-gate refusal, `ListDeletedDuringSave`)
+    /// are deliberately not listed, since that sentence would misname their cause; they get the
+    /// check-first text, which is cautious, not wrong.
+    static func failsBeforeAnyWrite(_ error: Error) -> Bool {
+        guard let error = error as? EventKitError else { return false }
+        switch error {
+        case .calendarNotFound, .calendarNotFoundWithSource, .undoCalendarMissing, .undoListMissing: return true
+        default: return false
+        }
+    }
+
+    /// The recorded title of the item a batch member restores (nil for a nested batch and for the
+    /// kinds no batch records), for the partial error. Exhaustive (#196 convention).
+    var restoredItemTitle: String? {
+        switch self {
+        case .deleteEvent(let snapshot): return snapshot.title
+        case .deleteOccurrence(let snapshot, _): return snapshot.title
+        case .deleteReminder(let snapshot): return snapshot.title
+        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
+             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+            return nil
+        }
     }
 
     /// Whether a batch undo may move this member to run last when its write fails (#248 A). True for
