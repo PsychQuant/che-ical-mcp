@@ -123,19 +123,44 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
-    /// The "Reset TCC + re-prompt" section of `--print-tcc-path`, built here (not inline in
-    /// `main.swift`) so it can be pinned without spawning the binary (#357, #368).
+    /// The paste-ready `--print-tcc-path` command for this binary, built like
+    /// `setupCommandHint` (single-quoted clean path; no command for a control-character path).
+    static func printTCCPathHint(binaryPath: String) -> String {
+        guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
+            return "the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --print-tcc-path "
+                + "(its path has control characters, so no command is printed)"
+        }
+        return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --print-tcc-path"
+    }
+
+    static func resolvedPrintTCCPathHint() -> String {
+        printTCCPathHint(binaryPath: RunningBinaryPath.current())
+    }
+
+    /// What stands where `tccutil reset <service> com.checheng.CheICalMCP` stood (#357): that
+    /// command fails with -10814 for a bare binary (no LaunchServices registration, README
+    /// erratum). The text does not depend on the status or on which process macOS checks —
+    /// `--print-tcc-path` shows that — and carries no reset of any kind, because it reaches the
+    /// model (access-denied, unknown state) and agents read the banner and `--print-tcc-path`.
+    static func agnosticRemedy(pane: String, printTCCPathHint: String) -> String {
+        "run \(printTCCPathHint) on the Mac to see which process macOS checks; in System Settings → "
+            + "Privacy & Security → \(pane) switch that entry on, or off and on (if two CheICalMCP rows are "
+            + "listed, one at a time, re-checking --print-tcc-path); whether the switch clears a "
+            + "code-requirement mismatch is not yet confirmed (#382)"
+    }
+
+    /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)
+    /// so it can be pinned without spawning the binary (#357, #368). It carries no reset (#357).
     static func printTCCPathRepromptSection(
-        bundleID: String = "com.checheng.CheICalMCP",
         binaryPath: String,
         calendarStatus: EKAuthorizationStatus,
         remindersStatus: EKAuthorizationStatus
     ) -> String {
         var lines = [
-            "Reset TCC + re-prompt (run from Terminal, NOT over SSH):",
-            "  tccutil reset Calendar \(bundleID)",
-            "  tccutil reset Reminders \(bundleID)",
+            "Re-prompt (run from Terminal, NOT over SSH):",
             "  \(setupCommandHint(binaryPath: binaryPath))",
+            "  If that does not restore access: "
+                + agnosticRemedy(pane: "Calendar / Reminders", printTCCPathHint: printTCCPathHint(binaryPath: binaryPath)),
         ]
         // #368: a `restricted` status comes from a configuration profile or Screen Time; no
         // prompt appears for it, so nothing in this section can change it.
@@ -184,7 +209,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         deniedByStatus: Bool,
         setupHint: String,
         attribution: ResponsibleHostKind? = nil,
-        restrictedByPolicy: Bool = false
+        restrictedByPolicy: Bool = false,
+        printTCCPathHint: String = "CheICalMCP --print-tcc-path"
     ) -> String {
         if restrictedByPolicy {
             let checked: String
@@ -231,8 +257,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
             1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
             \(setupHint)
-            2. Or manually add CheICalMCP in: \
-            System Settings → Privacy & Security → \(type)
+            2. Or switch CheICalMCP on in System Settings → Privacy & Security → \(type) \
+            (if it is not listed, step 1 adds it: an app appears there once it requests access)
             3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
             """
         }
@@ -256,9 +282,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
             `disclaimer` wrapper entirely (see #132): in Claude Code, run \
             `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-            2. Or clear the stale/mismatched row so a fresh grant can be minted: \
-            `tccutil reset \(type) com.checheng.CheICalMCP`, then re-run \(setupHint) from Terminal \
-            (now first-run → the dialog can present)
+            2. Or have a person at the Mac fix the stale/mismatched row: \
+            \(agnosticRemedy(pane: type, printTCCPathHint: printTCCPathHint))
             3. Or, for one-off calendar data, fall back to `.ics` import
             4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
             """
@@ -2762,7 +2787,8 @@ enum EventKitError: LocalizedError {
                 deniedByStatus: deniedByStatus,
                 setupHint: EventKitManager.resolvedSetupCommandHint(),
                 attribution: EventKitManager.currentAttribution(),
-                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type)
+                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type),
+                printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()
             )
         case .insufficientAccess(let type):
             return """
@@ -2776,7 +2802,7 @@ enum EventKitError: LocalizedError {
             return """
             \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
-            2. Or 'tccutil reset Calendar com.checheng.CheICalMCP' (and same for Reminders) then re-grant
+            2. Or \(EventKitManager.agnosticRemedy(pane: type, printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()))
             3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .unsupportedEntityType(let rawValue):

@@ -85,9 +85,10 @@ if CommandLine.arguments.contains("--self-update") {
 
 if CommandLine.arguments.contains("--print-tcc-path") {
     // #109: TCC diagnostic flag — prints the runtime binary's path + bundle ID +
-    // current EventKit authorization status + ready-to-paste tccutil reset / sqlite3
-    // commands. Designed for the .mcpb-installed scenario where users can't easily
-    // find the extracted binary path on their own.
+    // current EventKit authorization status + ready-to-paste `--setup` / sqlite3 commands
+    // (no `tccutil reset <bundle id>`: it fails with -10814 for a bare binary, #357).
+    // Designed for the .mcpb-installed scenario where users can't easily find the
+    // extracted binary path on their own.
 
     // #360: the kernel's path of this binary, not argv[0] resolved against the cwd.
     let absolute = RunningBinaryPath.current()
@@ -121,7 +122,7 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           Reminders:  \(statusString(remStatus))
 
         \(EventKitManager.printTCCPathRepromptSection(
-            bundleID: bundleID, binaryPath: absolute,
+            binaryPath: absolute,
             calendarStatus: calStatus, remindersStatus: remStatus))
 
         Inspect TCC database directly:

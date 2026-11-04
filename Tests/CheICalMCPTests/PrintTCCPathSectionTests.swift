@@ -19,6 +19,17 @@ final class PrintTCCPathSectionTests: XCTestCase {
         XCTAssertTrue(section(.denied, .denied).contains("'\(path)' --setup"))
     }
 
+    // #357: the section offers no reset (agents read it); where the bundle-id reset stood is
+    // the agnostic remedy.
+    func testSection_offersNoReset_andGivesTheAgnosticRemedy() {
+        for status in [EKAuthorizationStatus.notDetermined, .denied, .restricted, .fullAccess, .writeOnly] {
+            let s = section(status, status)
+            XCTAssertTrue(s.hasPrefix("Re-prompt"), s)
+            TCCRemedyAssertions.assertAgnosticRemedy(s, pane: "Calendar / Reminders",
+                                                     printTCCPathHint: "'\(path)' --print-tcc-path")
+        }
+    }
+
     // #368: a `restricted` status is a policy; the re-prompt section cannot reach it.
     func testRestrictedStatus_addsANoteThatTheSectionCannotChangeIt() {
         for (cal, rem) in [(EKAuthorizationStatus.restricted, EKAuthorizationStatus.fullAccess),

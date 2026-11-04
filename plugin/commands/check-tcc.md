@@ -1,6 +1,6 @@
 ---
 name: check-tcc
-description: Print che-ical-mcp's current TCC permission state, binary path, and ready-to-paste reset / re-prompt commands. Use when user says "check TCC", "permission status", "tccutil"。
+description: Print che-ical-mcp's current TCC permission state, binary path, and ready-to-paste re-prompt commands. Use when user says "check TCC", "permission status", "tccutil"。
 allowed-tools:
   - Bash
 ---
@@ -33,7 +33,7 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | `tccutil reset` then re-grant (see `troubleshoot-tcc` skill Step 4–5) |
+   | `denied` | Explicitly denied | See `troubleshoot-tcc` skill Step 4: find the process macOS checks with `--print-tcc-path`, switch that entry on in System Settings (`tccutil reset` with the bundle id fails with -10814 for this binary, #357) |
    | `writeOnly` | Partial access | Upgrade in System Settings manually |
    | `restricted` | System policy | Check Screen Time / MDM |
 
@@ -51,6 +51,6 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
 
 ## Why this command exists
 
-v1.9.0 introduced `--print-tcc-path` to close the documentation gap from #108 Phase 1 — `.mcpb` users couldn't easily find the extracted binary path to run `tccutil reset` or `--setup`. This slash command is the natural-language entry point: user says "check my calendar permissions" → command runs the flag → output is self-explanatory.
+v1.9.0 introduced `--print-tcc-path` to close the documentation gap from #108 Phase 1 — `.mcpb` users couldn't easily find the extracted binary path to run `--setup`. This slash command is the natural-language entry point: user says "check my calendar permissions" → command runs the flag → output is self-explanatory.
 
 Pair with `troubleshoot-tcc` skill when the output indicates a fix is needed.

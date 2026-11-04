@@ -141,7 +141,9 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        XCTAssertTrue(banner.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
+        // #357: the agnostic remedy replaces the bundle-id reset; no reset, no --setup.
+        TCCRemedyAssertions.assertAgnosticRemedy(banner, pane: "Calendar")
+        XCTAssertFalse(banner.contains("' --setup"), banner)
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }
 
@@ -169,7 +171,10 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
             report: report, version: "1.13.0", runningBinaryPath: runningPath,
             pid: 4242, bundleID: "com.checheng.CheICalMCP"
         )
-        XCTAssertFalse(banner.contains("tccutil reset kTCCServiceBogus"))
+        // Restated after #357: no runnable command, no pane named after the unknown service.
+        XCTAssertFalse(banner.contains("' --print-tcc-path"), banner)
+        XCTAssertFalse(banner.contains("Privacy & Security → kTCCService"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("manual remediation"))
     }
 }

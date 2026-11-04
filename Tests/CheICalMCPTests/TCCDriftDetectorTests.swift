@@ -425,6 +425,38 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(b.unicodeScalars.contains { $0.value == 0x07 }, "escaped: \(b)")
     }
 
+    /// #357: no banner signal prints a reset, for either kind of path.
+    func testFormatBanner_noSignalPrintsAReset() {
+        let signals: [DriftSignal] = [
+            .tccPathMismatch(service: "kTCCServiceCalendar", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
+            .tccPathMismatch(service: "kTCCServiceReminders", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
+            .csreqMismatch(service: "kTCCServiceCalendar", hasEntitlement: false),
+            .csreqMismatch(service: "kTCCServiceReminders", hasEntitlement: true),
+        ]
+        for path in [runningPath, "/path/with\n[banner] FAKE/CheICalMCP"] {
+            let banner = TCCDriftDetector.formatBanner(
+                report: DriftReport(signals: signals, skipReasons: []), version: "1.0.0",
+                runningBinaryPath: path, pid: 1, bundleID: bundleID)
+            TCCRemedyAssertions.assertNoReset(banner)
+        }
+    }
+
+    /// #357: the control-char variant of the path-mismatch line gives this binary's --setup
+    /// only, and no runnable command.
+    func testFormatBanner_pathMismatchWithControlCharPath_givesOnlyThisBinarysSetup() {
+        let path = "/path/with\u{07}bel/CheICalMCP"
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [.tccPathMismatch(service: "kTCCServiceCalendar",
+                                                           runningBinaryPath: path, recordedClient: "/o/CheICalMCP")],
+                                skipReasons: []),
+            version: "1.0.0", runningBinaryPath: path, pid: 1, bundleID: bundleID)
+        let line = banner.components(separatedBy: "\n").first { $0.contains("binary path contains control chars") } ?? ""
+        XCTAssertTrue(line.contains("run the binary at"), banner)
+        XCTAssertTrue(line.contains("with --setup"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+    }
+
     func testFormatBannerNoSetupHintWhenCalendarGranted() {
         let banner = TCCDriftDetector.formatBanner(
             report: DriftReport(signals: [], skipReasons: []),
@@ -466,7 +498,10 @@ final class TCCDriftDetectorTests: XCTestCase {
 
         // Per-signal lines + their actionable hints.
         XCTAssertTrue(banner.contains("TCC.db Calendar entry path mismatch"))
-        XCTAssertTrue(banner.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
+        // #357: the bundle-id reset is gone; a path mismatch gives this binary's --setup only
+        // (the recorded row belongs to another install).
+        XCTAssertTrue(banner.contains("[drift]   → '\(runningPath)' --setup"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("3 stale CheICalMCP processes running"))
         XCTAssertTrue(banner.contains("pkill -f"))
         // Drift status surfaces signal count.
@@ -633,10 +668,10 @@ final class TCCDriftDetectorTests: XCTestCase {
             bundleID: bundleID
         )
 
-        XCTAssertFalse(
-            banner.contains("tccutil reset"),
-            "must not emit `tccutil reset` for non-whitelisted service"
-        )
+        // Restated after #357 (no reset is ever printed): no runnable command for an unknown
+        // service, and no pane named after it.
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+        XCTAssertFalse(banner.contains("Privacy & Security → kTCCService"), banner)
         XCTAssertTrue(
             banner.contains("unrecognized TCC service"),
             "must emit manual-remediation hint instead"
@@ -691,8 +726,8 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertTrue(banner.contains("\\n"), "expected escaped \\n in safe-display hint")
         // 3. No copy-paste command — the `'/path/...'` shell-quoted form is suppressed.
         XCTAssertFalse(
-            banner.contains("tccutil reset Calendar com.checheng.CheICalMCP &&"),
-            "should not emit copy-paste tccutil command for path with control chars"
+            banner.contains("' --setup"),
+            "should not emit a copy-paste --setup command for path with control chars"
         )
         XCTAssertFalse(
             banner.contains("pkill -f '/path"),
@@ -765,7 +800,7 @@ final class TCCDriftDetectorTests: XCTestCase {
         let expectedQuoted = "'/Users/test/O'\\''Hara/CheICalMCP'"
         XCTAssertTrue(
             banner.contains(expectedQuoted),
-            "tccutil actionable command must use POSIX single-quote escaping for paths with apostrophes. Got: \(banner)"
+            "--setup actionable command must use POSIX single-quote escaping for paths with apostrophes. Got: \(banner)"
         )
         XCTAssertTrue(
             banner.contains("pkill -f " + expectedQuoted),

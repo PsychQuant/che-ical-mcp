@@ -1,6 +1,6 @@
 ---
 name: troubleshoot-tcc
-description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, tccutil reset, and --setup re-prompt flow.
+description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, the System Settings entry, and --setup re-prompt flow.
 allowed-tools:
   - Bash
   - Read
@@ -88,7 +88,7 @@ Interpreting the status lines:
 |---|---|
 | `Calendar: fullAccess (granted)` | OK, this side is fine |
 | `Calendar: notDetermined` | This *context* was never asked → check the host layer (Step 3), then re-prompt (Step 5) |
-| `Calendar: denied` | Explicitly denied in this context → go to Step 4 (reset) |
+| `Calendar: denied` | Explicitly denied in this context → go to Step 4 |
 | `Calendar: writeOnly` | Partial access (macOS 14+) → user must manually upgrade in System Settings → Privacy & Security → Calendar |
 | `Calendar: restricted` | System policy (Screen Time / MDM) — outside our control |
 
@@ -115,14 +115,13 @@ Read the chain like this:
 - Contains `.../claude/versions/<version>` → **Claude Code** context (the version-number binary is the responsible process; this half is reliable — the versioned binary stays resident in the live tree).
 - **Claude Desktop** is identified by *absence*: the `Helpers/disclaimer` shim typically `exec`-replaces itself with the server binary, so it usually does **not** appear as a live ancestor. A Desktop-spawned server's chain is roughly `CheICalMCP → Claude → launchd` with **no** `claude/versions/…` segment. So: chain lacks the `claude/versions/…` segment **and** the running binary is the `.mcpb` path (from Step 1) → treat as Desktop / self-responsible.
 
-### Step 4: Reset stale TCC entries (only if `denied` or post-upgrade silent fail)
+### Step 4: Fix a stale TCC entry (only if `denied` or post-upgrade silent fail)
 
-```bash
-tccutil reset Calendar com.checheng.CheICalMCP
-tccutil reset Reminders com.checheng.CheICalMCP
-```
+Run `"$BINARY" --print-tcc-path` on the Mac to see which process macOS checks; in System Settings → Privacy & Security → Calendar / Reminders switch that entry on, or off and on (if two CheICalMCP rows are listed, one at a time, re-checking `--print-tcc-path`). Whether the switch clears a code-requirement mismatch is not yet confirmed ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
 
-> **Caveat**: TCC stores `.mcpb` clients by **binary path** rather than bundle ID. `tccutil reset SERVICE BUNDLE_ID` may report "Successfully reset" but actually no-op when the underlying entry is path-keyed. If the issue persists after reset + Step 5, fall back to manual System Settings toggle (Step 6).
+**Last resort**, only on CheICalMCP v1.11.0 or later: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. The user decides and runs it; an agent must not. Show the user the command and its consequence and let them decide.
+
+> **Never `tccutil reset <service> com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration** (#357).
 
 ### Step 5: Trigger re-prompt via `--setup`
 
@@ -138,7 +137,7 @@ Over SSH, or anywhere without a GUI session (a launchd daemon) or launched direc
 
 System Settings → Privacy & Security → Calendar:
 - Look for CheICalMCP, toggle on
-- If not listed, click `+`, navigate to the binary path from Step 1
+- If not listed, run `"$BINARY" --setup` (Step 5): the access request adds it, since an app appears in this pane only after it requests access
 - Also confirm the host-layer entry (Step 3) is present and ON
 
 Repeat for Reminders.
