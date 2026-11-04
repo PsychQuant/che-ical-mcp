@@ -46,6 +46,7 @@ class CheICalMCPServer {
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
     private let eventCopySource: any EventCopySource
+    private let eventWriteSource: any EventWriteSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -83,6 +84,7 @@ class CheICalMCPServer {
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
          eventCopySource: any EventCopySource = EventKitManager.shared,
+         eventWriteSource: any EventWriteSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -94,6 +96,7 @@ class CheICalMCPServer {
         self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
+        self.eventWriteSource = eventWriteSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -336,7 +339,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save: it stays the same within an account and can change when calendar_name moves the event to a calendar in another account; id_changed says whether it differs from event_id, and previous_id (only when it changed) repeats the event_id you passed.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -347,7 +350,7 @@ class CheICalMCPServer {
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar")]),
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
@@ -582,7 +585,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept; date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -599,7 +602,7 @@ class CheICalMCPServer {
                             "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list")]),
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -1454,7 +1457,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
         }
 
-        let event = try await eventKitManager.updateEvent(
+        let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
             title: title,
             startDate: startDate,
@@ -1474,9 +1477,12 @@ class CheICalMCPServer {
             applyToAll: spanStr == "all",
             timezone: timezone,
             clearTimezone: clearTimezone
-        )
+        ))
 
-        return try actionResult(["action": "updated", "title": event.title ?? "", "id": eventId])
+        // #268: the identifier after the save (a move to another account's calendar changes it).
+        var response: [String: Any] = ["action": "updated", "title": event.title ?? ""]
+        response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier)) { $1 }
+        return try actionResult(response)
     }
 
     private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {
@@ -1847,7 +1853,9 @@ class CheICalMCPServer {
             realignToDue: realignToDue
         ))
 
-        var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? "", "id": reminderId]
+        var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
+        // #268: the identifier after the save (a move to another account's list may change it).
+        response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
         // they agree with it, also for a call with only realign_to_due.
         if let sync = update.dateSync { response["date_sync"] = sync.dictionary }
