@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server now reads a date-only all-day end the same way on both tools. The lodging module no longer passes the last night when it updates a stay that is already all-day. Its read-back after every dates write stays, and with a server older than #364 it corrects the one extra night. Needs the binary that ships #364.
+- **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server now reads a date-only all-day end the same way on both tools. Their description of `create_event` `skipped` changes too: a timed session is skipped only by a same-titled timed event, and an all-day umbrella or stay only by a same-titled all-day event starting on the same day. The lodging module no longer passes the last night when it updates a stay that is already all-day. Its read-back after every dates write stays, and with a server older than #364 it corrects the one extra night. Needs the binary that ships #364.
 
 ## [1.23.0] - 2026-11-01
 

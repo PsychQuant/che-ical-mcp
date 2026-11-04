@@ -70,8 +70,10 @@ enum AllDayRange {
             // or source stored as an exact next midnight is a boundary, not a day.
             let stored = (try? normalize(start: storedStart, end: storedEnd, calendar: calendar))
                 ?? (start: calendar.startOfDay(for: storedStart), end: storedEnd)
-            let days = calendar.dateComponents([.day], from: stored.start,
-                                               to: calendar.startOfDay(for: stored.end)).day ?? 0
+            // Counted from calendar dates, not elapsed time: a day that starts at 01:00 (DST at
+            // midnight) is 23 h to the next midnight and would count as zero (#364 verify round 3).
+            let days = calendar.dateComponents([.day], from: noon(of: stored.start, calendar: calendar),
+                                               to: noon(of: stored.end, calendar: calendar)).day ?? 0
             let firstDay = calendar.startOfDay(for: newStart)
             end = lastSecond(of: calendar.date(byAdding: .day, value: days, to: firstDay) ?? firstDay, calendar: calendar)
         } else if let newStart {
@@ -85,10 +87,21 @@ enum AllDayRange {
             let days = try normalize(start: start, end: end, calendar: calendar)
             return UpdatePlan(start: days.start, end: days.end, isAllDay: true, datesToWrite: days)
         }
+        let datesGiven = newStart != nil || newEnd != nil
         try EventKitManager.validateTimeRange(
             start: start, end: end, isAllDay: false,
-            hint: "When changing the date, provide both start_time and end_time.")
-        return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: (start, end))
+            hint: datesGiven
+                ? "When changing the date, provide both start_time and end_time."
+                : "Turning an all-day event into a timed one needs start_time and end_time for the timed event.")
+        // A flag-only `all_day: false` writes no dates (#364 verify round 3): writing them while the
+        // event is still all-day is the order that made EventKit read a midnight end as one more day.
+        return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: datesGiven ? (start, end) : nil)
+    }
+
+    /// Noon of the day `date` falls on: two noons are whole days apart however long the days in
+    /// between are, and noon exists on every day (DST changes happen at night).
+    private static func noon(of date: Date, calendar: Calendar) -> Date {
+        calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
     }
 
     /// The last second of `day`, taken from the start of the next day: in a zone that starts DST at

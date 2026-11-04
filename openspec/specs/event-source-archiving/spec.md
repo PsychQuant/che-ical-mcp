@@ -49,7 +49,7 @@ When the source provides no stable identifier, the skill SHALL fall back to the 
 
 ##### Example: Why start-time matching is insufficient
 
-The create-time idempotency key is (title, start time within 30 seconds, calendar). After a reschedule from Aug 12 14:00 to Aug 13 15:30, the start time no longer matches, so that key treats the corrected event as new — leaving the superseded event in place. Matching on the source identifier is unaffected by the time change.
+The create-time idempotency key is (title, start time within 30 seconds, calendar, and the same kind: a timed create matches only a timed event, an all-day create only an all-day event starting on the same day, #364). After a reschedule from Aug 12 14:00 to Aug 13 15:30, the start time no longer matches, so that key treats the corrected event as new — leaving the superseded event in place. Matching on the source identifier is unaffected by the time change.
 
 #### Scenario: A source without an identifier is archived
 

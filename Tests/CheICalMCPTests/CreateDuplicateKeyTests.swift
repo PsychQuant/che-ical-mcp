@@ -50,11 +50,16 @@ final class CreateDuplicateKeyTests: XCTestCase {
     func testCreateEventPassesItsAllDayFlagToTheDuplicateCheck() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        // Whitespace-insensitive and bounded by the next `func`, so reformatting does not break it.
         let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func createEvent("))
-        XCTAssertTrue(source[from.upperBound...].prefix(4000)
-            .contains("findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar)"))
-        let finder = try XCTUnwrap(source.range(of: "private func findDuplicateEvent("))
-        XCTAssertTrue(source[finder.upperBound...].prefix(1200).contains("Self.isCreateDuplicate("))
+        func body(_ name: String) throws -> String {
+            let from = try XCTUnwrap(source.range(of: name), name)
+            let rest = source[from.upperBound...]
+            let end = rest.range(of: "\n    func ")?.lowerBound ?? rest.endIndex
+            return rest[..<end].filter { !$0.isWhitespace }
+        }
+        XCTAssertTrue(try body("func createEvent(")
+            .contains("findDuplicateEvent(title:title,startDate:startDate,isAllDay:isAllDay,calendar:calendar)"))
+        XCTAssertTrue(try body("private func findDuplicateEvent(").contains("Self.isCreateDuplicate("))
     }
 }

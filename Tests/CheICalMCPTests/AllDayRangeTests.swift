@@ -190,6 +190,35 @@ final class AllDayRangeTests: XCTestCase {
         XCTAssertEqual([p.start, p.end], [at(2027, 3, 1), at(2027, 3, 1, 23, 59, 59)])
     }
 
+    /// #364 verify round 3: the day count of a start-only move came from elapsed time, and in a
+    /// zone that starts DST at midnight the first day begins at 01:00, so 01:00 → next 00:00 is
+    /// 23 h and counted as zero days. Days are counted from calendar dates.
+    func testPlanUpdateStartOnlyKeepsTheDaysAcrossAMidnightDSTDay() throws {
+        let santiago = TimeZone(identifier: "America/Santiago")!
+        let sc = Calendar.gregorian(in: santiago)
+        func d(_ m: Int, _ dd: Int, _ h: Int = 0) -> Date { sc.date(from: DateComponents(year: 2026, month: m, day: dd, hour: h))! }
+        let stored = try AllDayRange.normalize(start: d(9, 6, 12), end: d(9, 9), calendar: sc)   // 09-06 .. 09-08
+        let p = try AllDayRange.planUpdate(storedStart: stored.start, storedEnd: stored.end, storedAllDay: true,
+                                           newStart: d(9, 20), newEnd: nil, requestedAllDay: nil, calendar: sc)
+        let l = sc.dateComponents([.month, .day], from: p.end)
+        XCTAssertEqual([l.month, l.day], [9, 22], "three days stay three days")
+    }
+
+    /// #364 verify round 3: a flag-only `all_day: false` must not write the dates while the event is
+    /// still all-day (that order is #364's root cause); it only checks them.
+    func testPlanUpdateFlagOnlyAllDayToTimedWritesNoDates() throws {
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                         requestedAllDay: false)
+        XCTAssertNil(p.datesToWrite)
+    }
+
+    func testPlanUpdateFlagOnlyRefusalAsksForTheTimedTimes() {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1), storedAllDay: true,
+                                      requestedAllDay: false)) { error in
+            XCTAssertTrue("\(error)".contains("start_time and end_time for the timed event"), "\(error)")
+        }
+    }
+
     // MARK: a day that is not 24 hours long
 
     /// #364 verify round 2: zones that start DST at midnight begin that day at 01:00, so "one day
