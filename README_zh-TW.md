@@ -460,7 +460,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 **步驟 2 — 只有在 SSH 裡仍被拒時：授予 sshd 完整磁碟存取權限：**
 1. 打開**系統設定 → 隱私權與安全性 → 完整磁碟存取權限**
-2. 點 **+**，按 <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>，輸入 `/usr/sbin/sshd` 加入
+2. 把 `/usr/sbin/sshd` 加入清單（在檔案對話框按 <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>，輸入路徑）
 3. 重新建立 SSH 連線
 
 > ⚠️ 步驟 2 會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的機器上使用。CheICalMCP 有了自己的授權之後是否仍需要這一步，目前還沒有實測（[#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)），所以保留作為備案。

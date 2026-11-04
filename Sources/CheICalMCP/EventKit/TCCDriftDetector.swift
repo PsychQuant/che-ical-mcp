@@ -361,16 +361,21 @@ struct TCCDriftDetector {
                 }
                 // Same control-char / whitelist gating as the tccPathMismatch case: emit a
                 // copy-paste command only for a recognized service and a clean path.
-                // #357 verify: switch the entry off and on (the pane has no − button), then
-                // `--setup`; the bare reset, which clears every app's grant, only as the last resort.
+                // #357 round-2 policy: the switch step (P3) with the not-yet-checked caveat; no
+                // `--setup` (the status reads granted, so it would not prompt, P4); the bare reset
+                // only as the human-run last resort, and not at all without the entitlement (P2).
                 if let pane = settingsPaneName(forService: service) {
-                    let toggle = EventKitManager.switchOffAndOnStep(pane: pane)
+                    let diagnose = EventKitManager.printTCCPathHint(binaryPath: runningBinaryPath)
+                    let toggle = EventKitManager.switchStep(pane: pane, printTCCPathHint: diagnose)
                     if pathHasControlChars(runningBinaryPath) {
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation: \(toggle), then re-grant from a Developer-ID / notarized build by running the binary at \(safePath) with --setup)")
+                        // `diagnose` is already an escaped description here, never a command.
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation: \(toggle) — \(EventKitManager.switchMismatchCaveat))")
                     } else {
-                        lines.append("[drift]   → \(toggle), then: \(shellSingleQuote(runningBinaryPath)) --setup   (re-grant from a Developer-ID / notarized build, #154)")
+                        lines.append("[drift]   → \(toggle) — \(EventKitManager.switchMismatchCaveat)")
                     }
-                    lines.append("[drift]   → \(EventKitManager.lastResortReset(service: pane))")
+                    lines.append("[drift]   → " + (hasEntitlement == false
+                        ? EventKitManager.upgradeFirstLine
+                        : EventKitManager.humanLastResort(services: [pane])))
                 } else {
                     let safeService = EventKitErrorSanitizer.escapeForStderr(service)
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")

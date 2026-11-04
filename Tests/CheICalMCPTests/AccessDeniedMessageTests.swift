@@ -17,6 +17,7 @@ import XCTest
 final class AccessDeniedMessageTests: XCTestCase {
 
     private let hint = "\"/buried/path/CheICalMCP\" --setup"
+    private let diagnose = "'/buried/path/CheICalMCP' --print-tcc-path"
 
     // MARK: - #154 dead-end signature (deniedByStatus + .mcpb) — the fix
 
@@ -47,17 +48,16 @@ final class AccessDeniedMessageTests: XCTestCase {
     func testMCPBDeniedByStatus_pointsAtWorkingAlternatives() {
         let msg = EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint)
+            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
 
         XCTAssertTrue(msg.contains("claude plugin install che-ical-mcp@psychquant-claude-plugins"),
             "must point at the working Claude Code plugin install path")
-        // #357 (deliberate change to the #158 pin): the heal is switching the stale row off and
-        // on in System Settings (the pane has no − button, verify round), then `--setup`;
-        // `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary.
-        TCCRemedyAssertions.assertStaleGrantRemedy(msg, service: "Calendar")
-        XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"),
-            "must point at the Calendar pane, type-correct")
-        XCTAssertTrue(msg.contains("then re-run \(hint)"), "the re-grant is this binary's --setup")
+        // #357 (deliberate change to the #158 pin) and round-2 policy P1/P4: text returned to
+        // the model carries no reset; a person at the Mac runs --print-tcc-path for the steps,
+        // and --setup is not offered for an already-denied status.
+        TCCRemedyAssertions.assertMCPFacingStaleGrant(msg)
+        XCTAssertTrue(msg.contains(diagnose), "the diagnose command for this binary: \(msg)")
+        XCTAssertFalse(msg.contains(hint), "--setup prompts only from notDetermined: \(msg)")
         XCTAssertTrue(msg.contains(".ics"), "must mention the `.ics` import fallback")
     }
 
@@ -65,11 +65,10 @@ final class AccessDeniedMessageTests: XCTestCase {
         // The System Settings pane must follow the entity type, not hardcode Calendar.
         let reminders = EventKitManager.accessDeniedMessage(
             type: "Reminders", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint)
-        XCTAssertTrue(reminders.contains("System Settings → Privacy & Security → Reminders"),
-            "Reminders denial must point at the Reminders pane")
-        XCTAssertFalse(reminders.contains("Privacy & Security → Calendar"))
-        TCCRemedyAssertions.assertStaleGrantRemedy(reminders, service: "Reminders")
+            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
+        XCTAssertTrue(reminders.contains("Reminders access denied"), reminders)
+        XCTAssertFalse(reminders.contains("Calendar access"), reminders)
+        TCCRemedyAssertions.assertMCPFacingStaleGrant(reminders)
     }
 
     // MARK: - #357: no surface offers `tccutil reset` with the bundle id
@@ -89,17 +88,18 @@ final class AccessDeniedMessageTests: XCTestCase {
                             type: type, isSSH: ssh, isNonInteractive: nonInteractive, isMCPB: mcpb,
                             deniedByStatus: denied, setupHint: hint, attribution: attribution,
                             restrictedByPolicy: restricted)
-                        TCCRemedyAssertions.assertNoBundleIDResetAndNoMinusButton(msg)
+                        TCCRemedyAssertions.assertNoBundleIDResetAndNoButton(msg)
                     }
                 } } }
             } }
         }
     }
 
-    func testUnknownAuthStateMessage_givesTheStaleGrantRemedy() {
+    func testUnknownAuthStateMessage_sendsAPersonAtTheMacToPrintTCCPath() {
+        // Round-2 policy P1: no reset in text returned to the model.
         let msg = EventKitError.unknownAuthState(type: "Calendar", statusValue: 99).errorDescription ?? ""
-        TCCRemedyAssertions.assertStaleGrantRemedy(msg, service: "Calendar")
-        XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"), msg)
+        TCCRemedyAssertions.assertMCPFacingStaleGrant(msg)
+        XCTAssertTrue(msg.contains("' --print-tcc-path"), "names this binary's command: \(msg)")
     }
 
     // MARK: - First-run .mcpb (notDetermined path) — --setup still IS the fix

@@ -237,6 +237,21 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(outcome.isBad)
     }
 
+    /// Round-2 policy P4 (#357): the guidance after --setup follows each outcome. A skipped
+    /// request lists nothing in System Settings yet, so it says to re-run --setup interactively.
+    func testGuidance_followsEachOutcome() {
+        let lines = SetupRunner.guidanceLines([
+            ("Calendar", .skippedWouldBlock), ("Reminders", .denied)]).joined(separator: "\n")
+        XCTAssertTrue(lines.contains("Calendar: the request was skipped, so nothing is listed in System Settings yet"), lines)
+        XCTAssertTrue(lines.contains("re-run --setup from Terminal.app on the Mac"), lines)
+        XCTAssertTrue(lines.contains("Reminders: a \"Don't Allow\" is recorded"), lines)
+        XCTAssertTrue(lines.contains("switch CheICalMCP on in System Settings → Privacy & Security → Reminders"), lines)
+        let writeOnly = SetupRunner.guidanceLines([("Calendar", .writeOnly)]).joined()
+        XCTAssertTrue(writeOnly.contains("Options… → Full Access"), writeOnly)
+        XCTAssertTrue(SetupRunner.guidanceLines([("Calendar", .granted), ("Reminders", .alreadyGranted)]).isEmpty)
+        XCTAssertFalse(SetupEntityOutcome.skippedWouldBlock.message(label: "Calendar").contains("Grant manually"))
+    }
+
     /// `message(label:)` formats the per-entity status line the setup output prints.
     func testSetupEntityOutcome_messageFormatting() {
         XCTAssertEqual(SetupEntityOutcome.granted.message(label: "Calendar"), "Calendar access: ✓ granted")

@@ -122,7 +122,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
 
         \(EventKitManager.printTCCPathRepromptSection(
             binaryPath: absolute,
-            calendarStatus: calStatus, remindersStatus: remStatus))
+            calendarStatus: calStatus, remindersStatus: remStatus,
+            hasEntitlement: LiveCodeSignatureSource().runningBinaryHasPersonalInfoEntitlement()))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -181,9 +182,9 @@ if CommandLine.arguments.contains("--setup") {
     // SetupWindow.run() (che-apple-mail-mcp#213). The non-interactive path can't present a dialog anyway, so it
     // reports status headlessly (skip / already-granted) and exits — never entering the loop.
     if nonInteractive {
-        let bad = await SetupRunner.requestBoth(nonInteractive: true)
-        SetupRunner.printGuidanceIfNeeded(bad)
-        exit(bad ? 1 : 0)
+        let outcomes = await SetupRunner.requestBoth(nonInteractive: true)
+        SetupRunner.printGuidanceIfNeeded(outcomes)
+        exit(outcomes.contains { $0.outcome.isBad } ? 1 : 0)
     } else {
         // Top-level code is @MainActor-isolated (SE-0343), so we can drive
         // NSApplication directly on the main thread. runInteractive() never returns

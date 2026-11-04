@@ -33,8 +33,8 @@ Run the v1.9.0+ binary's `--print-tcc-path` diagnostic, then present the output 
    |---|---|---|
    | `fullAccess (granted)` | ✅ OK | Tools should work |
    | `notDetermined` | Never asked | Run `"$BINARY" --setup` from Terminal |
-   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings (off and on, or its Options… menu, for a stale entry), then re-grant with `--setup` (see `troubleshoot-tcc` skill Step 4–5; `tccutil reset` with the bundle id fails with -10814 for this binary, #357; the bare reset clears every app's grant and is the last resort) |
-   | `writeOnly` | Partial access | Upgrade in System Settings manually |
+   | `denied` | Explicitly denied | Switch CheICalMCP on in System Settings → Privacy & Security; `--setup` prompts only from `notDetermined`, so it will not ask again. For a stale entry follow the output's "Re-prompt" section and `troubleshoot-tcc` Step 4 (`tccutil reset` with the bundle id fails with -10814 for this binary, #357; the bare reset is a last resort the user runs, not the agent) |
+   | `writeOnly` | Partial access | CheICalMCP's Options… menu → Full Access in System Settings |
    | `restricted` | System policy | Check Screen Time / MDM |
 
 4. **v1.23.0+ (#343)**: the server reads the host context's status first. With full Calendar and Reminders access the host's grant is kept, and a host a policy restricts keeps its attribution too (#367); otherwise the server re-execs as its own responsible process and only the `CheICalMCP` entry matters. The `TCC attribution` line in the output names the process macOS checks. The host table below applies to a host with full access of its own, to one a policy restricts, with `CHE_ICAL_MCP_NO_DISCLAIM=1`, and on v1.21.0 and earlier (v1.22.0 re-exec'd by default only under Claude Code, and under any host with `CHE_ICAL_MCP_FORCE_DISCLAIM`).

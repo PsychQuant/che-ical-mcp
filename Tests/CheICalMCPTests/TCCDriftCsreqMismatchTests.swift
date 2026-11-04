@@ -141,11 +141,15 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        // #357 verify: switch the entry off and on (or Options…), then --setup; the bare reset
-        // only as the last resort. The pane has no − button.
-        TCCRemedyAssertions.assertStaleGrantRemedy(banner, service: "Calendar")
-        XCTAssertTrue(banner.contains("System Settings → Privacy & Security → Calendar"), banner)
-        XCTAssertTrue(banner.contains("' --setup"), banner)
+        // Round-2 policy P2(b)/P3/P4: the switch step, no --setup (the status reads granted, so
+        // it would not prompt), and no reset line for a binary that lacks the entitlement.
+        TCCRemedyAssertions.assertSwitchStep(banner)
+        TCCRemedyAssertions.assertNoBundleIDResetAndNoButton(banner)
+        XCTAssertTrue(banner.contains("not yet checked on a device"), banner)
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+        XCTAssertFalse(banner.contains("re-grant"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
+        XCTAssertTrue(banner.contains("upgrade CheICalMCP to v1.11.0 or later first"), banner)
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }
 
@@ -161,6 +165,11 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("no longer satisfies"))
         XCTAssertFalse(banner.contains("lacks the personal-information entitlement"),
             "the policy-blocked note must NOT show when the binary has the entitlement")
+        // Round-2 policy P2: with the entitlement, the banner (human-run) may give the bare
+        // reset as the last resort, with all three parts.
+        TCCRemedyAssertions.assertSwitchStep(banner)
+        TCCRemedyAssertions.assertHumanLastResort(banner, service: "Calendar")
+        XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
     func testBanner_csreqMismatch_unknownService_noBadCommand() {

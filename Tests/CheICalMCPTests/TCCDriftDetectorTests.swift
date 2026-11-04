@@ -408,6 +408,23 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
+    // Round-2 verify (#357): the control-char variant of the path-mismatch line gives this
+    // binary's --setup only, as the clean variant does, and prints no runnable command.
+    func testFormatBanner_pathMismatchWithControlCharPath_givesOnlyThisBinarysSetup() {
+        let path = "/path/with\u{07}bel/CheICalMCP"
+        let banner = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [.tccPathMismatch(service: "kTCCServiceCalendar",
+                                                           runningBinaryPath: path, recordedClient: "/o/CheICalMCP")],
+                                skipReasons: []),
+            version: "1.0.0", runningBinaryPath: path, pid: 1, bundleID: bundleID)
+        let line = banner.components(separatedBy: "\n").first { $0.contains("binary path contains control chars") } ?? ""
+        XCTAssertTrue(line.contains("run the binary at"), banner)
+        XCTAssertTrue(line.contains("with --setup"), banner)
+        XCTAssertFalse(line.contains("off and on"), banner)
+        XCTAssertFalse(line.contains("System Settings"), banner)
+        XCTAssertFalse(banner.contains("' --setup"), banner)
+    }
+
     // #357: no banner line offers `tccutil reset` with the bundle id or a − button, for any
     // signal and either kind of path.
     func testFormatBanner_noSignalOffersABundleIDResetOrAMinusButton() {
@@ -424,7 +441,7 @@ final class TCCDriftDetectorTests: XCTestCase {
                 let banner = TCCDriftDetector.formatBanner(
                     report: DriftReport(signals: signals, skipReasons: []), version: "1.0.0",
                     runningBinaryPath: path, pid: 1, bundleID: bundleID, calendarAccessGranted: granted)
-                TCCRemedyAssertions.assertNoBundleIDResetAndNoMinusButton(banner)
+                TCCRemedyAssertions.assertNoBundleIDResetAndNoButton(banner)
             }
         }
     }

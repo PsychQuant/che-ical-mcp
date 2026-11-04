@@ -50,7 +50,7 @@ enum SetupEntityOutcome: Equatable {
         case .denied:
             return "\(label) access: ✗ denied"
         case .skippedWouldBlock:
-            return "\(label) access: ⤼ skipped — non-interactive session; requestFullAccess would block on a TCC dialog that can't appear here (#143). Grant manually (see below)."
+            return "\(label) access: ⤼ skipped — non-interactive session; requestFullAccess would block on a TCC dialog that can't appear here (#143). See below."
         case .writeOnly:
             return "\(label) access: ◐ write-only (partial — upgrade to full access in System Settings)"
         case .error(let safeMessage):
@@ -96,29 +96,52 @@ enum SetupRunner {
     /// `.requestAccess` the dialogs only present when a run loop is pumping (see
     /// ``runInteractive()``).
     @MainActor
-    static func requestBoth(nonInteractive: Bool) async -> Bool {
+    static func requestBoth(nonInteractive: Bool) async -> [(label: String, outcome: SetupEntityOutcome)] {
         let store = EKEventStore()
-        var anyBad = false
+        var outcomes: [(label: String, outcome: SetupEntityOutcome)] = []
 
         func run(_ label: String, entity: EKEntityType,
                  request: () async throws -> Bool) async {
             let status = EKEventStore.authorizationStatus(for: entity)
             let outcome = await evaluateEntity(status: status, nonInteractive: nonInteractive, request: request)
             print(outcome.message(label: label))
-            if outcome.isBad { anyBad = true }
+            outcomes.append((label, outcome))
         }
 
         await run("Calendar", entity: .event) { try await store.requestFullAccessToEvents() }
         await run("Reminders", entity: .reminder) { try await store.requestFullAccessToReminders() }
-        return anyBad
+        return outcomes
     }
 
-    /// Print the manual-grant guidance when any request was denied or skipped.
-    static func printGuidanceIfNeeded(_ bad: Bool) {
-        guard bad else { return }
-        print("\nIf permissions were denied or skipped, grant them manually:")
-        print("  System Settings → Privacy & Security → Calendar → enable CheICalMCP")
-        print("  System Settings → Privacy & Security → Reminders → enable CheICalMCP")
+    /// The guidance after `--setup`, one line per outcome that is not a grant (#357 round-2
+    /// policy P4). A skipped request lists nothing in System Settings yet (an app appears there
+    /// only after it requests access), so the fix is an interactive `--setup`; a recorded
+    /// "Don't Allow" is not asked again, so the fix is the switch.
+    static func guidanceLines(_ outcomes: [(label: String, outcome: SetupEntityOutcome)]) -> [String] {
+        outcomes.compactMap { label, outcome in
+            switch outcome {
+            case .alreadyGranted, .granted:
+                return nil
+            case .skippedWouldBlock:
+                return "  \(label): the request was skipped, so nothing is listed in System Settings yet — "
+                    + "re-run --setup from Terminal.app on the Mac (an interactive session)"
+            case .denied:
+                return "  \(label): a \"Don't Allow\" is recorded, so --setup will not prompt again — "
+                    + "switch CheICalMCP on in System Settings → Privacy & Security → \(label)"
+            case .writeOnly:
+                return "  \(label): System Settings → Privacy & Security → \(label) → CheICalMCP → Options… → Full Access"
+            case .error:
+                return "  \(label): run --print-tcc-path for this binary's status and the next steps"
+            }
+        }
+    }
+
+    /// Print the guidance when any request did not end in a grant.
+    static func printGuidanceIfNeeded(_ outcomes: [(label: String, outcome: SetupEntityOutcome)]) {
+        let lines = guidanceLines(outcomes)
+        guard !lines.isEmpty else { return }
+        print("\nNot granted yet:")
+        lines.forEach { print($0) }
     }
 
     /// Interactive path: present the SwiftUI `SetupWindow` inside a foreground

@@ -45,7 +45,7 @@ Interpret the result:
 | `auth_value` | Meaning | Action |
 |---|---|---|
 | `2` | Granted | No action needed — calendar tools should work. If they don't, the v1.9.0 per-call gate (#108 Phase 2) will surface the underlying reason as an explicit `accessDenied` error in tool output rather than silently masking it. |
-| `0` | Denied | Clear the stale entry (see [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) below), then re-grant via Steps 2–3. |
+| `0` | Denied | A recorded "Don't Allow" is not asked again and `--setup` prompts only while the status is `notDetermined`: switch CheICalMCP on in System Settings (see [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) below). |
 | _(empty / no row)_ | Never asked | Proceed to Step 2 to trigger the dialog. |
 
 ### Step 2 — locate the installed binary
@@ -87,15 +87,15 @@ Quit and reopen Claude Desktop. Calendar tool calls should now succeed.
 
 ### Dialog doesn't appear at all
 
-TCC may have a stale `denied` record blocking the new prompt. Refresh it in System Settings and retry:
+`--setup` prompts only while the status is `notDetermined`; after a switch it just reports the state. Run `"$BINARY" --print-tcc-path` first and follow its "Re-prompt" section:
 
-1. Open **System Settings → Privacy & Security → Calendar** (then **Reminders**). Each app has an on/off switch and an **Options…** button, and a Claude Code install (`~/bin`) also shows as `CheICalMCP` (observed on macOS 27).
-2. Switch **CheICalMCP** off and on (or use its **Options…** menu).
-3. Re-run Step 3.
+1. **`denied`** (a recorded "Don't Allow"): in **System Settings → Privacy & Security → Calendar** (then **Reminders**), switch **CheICalMCP** on. Each app there has an on/off switch and an **Options…** menu, and a Claude Code install (`~/bin`) also shows as `CheICalMCP` (observed on one Mac, macOS 27).
+2. **`writeOnly`**: CheICalMCP's **Options…** menu → Full Access.
+3. **A stale or code-requirement-mismatched entry** (the startup banner says so): switch CheICalMCP off and on in System Settings → Privacy & Security → Calendar / Reminders (or set it with its **Options…** menu); if two CheICalMCP rows are listed (the `~/bin` and the Claude Desktop installs), do one at a time and check `'<binary>' --print-tcc-path` after each. Whether the switch clears a code-requirement mismatch is not yet checked on a device (#382).
 
 If the startup banner reports a **path mismatch** instead, the recorded entry belongs to another install: leave it and just re-run Step 3 for this binary.
 
-As a last resort, only if access is still refused after that: `tccutil reset Calendar` (or `Reminders`) **without** a bundle id is the only full reset, and it clears that permission for **every app** on the Mac, so each one asks again.
+**Last resort**, only on CheICalMCP v1.11.0 or later (with the personal-information entitlement), run by you in Terminal: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id. It clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. With an older binary, upgrade first; `--print-tcc-path` prints no reset line when the binary lacks the entitlement.
 
 > Do not use `tccutil reset Calendar com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration (#357).
 

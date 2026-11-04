@@ -235,11 +235,11 @@ enum SetupWindow {
         exit(0)                                      // unreachable — satisfies Never
         #else
         let sema = DispatchSemaphore(value: 0)
-        var bad = false
-        Task { @MainActor in bad = await SetupRunner.requestBoth(nonInteractive: false); sema.signal() }
+        var outcomes: [(label: String, outcome: SetupEntityOutcome)] = []
+        Task { @MainActor in outcomes = await SetupRunner.requestBoth(nonInteractive: false); sema.signal() }
         sema.wait()
-        SetupRunner.printGuidanceIfNeeded(bad)
-        exit(bad ? 1 : 0)
+        SetupRunner.printGuidanceIfNeeded(outcomes)
+        exit(outcomes.contains { $0.outcome.isBad } ? 1 : 0)
         #endif
     }
 }

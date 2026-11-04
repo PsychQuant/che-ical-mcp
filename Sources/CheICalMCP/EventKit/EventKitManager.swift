@@ -123,41 +123,93 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
-    /// The System Settings step for a stale or code-requirement-mismatched CheICalMCP grant
-    /// (#357 verify). The Calendar / Reminders panes have no − (remove) button (observed on
-    /// macOS 27): each app has an on/off switch and an "Options…" button.
-    static func switchOffAndOnStep(pane: String) -> String {
-        "switch CheICalMCP off and on (or use its Options… menu) in System Settings → Privacy & Security → \(pane)"
+    /// The paste-ready `--print-tcc-path` command for this binary, built like
+    /// `setupCommandHint` (single-quoted clean path; no command for a control-character path).
+    static func printTCCPathHint(binaryPath: String) -> String {
+        guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
+            return "run the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --print-tcc-path "
+                + "(its path has control characters, so no command is printed)"
+        }
+        return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --print-tcc-path"
     }
 
-    /// The last resort when the switch and `--setup` do not restore access (#357 verify):
-    /// `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary,
-    /// so the only full reset is the bare one, which clears the permission for every app.
-    static func lastResortReset(service: String) -> String {
-        "as a last resort, if access is still refused: `tccutil reset \(service)` without a bundle id "
-            + "is the only full reset, and it clears \(service) permission for every app on this Mac, "
-            + "so each one asks again"
+    static func resolvedPrintTCCPathHint() -> String {
+        printTCCPathHint(binaryPath: RunningBinaryPath.current())
     }
+
+    // MARK: - TCC remedy text (#357, verify round 2 policy)
+    //
+    // P1: text returned to the model (access-denied, unknown state) never carries a reset of
+    //     any kind; a stale grant sends a person at the Mac to `--print-tcc-path`.
+    // P2: human-run surfaces (`--print-tcc-path`, the startup banner, the docs) may give the
+    //     bare reset as the last resort, always with its consequence, its precondition and
+    //     "run it yourself"; with the entitlement known to be missing, no reset at all.
+    // P3: the switch step, the same everywhere.
+    // P4: `--setup` only for `notDetermined`.
+
+    /// P1: the MCP-facing step for a stale or code-requirement-mismatched grant.
+    static func personAtTheMacStep(printTCCPathHint: String) -> String {
+        "a person at the Mac has to fix this: run \(printTCCPathHint) in Terminal for the steps"
+    }
+
+    /// P3: the System Settings switch step. The Calendar / Reminders panes have an on/off switch
+    /// and an "Options…" menu per app, and both installs are listed as "CheICalMCP" (observed on
+    /// one Mac, macOS 27).
+    static func switchStep(pane: String, printTCCPathHint: String) -> String {
+        "switch CheICalMCP off and on in System Settings → Privacy & Security → \(pane) "
+            + "(or set it with its Options… menu); if two CheICalMCP rows are listed (the ~/bin and the "
+            + "Claude Desktop installs), do one at a time and check \(printTCCPathHint) after each"
+    }
+
+    /// P3: the caveat that goes with the switch step for a code-requirement mismatch.
+    static let switchMismatchCaveat =
+        "whether the switch clears a code-requirement mismatch is not yet checked on a device"
+
+    /// P2: the human-run last resort, on one line: consequence, precondition, run it yourself.
+    static func humanLastResort(services: [String]) -> String {
+        let commands = services.map { "`tccutil reset \($0)`" }.joined(separator: " or ")
+        return "As a last resort, only on CheICalMCP v1.11.0 or later (with the personal-information "
+            + "entitlement), run it yourself in Terminal: \(commands) without a bundle id. It clears that "
+            + "permission for every app on this Mac, and command-line tools or hosts recorded by version "
+            + "number may not ask again."
+    }
+
+    /// P2(b): the line printed instead of a reset when the binary is known to lack the entitlement.
+    static let upgradeFirstLine =
+        "This binary lacks the personal-information entitlement: upgrade CheICalMCP to v1.11.0 or later first; "
+            + "no reset helps before that."
 
     /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)
     /// so it can be pinned without spawning the binary (#357, #368). It offers no
     /// `tccutil reset <service> com.checheng.CheICalMCP`: for a bare binary that fails with
-    /// -10814 (no LaunchServices registration, README erratum). The bare reset appears only
-    /// as the last resort, with its consequence (#357 verify).
+    /// -10814 (no LaunchServices registration, README erratum). `--setup` appears only for a
+    /// `notDetermined` status (P4); the bare reset only as the human-run last resort (P2),
+    /// and not at all when `hasEntitlement` is `false`.
     static func printTCCPathRepromptSection(
         binaryPath: String,
         calendarStatus: EKAuthorizationStatus,
-        remindersStatus: EKAuthorizationStatus
+        remindersStatus: EKAuthorizationStatus,
+        hasEntitlement: Bool? = nil
     ) -> String {
-        var lines = [
-            "Re-prompt (run from Terminal, NOT over SSH):",
-            "  \(setupCommandHint(binaryPath: binaryPath))",
-            "  A recorded \"Don't Allow\" shows no prompt: switch CheICalMCP on, or off and on",
-            "  (or use its Options… menu), in System Settings → Privacy & Security → Calendar /",
-            "  Reminders, then run the command above again.",
-            "  As a last resort, if access is still refused: `tccutil reset Calendar` or `tccutil reset Reminders` "
-                + "without a bundle id clears that permission for every app on this Mac, so each one asks again.",
-        ]
+        var lines = ["Re-prompt (run from Terminal, NOT over SSH):"]
+        if calendarStatus == .notDetermined || remindersStatus == .notDetermined {
+            lines.append("  \(setupCommandHint(binaryPath: binaryPath))")
+            lines.append("  (--setup prompts only while a status is notDetermined; after a switch it just reports the state)")
+        }
+        for (service, status) in [("Calendar", calendarStatus), ("Reminders", remindersStatus)] {
+            switch status {
+            case .denied:
+                lines.append("  \(service) is denied: switch CheICalMCP on in System Settings → Privacy & Security → \(service)")
+            case .writeOnly:
+                lines.append("  \(service) is write-only: System Settings → Privacy & Security → \(service) → CheICalMCP → Options… → Full Access")
+            default:
+                break
+            }
+        }
+        lines.append("  A stale or code-requirement-mismatched grant: "
+            + switchStep(pane: "Calendar / Reminders", printTCCPathHint: printTCCPathHint(binaryPath: binaryPath))
+            + " (\(switchMismatchCaveat)).")
+        lines.append("  " + (hasEntitlement == false ? upgradeFirstLine : humanLastResort(services: ["Calendar", "Reminders"])))
         // #368: a `restricted` status comes from a configuration profile or Screen Time; no
         // prompt appears for it, so nothing in this section can change it.
         if calendarStatus == .restricted || remindersStatus == .restricted {
@@ -206,7 +258,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         deniedByStatus: Bool,
         setupHint: String,
         attribution: ResponsibleHostKind? = nil,
-        restrictedByPolicy: Bool = false
+        restrictedByPolicy: Bool = false,
+        printTCCPathHint: String = "CheICalMCP --print-tcc-path",
+        noDisclaimSet: Bool = false
     ) -> String {
         if restrictedByPolicy {
             let checked: String
@@ -262,8 +316,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
             `disclaimer` wrapper entirely (see #132): in Claude Code, run \
             `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-            2. Or refresh the stale/mismatched row: \(switchOffAndOnStep(pane: type)), then re-run \
-            \(setupHint) from Terminal; \(lastResortReset(service: type))
+            2. Or have the stale/mismatched row fixed: \(personAtTheMacStep(printTCCPathHint: printTCCPathHint)) \
+            (a `--setup` prompts only while the status is notDetermined, and this one is already denied)
             3. Or, for one-off calendar data, fall back to `.ics` import
             4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
             """
@@ -420,6 +474,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Whether the current status of `typeName`'s service is `.restricted` (#343 verify
     /// round 2, row 9). The gate reports `.denied` and `.restricted` alike as `deniedByStatus`;
     /// the message reads which one at message time, the same way it reads the attribution.
+    /// Whether `CHE_ICAL_MCP_NO_DISCLAIM` is set (non-empty) in this process's environment
+    /// (#362 round 2: the SSH host text offers removing it only when it is set).
+    static func noDisclaimIsSet(env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard let value = env[SelfDisclaim.optOutVariable] else { return false }
+        return !value.isEmpty
+    }
+
     static func currentStatusIsRestricted(typeName: String) -> Bool {
         let entity: EKEntityType = typeName == "Reminders" ? .reminder : .event
         return EKEventStore.authorizationStatus(for: entity) == .restricted
@@ -2833,7 +2894,9 @@ enum EventKitError: LocalizedError {
                 deniedByStatus: deniedByStatus,
                 setupHint: EventKitManager.resolvedSetupCommandHint(),
                 attribution: EventKitManager.currentAttribution(),
-                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type)
+                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type),
+                printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint(),
+                noDisclaimSet: EventKitManager.noDisclaimIsSet()
             )
         case .insufficientAccess(let type):
             return """
@@ -2847,7 +2910,7 @@ enum EventKitError: LocalizedError {
             return """
             \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
-            2. Or \(EventKitManager.switchOffAndOnStep(pane: type)), then run its setup again; \(EventKitManager.lastResortReset(service: type))
+            2. Or, if that does not help, \(EventKitManager.personAtTheMacStep(printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()))
             3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .unsupportedEntityType(let rawValue):
