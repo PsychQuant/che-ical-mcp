@@ -34,6 +34,7 @@ struct FakeFormattableEvent: EventFormattingSource {
     var structuredLocationFragment: [String: Any]?
     var attendeesFragment: [[String: Any]]?
     var organizerFragment: [String: Any]?
+    var alarmsFragment: [ReminderReadSnapshot.Alarm]
 
     /// Default initializer — all conditional accessors set to non-nil values
     /// so the fake triggers every conditional emission path in `formatEventDict`.
@@ -57,7 +58,8 @@ struct FakeFormattableEvent: EventFormattingSource {
         recurrenceRulesFragment: [[String: Any]]? = [["frequency": "weekly", "interval": 1]],
         structuredLocationFragment: [String: Any]? = ["title": "Fake structured loc"],
         attendeesFragment: [[String: Any]]? = [["name": "Fake Attendee", "email": "a@example.com"]],
-        organizerFragment: [String: Any]? = ["name": "Fake Organizer", "email": "org@example.com"]
+        organizerFragment: [String: Any]? = ["name": "Fake Organizer", "email": "org@example.com"],
+        alarmsFragment: [ReminderReadSnapshot.Alarm] = [.relative(seconds: -900)]
     ) {
         self.formatID = formatID
         self.formatTitle = formatTitle
@@ -73,5 +75,6 @@ struct FakeFormattableEvent: EventFormattingSource {
         self.structuredLocationFragment = structuredLocationFragment
         self.attendeesFragment = attendeesFragment
         self.organizerFragment = organizerFragment
+        self.alarmsFragment = alarmsFragment
     }
 }

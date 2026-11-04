@@ -252,6 +252,45 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
+    /// manifest, as the reminder read tools do (#231).
+    func testEventReadToolsDescribeAlarms() throws {
+        let sign = "positive = before the start, negative = after"
+        // PR #410 verify round 1: an occurrence edited on its own reports its own alarms.
+        let occurrence = "An occurrence reports the series' alarms unless it was edited on its own."
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        // check_conflicts formats its events with formatEventDict too (verify round 1).
+        for name in ["list_events", "list_events_quick", "search_events", "check_conflicts"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains(sign), "defineTools() \(name): \(declared)")
+            XCTAssertTrue(declared.contains("event lists its time-based alarms as alarms"), "defineTools() \(name)")
+            XCTAssertTrue(declared.contains("location alarms are not listed"), "defineTools() \(name)")
+            XCTAssertTrue(declared.contains(occurrence), "defineTools() \(name)")
+            XCTAssertFalse(declared.contains("occurrences all report the series' alarms"), "defineTools() \(name)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains(sign), "mcpb/manifest.json \(name): \(summary)")
+        }
+        for name in ["list_events", "list_events_quick", "search_events"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains("Outside detail_level summary each event lists its time-based alarms as alarms"), name)
+        }
+    }
+
+    /// PR #410 verify round 1: the `fields` description of each event listing tool lists every
+    /// field `fields` accepts (`InputValidation.validEventFields`, `id` always included), so a new
+    /// field cannot be left out of it.
+    func testEventFieldsDescriptionsListEveryValidField() throws {
+        for name in ["list_events", "search_events", "list_events_quick"] {
+            let schema = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema.objectValue)
+            let fields = try XCTUnwrap(schema["properties"]?.objectValue?["fields"]?.objectValue?["description"]?.stringValue, name)
+            let listed = try XCTUnwrap(fields.components(separatedBy: "Available: ").last, name)
+            let names = Set(listed.trimmingCharacters(in: CharacterSet(charactersIn: ". ")).components(separatedBy: ", "))
+            XCTAssertEqual(names, InputValidation.validEventFields.subtracting(["id"]), "\(name): \(fields)")
+        }
+    }
+
     /// #241: both reminder read tools name `item_timezone` (the reminder's own zone, null when
     /// floating) and say what `timezone` names, in defineTools() and in the manifest.
     func testReminderReadToolsDescribeItemTimezone() throws {
