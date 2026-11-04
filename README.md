@@ -63,7 +63,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_calendars` | List all calendars and reminder lists (includes source_type) |
-| `create_calendar` | Create a new calendar |
+| `create_calendar` | Create a new calendar. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `delete_calendar` | Delete a calendar |
 | `update_calendar` | Rename a calendar or change its color (v0.9.0) |
 
@@ -79,6 +79,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `update_event` | Update an event (including timezone, recurrence, span for recurring) |
 | `delete_event` | Delete an event (with occurrence support for recurring) |
 
+> **A reminder's identifier given to an event tool (#260)**: `update_event`, `delete_event`, `copy_event`, `move_events_batch` and `delete_events_batch` answer `Event not found: <id>` (a row error in the batch tools) instead of ending the server. Without Reminders access EventKit may not report the item as a reminder, and the lookup can still end the process (#288); a reminder's identifier normally comes from the reminder tools, which need that access.
+
 > **Recurrence exclusions (#182)**: `create_event` (and each `create_events_batch` item) accepts `recurrence.excluded_occurrence_dates` to skip specific dates in a recurring series at creation time — applied with best-effort all-or-nothing semantics (any failure removes the entire new series via compensating delete; rollback failure is reported, never silent; the first occurrence cannot be excluded), and one `undo` removes the whole series including exclusions. The excluded dates are removed occurrences, not edited ones (checked on iCloud only, 2026-10-05; other stores were not checked), so they do not stop that undo; an occurrence edited on its own after the series was created does (#236). Known limitation: on idempotent retry, a duplicate recurring series with every requested date already absent is `skipped`, but extra exclusions already present on the existing series (beyond those requested) are not detected.
 
 </details>
@@ -89,7 +91,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_reminders` | List reminders with filter/sort/limit, tags extraction (v1.0.0) |
-| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267), and the response then carries `date_sync` with `aligned` judged on the saved reminder (#301) |
+| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267), and the response then carries `date_sync` with `aligned` judged on the saved reminder (#301). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `update_reminder` | Update a reminder (including tags, `clear_due_date`) (v1.3.0) |
 | `complete_reminder` | Mark as completed/incomplete |
 | `delete_reminder` | Delete a reminder |
@@ -121,7 +123,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `move_events_batch` | Move events to another calendar in place, keeping recurrence and attendees; `span` / `occurrence_dates` for recurring events (#226) |
 | `delete_events_batch` | Delete events by IDs or date range, with dry-run preview (v1.0.0) |
 | `find_duplicate_events` | Find duplicate events across calendars (v0.5.0) |
-| `create_reminders_batch` | Create multiple reminders at once (v0.9.0) |
+| `create_reminders_batch` | Create multiple reminders at once (v0.9.0); a row may carry `store_differs` and `note`, as `create_reminder` does (#261) |
 | `delete_reminders_batch` | Delete multiple reminders at once (v0.9.0); one `undo` recreates them (#243) |
 
 **Moving events (#226):** a move reassigns the event's calendar, so recurrence, attendees and every other field are kept. The identifier stays the same within an account and changes across accounts (each result reports `id_changed` and `new_event_id`). For a recurring event, `span: this` (default) moves only the occurrence named in `occurrence_dates`, which becomes a one-off; `span: all` moves the whole series; a recurring event without a date is refused. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`) and any `not_carried_over` fields.
