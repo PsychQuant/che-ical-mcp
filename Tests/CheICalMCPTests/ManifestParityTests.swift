@@ -473,4 +473,47 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertFalse((entry["description"] as? String ?? "").contains(backwards), "mcpb/manifest.json \(entry["name"] ?? "")")
         }
     }
+
+    /// #391 (PR #394 verify round 1): every parameter that names an occurrence by date says that it
+    /// is the day the occurrence starts on, and what a date or time inside an overnight occurrence
+    /// does. `update_event`'s keeps #392's zone wording too (`testUpdateEventDescribesTheOccurrenceDateZone`).
+    func testOccurrenceDateParametersNameTheStartDay() throws {
+        func descriptions(of key: String, in value: Value) -> [String] {
+            guard let object = value.objectValue else {
+                return value.arrayValue?.flatMap { descriptions(of: key, in: $0) } ?? []
+            }
+            var found: [String] = []
+            if let property = object["properties"]?.objectValue?[key]?.objectValue?["description"]?.stringValue { found.append(property) }
+            for (_, child) in object { found += descriptions(of: key, in: child) }
+            return found
+        }
+        let tools = CheICalMCPServer.defineTools()
+        let cases: [(tool: String, key: String, count: Int)] = [
+            ("update_event", "occurrence_date", 1),
+            ("delete_event", "occurrence_date", 1),
+            ("move_events_batch", "occurrence_dates", 1),
+            ("create_event", "excluded_occurrence_dates", 1),
+            ("create_events_batch", "excluded_occurrence_dates", 1),
+        ]
+        for (name, key, count) in cases {
+            let schema = try XCTUnwrap(tools.first { $0.name == name }?.inputSchema, name)
+            let found = Array(Set(descriptions(of: key, in: schema)))
+            XCTAssertEqual(found.count, count, "\(name).\(key): \(found)")
+            for text in found {
+                XCTAssertTrue(text.contains("the day the occurrence starts on"), "\(name).\(key): \(text)")
+                XCTAssertTrue(text.contains("runs past midnight"), "\(name).\(key): \(text)")
+            }
+        }
+        for key in ["occurrence_date", "occurrence_dates"] {
+            for text in [("update_event", key), ("delete_event", key), ("move_events_batch", key)].flatMap({ pair in
+                descriptions(of: pair.1, in: tools.first { $0.name == pair.0 }!.inputSchema) }) {
+                XCTAssertTrue(text.contains("selects the occurrence starting on that following day"), text)
+            }
+        }
+        for name in ["create_event", "create_events_batch"] {
+            for text in descriptions(of: "excluded_occurrence_dates", in: tools.first { $0.name == name }!.inputSchema) {
+                XCTAssertTrue(text.contains("rolled back"), "\(name): \(text)")
+            }
+        }
+    }
 }
