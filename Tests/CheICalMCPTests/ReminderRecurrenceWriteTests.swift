@@ -226,6 +226,17 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
         XCTAssertTrue(given.contains("given in this call"), given)
         let monthly = try XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [monthly15], dueGiven: false))
         XCTAssertTrue(monthly.contains("not measured"), monthly)
+        // PR #420 verify round 2: "measured" only for the shape measured: weekly, interval 1, one
+        // weekday, no end date or count.
+        func weeklyRule(days: [Int], interval: Int = 1, count: Int? = nil, end: Date? = nil) -> ReminderRecurrenceRuleValue {
+            ReminderRecurrenceRuleValue(from: EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
+                frequency: .weekly, interval: interval, endDate: end, occurrenceCount: count, daysOfWeek: days, daysOfMonth: nil, excludedOccurrenceDates: nil)))
+        }
+        for rule in [weeklyRule(days: [6], interval: 2), weeklyRule(days: [6, 7]), weeklyRule(days: [6], count: 5),
+                     weeklyRule(days: [6], end: Date(timeIntervalSince1970: 1_900_000_000))] {
+            let note = try XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [rule], dueGiven: false))
+            XCTAssertTrue(note.contains("not measured"), note)
+        }
     }
 
     /// Weekdays count for every frequency but daily; days of the month only for monthly.
@@ -271,6 +282,13 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
         let dateOnly = DateComponents(year: 2026, month: 12, day: 10)
         let post = ReminderSnapshot(from: reminder(due: dateOnly, end: end))
         XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: reminder(due: dateOnly, end: end.addingTimeInterval(60))), restoring: nil), [])
+        // PR #420 verify round 2: the "already restored" comparison too goes by day only when both
+        // sides are date-only. A date-only reminder made timed, whose rule end another app then
+        // moves within the day, is not taken as restored.
+        let target = ReminderSnapshot(from: reminder(due: dateOnly, end: end))
+        let timedAfterUpdate = ReminderSnapshot(from: reminder(due: thursdayDue, end: end.addingTimeInterval(-3600)))
+        XCTAssertEqual(timedAfterUpdate.changedFields(in: ReminderSnapshot(from: reminder(due: thursdayDue, end: end.addingTimeInterval(60))),
+                                                      restoring: target), ["recurrence"])
         let timedPost = ReminderSnapshot(from: reminder(due: thursdayDue, end: end))
         XCTAssertEqual(timedPost.changedFields(in: ReminderSnapshot(from: reminder(due: thursdayDue, end: end.addingTimeInterval(60))), restoring: nil),
                        ["recurrence"])

@@ -123,7 +123,9 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("unreadable"), "recurrence": fridays]))
         XCTAssertEqual(result["recurrence_read_back"] as? Bool, false)
-        XCTAssertEqual(result["recurrence_note"] as? String, ReminderRecurrenceWrite.unconfirmedNote)
+        // PR #420 verify round 2: its own key, so recurrence_note keeps one meaning.
+        XCTAssertEqual(result["recurrence_read_back_note"] as? String, ReminderRecurrenceWrite.unconfirmedNote)
+        XCTAssertNil(result["recurrence_note"])
         XCTAssertNil(result["reminder_recurrence_rules"])
     }
 
@@ -159,6 +161,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
             ("create_reminder", ["title": .string("t"), "due_date": .string("2026-12-10T09:00:00"), "calendar_name": .string("none")]),
             ("create_event", ["title": .string("t"), "start_time": .string("2026-12-10T09:00:00"),
                               "end_time": .string("2026-12-10T10:00:00"), "calendar_name": .string("none")]),
+            ("update_event", ["event_id": .string("none")]),
         ]
         for (rule, field) in bad {
             for (tool, base) in tools {
@@ -174,13 +177,33 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
         }
         let updated = await fake.updated
         XCTAssertTrue(updated.isEmpty)
+
+        // PR #420 verify round 2: create_events_batch reports it per item (the rule in events[0]).
+        for (rule, field) in bad {
+            let batch = try object(await server.executeToolCall(name: "create_events_batch", arguments: [
+                "events": .array([.object(["title": .string("t"), "start_time": .string("2026-12-10T09:00:00"),
+                                           "end_time": .string("2026-12-10T10:00:00"), "calendar_name": .string("none"),
+                                           "recurrence": rule])])]))
+            let row = try XCTUnwrap((batch["results"] as? [[String: Any]])?.first)
+            XCTAssertEqual(row["success"] as? Bool, false, "\(rule)")
+            XCTAssertTrue((row["error"] as? String ?? "").contains("recurrence.\(field)"), "\(rule): \(row)")
+        }
     }
 
     func testTheRuleBoundsAreStatedInTheSchemas() {
-        for name in ["create_event", "update_event", "create_reminder", "update_reminder"] {
+        for name in ["create_event", "update_event", "create_events_batch", "create_reminder", "update_reminder"] {
             let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
             XCTAssertTrue(schema.contains("1 to 1000"), "\(name): interval bound")
             XCTAssertTrue(schema.contains("1 to 10000"), "\(name): occurrence_count bound")
         }
+    }
+
+    /// PR #420 verify round 2: update_reminder's days_of_week says the same as its rule text.
+    func testUpdateReminderDaysOfWeekIsNotWeeklyOnly() throws {
+        let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_reminder" })
+        let days = tool.inputSchema.objectValue?["properties"]?.objectValue?["recurrence"]?.objectValue?["properties"]?
+            .objectValue?["days_of_week"]?.objectValue?["description"]?.stringValue ?? ""
+        XCTAssertFalse(days.hasPrefix("For weekly"), days)
+        XCTAssertTrue(days.contains("every frequency but daily"), days)
     }
 }

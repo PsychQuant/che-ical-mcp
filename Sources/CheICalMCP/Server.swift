@@ -640,7 +640,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule."),
+                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false, with recurrence_read_back_note, when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -662,7 +662,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency but daily")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -2002,7 +2002,7 @@ class CheICalMCPServer {
             } else {
                 // PR #420 verify round 1: not re-read after the save, so nothing is reported as stored.
                 response["recurrence_read_back"] = false
-                response["recurrence_note"] = ReminderRecurrenceWrite.unconfirmedNote
+                response["recurrence_read_back_note"] = ReminderRecurrenceWrite.unconfirmedNote   // round 2: its own key
             }
         }
         // #268: the identifier after the save (a move to another account's list may change it).

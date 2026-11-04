@@ -84,9 +84,12 @@ enum ReminderRecurrenceWrite {
         let first = dueGiven
             ? "The due date (\(label)), as given in this call, is not on the rule's days: this pending occurrence is on it."
             : "The due date (\(label)) is not on the new rule's days and was not moved: this pending occurrence stays on it."
-        let measured = rule.frequency == "weekly" && !(rule.weekdays ?? []).isEmpty
+        // PR #420 verify round 2: the shape measured on iCloud: weekly, every week, one weekday,
+        // no end date or count.
+        let measured = rule.frequency == "weekly" && rule.interval == 1 && (rule.weekdays ?? []).count == 1
+            && rule.endDate == nil && rule.occurrenceCount == nil
         let after = measured
-            ? " After it is completed, the reminder repeats on the rule's days (measured for a weekly rule)."
+            ? " After it is completed, the reminder repeats on the rule's days (measured for a weekly rule on one weekday)."
             : " After it is completed, the reminder is expected to repeat on the rule's days (not measured for this kind of rule)."
         let remedy = dueGiven ? "" : " To move it, pass due_date to update_reminder."
         return first + after + remedy
