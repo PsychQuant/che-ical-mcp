@@ -316,6 +316,28 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         }
     }
 
+    /// #369: the undo lookup resolves the stand-in exactly as the move did (no edited-before
+    /// refusal, the cross-account refusal kept), and only behind the series-move predicate, so a
+    /// create-undo never compares its series snapshot with a middle occurrence.
+    func testTheUndoLookupResolvesTheStandInOnlyForASeriesMove() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func verifiedHistoryTarget("))
+        let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
+        let body = String(source[from.upperBound..<to.lowerBound])
+        let gate = try XCTUnwrap(body.range(of: "if operation.resolvesThroughStandIn {"), "the stand-in sits behind the predicate")
+        let call = try XCTUnwrap(body.range(of: "seriesMoveUndoTarget("), "resolved by the series-move helper")
+        XCTAssertLessThan(gate.lowerBound, call.lowerBound)
+        XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
+        XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
+        let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
+        let helper = String(source[helperFrom.upperBound...].prefix(1600))
+        XCTAssertTrue(helper.contains("freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"), "resolved as the move resolved")
+        XCTAssertTrue(helper.contains("refusesMoveThroughStandIn("), "a move back to another account keeps the refusal")
+        XCTAssertTrue(body.contains("storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {

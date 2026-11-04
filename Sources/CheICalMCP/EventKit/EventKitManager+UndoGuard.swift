@@ -114,6 +114,9 @@ extension EventKitManager {
             return try UndoTargetCheck.check(
                 expected, verb: verb,
                 lookup: { () -> EKEvent? in
+                    if operation.resolvesThroughStandIn {
+                        return try seriesMoveUndoTarget(expected, verb: verb)
+                    }
                     refreshIfNeeded()
                     return storedEvent(id: expected.itemID)
                 },
@@ -149,6 +152,31 @@ extension EventKitManager {
                 },
                 refusal: refusal)
         }
+    }
+
+    /// #369: the target of a whole-series move's undo, resolved as `moveEvent` resolved it: the
+    /// series object when it refreshes, else the earliest remaining occurrence, with no
+    /// edited-before refusal (a move leaves no occurrence behind, device 2026-10-20). Nil when
+    /// nothing is stored; a stored series with no stand-in throws the not-found that does not
+    /// call it deleted or moved. Moving back through the stand-in to another account is refused,
+    /// as the forward move refuses it (`refusesMoveThroughStandIn`), and the record is kept.
+    private func seriesMoveUndoTarget(_ expected: UndoPostState, verb: UndoHistoryVerb) throws -> EKEvent? {
+        let id = expected.itemID
+        guard let resolved = freshEventWithOrigin(id: id, refuseWhenEditedBefore: false) else {
+            guard storedEvent(id: id) != nil else { return nil }
+            throw UndoTargetMissingError(verb: verb, kind: expected.kind, title: expected.title,
+                                         hasIdentifier: !id.isEmpty, seriesWithoutStandIn: true)
+        }
+        if case .eventCalendar(_, _, _, let restoringCalendarIdentifier) = expected,
+           let original = eventStore.calendar(withIdentifier: restoringCalendarIdentifier),
+           FirstRemainingOccurrence.refusesMoveThroughStandIn(
+               viaStandIn: resolved.viaStandIn, wholeSeries: true,
+               acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(
+                   fromSourceID: resolved.event.calendar?.source?.sourceIdentifier,
+                   toSourceID: original.source?.sourceIdentifier)) {
+            throw EventKitError.standInRefused(reason: Self.standInUndoAccountReason)
+        }
+        return resolved.event
     }
 
     /// D4 pre-flight for one member of a batch (nested batches are walked).

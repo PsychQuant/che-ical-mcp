@@ -945,6 +945,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     static let standInAllEditedReason = "This series' first occurrence was deleted and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
+    /// The fixed reason for refusing the undo of a whole-series move whose way back goes through
+    /// the stand-in to another account (#369). The record is kept, as every refusal outside the
+    /// spec's discard scenarios is (`undo-history-discard`).
+    static let standInUndoAccountReason = "Cannot undo the move: this series' first occurrence was deleted, so moving the whole series back to its original calendar in another account (a create plus a delete from its first remaining occurrence) is not supported. Nothing was written and this history entry was kept. Move the series back in Calendar, or move single occurrences with their occurrence date and span 'this'; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     /// The fixed reason for refusing a series-level update (calendar of another account,
     /// recurrence rules) through the stand-in (#326).
     private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
@@ -2413,7 +2417,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
-            // event is still in the calendar it was moved to (#236).
+            // event is still in the calendar it was moved to (#236). A series is resolved as the
+            // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
             let event = try await verifiedEvent(of: operation, verb: .undo)
             guard let original = eventStore.calendar(withIdentifier: fromCalendarIdentifier) else {
                 throw EventKitError.calendarNotFound(identifier: fromCalendarIdentifier)
