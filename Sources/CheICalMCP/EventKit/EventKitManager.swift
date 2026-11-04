@@ -588,13 +588,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // #261: a reminder list whose save failed may stay pending and be written by the next
-        // save, so it is discarded unless a new store finds it; then it was saved, and it is
-        // returned as created. An event calendar is saved as before: in the failure classes
-        // tried, a failed one was not written by a later save (see NewObjectSave).
+        // save, so it is discarded when a new store does not find it; when it finds it, it was
+        // saved, and it is returned as created. When that store cannot answer, the list is kept and
+        // the call fails with `saveUnchecked` (#289: a create has no undo record). An event
+        // calendar is saved as before: in the failure classes tried, a failed one was not written
+        // by a later save (see NewObjectSave).
         var storeDiffers: [String] = []
         if NewObjectSave.keepsFailedInsert(entityType) {
             storeDiffers = try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
                                   committed: { NewObjectSave.freshStoreFinds(NewObjectSave.listCheck(calendar)) },
+                                  onNoAnswer: .keep,
                                   discard: { try eventStore.removeCalendar(calendar, commit: false) },
                                   report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
         } else {
@@ -2253,6 +2256,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
     /// the save fails and a new store does not find the reminder, it is removed from the store
     /// without committing, so the next save by any tool does not write it (`NewObjectSave`). If
+    /// that store cannot answer, a create keeps the reminder and fails with `saveUnchecked` (#289:
+    /// it has no undo record), and a restore (`restoring`) removes it as before, its undo record
+    /// being kept for a retry (PR #421 round 1). If
     /// that store finds it, it counts as saved, whether or not its compared fields agree, and this
     /// returns as after a save: the caller's success path runs (the create's result and undo
     /// entry, the delete-undo's restore). Returns the compared fields the store holds differently
@@ -2276,6 +2282,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                       restoring: restoring)
                               },
                               committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
+                              onNoAnswer: restoring ? .discard : .keep,
                               discard: { try eventStore.remove(reminder, commit: false) },
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
     }
@@ -3111,7 +3118,7 @@ enum EventKitError: LocalizedError {
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):
-            return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed: it may already be saved, or be written by the next save of any tool. Check before trying again: creating it again, or running the same undo again, may make a second copy. For an undo, if the item is there, give the history entry up with discard_id instead of running undo again."
+            return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed. It may already be saved. If it was not, it stays pending in this server's store and the next save of any tool writes it, including the save of a retry, which would then leave two. A check made right away may not see an item that is still pending (not tried), so it proves nothing yet: the item shows once another save by this server has written it, and is dropped if the server restarts first (not tried). Do not create it again until one of those has happened. It has no undo entry (this call recorded none): if it is written, undo does not remove it (undo would undo the operation before it); delete it by hand if it is not wanted."
         case .calendarNotEmpty(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):

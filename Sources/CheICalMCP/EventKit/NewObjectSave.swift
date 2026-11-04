@@ -40,25 +40,30 @@ import EventKit
 ///   whose due date agrees within a minute (or neither has one), `create_calendar` for a calendar
 ///   of the same title and type, and either returns what it finds. Whether those checks see an
 ///   item still pending was read from the code, not tried.
-/// - no answer (the new store has no sources): the object is kept, not discarded (#289). Nothing
-///   shows that such a save did not commit, and discarding a save that did would delete the item at
-///   the next write by any tool, with no undo record, which cannot be reversed; #261's rule is "no
+/// - no answer (the new store has no sources): what happens is the caller's choice (`NoAnswer`,
+///   #289, PR #421 round 1). A create keeps the object (`keep`): nothing shows that such a save did
+///   not commit, a create has no undo record, and discarding a save that did commit would delete
+///   the item at the next write by any tool with nothing to bring it back; #261's rule is "no
 ///   defensive discard without probe evidence". The cost is the other way round: an item whose
-///   save did not commit stays pending and the next save of any tool may write it, with no undo
-///   record. The caller gets `EventKitError.saveUnchecked`, which says so: the item may already be
-///   saved or be written later, so check before creating it again or running the same undo again
-///   (either may make a second copy), and for an undo give the entry up with `discard_id` if the
-///   item is there. The nil branch was not produced on device (#289): before #289 it was a discard,
-///   kept as the one exception on these grounds: the caller has already been told the save failed; on
+///   save did not commit stays pending and the next save of any tool writes it, a retry's own save
+///   included, with no undo record; and an item that can never commit may make later saves in this
+///   process fail until a restart (not tried). The caller gets `EventKitError.saveUnchecked`, which
+///   says what was kept, that a check right away may not see it, not to create it again until
+///   another save or a restart has settled it, and that undo will not remove it. A restore
+///   (`discard`; the undo of `delete_reminder`) removes the object as before #289: its undo record
+///   is kept on failure, so a retry restores the reminder, while a kept pending copy would be
+///   written by the next save and a retried undo would make a second one. The nil branch was not
+///   produced on device (#289). Before #289 it was a discard everywhere, kept as the one exception
+///   on these grounds: the caller has already been told the save failed; on
 ///   device a new store had no sources only with about ten stores that have read their sources
 ///   alive in one process, while the server keeps one such store (`EventKitManager`; the store
 ///   made at startup only reads the authorization status) plus the one this check makes and
 ///   releases; and with a long-lived store alive every check answered: up to 100 in a row in one
 ///   process, 280 over four runs, and 200 more over two later runs in which that store was held
-///   alive explicitly through the loop and read after it. The exception assumes that a failing
+///   alive explicitly through the loop and read after it. Those grounds assumed that a failing
 ///   save and a new store without sources are unrelated; nothing on device shows that (a save
 ///   broken by a lost connection to the calendar daemon might also leave a new store without
-///   sources).
+///   sources). They still describe how rare the branch is; on the restore path they still hold.
 ///
 /// Checked on device, iCloud only, in the host's time zone (+08:00), 2026-10-07 and 08. The commit
 /// failures were induced: an event was staged with `save(_:span:commit: false)` into a calendar
@@ -138,10 +143,11 @@ import EventKit
 /// - a real throw inside `save`. Every device run threw only after `save` returned, when the
 ///   saving store's copy was already clean. A throw inside `save` may leave that copy unverified
 ///   and pending, to be written again by the next save. If the check misses an object that was
-///   saved (no answer, a read behind the commit, or a lookup by an identifier that was never the
-///   saved one), the discard deletes it at the next write by any tool; a `create_reminder` retried
-///   in between would find the reminder by its title and report it as existing, and the staged
-///   removal would still delete it (read from the code, not tried).
+///   saved (a read behind the commit, a lookup by an identifier that was never the saved one, or no
+///   answer on the restore path), the discard deletes it at the next write by any tool; a
+///   `create_reminder` retried in between would find the reminder by its title and report it as
+///   existing, and the staged removal would still delete it (read from the code, not tried). With
+///   no answer, a create keeps it instead (#289).
 /// - a store that hands a compared field back changed: the call still succeeds, with that field
 ///   named, a false note. Not tried, and so the likely sources of one: a time-zone alias (GMT and
 ///   UTC, Asia/Calcutta and Asia/Kolkata) or a zone the host does not use; a URL the store
@@ -189,9 +195,10 @@ import EventKit
 /// lookup and the save). Not checked: other sources than iCloud, and a new reminder list saved
 /// into a source deleted elsewhere (`createCalendar` passes no `verified`).
 ///
-/// Every outcome of a failed save is one line on stderr; the lines for a found item and for a
-/// failed removal name the save's error by domain and code. The caller gets the save's error
-/// unless a new store finds the object. A save that returned and fails `verified` writes no stderr
+/// Every outcome of a failed save is one line on stderr; the lines for a found item, for no answer
+/// and for a failed removal name the save's error by domain and code. The caller gets the save's
+/// error unless a new store finds the object, or cannot answer on a create (then
+/// `EventKitError.saveUnchecked`, #289). A save that returned and fails `verified` writes no stderr
 /// line and runs no new store or removal: the caller gets `verified`'s error
 /// (`ListDeletedDuringSave` for a reminder).
 enum NewObjectSave {
@@ -205,15 +212,31 @@ enum NewObjectSave {
         /// object (`Found.differs`): a partial write, or an edit made elsewhere between the commit
         /// and the check. The item is kept, `run` returns the names, and the call succeeds.
         case committedButDiffers(fields: [String], save: Error)
-        /// That store had no sources and could not answer; the object was kept, not removed (#289),
-        /// and the caller gets `EventKitError.saveUnchecked`.
-        case unchecked
+        /// That store had no sources and could not answer, on a path that discards then (a restore,
+        /// whose undo record is kept for a retry; `NoAnswer.discard`): the object was removed, and the
+        /// removal ran without an error.
+        case unchecked(save: Error)
+        /// That store could not answer, on a path that keeps the object then (a create, which has no
+        /// undo record; `NoAnswer.keep`, #289): nothing was removed, and the caller gets
+        /// `EventKitError.saveUnchecked`.
+        case uncheckedKept(save: Error)
         /// The save was the refusal seen before the store took the object in, and the removal threw
         /// the error that refusal gave (`isNothingPending`).
         case nothingPending
         /// The removal threw anything else: the object may still be written by the next save.
         case discardFailed(save: Error, discard: Error)
     }
+
+    /// What `run` does when the new store cannot answer (#289, PR #421 round 1), chosen by each
+    /// caller:
+    /// - `keep`, for a create (`create_reminder`, `create_reminders_batch`, `create_calendar`): no
+    ///   undo record exists for it, so a removal of a save that did commit would delete the item at
+    ///   the next write with nothing to bring it back. The item is kept and the caller gets
+    ///   `EventKitError.saveUnchecked`.
+    /// - `discard`, for a restore (the undo of `delete_reminder`, single and batch member): its undo
+    ///   record is kept on failure, so a retry restores the reminder; keeping a pending copy there
+    ///   would let the next save write it and a retried undo make a second one. As before #289.
+    enum NoAnswer { case keep, discard }
 
     /// Whether a failed insert of this type stayed pending on device: reminders and reminder
     /// lists did, events and event calendars did not.
@@ -328,10 +351,12 @@ enum NewObjectSave {
     /// and returns the names. Either way the object is kept and the caller goes on as after a
     /// save, telling its own caller about the names (`responseFields`, `undoSuffix`). `.absent`
     /// runs `discard`, reports `.nothingPending` or `.discardFailed` when the removal throws, and
-    /// rethrows the save's error. Nil (no answer) runs no `discard` (#289): it reports `.unchecked`
-    /// and throws `EventKitError.saveUnchecked` with the save's sanitized code.
+    /// rethrows the save's error. Nil (no answer) follows `onNoAnswer`: `.keep` runs no `discard`,
+    /// reports `.uncheckedKept` and throws `EventKitError.saveUnchecked` with the save's sanitized
+    /// code (#289); `.discard` does what `.absent` does, reporting `.unchecked` after a removal that
+    /// ran without an error.
     static func run(save: () throws -> Void, verified: () throws -> Void = {}, committed: () -> Found?,
-                    discard: () throws -> Void, report: (Outcome) -> Void) throws -> [String] {
+                    onNoAnswer: NoAnswer, discard: () throws -> Void, report: (Outcome) -> Void) throws -> [String] {
         do {
             try save()
         } catch {
@@ -344,13 +369,14 @@ enum NewObjectSave {
                 report(.committedButDiffers(fields: fields, save: error))
                 return fields
             }
-            guard found != nil else {
-                // #289: no evidence either way, so nothing is removed.
-                report(.unchecked)
+            if found == nil, onNoAnswer == .keep {
+                // #289: no evidence either way and no undo record, so nothing is removed.
+                report(.uncheckedKept(save: error))
                 throw EventKitError.saveUnchecked(code: EventKitErrorSanitizer.sanitize(error).code)
             }
             do {
                 try discard()
+                if found == nil { report(.unchecked(save: error)) }
             } catch let discardError {
                 report(isNothingPending(save: error, discard: discardError)
                        ? .nothingPending : .discardFailed(save: error, discard: discardError))
@@ -425,8 +451,10 @@ enum NewObjectSave {
             return "\(site): the save threw \(code(save)), but a new store finds the item as it was saved, so it was saved; it is kept and the call succeeds"
         case .committedButDiffers(let fields, let save):
             return "\(site): the save threw \(code(save)), and a new store finds the item, but its \(fields.joined(separator: ", ")) differ from what was written (a partial write or an edit made elsewhere); it is kept and the call succeeds with a note naming them"
-        case .unchecked:
-            return "\(site): the save threw and a new store could not be read, so whether it was saved is unknown; it was kept (not removed), since removing a save that committed would delete it at the next write (#289)"
+        case .unchecked(let save):
+            return "\(site): the save threw \(code(save)) and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing (the undo record is kept for a retry)"
+        case .uncheckedKept(let save):
+            return "\(site): the save threw \(code(save)) and a new store could not be read, so whether it was saved is unknown; it was kept (not removed), since removing a save that committed would delete it at the next write (#289)"
         case .nothingPending:
             return "\(site): the save was refused before the store took the item in; nothing to remove"
         case .discardFailed(let save, let discard):
