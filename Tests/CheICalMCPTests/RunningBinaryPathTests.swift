@@ -72,6 +72,31 @@ final class RunningBinaryPathTests: XCTestCase {
         XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: name), canonical(onPath))
     }
 
+    /// Round-2 verify (#360): the PATH walk skips a directory of that name and a relative
+    /// PATH entry such as `.`, which would bring the current directory back.
+    func testPATHWalk_skipsDirectoriesAndRelativeEntries() throws {
+        let name = "rbp-\(UUID().uuidString.prefix(8))"
+        let dirFirst = tempDir.appendingPathComponent("first", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: dirFirst.appendingPathComponent(name, isDirectory: true), withIntermediateDirectories: true)
+        let binDir = tempDir.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        let onPath = binDir.appendingPathComponent(name)
+        try Data().write(to: onPath)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: onPath.path)
+        let work = tempDir.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let planted = work.appendingPathComponent(name)
+        try Data().write(to: planted)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: planted.path)
+        FileManager.default.changeCurrentDirectoryPath(work.path)
+        let savedPATH = getenv("PATH").map { String(cString: $0) }
+        setenv("PATH", ".:\(dirFirst.path):\(binDir.path)", 1)
+        defer { if let savedPATH { setenv("PATH", savedPATH, 1) } else { unsetenv("PATH") } }
+
+        XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: name), canonical(onPath))
+    }
+
     func testNilKernelPath_bareArgv0NotOnPATH_fallsBackToArgv0Resolution() {
         let name = "rbp-missing-\(UUID().uuidString.prefix(8))"
         XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: name),
