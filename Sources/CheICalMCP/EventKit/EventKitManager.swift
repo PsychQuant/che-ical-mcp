@@ -1338,8 +1338,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
         // rebuilds the whole series), consistent with single deleteEvent.
         // #285: a series' exceptions are listed before the removal takes them away.
-        let snapshot = EventSnapshot(from: event)
-            .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
+        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
         if event.hasRecurrenceRules {
             try eventStore.remove(event, span: .futureEvents)
         } else {
@@ -1368,8 +1367,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
-                let snapshot = EventSnapshot(from: event)
-                    .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
+                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
                 if event.hasRecurrenceRules {
                     try eventStore.remove(event, span: .futureEvents)
                 } else {
