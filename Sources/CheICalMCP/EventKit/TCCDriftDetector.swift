@@ -269,11 +269,14 @@ struct TCCDriftDetector {
             }
         }
         if !calendarAccessGranted, !hostSignalPresent, calendarRestricted {
+            // Round 4 (R5): this binary's own command (the `.mcpb` binary is not on PATH); for a
+            // control-char path, an escaped description and no runnable command.
+            let diagnose = EventKitManager.printTCCPathHint(binaryPath: runningBinaryPath)
             // #368: a `restricted` Calendar status is a policy (configuration profile or Screen
             // Time). `--setup` shows no prompt for it, so no command is printed. The banner does
             // not know the attribution (it may be unavailable), so the line names "the process
             // macOS checks", not CheICalMCP (round-3 LOW 13).
-            lines.append("[banner] Calendar access is restricted by a policy (configuration profile or Screen Time); --setup cannot change it — ask whoever manages this Mac to allow Calendar access for the process macOS checks (CheICalMCP --print-tcc-path shows which)")
+            lines.append("[banner] Calendar access is restricted by a policy (configuration profile or Screen Time); --setup cannot change it — ask whoever manages this Mac to allow Calendar access for the process macOS checks (\(diagnose) shows which)")
             // #368 verify (DA): the policy covers Calendar only, so the Reminders line follows
             // the Reminders status. `--setup` prompts only from `notDetermined`; the status may
             // be a host's, so the other lines name "that entry", not CheICalMCP (round 3).
@@ -285,9 +288,9 @@ struct TCCDriftDetector {
                     lines.append("[banner] Reminders access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup (it prompts only while the status is notDetermined)")
                 }
             case .denied:
-                lines.append("[banner] Reminders access denied — a \"Don't Allow\" is recorded for the process macOS checks (CheICalMCP --print-tcc-path shows which), so no prompt will appear: switch that entry on in System Settings → Privacy & Security → Reminders")
+                lines.append("[banner] Reminders access denied — a \"Don't Allow\" is recorded for the process macOS checks (\(diagnose) shows which), so no prompt will appear: switch that entry on in System Settings → Privacy & Security → Reminders")
             case .writeOnly:
-                lines.append("[banner] Reminders access is write-only — System Settings → Privacy & Security → Reminders → that entry's Options… → Full Access (CheICalMCP --print-tcc-path shows which process macOS checks)")
+                lines.append("[banner] Reminders access is write-only — System Settings → Privacy & Security → Reminders → that entry's Options… → Full Access (\(diagnose) shows which process macOS checks)")
             default:
                 break  // restricted (a policy) or granted: nothing --setup or a switch can add
             }

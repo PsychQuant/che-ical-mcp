@@ -412,6 +412,37 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
+    /// Round 4 (R5): the restricted-Calendar lines name this binary's --print-tcc-path command,
+    /// not a hardcoded `CheICalMCP` that may not be on PATH (the `.mcpb` binary is not).
+    func testRestrictedCalendar_linesNameThisBinarysPrintTCCPathCommand() {
+        let mcpb = "/Users/test/Library/Application Support/Claude/Claude Extensions/local.mcpb.che-cheng.che-ical-mcp/server/CheICalMCP"
+        for reminders in [EKAuthorizationStatus.denied, .writeOnly] {
+            let b = TCCDriftDetector.formatBanner(
+                report: DriftReport(signals: [], skipReasons: []), version: "1.12.0",
+                runningBinaryPath: mcpb, pid: 1, bundleID: bundleID,
+                calendarAccessGranted: false, calendarRestricted: true, remindersStatus: reminders)
+            let restrictedLines = b.components(separatedBy: "\n").filter {
+                $0.hasPrefix("[banner] Calendar access is restricted") || $0.hasPrefix("[banner] Reminders")
+            }
+            XCTAssertEqual(restrictedLines.count, 2, b)
+            for line in restrictedLines {
+                XCTAssertTrue(line.contains("'\(mcpb)' --print-tcc-path"), line)
+                XCTAssertFalse(line.contains("(CheICalMCP --print-tcc-path"), line)
+            }
+        }
+    }
+
+    func testRestrictedCalendar_controlCharPath_printsNoRunnablePrintTCCPathCommand() {
+        let path = "/path/with\u{07}bel/CheICalMCP"
+        let b = TCCDriftDetector.formatBanner(
+            report: DriftReport(signals: [], skipReasons: []), version: "1.12.0",
+            runningBinaryPath: path, pid: 1, bundleID: bundleID,
+            calendarAccessGranted: false, calendarRestricted: true, remindersStatus: .denied)
+        XCTAssertFalse(b.contains("' --print-tcc-path"), b)
+        XCTAssertTrue(b.contains("with --print-tcc-path"), b)
+        XCTAssertFalse(b.unicodeScalars.contains { $0.value == 0x07 }, b)
+    }
+
     /// Round-3 LOW 20: the control-char variant of the Reminders line prints no runnable command.
     func testRestrictedCalendar_notDeterminedReminders_controlCharPath_printsNoCommand() {
         let path = "/path/with\u{07}bel/CheICalMCP"
