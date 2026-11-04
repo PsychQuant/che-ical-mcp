@@ -179,5 +179,24 @@ final class AllDayOffsetWarningTests: XCTestCase {
         let parts = taipei.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
     }
+
+    /// Verify round 3: a skipped duplicate keeps its existing dates, so the message speaks of the
+    /// request's dates and says the existing event was not changed.
+    func testASkippedCreatesMessageSpeaksOfTheRequestsDates() {
+        let zone = TimeZone(identifier: "Asia/Taipei")!
+        for (field, verb) in [("end_time", "ending"), ("start_time", "starting")] {
+            let warning = AllDayOffsetWarning.Warning(field: field, writtenDay: "2027-04-11", hostDay: "2027-04-12")
+            let skipped = warning.dictionary(hostZone: zone, skipped: true)["message"] as? String ?? ""
+            XCTAssertTrue(skipped.contains("the request's dates would be written \(verb) on 2027-04-12"), skipped)
+            XCTAssertTrue(skipped.contains("the existing event was not changed"), skipped)
+            XCTAssertFalse(skipped.contains("the event \(verb == "ending" ? "ends" : "starts") on"), skipped)
+            let written = warning.dictionary(hostZone: zone)["message"] as? String ?? ""
+            XCTAssertFalse(written.contains("not changed"), written)
+        }
+        let fields = AllDayOffsetWarning.responseFields(
+            [.init(field: "end_time", writtenDay: "2027-04-11", hostDay: "2027-04-12")], hostZone: zone, skipped: true)
+        let message = (fields["warnings"] as? [[String: Any]])?.first?["message"] as? String ?? ""
+        XCTAssertTrue(message.contains("not changed"), message)
+    }
 }
 

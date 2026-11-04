@@ -44,10 +44,13 @@ actor FakeEventWriteSource: EventWriteSource {
 
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue {
         creates.append(request)
+        // A duplicate is an existing event: its end is five days after the request's (verify round 3).
+        let isDuplicate = request.title == "duplicate"
         return EventCreateValue(
-            event: EventWriteValue(eventIdentifier: "created-\(creates.count)", title: request.title,
-                                   isAllDay: request.isAllDay, startDate: request.startDate, endDate: request.endDate),
-            isDuplicate: request.title == "duplicate")
+            event: EventWriteValue(eventIdentifier: isDuplicate ? "existing" : "created-\(creates.count)", title: request.title,
+                                   isAllDay: request.isAllDay, startDate: request.startDate,
+                                   endDate: isDuplicate ? request.endDate.addingTimeInterval(5 * 86_400) : request.endDate),
+            isDuplicate: isDuplicate)
     }
 
     func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] { [] }

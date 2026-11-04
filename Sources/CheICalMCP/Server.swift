@@ -1415,7 +1415,7 @@ class CheICalMCPServer {
             let host = Calendar.gregorian(in: .current)
             payload.merge(AllDayOffsetWarning.responseFields(
                 AllDayOffsetWarning.warnings(start: startDate, startText: startStr, end: endDate, endText: endStr, host: host),
-                hostZone: host.timeZone)) { $1 }
+                hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
         }
         return try actionResult(payload)
     }
@@ -2577,7 +2577,7 @@ class CheICalMCPServer {
                     let host = Calendar.gregorian(in: .current)
                     entry.merge(AllDayOffsetWarning.responseFields(
                         AllDayOffsetWarning.warnings(start: startDate, startText: startStr, end: endDate, endText: endStr, host: host),
-                        hostZone: host.timeZone)) { $1 }
+                        hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
                 }
                 results.append(entry)
             } catch {

@@ -36,7 +36,29 @@ final class EventCreateHandlerTests: XCTestCase {
         let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, title: "duplicate", allDay: true, start: "2027-04-10", end: shiftedEnd)
         XCTAssertEqual(result["action"] as? String, "skipped")
-        XCTAssertEqual((result["warnings"] as? [[String: Any]])?.count, 1)
+        let warnings = try XCTUnwrap(result["warnings"] as? [[String: Any]])
+        XCTAssertEqual(warnings.count, 1)
+        try assertSkippedWording(warnings[0])
+    }
+
+    /// Verify round 3: on a skipped duplicate the days are the request's, not the existing event's
+    /// (whose end differs here), so the message says the request would be written that way and the
+    /// existing event was not changed.
+    private func assertSkippedWording(_ warning: [String: Any], file: StaticString = #filePath, line: UInt = #line) throws {
+        XCTAssertEqual(warning["written_day"] as? String, "2027-04-11", file: file, line: line)
+        XCTAssertEqual(warning["host_day"] as? String, "2027-04-12", file: file, line: line)
+        let message = try XCTUnwrap(warning["message"] as? String, file: file, line: line)
+        XCTAssertTrue(message.contains("the request's dates would be written ending on 2027-04-12"), message, file: file, line: line)
+        XCTAssertTrue(message.contains("the existing event was not changed"), message, file: file, line: line)
+        XCTAssertFalse(message.contains("the event ends on"), message, file: file, line: line)
+    }
+
+    func testACreatedEventsWarningSaysTheEventEndsOnTheHostDay() async throws {
+        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let result = try await create(server, allDay: true, start: "2027-04-10", end: shiftedEnd)
+        let message = try XCTUnwrap((result["warnings"] as? [[String: Any]])?.first?["message"] as? String)
+        XCTAssertTrue(message.contains("the event ends on 2027-04-12"), message)
+        XCTAssertFalse(message.contains("not changed"), message)
     }
 
     func testATimedCreateDoesNotWarn() async throws {
@@ -85,5 +107,8 @@ final class EventCreateHandlerTests: XCTestCase {
         XCTAssertNil(warnings[2])
         XCTAssertEqual(warnings[3], ["end_time"])
         XCTAssertEqual(rows[3]["skipped"] as? Bool, true)
+        try assertSkippedWording(try XCTUnwrap((rows[3]["warnings"] as? [[String: Any]])?.first))
+        let created = try XCTUnwrap((rows[0]["warnings"] as? [[String: Any]])?.first?["message"] as? String)
+        XCTAssertFalse(created.contains("not changed"), created)
     }
 }

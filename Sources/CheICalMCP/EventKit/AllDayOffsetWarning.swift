@@ -29,13 +29,20 @@ enum AllDayOffsetWarning {
             return [writtenDay + "T23:59:59", AllDayOffsetWarning.dayAfter(writtenDay) ?? writtenDay + "T23:59:59"]
         }
 
-        func dictionary(hostZone: TimeZone) -> [String: Any] {
+        /// - Parameter skipped: the create was answered `skipped` (an existing duplicate): nothing
+        ///   was written, so the message speaks of the request's dates, not the event's (PR #387
+        ///   verify round 3: the existing event's own dates can differ).
+        func dictionary(hostZone: TimeZone, skipped: Bool = false) -> [String: Any] {
+            let isStart = field == "start_time"
+            let outcome = skipped
+                ? "the request's dates would be written \(isStart ? "starting" : "ending") on \(hostDay), and the existing event was not changed."
+                : "the event \(isStart ? "starts" : "ends") on \(hostDay)."
             let hint: String
-            if field == "start_time" {
-                hint = "the event starts on \(hostDay). To start on \(writtenDay), send start_time \(writtenDay) without an offset."
+            if isStart {
+                hint = outcome + " To start on \(writtenDay), send start_time \(writtenDay) without an offset."
             } else {
                 let values = suggestedValues
-                hint = "the event ends on \(hostDay). To end on \(writtenDay), send end_time \(values[0]) without an offset, "
+                hint = outcome + " To end on \(writtenDay), send end_time \(values[0]) without an offset, "
                     + "or the bare date \(values[1]) (the day after, an exclusive end)."
             }
             let which = field == "start_time" ? "first" : "last"
@@ -93,8 +100,8 @@ enum AllDayOffsetWarning {
 
     /// `["warnings": [...]]`, or empty when there is nothing to report, so a response without a
     /// warning keeps its shape.
-    static func responseFields(_ warnings: [Warning], hostZone: TimeZone) -> [String: Any] {
-        warnings.isEmpty ? [:] : ["warnings": warnings.map { $0.dictionary(hostZone: hostZone) }]
+    static func responseFields(_ warnings: [Warning], hostZone: TimeZone, skipped: Bool = false) -> [String: Any] {
+        warnings.isEmpty ? [:] : ["warnings": warnings.map { $0.dictionary(hostZone: hostZone, skipped: skipped) }]
     }
 
     /// The last day under `AllDayRange.normalize`'s rule: an end exactly at a midnight of a day
