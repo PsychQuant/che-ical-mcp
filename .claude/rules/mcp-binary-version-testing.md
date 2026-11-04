@@ -122,5 +122,13 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
    拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
+10. **經 stand-in 的整串搬移之 undo（#369）**：拋棄式日曆 A、B（同一 iCloud 帳號）建每週 5 次的系列 →
+    `delete_event` span `this` 刪第一個場次 → `move_events_batch` 用 bare id、span `all` 從 A 搬到 B
+    （`in_place`、id 不變、B 有 4 個場次）→ `undo`：4 個場次回到 A、id 不變；之前先建一筆一次性事件，
+    再 `undo` 一次要刪掉它（堆疊沒被卡住）。再做一次，搬移前先用 `update_event` span `this` 單獨改
+    第一個剩下的場次（edited-before 形狀）→ 搬移、`undo` 後 4 個場次（含被改過的）都回到 A。
+    2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process（`--cli` 的 undo stack 是 per-process，
+    走不到）做過這兩項，跨 process 的 `list_events` 確認結果；出版前在重啟後的 session MCP 上重做一次。
+    跨帳號搬回（拒絕、紀錄保留）沒有在裝置上驗過：只在有第二個帳號的拋棄式日曆時做。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
