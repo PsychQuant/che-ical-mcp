@@ -464,7 +464,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "redo",
-                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo history unchanged, and answers success: false with the tool that repeats the operation; that entry is then removed from the redo history, and the next redo applies to whatever is then on top of it. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
+                description: "Redo the last undone operation. Only available after an undo. Only completions (complete_reminder) are written again. For any other record (a create, delete, update or move, or a batch of deletes) redo writes nothing, leaves the undo history unchanged, and answers success: false with the tool that repeats the operation; that entry is then removed from the redo history, and the next redo applies to whatever is then on top of it. Redo does not replay a create, delete, update or move by design: the tool that made it repeats it, with its own checks and its own undo entry. Redo of a completion refuses without writing anything when the reminder was changed after the undo; the redo entry is kept, except for a recurring reminder whose identifier now resolves to another occurrence, whose entry is discarded.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
