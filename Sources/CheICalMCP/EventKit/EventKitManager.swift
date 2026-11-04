@@ -1270,7 +1270,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         event.timeZone
     }
 
-    /// Find a specific occurrence of a recurring event on a given date.
+    /// Find a specific occurrence of a recurring event on a given date: the one that starts on that
+    /// day in `timeZone` (#391, `OccurrenceDay.startsOnRequestedDay`), not one that only overlaps it.
     /// Returns the occurrence EKEvent (not the master event). With `slot`, only the occurrence
     /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
     /// one series, and the first enumerated one is not necessarily the one asked for.
@@ -1280,8 +1281,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in
+            // #391: the occurrence must start on the requested day, not only overlap it.
             if FutureDeletionCoverage.isRequested(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate,
-                                                  identifier: identifier, slot: slot) {
+                                                  identifier: identifier, slot: slot),
+               OccurrenceDay.startsOnRequestedDay(occurrenceStart: event.startDate, isAllDay: event.isAllDay, requested: date, in: timeZone) {
                 target = event
                 stop.pointee = true
             }

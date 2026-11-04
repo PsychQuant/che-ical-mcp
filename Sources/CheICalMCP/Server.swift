@@ -442,7 +442,7 @@ class CheICalMCPServer {
                         ]),
                         "occurrence_date": .object([
                             "type": .string("string"),
-                            "description": .string("For recurring events: the date of the specific occurrence to act on (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'). Required when span is 'this' or 'future' on recurring events.")
+                            "description": .string("For recurring events: the date of the specific occurrence to act on (e.g., '2026-03-28' or '2026-03-28T09:30:00+08:00'): the day the occurrence starts on, in the event's time zone (an occurrence that runs past midnight is not found by the next day). Required when span is 'this' or 'future' on recurring events.")
                         ])
                     ]),
                     "required": .array([.string("event_id")])
@@ -906,7 +906,7 @@ class CheICalMCPServer {
                         "occurrence_dates": .object([
                             "type": .string("array"),
                             "items": .object(["type": .array([.string("string"), .string("null")])]),
-                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'); null for the others. Must have the same length as event_ids when given.")
+                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. Must have the same length as event_ids when given.")
                         ])
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])

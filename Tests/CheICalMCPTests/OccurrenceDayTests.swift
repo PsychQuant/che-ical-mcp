@@ -60,3 +60,84 @@ final class OccurrenceDayTests: XCTestCase {
         XCTAssertEqual(window.end.timeIntervalSince(window.start), 25 * 3600)
     }
 }
+
+/// #391: `findOccurrence` took the first occurrence of the series the day's predicate enumerated,
+/// and EventKit's predicate also returns an occurrence that only touches the window at its end
+/// (device, 2026-11-04: a daily 23:30-00:00 New York series, `occurrence_date` 2026-12-06,
+/// updated the Dec 5 occurrence). An occurrence belongs to the day its start falls in.
+final class OccurrenceDayStartRuleTests: XCTestCase {
+    private let newYork = TimeZone(identifier: "America/New_York")!
+
+    private func at(_ iso: String) -> Date { ISO8601DateFormatter().date(from: iso)! }
+
+    /// The device case: Dec 5 23:30 New York ends at Dec 6 00:00, the window's start.
+    func testAnOccurrenceEndingAtTheDayStartIsNotOnThatDay() {
+        let requested = TestZones.midnight("2026-12-06", in: newYork)
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-06T04:30:00Z"), isAllDay: false, requested: requested, in: newYork),
+            "Dec 5 23:30 New York is the previous day's occurrence")
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-07T04:30:00Z"), isAllDay: false, requested: requested, in: newYork),
+            "Dec 6 23:30 New York is the requested one")
+    }
+
+    /// An overnight occurrence (22:00 to 02:00) overlaps the next day too; it is on the day it starts.
+    func testAnOvernightOccurrenceIsOnTheDayItStarts() {
+        let requested = TestZones.midnight("2026-12-06", in: newYork)
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-06T03:00:00Z"), isAllDay: false, requested: requested, in: newYork))
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-07T03:00:00Z"), isAllDay: false, requested: requested, in: newYork))
+    }
+
+    /// The window is half-open: a start at the day's first instant is on it, one at the next midnight is not.
+    func testTheDayIsHalfOpen() throws {
+        let requested = TestZones.midnight("2026-12-06", in: newYork)
+        let window = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: newYork))
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(occurrenceStart: window.start, isAllDay: false, requested: requested, in: newYork))
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(occurrenceStart: window.end.addingTimeInterval(-1), isAllDay: false, requested: requested, in: newYork))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: window.end, isAllDay: false, requested: requested, in: newYork))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: window.start.addingTimeInterval(-1), isAllDay: false, requested: requested, in: newYork))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: nil, isAllDay: false, requested: requested, in: newYork))
+    }
+
+    /// An explicit instant (not midnight) asks for the day it falls in, in the search zone.
+    func testAnInstantAsksForItsDayInTheZone() {
+        let requested = at("2026-12-06T15:00:00Z")   // Dec 6 10:00 New York
+        XCTAssertTrue(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-07T04:30:00Z"), isAllDay: false, requested: requested, in: newYork))
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(
+            occurrenceStart: at("2026-12-06T04:30:00Z"), isAllDay: false, requested: requested, in: newYork))
+    }
+
+    /// An all-day occurrence is a floating day stored from this Mac's midnight (#364), so it is
+    /// compared by its day in the host zone with the requested day in the search zone, whichever
+    /// side of the host that zone is. By start instant alone, a zone behind the host would pick the
+    /// next day's all-day occurrence (Dec 7 00:00 +08:00 is Dec 6 in New York).
+    func testAnAllDayOccurrenceIsComparedByItsDay() {
+        let host = TimeZone.current
+        let zones = ["America/New_York", "Asia/Tokyo", "Pacific/Kiritimati", "Pacific/Pago_Pago", "UTC"]
+            .compactMap(TimeZone.init(identifier:)) + [host]
+        for zone in zones.map(Optional.some) + [nil] {   // nil: the host zone (an all-day series has none)
+            let requested = TestZones.midnight("2026-12-06", in: zone ?? host)
+            for (day, expected) in [("2026-12-05", false), ("2026-12-06", true), ("2026-12-07", false)] {
+                let allDayStart = TestZones.midnight(day, in: host)
+                XCTAssertEqual(OccurrenceDay.startsOnRequestedDay(
+                    occurrenceStart: allDayStart, isAllDay: true, requested: requested, in: zone), expected,
+                    "all-day \(day) asked as 2026-12-06 in \(zone?.identifier ?? "nil")")
+            }
+        }
+    }
+
+    /// `findOccurrence` matches through this rule, with the enumerated event's own start and
+    /// all-day flag and the requested date and zone it was called with.
+    func testFindOccurrenceMatchesByTheStartRule() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        let body = try XCTUnwrap(SourceScan.body(of: "func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {", in: code))
+        XCTAssertEqual(SourcePins.ranges(of: "OccurrenceDay.startsOnRequestedDay(occurrenceStart: event.startDate, isAllDay: event.isAllDay, requested: date, in: timeZone)", in: body).count, 1)
+        let rule = try XCTUnwrap(body.range(of: "OccurrenceDay.startsOnRequestedDay("))
+        let pick = try XCTUnwrap(body.range(of: "target = event"))
+        XCTAssertLessThan(rule.lowerBound, pick.lowerBound, "the rule gates the pick")
+    }
+}
