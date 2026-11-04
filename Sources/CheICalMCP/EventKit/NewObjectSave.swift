@@ -25,8 +25,9 @@ import EventKit
 ///   values. The difference may come from a partial write or from an edit made elsewhere between
 ///   the commit and the check (the only device case was the second: a rename through another
 ///   store); a partial write was not seen. The caller has the item's identifier and, for a
-///   create, its undo entry. A retried delete-undo cannot make a second copy, since its record is
-///   consumed. A retried create can: `create_reminder`'s duplicate check matches the title, list
+///   create, its undo entry. A retried delete-undo cannot make a second copy: a single undo's record is
+///   consumed, and in a batch the member counts as restored and is left out of the entry that is
+///   kept (#248). A retried create can: `create_reminder`'s duplicate check matches the title, list
 ///   and due date, and `create_calendar`'s the title and type, and the title, list or due date may
 ///   be among the differing fields, so the create note says that creating it again with the same
 ///   parameters may make a second copy.
