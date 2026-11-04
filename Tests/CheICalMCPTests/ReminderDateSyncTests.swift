@@ -222,8 +222,14 @@ final class ReminderDateSyncTests: XCTestCase {
         let newDue = date(2026, 3, 8, 10, in: newYork)
         let reminder = makeReminder()
         reminder.startDateComponents = components(oldDue, in: newYork, time: false)
+        // #336: the day count comes from the stored components, as `setDue` derives it. Without
+        // it `sync` counts days in the host zone, and from UTC+9 (Tokyo) both instants fall on
+        // 2026-03-08, so the start did not move.
+        let shift = ReminderDateSync.dayShift(from: components(oldDue, in: newYork, time: false),
+                                              to: components(newDue, in: newYork, time: false))
+        XCTAssertEqual(shift, 1)
 
-        _ = ReminderDateSync.sync(reminder, from: oldDue, to: newDue)
+        _ = ReminderDateSync.sync(reminder, from: oldDue, to: newDue, dueDayShift: shift)
 
         XCTAssertEqual(startComponents(reminder), components(newDue, in: newYork, time: false))
     }
