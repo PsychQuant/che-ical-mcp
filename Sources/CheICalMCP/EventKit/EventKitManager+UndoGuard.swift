@@ -162,7 +162,7 @@ extension EventKitManager {
         let id = expected.itemID
         let resolved = freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)
         // A recorded calendar that no longer resolves gives nil here; `decide` refuses a stand-in
-        // with `calendarNotFound`, and the move arm refuses the series object the same way.
+        // still in the destination with `calendarNotFound`, and the move arm refuses the series object the same way.
         let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap { restoring in
             eventStore.calendar(withIdentifier: restoring)
         }

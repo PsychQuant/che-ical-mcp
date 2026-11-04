@@ -123,10 +123,10 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
    另在該來源的兩個拋棄式日曆做第 10 步（經 stand-in 的整串搬移之 undo，#369）：它靠搬移後舊的系列物件
-   回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「is still stored under its recorded
-   identifier」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
+   回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「still resolves, but neither the series nor an
+   occurrence that could stand in for it can be read」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
 10. **經 stand-in 的整串搬移之 undo（#369）**：系列的建立與刪第一個場次要用 `--cli`（各自獨立的 process）做，
-    不要在 session MCP 上做，讓 session 的 undo stack 只有下面兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
+    不要在 session MCP 上做，讓這兩個寫入不進 session 的 undo stack，最上面兩筆才會是 (b) 列的那兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
     (a) `--cli`：在 A 建每週 5 次的系列 → `--cli`：`delete_event` span `this` 刪第一個場次；
     (b) session MCP：在 A 建一筆一次性事件 → `move_events_batch` 用系列的 bare id、span `all` 搬到 B
         （`in_place`、id 不變、B 有 4 個場次）。此時 `undo_history` 最上面兩筆由上而下是
@@ -134,7 +134,9 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
         它們下面還有那些步驟留下的紀錄，這是預期的；
     (c) `undo`：4 個場次回到 A、id 不變 → `undo`：刪掉那筆一次性事件（堆疊沒被卡住）。
     (d) 已經在 Calendar.app 搬回去的情況：重做 (a)(b)，undo 之前先在 Calendar.app 把整個系列搬回 A →
-        `undo` 要被接受，而且什麼都沒改：所有場次仍在 A、id 不變。
+        `undo` 要被接受，而且什麼都沒改：所有場次仍在 A、id 不變。這一項依賴兩件沒驗過的事：Calendar.app 搬回後
+        bare id 仍解析得到，以及舊的系列物件改回報 A。若 undo 以上面第 9 步引的 residual not-found 拒絕（什麼都沒寫、
+        紀錄保留），記錄下來回報到 #369，當成已知限制，不是安全問題；以其他方式寫入才是 bug。
     再做一次 edited-before 形狀：(a) 之後用 `--cli` 的 `update_event` span `this` 單獨改第一個剩下的場次，
     再做 (b)(c)，4 個場次（含被改過的）都回到 A。
     **系列的 create-undo 仍會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，

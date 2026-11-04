@@ -26,21 +26,26 @@ enum SeriesMoveUndo {
         return nil
     }
 
-    /// - nothing resolved: `stored` (asked only then) tells nothing stored, which returns nil and
-    ///   `UndoTargetCheck` reports as not found, from a stored series with no stand-in, the
-    ///   residual not-found;
+    /// - nothing resolved and nothing stored (`stored` is asked only here): nil, which
+    ///   `UndoTargetCheck` reports as not found;
+    /// - nothing resolved but the identifier is stored: the residual not-found;
     /// - a stand-in still in the recorded destination: refused when the original calendar does
     ///   not resolve (fails closed with the move arm's `calendarNotFound`), and when the way back
     ///   leaves the account or an account is unknown, as the forward move refuses it
     ///   (`refusesMoveThroughStandIn`). Both are kept, since neither is one of the spec's discard
     ///   scenarios;
-    /// - otherwise the resolved event. A stand-in that left the destination goes on to the
-    ///   comparison, which reports the changed calendar; for the series object itself the move
-    ///   arm handles a missing original calendar.
+    /// - otherwise the resolved event. A stand-in in a third calendar goes on to the comparison,
+    ///   which reports the changed calendar; one already back in the original calendar is accepted
+    ///   there. For the series object itself the move arm handles a missing original calendar.
+    ///   A post-state other than `.eventCalendar` also falls through here, unchecked: it cannot
+    ///   occur, because `resolvesThroughStandIn` is true only for a whole-series move, whose
+    ///   post-state is always `.eventCalendar`. Widening that predicate needs a check here.
     ///
-    /// The stand-in's calendar is read before `UndoTargetCheck` refreshes it a second time. That
-    /// is not a gap: `firstRemainingOccurrence` refreshed it just before, and the lookup, the
-    /// second refresh and the comparison run synchronously, with no suspension point between them.
+    /// The stand-in's calendar is read before `UndoTargetCheck` refreshes it a second time. No
+    /// other task of this process can run in between (synchronous, no suspension point), but a
+    /// write by another process (Calendar.app, a sync) landing between the two refreshes would be
+    /// seen only by the second one. The window is a few lines of code long, so it is accepted
+    /// rather than closed by moving the account check into the comparison.
     static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () -> Bool,
                               resolved: Resolved<Event>?, original: OriginalCalendar?) throws -> Event? {
         guard let resolved else {
