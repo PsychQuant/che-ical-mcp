@@ -73,10 +73,14 @@ enum AllDayRange {
         let end: Date
         if let newEnd {
             end = newEnd
-        } else if let newStart, isAllDay, storedAllDay {
-            // An all-day event moved by its start keeps its number of days, not its seconds. The
-            // stored pair is read with the same rule (#364 verify round 1): an end some other client
-            // or source stored as an exact next midnight is a boundary, not a day.
+        } else if let newStart, isAllDay {
+            // An event that is all-day after the update and is moved by its start keeps the number of
+            // days its stored range touches, timed or not (#374: a timed event turned all-day used
+            // to keep its elapsed time and then round, so the day count depended on the new start's
+            // time of day; the flag-only call already counted the days the timed range touched). The
+            // stored pair is read with the same rule (#364 verify round 1): an end stored as an exact
+            // next midnight is a boundary, not a day. A timed pair is read in `calendar`'s zone
+            // (the host zone), like the flag-only path (#190 floating days).
             let stored = (try? normalize(start: storedStart, end: storedEnd, calendar: calendar))
                 ?? (start: calendar.startOfDay(for: storedStart), end: storedEnd)
             // Counted from calendar dates, not elapsed time: a day that starts at 01:00 (DST at
