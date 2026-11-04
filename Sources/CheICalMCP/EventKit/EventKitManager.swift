@@ -1058,8 +1058,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // 1. A new recurrence rule is being set, OR
         // 2. start_time or timezone changed on an event that already has weekly recurrence
         // Skip entirely if clearRecurrence is true (event becoming non-recurring)
-        // Read from the values the event will have after this update: the planned start, and the
-        // requested zone, else the stored one unless it is being cleared.
+        // Read from the values the event will have after this update: the planned start, in the
+        // zone WeekdayCheck.zone picks (the host zone for an all-day result).
         let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
         let existingWeeklyDays: [Int]? = {
             guard !clearRecurrence, // skip if clearing recurrence
@@ -1075,9 +1075,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
         if let days = daysToValidate, !days.isEmpty {
-            var cal = Calendar.current
-            if let tz = timezone ?? (clearTimezone ? nil : event.timeZone) { cal.timeZone = tz }
-            let weekday = cal.component(.weekday, from: datePlan.datesToWrite?.start ?? event.startDate)
+            let weekday = WeekdayCheck.weekday(
+                of: datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
+                requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
             if !days.contains(weekday) {
                 let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                 let startDay = dayNames[weekday]

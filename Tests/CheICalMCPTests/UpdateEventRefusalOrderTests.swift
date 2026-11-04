@@ -44,6 +44,14 @@ final class UpdateEventRefusalOrderTests: XCTestCase {
         XCTAssertEqual(late, [], "a step that can refuse runs after the first write (\(lines[firstWrite].trimmingCharacters(in: .whitespaces)))")
     }
 
+    /// #373 verify round 2: the weekday check reads the planned start with the zone the event will
+    /// have after the update, which for an all-day result is the host zone (WeekdayCheckZoneTests).
+    func testTheWeekdayCheckUsesThePlannedAllDayState() throws {
+        let text = try updateEventBodyBeforeSave().joined(separator: "\n").filter { !$0.isWhitespace }
+        XCTAssertTrue(text.contains("WeekdayCheck.weekday(of:datePlan.datesToWrite?.start??event.startDate,resultIsAllDay:datePlan.isAllDay,"),
+                      "updateEvent passes the planned start and the planned all-day state to WeekdayCheck")
+    }
+
     /// The pin must see the refusals it is about; otherwise an edit that renames them would make
     /// the check above pass on nothing.
     func testThePinSeesTheRefusalsItOrders() throws {
