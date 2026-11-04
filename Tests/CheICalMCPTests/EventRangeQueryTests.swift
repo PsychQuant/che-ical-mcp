@@ -269,7 +269,11 @@ final class EventRangeQueryTests: XCTestCase {
         let allowed: [String: Set<String>] = [
             "EventKit/EventRangeQuery.swift": ["events"],
             "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence"],
-            "EventKit/EventKitManager+SeriesExceptions.swift": ["captureSeriesExceptions", "restoreSeriesExceptions", "seriesHoldsSlot"],
+            // #322: the delete-undo exceptions layer's two EventKit queries, moved here from
+            // EventKitManager+SeriesExceptions.swift. `slotHolders` builds its range from one
+            // occurrence; `events(in:inCalendarOf:)` takes one, and
+            // `testTheExceptionsRangePrimitiveOnlyGetsTheBoundedWindows` pins what its callers pass.
+            "EventKit/SeriesExceptionsStoreSource.swift": ["events", "slotHolders"],
             // #326: the stand-in search lists the series' own scan window and a year each side, a
             // range the server derives from the series, not one a caller gave.
             "EventKit/FirstRemainingOccurrence.swift": ["seriesOccurrences"],
@@ -300,6 +304,55 @@ final class EventRangeQueryTests: XCTestCase {
             }
         }
         XCTAssertEqual(offenders, [], "range queries must go through EventKitManager.events(from:to:calendars:)")
+    }
+
+    /// #322 (PR #400 verify round 1): `SeriesExceptionsStoreSource.events(in:inCalendarOf:)` runs
+    /// one EventKit query over whatever range it is given, so the allow-list above would admit a
+    /// caller range through it. Its only callers are the two in `SeriesExceptionsUndo`, and each
+    /// passes a bounded form: a listing range of the series' scan window
+    /// (`SeriesExceptionsPlanner.listingRanges(for:)`: the window, at most 1460 days, and 366 days on
+    /// each side) or the recorded window (`exceptions.window`, a scan window). A new caller, or a
+    /// caller passing another range, fails here.
+    func testTheExceptionsRangePrimitiveOnlyGetsTheBoundedWindows() throws {
+        // PR #400 verify round 2: every `inCalendarOf:` label in Sources is enumerated (comments and
+        // strings blanked), so a call whose range is itself a call, or an unqualified call inside a
+        // store, cannot slip past a pattern. Each label is a declaration of the requirement or a
+        // call of it; for a call, the range argument is the text between its `events(in:` and its
+        // `, inCalendarOf:`, sliced by position, so nested parentheses do not matter.
+        let sources = repoRoot.appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var declarations: [String] = []
+        var calls: [String] = []
+        for file in files {
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            for label in SourcePins.ranges(of: "inCalendarOf", in: code) {
+                let before = code[..<label.lowerBound]
+                let open = try XCTUnwrap(before.range(of: "events(in", options: .backwards),
+                                         "\(file.lastPathComponent): `inCalendarOf` outside an `events(in` call or declaration")
+                var argument = String(code[open.upperBound..<label.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if argument.hasPrefix(":") { argument = String(argument.dropFirst()).trimmingCharacters(in: .whitespaces) }
+                let isDeclaration = code[..<open.lowerBound].hasSuffix("func ")
+                if isDeclaration {
+                    declarations.append(file.lastPathComponent + ": " + argument)
+                } else {
+                    calls.append(file.lastPathComponent + ": " + argument)
+                }
+            }
+        }
+        XCTAssertEqual(declarations.sorted(), [
+            "SeriesExceptionsStoreSource.swift: range: DateInterval,",
+            "SeriesExceptionsStoreSource.swift: range: DateInterval,",
+        ], "the requirement and the EventKit adapter only")
+        XCTAssertEqual(calls.sorted(), [
+            "SeriesExceptionsUndo.swift: exceptions.window,",
+            "SeriesExceptionsUndo.swift: range,",
+        ], "a listing range of the scan window, or the recorded window")
+        let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
+        let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in SeriesExceptionsPlanner\.listingRanges\(for: window\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: capture).count, 1,
+                       "the capture's range is a listing range of the series' scan window")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let window = store\.scanWindow\(of: series\)"#, in: capture).count, 1)
     }
 
     /// `delete_events_batch` by date range takes its range from `deletionRange`, checks the size,

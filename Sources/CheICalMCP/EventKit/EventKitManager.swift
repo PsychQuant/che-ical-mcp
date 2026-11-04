@@ -36,6 +36,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     let eventStore: EKEventStore
     private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
+    /// #322: a test's `SeriesExceptionsStoreSource` (`forTesting(probe:seriesExceptionsStore:)`);
+    /// nil in production, where the delete-undo exceptions layer runs on this manager's own store
+    /// (`seriesExceptionsStore`).
+    let seriesExceptionsStoreOverride: (any SeriesExceptionsStoreSource)?
 
     static let shared = EventKitManager()
 
@@ -47,10 +51,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// - Parameter authorizationSource: Probe for TCC state reads + access requests.
     ///   Default wires `LiveAuthorizationStatusSource` sharing the same `EKEventStore`
     ///   instance so request attribution matches data-ops.
-    fileprivate init(authorizationSource: AuthorizationStatusSource? = nil) {
+    fileprivate init(authorizationSource: AuthorizationStatusSource? = nil,
+                     seriesExceptionsStore: (any SeriesExceptionsStoreSource)? = nil) {
         let store = EKEventStore()
         self.eventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
+        self.seriesExceptionsStoreOverride = seriesExceptionsStore
     }
 
     #if DEBUG
@@ -59,6 +65,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `EventKitManager.shared` — see fileprivate `init` above for the singleton invariant. (#115)
     static func forTesting(probe: AuthorizationStatusSource) -> EventKitManager {
         EventKitManager(authorizationSource: probe)
+    }
+
+    /// #322: also runs the `.deleteEvent` and `.deleteOccurrence` undo arms (`SeriesExceptionsUndo`,
+    /// the exceptions restore and the slot guard included) on `seriesExceptionsStore`. The record
+    /// sites' capture does not read it: it always runs on the manager's own store.
+    static func forTesting(probe: AuthorizationStatusSource,
+                           seriesExceptionsStore: any SeriesExceptionsStoreSource) -> EventKitManager {
+        EventKitManager(authorizationSource: probe, seriesExceptionsStore: seriesExceptionsStore)
     }
     #endif
 
@@ -1346,8 +1360,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
         // rebuilds the whole series), consistent with single deleteEvent.
         // #285: a series' exceptions are listed before the removal takes them away.
-        let snapshot = EventSnapshot(from: event)
-            .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
+        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
         if event.hasRecurrenceRules {
             try eventStore.remove(event, span: .futureEvents)
         } else {
@@ -1376,8 +1389,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
-                let snapshot = EventSnapshot(from: event)
-                    .withExceptions(event.hasRecurrenceRules ? captureSeriesExceptions(of: event) : nil)
+                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
                 if event.hasRecurrenceRules {
                     try eventStore.remove(event, span: .futureEvents)
                 } else {
@@ -2499,37 +2511,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
         case .deleteEvent(let snapshot):
-            // Undo delete = recreate from snapshot; a series from its rules only (#285), which the
-            // text says. #261: no discard; in the failure classes tried on device, a failed new
-            // event was not written by a later save (see NewObjectSave).
-            let event = EKEvent(eventStore: eventStore)
-            try await applySnapshot(snapshot, to: event, for: .recreateDeleted)
-            try eventStore.save(event, span: .thisEvent)
-            markNeedsRefresh()
-            // #285: a series whose exceptions were recorded gets them back (all or nothing).
-            var outcome: SeriesExceptionsRestorer.Outcome?
-            if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
-                outcome = try restoreSeriesExceptions(exceptions, of: event)
-            }
-            return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: event.eventIdentifier ?? "unknown",
-                                                      exceptionsOutcome: outcome)
+            // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam), which reads the
+            // calendar through `restoreCalendar(for:kind:)` with `.recreateDeleted` (#269).
+            return try await undoDeletedEvent(snapshot).text
 
         case .deleteOccurrence(let snapshot, let notCarriedOver):
-            // #244: the snapshot holds no rules, so the occurrence comes back as a one-off event at
-            // its slot, beside what is left of the series (EventKit cannot put it back in).
-            // #285: not when the series already holds the slot (it was recreated from its rules
-            // by an undo of the whole-series delete, which brings every slot back).
-            // The calendar is resolved once, before the slot check and the write (#269 verify).
-            let calendar = try await restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence)
-            if seriesHoldsSlot(of: snapshot, in: calendar) {
-                return UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title)
-            }
-            let event = EKEvent(eventStore: eventStore)
-            snapshot.apply(to: event, calendar: calendar)
-            try eventStore.save(event, span: .thisEvent)
-            markNeedsRefresh()
-            return UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: event.eventIdentifier ?? "unknown",
-                                                           notCarriedOver: notCarriedOver)
+            // #244: a one-off at the occurrence's slot, unless the series already holds it (#285);
+            // the arm's code is `SeriesExceptionsUndo.undoDeleteOccurrence` (#322 seam), which
+            // resolves the calendar once, before the slot check and the write (#269 verify).
+            return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver).text
 
         case .deleteFollowingOccurrences(let title):
             // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
@@ -2632,7 +2623,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The undo of a batch record: its message, and what the stores of the reminders it recreated
     /// hold differently, as data, so a batch nested in another carries them up
     /// (`undoBatchMember`; PR #282 round 6, findings 2, 9).
-    func undoBatch(_ ops: [UndoOperation]) async throws -> (message: String, differing: [UndoRestoredDifference]) {
+    func undoBatch(_ ops: [UndoOperation]) async throws
+        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
         // #244 D3 first: a member that can never be restored refuses and discards the record,
         // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
         try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
@@ -2647,9 +2639,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             check: { try await self.verifyHistoryTarget(of: $0, verb: .undo) },
             restore: { try await self.undoBatchMember($0) },
             describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })
-        // #244: names what a restored occurrence did not carry over; #261: what a restored
-        // reminder's store holds differently (`batchUndoneMessage`).
-        return (UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing), outcome.differing)
+        // #323: what the event members did, from the outcomes they returned (an occurrence's
+        // absolute-date alarm, a series' rules or exceptions restore, a slot already held); #261:
+        // what a restored reminder's store holds differently (`batchUndoneMessage`).
+        return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing),
+                outcome.differing, outcome.events)
     }
 
     /// #261: the undo of `delete_reminder`, for the single arm and for each batch member. Reads the
@@ -2677,19 +2671,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `restoreDeletedReminder`, and the fields its store holds differently travel as data
     /// (`UndoRestoredDifference`, which shows the title itself), so the batch texts name
     /// them (#261; PR #282 round 5, finding 1). A nested batch passes up its own members'
-    /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). Every
-    /// other member runs `executeUndo`.
+    /// differences (`undoBatch`, round 6, findings 2, 9; no nested batch is recorded today). A
+    /// deleted event or occurrence runs the same arm as `executeUndo`, and what it did travels as
+    /// data too (`UndoEventOutcome`, #323). Every other member runs `executeUndo`.
     func undoBatchMember(_ operation: UndoOperation) async throws -> UndoMemberOutcome {
-        if case .batch(let inner) = operation {
+        switch operation {
+        case .batch(let inner):
             let undone = try await undoBatch(inner)
-            return UndoMemberOutcome(text: undone.message, differing: undone.differing)
-        }
-        guard case .deleteReminder(let snapshot) = operation else {
+            return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)
+        case .deleteReminder(let snapshot):
+            let restored = try await restoreDeletedReminder(snapshot)
+            return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
+                                     differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
+        case .deleteEvent(let snapshot):
+            // #323: the same arm as `executeUndo`'s, with what it did as data.
+            let undone = try await undoDeletedEvent(snapshot)
+            return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])
+        case .deleteOccurrence(let snapshot, let notCarriedOver):
+            let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
+            return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])
+        default:
             return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])
         }
-        let restored = try await restoreDeletedReminder(snapshot)
-        return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
-                                 differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
     }
 
     /// Execute an operation again (for redo). Only completions are written again (#247).
@@ -2726,26 +2729,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 describe: { EventKitErrorSanitizer.writeFailureLog(handler: "redo", identifier: "batch member", error: $0) })
             return UndoOperation.batchRedoneMessage(count: results.count)
         }
-    }
-
-    /// #285: saves `event` (new) as a one-off from `snapshot` (an occurrence edited on its own, restored
-    /// beside the series recreated from its rules). Takes the event so a caller can clean it up if the
-    /// save throws after the store took the write.
-    func saveOneOff(_ event: EKEvent, from snapshot: EventSnapshot) throws -> EKEvent {
-        // Inside a delete-undo, after the recreated series was saved in this calendar, so the
-        // synchronous lookup; a miss here is rolled back by the exception restore.
-        let calendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier }, for: .recreateDeleted)
-        snapshot.apply(to: event, calendar: calendar)
-        try eventStore.save(event, span: .thisEvent)
-        return event
-    }
-
-    /// Apply an EventSnapshot to an EKEvent: the calendar lookup here, because it needs the
-    /// store; every field write in `EventSnapshot.apply` (#253 verify #4, as #228 did for
-    /// reminders).
-    private func applySnapshot(_ snapshot: EventSnapshot, to event: EKEvent, for kind: EventRestoreKind) async throws {
-        let originalCalendar = try await restoreCalendar(for: snapshot, kind: kind)
-        snapshot.apply(to: event, calendar: originalCalendar)
     }
 
     /// #269 verify: the calendars a single event undo restores into, and the batch pre-check's read

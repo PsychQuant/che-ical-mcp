@@ -63,16 +63,40 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertTrue(UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW").hasSuffix(UndoOperation.seriesRulesRestoreNote))
     }
 
-    func testBatchUndoTextNamesTheExceptionsRestoreOnce() {
-        let message = UndoOperation.batchUndoneMessage(members: [series("A", withExceptions: true), series("B", withExceptions: true)], count: 2)
+    /// #323: the batch text names the exceptions restore once, with the totals of what the
+    /// members returned.
+    func testBatchUndoTextNamesTheExceptionsRestoreOnceWithTotals() {
+        let message = UndoOperation.batchUndoneMessage(count: 2, events: [
+            .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 0)),
+            .seriesWithExceptions(.init(stayedDeleted: 2, oneOffs: 1, firstOccurrenceKeptFromRule: true)),
+        ])
         XCTAssertEqual(message.components(separatedBy: "inside the checked window").count - 1, 1, message)
+        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window: 3 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
+        XCTAssertTrue(message.contains("In 1 of them the first occurrence"), message)
         XCTAssertFalse(message.contains(UndoOperation.seriesRulesRestoreNote), message)
     }
 
     func testBatchUndoTextOfAMixedBatchNamesBothNotes() {
-        let message = UndoOperation.batchUndoneMessage(members: [series("A", withExceptions: true), series("B", withExceptions: false)], count: 2)
+        let message = UndoOperation.batchUndoneMessage(count: 2, events: [.seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0)), .seriesFromRules])
         XCTAssertTrue(message.contains(UndoOperation.seriesRulesRestoreNote), message)
-        XCTAssertTrue(message.contains("inside the checked window"), message)
+        XCTAssertTrue(message.contains("1 series was restored from its rules with its exceptions inside the checked window"), message)
+    }
+
+    /// PR #406 verify r1, 3: one series from its rules keeps the single wording; more say how many.
+    func testBatchUndoTextCountsTheSeriesRestoredFromTheirRulesAlone() {
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 1, events: [.seriesFromRules]),
+                       "Undone batch (1 operation). " + UndoOperation.seriesRulesRestoreNote)
+        let message = UndoOperation.batchUndoneMessage(count: 3, events: [.seriesFromRules, .seriesFromRules, .seriesFromRules])
+        XCTAssertEqual(message, "Undone batch (3 operations). 3 series were restored from their rules alone, because their exceptions were not checked when they were deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot")
+        XCTAssertFalse(message.contains(UndoOperation.seriesRulesRestoreNote), message)
+    }
+
+    func testBatchUndoTextSaysWhichSeriesHadNoExceptionApplied() {
+        let message = UndoOperation.batchUndoneMessage(count: 2, events: [
+            .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true)),
+            .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true)),
+        ])
+        XCTAssertEqual(message, "Undone batch (2 operations). 2 series were restored from their rules alone: their recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
     }
 
     func testAlreadyRestoredOccurrenceSaysNothingWasWritten() {
@@ -102,11 +126,12 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertFalse(message.contains("stayed deleted"), message)
     }
 
-    func testBatchNoteDoesNotPromiseWhatItCannotKnow() {
-        // A batch undo text is built before the members' outcomes are known (PR #318 verify round 2).
-        let note = UndoOperation.seriesExceptionsBatchNote
-        XCTAssertTrue(note.contains("first occurrence"), note)
+    func testBatchNoteStatesTheWindowLimitAndNoLongerSaysItCannotKnow() {
+        // #323: built from the members' outcomes, so it says what happened (PR #318 verify round 2
+        // had it built before them, with "Per series this text cannot say").
+        let note = UndoOperation.seriesExceptionsBatchNote([.init(stayedDeleted: 0, oneOffs: 0)])
         XCTAssertTrue(note.contains("more than a year"), note)
-        XCTAssertTrue(note.contains("did not match"), note)
+        XCTAssertFalse(note.contains("cannot say"), note)
+        XCTAssertFalse(note.contains("first occurrence was edited"), "only when a member kept it: \(note)")
     }
 }

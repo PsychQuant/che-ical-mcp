@@ -120,28 +120,36 @@ enum SeriesExceptionsPlanner {
 /// recreated series and anything created for the exceptions were deleted again, so nothing of the
 /// restore is left and the undo can be retried. `rollbackFailed` means the compensating delete
 /// itself failed: the series exists, with some exceptions applied.
+///
+/// `code` is the failed write's sanitized code (`SeriesExceptionsRestorer.failureCode`, #398):
+/// `eventkit_error_<N>` for an EventKit error, otherwise the sanitizer's generic code. It is the
+/// only part of the underlying error kept, so a failure that recurs on every retry can be told
+/// from a passing one without an EventKit description (which can quote calendar data, #37)
+/// reaching the text.
 enum SeriesExceptionsRestoreError: Error, Equatable {
     /// A surplus slot could not be found among the recreated series' occurrences. Nothing was removed.
     case surplusUnresolved(Date)
     /// Removing the surplus occurrence at this slot failed.
-    case removeFailed(Date)
+    case removeFailed(Date, code: String)
     /// Recreating the occurrence edited on its own at this slot failed.
-    case oneOffFailed(Date)
+    case oneOffFailed(Date, code: String)
     /// The compensating delete failed after one of the above; `exclusionsApplied` surplus
     /// occurrences had been removed by then.
     case rollbackFailed(exclusionsApplied: Int)
     /// The recreated series was deleted again, but a one-off event created for an exception could
-    /// not be removed: it remains in the calendar (round 2, C).
-    case strayOneOffs(Date)
+    /// not be removed: it remains in the calendar (round 2, C). `code` is the save's.
+    case strayOneOffs(Date, code: String)
     /// The recreated series was deleted again; a one-off whose save threw may or may not have been
-    /// written and could not be removed, so it may remain.
-    case oneOffMaybeLeft(Date)
+    /// written and could not be removed, so it may remain. `code` is the save's.
+    case oneOffMaybeLeft(Date, code: String)
 }
 
 /// A one-off save that threw after the store may have taken the write: the closure hands the
-/// event back so the restore can clean it up (PR #318 verify B3).
+/// event back so the restore can clean it up (PR #318 verify B3), with the save's error so the
+/// restore can name its code (#398).
 struct SeriesExceptionsOneOffWriteFailed<OneOff>: Error {
     let possiblyWritten: OneOff
+    let underlying: Error
 }
 
 /// The restore after undo recreated a series from its rules: remove the surplus slots, then
@@ -161,6 +169,20 @@ enum SeriesExceptionsRestorer {
         /// slot the series does not generate, or no slot at the series' own start), so none was
         /// applied and the series stands as the rules made it (round 2, B).
         var notApplied: Bool = false
+    }
+
+    /// The sanitized code of a failed write (#398): `eventkit_error_<N>`, `error_<domain>_<N>` for
+    /// another NSError, otherwise `error_unknown`. `sanitize`, not `sanitizeForResponse`: for a
+    /// trusted error the latter's "code" is the error's whole text. The one trusted error that can
+    /// reach a one-off's creation is `undoCalendarMissing` (from `calendarNow`), a complete
+    /// instruction to give the undo up; in the "(code)" slot of a text that says the restore was
+    /// rolled back and can be retried, it would contradict that text. So only the code is kept.
+    /// The description behind it goes to stderr for an operator (escaped and capped, through
+    /// `writeFailureLog`, which logs untrusted errors only), never into the text (PR #405 verify).
+    static func failureCode<OneOff>(_ error: Error, oneOff: OneOff.Type) -> String {
+        let underlying = (error as? SeriesExceptionsOneOffWriteFailed<OneOff>)?.underlying ?? error
+        _ = EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "series exceptions restore", error: underlying)
+        return EventKitErrorSanitizer.sanitize(underlying).code
     }
 
     /// `generated` lists the recreated series' occurrences inside `exceptions.window`, as
@@ -192,16 +214,22 @@ enum SeriesExceptionsRestorer {
             || exceptions.detached.contains { isAnchor($0.slot) }
 
         var exclusionsApplied = 0
+        // The executor reports which slot failed, not why; the removal's error is kept here (#398).
+        var removeError: Error?
         do {
             exclusionsApplied = try ExclusionExecutor.run(
                 dates: surplus,
                 resolve: { slot in generated.first { UndoPostState.sameInstant($0.slot, slot) }?.occurrence },
-                remove: remove,
+                remove: { occurrence in
+                    do { try remove(occurrence) } catch { removeError = error; throw error }
+                },
                 rollback: rollbackSeries).count
         } catch let error as ExclusionExecutionError {
             switch error {
             case .noOccurrence(let date): throw SeriesExceptionsRestoreError.surplusUnresolved(date)
-            case .removeFailed(let date): throw SeriesExceptionsRestoreError.removeFailed(date)
+            case .removeFailed(let date):
+                let code = removeError.map { failureCode($0, oneOff: OneOff.self) } ?? "error_unknown"
+                throw SeriesExceptionsRestoreError.removeFailed(date, code: code)
             case .rollbackFailed(let applied): throw SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: applied.count)
             }
         }
@@ -214,6 +242,7 @@ enum SeriesExceptionsRestorer {
                 // Cleaned up apart from the rest: a save that threw may or may not have written,
                 // so a failure to remove it proves nothing (round 2, C).
                 let uncertain = (error as? SeriesExceptionsOneOffWriteFailed<OneOff>)?.possiblyWritten
+                let code = failureCode(error, oneOff: OneOff.self)
                 var confirmedCleaned = true
                 for oneOff in created {
                     do { try removeOneOff(oneOff) } catch { confirmedCleaned = false }
@@ -223,9 +252,9 @@ enum SeriesExceptionsRestorer {
                 var seriesRemoved = true
                 do { try rollbackSeries() } catch { seriesRemoved = false }
                 if !seriesRemoved { throw SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: exclusionsApplied) }
-                if !confirmedCleaned { throw SeriesExceptionsRestoreError.strayOneOffs(detached.slot) }
-                if !uncertainCleaned { throw SeriesExceptionsRestoreError.oneOffMaybeLeft(detached.slot) }
-                throw SeriesExceptionsRestoreError.oneOffFailed(detached.slot)
+                if !confirmedCleaned { throw SeriesExceptionsRestoreError.strayOneOffs(detached.slot, code: code) }
+                if !uncertainCleaned { throw SeriesExceptionsRestoreError.oneOffMaybeLeft(detached.slot, code: code) }
+                throw SeriesExceptionsRestoreError.oneOffFailed(detached.slot, code: code)
             }
         }
 

@@ -231,6 +231,10 @@ final class UndoBatchWiringTests: XCTestCase {
         // `ReminderUndoWiringTests` (#242); here only the kind the delete-undo passes.
         let apply = Substring(try Self.body("func restoreCalendar(for snapshot: EventSnapshot", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("snapshot.resolveCalendar(in: $0, identifier: { $0.calendarIdentifier }, for: kind)"), in: apply))
+        // #322: the delete-undo arms read their calendar through
+        // `SeriesExceptionsStoreSource.restoreCalendar`, which in production is that same function.
+        let store = Substring(try Self.body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift"))
+        XCTAssertNotNil(Self.offset(of: Self.call("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
         let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))
@@ -247,17 +251,24 @@ final class UndoBatchWiringTests: XCTestCase {
     func testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData() throws {
         let batch = try Self.undoBatchBody()
         XCTAssertNotNil(Self.offset(of: Self.call("restore: { try await self.undoBatchMember($0) },"), in: batch))
-        XCTAssertNotNil(Self.offset(of: Self.call("return (UndoOperation.batchUndoneMessage(members: ops, count: outcome.texts.count, differing: outcome.differing), outcome.differing)"), in: batch))
+        XCTAssertNotNil(Self.offset(of: Self.call("return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing), outcome.differing, outcome.events)"), in: batch))
+        // #323: the text is built from what the members returned, never from the records.
+        XCTAssertEqual(Self.count("members:", in: Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))), 0)
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boutcome\.texts\b"#, in: String(batch)).count, 1, "only the count of the member texts is used")
         XCTAssertEqual(Self.count("restoreDeletedReminder(", in: batch), 0, "reminders go through undoBatchMember")
 
         let member = Substring(try Self.body("func undoBatchMember(_ operation: UndoOperation)", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("guard case .deleteReminder(let snapshot) = operation else {"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])"), in: member))
-        // Round 6, findings 2, 9: a nested batch member carries its own members' differences up.
-        XCTAssertNotNil(Self.offset(of: Self.call("if case .batch(let inner) = operation {"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("case .deleteReminder(let snapshot):"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("default: return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])"), in: member))
+        // Round 6, findings 2, 9: a nested batch member carries its own members' differences up,
+        // and (#323) what its event members did.
+        XCTAssertNotNil(Self.offset(of: Self.call("case .batch(let inner):"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoBatch(inner)"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)"), in: member))
+        // #323: a deleted event or occurrence runs the same arm as `executeUndo`, and its outcome
+        // travels as data.
+        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedEvent(snapshot) return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver) return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])"), in: member))
 

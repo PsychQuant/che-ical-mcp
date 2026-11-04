@@ -10,7 +10,7 @@
 
 ## 3. 刪除前擷取（例外記在系列快照上，取自「刪除前列舉的實際場次」）
 
-- [x] 3.1 把「列舉視窗內實際場次」與其後的決策分開：EventKit 讀取在 `EventKitManager+SeriesExceptions.swift` 的薄層，決策是純函式 `SeriesExceptionsPlanner.capture`／`surplusSlots` 與以 closure 為縫的 `SeriesExceptionsRestorer`（#182 `ExclusionExecutor` 的 closure-seam 變體，不新增 `*Source` 協定、不擴充 `EventKitManaging`）。行為：擷取與還原的決策不依賴 EventKit，測試可注入假 closure。驗證：`SeriesExceptionsTests`、`SeriesExceptionsRestorerTests` 以純值與 closure 驅動並通過。
+- [x] 3.1 把「列舉視窗內實際場次」與其後的決策分開：EventKit 讀取在 `EventKitManager+SeriesExceptions.swift` 的薄層，決策是純函式 `SeriesExceptionsPlanner.capture`／`surplusSlots` 與以 closure 為縫的 `SeriesExceptionsRestorer`（#182 `ExclusionExecutor` 的 closure-seam 變體，不新增 `*Source` 協定、不擴充 `EventKitManaging`）。行為：擷取與還原的決策不依賴 EventKit，測試可注入假 closure。驗證：`SeriesExceptionsTests`、`SeriesExceptionsRestorerTests` 以純值與 closure 驅動並通過。（#322 後續，PR #400：EventKit 讀寫已移到 `SeriesExceptionsStoreSource` 縫後面的 `SeriesExceptionsUndo`，行為不變；`SeriesExceptionsUndoTests`／`SeriesExceptionsUndoHandlerTests` 以假 store 驅動。）
 - [x] 3.2 在 `DeletedEventSnapshots`（`deleteEvent` 的整個系列分支）、`deleteEventSeries`、`deleteEventSeriesBatch` 三個記錄點，於 `eventStore.remove` 之前、僅當 `hadRules && span != .thisEvent` 時擷取 `SeriesExceptions` 並放進系列快照；擷取不能執行時 `exceptions` 為 `nil`。行為：三個記錄點的快照一致帶著例外；span "this" 不擷取。驗證：決策為純函式（`SeriesExceptionsPlanner.capture`，`SeriesExceptionsTests`）；EventKit 擷取層以 iCloud 實機驗證（案例 1–4、`delete_events_batch` span all）。**沒有**經 handler 縫的記錄點測試（本 change 用 closure 縫而非 `*Source` 協定），這是已知的覆蓋缺口，列為 PR #318 verify 的後續項目。
 
 ## 4. undo 還原（部分失敗：全有或全無，補償失敗要報告而不是吞掉）
