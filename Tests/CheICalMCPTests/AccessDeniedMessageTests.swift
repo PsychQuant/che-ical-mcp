@@ -10,7 +10,9 @@ import XCTest
 /// TCC status was already `.denied` at the gate, a bare `--setup` cannot re-prompt (the
 /// status-first check only requests on `.notDetermined`). The message must NOT lead with
 /// `--setup` there — it must name the real blocker (anthropics/claude-code#63032) and the
-/// paths that actually work (Claude Code plugin path, `tccutil reset`, `.ics` import).
+/// paths that actually work (Claude Code plugin path, the System Settings entry, `.ics` import).
+/// Until #357, step 2 was `tccutil reset <service> com.checheng.CheICalMCP`, which fails with
+/// -10814 for a bare binary (no LaunchServices registration).
 final class AccessDeniedMessageTests: XCTestCase {
 
     private let hint = "\"/buried/path/CheICalMCP\" --setup"
@@ -48,18 +50,57 @@ final class AccessDeniedMessageTests: XCTestCase {
 
         XCTAssertTrue(msg.contains("claude plugin install che-ical-mcp@psychquant-claude-plugins"),
             "must point at the working Claude Code plugin install path")
-        XCTAssertTrue(msg.contains("tccutil reset Calendar com.checheng.CheICalMCP"),
-            "must offer the reset-then-regrant heal, type-correct for Calendar")
+        // #357 (deliberate change to the #158 pin): `tccutil reset Calendar com.checheng.CheICalMCP`
+        // fails with -10814 for a bare binary. Step 2 is main's existing switch sentence (round 4,
+        // R1), and this text goes to the model, so it carries no reset at all.
+        TCCRemedyAssertions.assertSwitchRemedy(msg, pane: "Calendar")
         XCTAssertTrue(msg.contains(".ics"), "must mention the `.ics` import fallback")
     }
 
-    func testMCPBDeniedByStatus_tccutilServiceTracksType() {
-        // The tccutil service name must follow the entity type, not hardcode Calendar.
+    func testMCPBDeniedByStatus_settingsPaneTracksType() {
+        // The System Settings pane must follow the entity type, not hardcode Calendar (it was
+        // the tccutil service name until #357).
         let reminders = EventKitManager.accessDeniedMessage(
             type: "Reminders", isSSH: false, isNonInteractive: false,
             isMCPB: true, deniedByStatus: true, setupHint: hint)
-        XCTAssertTrue(reminders.contains("tccutil reset Reminders com.checheng.CheICalMCP"),
-            "Reminders denial must reset the Reminders service, not Calendar")
+        TCCRemedyAssertions.assertSwitchRemedy(reminders, pane: "Reminders")
+        XCTAssertFalse(reminders.contains("Privacy & Security → Calendar"), reminders)
+    }
+
+    // MARK: - #357: no access-denied text carries a reset
+
+    func testNoAccessDeniedBranchCarriesAReset() {
+        let attributions: [ResponsibleHostKind?] = [
+            nil, .selfBinary, .claudeCode(version: "2.1.309"), .appBundle(name: "Visual Studio Code"),
+            .otherExecutable(path: "/sbin/launchd"), .unknown]
+        for type in ["Calendar", "Reminders"] {
+            for ssh in [false, true] { for nonInteractive in [false, true] {
+                for mcpb in [false, true] { for denied in [false, true] { for restricted in [false, true] {
+                    for attribution in attributions {
+                        let msg = EventKitManager.accessDeniedMessage(
+                            type: type, isSSH: ssh, isNonInteractive: nonInteractive, isMCPB: mcpb,
+                            deniedByStatus: denied, setupHint: hint, attribution: attribution,
+                            restrictedByPolicy: restricted)
+                        XCTAssertFalse(msg.contains("tccutil"), msg)
+                    }
+                } } }
+            } }
+        }
+    }
+
+    func testUnknownAuthStateMessage_givesTheSwitchRemedy() {
+        let msg = EventKitError.unknownAuthState(type: "Calendar", statusValue: 99).errorDescription ?? ""
+        TCCRemedyAssertions.assertSwitchRemedy(msg, pane: "Calendar")
+    }
+
+    func testNonInteractiveBranch_saysAnUnlistedEntryIsAddedBySetup() {
+        // Observed on one Mac (macOS 27): the pane has no add button; an app is listed only
+        // after it requests access.
+        let msg = EventKitManager.accessDeniedMessage(
+            type: "Reminders", isSSH: false, isNonInteractive: true,
+            isMCPB: false, deniedByStatus: false, setupHint: hint)
+        XCTAssertFalse(msg.contains("manually add"), msg)
+        XCTAssertTrue(msg.contains("if it is not listed, step 1 adds it"), msg)
     }
 
     // MARK: - First-run .mcpb (notDetermined path) — --setup still IS the fix

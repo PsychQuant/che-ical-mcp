@@ -101,9 +101,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// channel-specific (only `.mcpb` is affected; Claude Code plugin path
     /// `~/bin/CheICalMCP` is unaffected — different spawn chain).
     static let isMCPBClaudeDesktopInstall: Bool = {
-        let argv0 = CommandLine.arguments.first ?? ""
-        let resolved = BinaryPathResolver.resolveArgv0(argv0)
-        return resolved.contains("Claude Extensions/local.mcpb.")
+        // The kernel's path, not argv[0] against the current directory (#360).
+        RunningBinaryPath.current().contains("Claude Extensions/local.mcpb.")
     }()
 
     /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
@@ -124,6 +123,37 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
+    /// What stands where `tccutil reset <service> com.checheng.CheICalMCP` stood (#357): that
+    /// command fails with -10814 for a bare binary (no LaunchServices registration, README
+    /// erratum). Round 4 (R1): no new remedy prose — this is the sentence main already uses in
+    /// the self-attributed, already-denied access-denied branch, with the pane name, and #382 as
+    /// the pointer to the open device question. Round 5: "on, or off and on", because these
+    /// surfaces do not see an off switch. No reset of any kind.
+    static func switchOnStep(pane: String) -> String {
+        "switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → \(pane) (#382)"
+    }
+
+    /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)
+    /// so it can be pinned without spawning the binary (#357, #368). It carries no reset (#357).
+    static func printTCCPathRepromptSection(
+        binaryPath: String,
+        calendarStatus: EKAuthorizationStatus,
+        remindersStatus: EKAuthorizationStatus
+    ) -> String {
+        var lines = [
+            "Re-prompt (run from Terminal, NOT over SSH):",
+            "  \(setupCommandHint(binaryPath: binaryPath))",
+            "  If that does not restore access: " + switchOnStep(pane: "Calendar / Reminders"),
+        ]
+        // #368: a `restricted` status comes from a configuration profile or Screen Time; no
+        // prompt appears for it, so nothing in this section can change it.
+        if calendarStatus == .restricted || remindersStatus == .restricted {
+            lines.append("  (a `restricted` status is set by a configuration profile or Screen Time: "
+                + "nothing here changes it; ask whoever manages this Mac)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The binary path as `--print-tcc-path` shows it: as is, so it names the same file as the
     /// `--setup` command beneath it, unless it has control characters, which are escaped and
     /// said so (verify round 3b row 11: escaping a clean path doubled its backslashes).
@@ -132,14 +162,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(EventKitErrorSanitizer.escapeForStderr(path))  (escaped: the path has control characters)"
     }
 
-    /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the
-    /// same realpath(3) path `--print-tcc-path` / the banner use) and format the `--setup`
+    /// Resolve the running binary's canonical path (`RunningBinaryPath`: the kernel's path,
+    /// argv[0] only as a fallback, #360 — the same path `--print-tcc-path` / the banner use)
+    /// and format the `--setup`
     /// remediation hint. The `.mcpb` install's binary lives at a buried path users can't
     /// easily locate, so denial messages surface the exact command to grant THIS binary's
     /// TCC permission — the foreground `--setup` is what makes the dialog present (#163).
     static func resolvedSetupCommandHint() -> String {
-        let argv0 = CommandLine.arguments.first ?? AppVersion.name
-        return setupCommandHint(binaryPath: BinaryPathResolver.resolveArgv0(argv0))
+        setupCommandHint(binaryPath: RunningBinaryPath.current())
     }
 
     /// Pure formatter for the `EventKitError.accessDenied` remediation message. Every
@@ -209,8 +239,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
             1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
             \(setupHint)
-            2. Or manually add CheICalMCP in: \
-            System Settings → Privacy & Security → \(type)
+            2. Or switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → \(type) \
+            (if it is not listed, step 1 adds it: an app appears there once it requests access)
             3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
             """
         }
@@ -234,9 +264,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
             `disclaimer` wrapper entirely (see #132): in Claude Code, run \
             `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-            2. Or clear the stale/mismatched row so a fresh grant can be minted: \
-            `tccutil reset \(type) com.checheng.CheICalMCP`, then re-run \(setupHint) from Terminal \
-            (now first-run → the dialog can present)
+            2. Or \(switchOnStep(pane: type))
             3. Or, for one-off calendar data, fall back to `.ics` import
             4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
             """
@@ -2776,7 +2804,7 @@ enum EventKitError: LocalizedError {
             return """
             \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
-            2. Or 'tccutil reset Calendar com.checheng.CheICalMCP' (and same for Reminders) then re-grant
+            2. Or \(EventKitManager.switchOnStep(pane: type))
             3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .unsupportedEntityType(let rawValue):
