@@ -60,10 +60,15 @@ final class SeriesCreateUndoTests: XCTestCase {
 
     // MARK: - SeriesCreateUndo.missingError
 
+    /// `standIn` says where the stand-in starts relative to the record's own start (`created.startDate`):
+    /// true later, false not later, nil no stand-in.
     private func decide(_ operation: UndoOperation? = nil, verb: UndoHistoryVerb = .undo, stored: Bool = true,
                         recurring: Bool = true, standIn: () -> Bool?) -> Error? {
-        SeriesCreateUndo.missingError(of: operation ?? createOp, verb: verb, stored: stored, recurring: recurring,
-                                      standInStartsAfterSeriesStart: standIn)
+        let op = operation ?? createOp
+        var recorded = Date.distantPast
+        if case .createEvent(_, _, let created) = op { recorded = created.startDate }
+        return SeriesCreateUndo.missingError(of: op, verb: verb, stored: stored, recurring: recurring,
+                                             standInStart: { standIn().map { recorded.addingTimeInterval($0 ? 7 * 86_400 : 0) } })
     }
 
     func testOnlyACreateUndoProbesForAStandIn() {
@@ -129,16 +134,34 @@ final class SeriesCreateUndoTests: XCTestCase {
         try assertAskThenDiscardThenDelete(message)
     }
 
-    /// Verify MEDIUM: discard_id removes only the top record, and delete_event pushes its own
-    /// record on top, so the order is: ask the user, discard, and only then delete the rest.
+    /// Verify MEDIUM (rounds 1–2): discard_id removes only the top record and any delete pushes its
+    /// own, so the user is asked and the entry discarded first. The delete of what is left is the
+    /// user's own step, by hand, with no tool named: a delete_event of the rest skips the
+    /// modified_occurrences check and defaults to span `this` (the `UndoTargetChangedError` wording).
     private func assertAskThenDiscardThenDelete(_ message: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let ask = try XCTUnwrap(message.range(of: "ask the user whether to give up this undo"), message, file: file, line: line)
         let discard = try XCTUnwrap(message.range(of: "discard_id"), message, file: file, line: line)
-        let delete = try XCTUnwrap(message.range(of: "delete_event"), message, file: file, line: line)
+        let byHand = try XCTUnwrap(message.range(of: "the series can then be deleted by hand if it should still go."),
+                                   message, file: file, line: line)
         XCTAssertLessThan(ask.lowerBound, discard.lowerBound, "ask the user first: \(message)", file: file, line: line)
-        XCTAssertLessThan(discard.lowerBound, delete.lowerBound, "discard before any new record: \(message)", file: file, line: line)
-        XCTAssertTrue(message.contains("The remaining occurrences can then be deleted with delete_event if the series should still go"),
-                      message, file: file, line: line)
+        XCTAssertLessThan(discard.lowerBound, byHand.lowerBound, "discard before any new record: \(message)", file: file, line: line)
+        XCTAssertFalse(message.contains("delete_event"), "no destructive tool is named: \(message)", file: file, line: line)
+        XCTAssertTrue(message.hasSuffix("the series can then be deleted by hand if it should still go."), message, file: file, line: line)
+    }
+
+    /// Round 2 LOW: the comparison is with the record's own start, not the stale object's. A stand-in
+    /// later than the recorded start names the cause whatever the stale object reports.
+    func testTheStandInIsComparedWithTheRecordedStart() throws {
+        let created = UndoSnapshotFixtures.event(title: "Standup")
+        let op = UndoOperation.createEvent(id: "S", title: "Standup", created: created)
+        let later = try XCTUnwrap(SeriesCreateUndo.missingError(
+            of: op, verb: .undo, stored: true, recurring: true,
+            standInStart: { created.startDate.addingTimeInterval(60) }) as? UndoTargetMissingError)
+        XCTAssertTrue(later.message.contains("first occurrence"), later.message)
+        let same = try XCTUnwrap(SeriesCreateUndo.missingError(
+            of: op, verb: .undo, stored: true, recurring: true,
+            standInStart: { created.startDate }) as? UndoTargetMissingError)
+        XCTAssertFalse(same.message.contains("first occurrence"), same.message)
     }
 
     func testTheTitleIsShownAsOtherUndoErrorsShowIt() throws {

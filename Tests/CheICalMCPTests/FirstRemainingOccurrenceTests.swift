@@ -375,8 +375,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("recurring: stored?.hasRecurrenceRules ?? false"), "the stored object's rules")
         XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)"),
                       "any remaining occurrence, edited-before or not")
-        XCTAssertTrue(helper.contains("standIn.startDate > stored.startDate"),
-                      "the shape is named only when the stand-in starts after the series' recorded start")
+        XCTAssertTrue(helper.contains("standInStart: {"), "the stand-in's start goes to the seam")
+        XCTAssertTrue(helper.contains("?.startDate"), "the stand-in's own start")
+        XCTAssertFalse(helper.contains("stored.startDate"), "compared with the record's start in the seam, not the stale object's")
         XCTAssertTrue(helper.contains("stored: EKEvent?) -> Error? {"), "the helper returns an error, never an event")
         XCTAssertFalse(helper.contains("return standIn\n"), "the stand-in is not a target")
     }

@@ -15,24 +15,23 @@ enum SeriesCreateUndo {
     /// - a stored series with no remaining occurrence that can stand in (none left, or every one
     ///   left edited on its own, which the pick skips): the #369 residual wording, which names the
     ///   possible causes;
-    /// - a stand-in that starts after the series' recorded start, the slot a deleted first
+    /// - a stand-in that starts after the record's own start, the slot a deleted first
     ///   occurrence leaves: `seriesFirstOccurrenceDeleted`, which names that shape;
     /// - a stand-in that does not: `seriesUnreadable`, which claims no cause and no permanence.
     /// All are `UndoTargetMissingError`, kept like every not-found.
     ///
-    /// `standInStartsAfterSeriesStart` is asked last and only for a stored series: nil when no
-    /// occurrence stands in.
+    /// `standInStart` is asked last and only for a stored series: the start of the occurrence that
+    /// stands in, or nil when none does. It is compared with the record's own start
+    /// (`created.startDate`, verify round 2), not with the stale series object's, whose fields are
+    /// not refreshed and so cannot be relied on.
     static func missingError(of operation: UndoOperation, verb: UndoHistoryVerb, stored: Bool, recurring: Bool,
-                             standInStartsAfterSeriesStart: () -> Bool?) -> Error? {
-        guard verb == .undo, case .createEvent(_, let title, _) = operation, stored, recurring else { return nil }
-        switch standInStartsAfterSeriesStart() {
-        case nil:
+                             standInStart: () -> Date?) -> Error? {
+        guard verb == .undo, case .createEvent(_, let title, let created) = operation, stored, recurring else { return nil }
+        guard let start = standInStart() else {
             return UndoTargetMissingError(verb: verb, kind: .event, title: title, hasIdentifier: true,
                                           seriesWithoutStandIn: true)
-        case true?:
-            return UndoTargetMissingError.seriesFirstOccurrenceDeleted(title: title)
-        case false?:
-            return UndoTargetMissingError.seriesUnreadable(title: title)
         }
+        return start > created.startDate ? UndoTargetMissingError.seriesFirstOccurrenceDeleted(title: title)
+                                         : UndoTargetMissingError.seriesUnreadable(title: title)
     }
 }
