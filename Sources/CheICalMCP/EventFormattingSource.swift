@@ -50,13 +50,9 @@ protocol EventFormattingSource {
 // MARK: - EKEvent conformance
 
 /// Module-level formatter used by `formatRecurrenceRule` for `end_date`
-/// formatting. Stateless (no per-call configuration), safe to share.
-let eventFormattingDateFormatter: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-    f.timeZone = TimeZone.current
-    return f
-}()
+/// formatting. Stateless (no per-call configuration), safe to share. Gregorian with ASCII digits
+/// whatever the host locale (#304).
+let eventFormattingDateFormatter = DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone.current)
 
 extension EKEvent: EventFormattingSource {
     var formatID: String? { eventIdentifier }

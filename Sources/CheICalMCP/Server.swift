@@ -55,20 +55,13 @@ class CheICalMCPServer {
     private let reminderCompletionSource: any ReminderCompletionSource
     private let dateFormatter: ISO8601DateFormatter
 
-    /// Local time formatter for user-friendly display
-    private let localDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        f.timeZone = TimeZone.current
-        return f
-    }()
+    /// Local time formatter for user-friendly display. Gregorian with ASCII digits whatever the
+    /// host locale (#304).
+    private let localDateFormatter = DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone.current)
 
-    /// Format a date as local time in a specific timezone
+    /// Format a date as local time in a specific timezone (#304: Gregorian, ASCII digits)
     private func formatLocal(_ date: Date, in tz: TimeZone?) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        formatter.timeZone = tz ?? TimeZone.current
-        return formatter.string(from: date)
+        DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: tz ?? TimeZone.current).string(from: date)
     }
 
     /// All available tools
@@ -1627,8 +1620,7 @@ class CheICalMCPServer {
         let undoCount = snapshot.undoCount
         let redoCount = snapshot.redoCount
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "HH:mm:ss"
+        let dateFormatter = DateFormatter.machineReadable("HH:mm:ss", zone: TimeZone.current)   // #304: ASCII digits
 
         let entries = history.prefix(limit).map { entry -> [String: Any] in
             [
