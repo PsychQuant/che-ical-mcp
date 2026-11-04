@@ -122,13 +122,22 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
    拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
-10. **經 stand-in 的整串搬移之 undo（#369）**：拋棄式日曆 A、B（同一 iCloud 帳號）建每週 5 次的系列 →
-    `delete_event` span `this` 刪第一個場次 → `move_events_batch` 用 bare id、span `all` 從 A 搬到 B
-    （`in_place`、id 不變、B 有 4 個場次）→ `undo`：4 個場次回到 A、id 不變；之前先建一筆一次性事件，
-    再 `undo` 一次要刪掉它（堆疊沒被卡住）。再做一次，搬移前先用 `update_event` span `this` 單獨改
-    第一個剩下的場次（edited-before 形狀）→ 搬移、`undo` 後 4 個場次（含被改過的）都回到 A。
-    2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process（`--cli` 的 undo stack 是 per-process，
-    走不到）做過這兩項，跨 process 的 `list_events` 確認結果；出版前在重啟後的 session MCP 上重做一次。
-    跨帳號搬回（拒絕、紀錄保留）沒有在裝置上驗過：只在有第二個帳號的拋棄式日曆時做。
+   另在該來源的兩個拋棄式日曆做第 10 步（經 stand-in 的整串搬移之 undo，#369）：它靠搬移後舊的系列物件
+   回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「is still stored under its recorded
+   identifier」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
+10. **經 stand-in 的整串搬移之 undo（#369）**：系列的建立與刪第一個場次要用 `--cli`（各自獨立的 process）做，
+    不要在 session MCP 上做，讓 session 的 undo stack 只有下面兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
+    (a) `--cli`：在 A 建每週 5 次的系列 → `--cli`：`delete_event` span `this` 刪第一個場次；
+    (b) session MCP：在 A 建一筆一次性事件 → `move_events_batch` 用系列的 bare id、span `all` 搬到 B
+        （`in_place`、id 不變、B 有 4 個場次）。此時 `undo_history` 只有兩筆，由上而下是
+        「Moved event」、「Created event: <一次性事件>」；
+    (c) `undo`：4 個場次回到 A、id 不變 → `undo`：刪掉那筆一次性事件（堆疊沒被卡住）。
+    再做一次 edited-before 形狀：(a) 之後用 `--cli` 的 `update_event` span `this` 單獨改第一個剩下的場次，
+    再做 (b)(c)，4 個場次（含被改過的）都回到 A。
+    **系列的 create-undo 仍會被拒絕**：在 session MCP 上建系列、刪第一個場次之後，undo 過了 delete-undo，
+    create-undo 會以「not found under its recorded identifier」拒絕並保留紀錄（#377，尚未修），所以 (a) 才要放在
+    `--cli` 做。2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 做過 (b)(c) 與 edited-before 形狀，
+    跨 process 的 `list_events` 確認結果；出版前在重啟後的 session MCP 上重做一次。跨帳號搬回（拒絕、紀錄保留）
+    沒有在裝置上驗過：只在有第二個帳號的拋棄式日曆時做。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
