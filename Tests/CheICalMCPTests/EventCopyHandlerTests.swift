@@ -17,11 +17,15 @@ private actor CopyFake: EventCopySource {
         if identifier == "save-fail" { throw Failure.failed }
         if identifier == "reminder-id" { throw EventKitError.eventNotFound(identifier: identifier) }
         if identifier == "refused-alarms" { throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms"]) }
+        if identifier == "free-to-busy-only" {
+            return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier, notCarriedOver: ["availability"])
+        }
         return EventCopyValue(eventIdentifier: "copy-" + identifier, title: identifier)
     }
 
-    func eventTimeZone(identifier: String) async -> TimeZone? {
-        identifier.hasPrefix("ny-") ? TimeZone(identifier: "America/New_York") : nil
+    func eventTimeZone(identifier: String) async throws -> TimeZone? {
+        if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
+        return identifier.hasPrefix("ny-") ? TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21")) : nil
     }
 
     struct MoveCall: Equatable { let identifier: String; let occurrenceDate: Date?; let span: EventMovePolicy.Span }
@@ -216,6 +220,29 @@ final class EventCopyHandlerTests: XCTestCase {
         XCTAssertEqual(result["not_carried_over"] as? [String], ["structured_location"])
     }
 
+    private func plainCopy(_ id: String) async throws -> [String: Any] {
+        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let raw = try await server.executeToolCall(name: "copy_event", arguments: [
+            "event_id": .string(id), "target_calendar": .string("Work")])
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+    }
+
+    /// #272: a plain copy that could not keep availability (the target calendar does not support
+    /// the value) says so, with the same key as a move.
+    func testPlainCopyReportsNotCarriedOver() async throws {
+        let result = try await plainCopy("free-to-busy-only")
+        XCTAssertEqual(result["action"] as? String, "copied")
+        XCTAssertEqual(result["not_carried_over"] as? [String], ["availability"])
+        XCTAssertNil(result["method"], "method and id_changed are for a move")
+    }
+
+    /// #272: a plain copy that kept everything lists nothing.
+    func testPlainCopyThatKeptEverythingListsNothing() async throws {
+        let result = try await plainCopy("good")
+        XCTAssertEqual(result["action"] as? String, "copied")
+        XCTAssertNil(result["not_carried_over"])
+    }
+
     /// Round 2 #5: copy_event to the event's own calendar did nothing; say so.
     func testCopyEventMoveToTheCurrentCalendarReportsUnchanged() async throws {
         let result = try await copyMove("same-calendar")
@@ -252,10 +279,25 @@ final class EventCopyHandlerTests: XCTestCase {
         let server = try await CheICalMCPServer(eventCopySource: fake)
         _ = try await move(server, ["event_ids": .array([.string("ny-series")]),
                                     "occurrence_dates": .array([.string("2026-10-21")])])
-        var ny = Calendar(identifier: .gregorian)
-        ny.timeZone = TimeZone(identifier: "America/New_York")!
+        // Round 4: the fake's zone differs from the host's on any host (New York, or Tokyo).
+        let zone = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21"))
         let calls = await fake.moveCalls
-        XCTAssertEqual(calls.first?.occurrenceDate, ny.date(from: DateComponents(year: 2026, month: 10, day: 21)))
+        XCTAssertEqual(calls.first?.occurrenceDate, TestZones.midnight("2026-10-21", in: zone))
+    }
+
+    /// #270 round 3: an access error from the zone lookup reaches the caller before any move.
+    func testAnAccessErrorFromTheZoneLookupStopsTheBatchBeforeAnyMove() async throws {
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        do {
+            _ = try await move(server, ["event_ids": .array([.string("good"), .string("denied")]),
+                                        "occurrence_dates": .array([.null, .string("2026-10-21")])])
+            XCTFail("the access error must surface")
+        } catch let error as EventKitError {
+            guard case .accessDenied = error else { return XCTFail("\(error)") }
+        }
+        let calls = await fake.moveCalls
+        XCTAssertEqual(calls, [])
     }
 
     /// Round 1 #10: a present but non-array occurrence_dates is rejected, not ignored.

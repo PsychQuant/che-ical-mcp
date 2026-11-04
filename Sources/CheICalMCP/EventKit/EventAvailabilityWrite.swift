@@ -11,6 +11,15 @@ extension EventSnapshot {
         return recorded
     }
 
+    /// #272 — the availability a copy is given: the source's, whenever the target calendar
+    /// supports it, else nil to keep the calendar's default. Unlike `availabilityToWrite` there is
+    /// no "already has it" exemption: a copy is new and unsaved, so the value it reads before the
+    /// save says nothing about what will be stored (verify INFO).
+    static func availabilityForCopy(source: EKEventAvailability, supported: EKCalendarEventAvailabilityMask) -> EKEventAvailability? {
+        guard let mask = mask(of: source), supported.contains(mask) else { return nil }
+        return source
+    }
+
     private static func mask(of availability: EKEventAvailability) -> EKCalendarEventAvailabilityMask? {
         switch availability {
         case .busy: return .busy
