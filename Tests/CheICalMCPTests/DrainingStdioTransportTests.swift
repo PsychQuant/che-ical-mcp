@@ -1,9 +1,50 @@
 import Darwin
 import Foundation
+import Logging
 import MCP
 import System
 import XCTest
 @testable import CheICalMCP
+
+private actor EndFlag {
+    private(set) var value = false
+    func set() { value = true }
+}
+
+/// An inner transport the test drives: `feed` yields messages to `receive()`, `finish` is EOF,
+/// `send` can be held until `release` or made to throw (PR #409 verify round 1).
+private actor ScriptedTransport: Transport {
+    nonisolated let logger = Logger(label: "test.scripted", factory: { _ in SwiftLogNoOpLogHandler() })
+    private let stream: AsyncThrowingStream<Data, Swift.Error>
+    private let continuation: AsyncThrowingStream<Data, Swift.Error>.Continuation
+    private var holdSends = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private var throwOnSend = false
+    private(set) var sent: [Data] = []
+
+    init() {
+        var c: AsyncThrowingStream<Data, Swift.Error>.Continuation!
+        stream = AsyncThrowingStream { c = $0 }
+        continuation = c
+    }
+
+    func connect() async throws {}
+    func disconnect() async {}
+    func receive() -> AsyncThrowingStream<Data, Swift.Error> { stream }
+
+    func feed(_ json: String) { continuation.yield(Data(json.utf8)) }
+    func finish() { continuation.finish() }
+    func setHoldSends(_ hold: Bool) { holdSends = hold }
+    func setThrowOnSend(_ value: Bool) { throwOnSend = value }
+    var heldCount: Int { held.count }
+    func release() { held.forEach { $0.resume() }; held.removeAll() }
+
+    func send(_ data: Data) async throws {
+        if throwOnSend { throw MCPError.internalError("scripted send failure") }
+        if holdSends { await withCheckedContinuation { held.append($0) } }
+        sent.append(data)
+    }
+}
 
 /// #345: `DrainingStdioTransport` over a pair of pipes instead of the process's stdio, so the drain
 /// and its timeout are tested without spawning the binary.
@@ -73,6 +114,91 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertLessThan(elapsed, .seconds(5))
         close(p.serverRead)
         await p.transport.disconnect()
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async throws {
+        for _ in 0..<500 where !(await condition()) { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// PR #409 verify round 1 (MEDIUM): a reply settles its request before the write is awaited,
+    /// so a request that reuses the id while the write is in flight stays outstanding, and the
+    /// drain waits for its own reply. Order: request 1, reply 1 (held), request 1 again, EOF,
+    /// release the held write; the stream must not end until the second reply.
+    func testAnIdReusedWhileItsReplyIsBeingWrittenIsStillAwaited() async throws {
+        let inner = ScriptedTransport()
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .seconds(10))
+        let done = EndFlag()
+        let ended = Task { () -> Int in
+            var n = 0
+            for try await _ in await transport.receive() { n += 1 }
+            await done.set()
+            return n
+        }
+        await inner.feed(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        try await Task.sleep(for: .milliseconds(100))
+        await inner.setHoldSends(true)
+        let firstReply = Task { try await transport.send(Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8)) }
+        try await waitUntil { await inner.heldCount == 1 }
+        await inner.feed(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        await inner.finish()
+        try await Task.sleep(for: .milliseconds(100))
+        await inner.setHoldSends(false)
+        await inner.release()
+        try await firstReply.value
+
+        try await Task.sleep(for: .milliseconds(300))
+        let endedEarly = await done.value
+        XCTAssertFalse(endedEarly, "the reused id's request is still unanswered")
+
+        try await transport.send(Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8))
+        let messages = try await ended.value
+        XCTAssertEqual(messages, 2)
+    }
+
+    /// PR #409 verify round 1: a reply whose write fails still settles its request, so the drain
+    /// does not wait for the cap.
+    func testAFailedReplyWriteStillSettles() async throws {
+        let inner = ScriptedTransport()
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .seconds(10))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let ended = Task { () -> Int in
+            var n = 0
+            for try await _ in await transport.receive() { n += 1 }
+            return n
+        }
+        await inner.feed(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        try await Task.sleep(for: .milliseconds(100))
+        await inner.setThrowOnSend(true)
+        do {
+            try await transport.send(Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8))
+            XCTFail("the inner send throws")
+        } catch {}
+        await inner.finish()
+        _ = try await ended.value
+        XCTAssertLessThan(clock.now - start, .seconds(5), "settled despite the failed write")
+    }
+
+    /// PR #409 verify round 1: a batch the SDK cannot decode is answered under a fresh id, so its
+    /// members never settle; the cap ends the drain.
+    func testAnUndecodableBatchIsBoundedByTheCap() async throws {
+        let inner = ScriptedTransport()
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .milliseconds(300))
+        let clock = ContinuousClock()
+        let start = clock.now
+        let ended = Task { () -> Int in
+            var n = 0
+            for try await _ in await transport.receive() { n += 1 }
+            return n
+        }
+        await inner.feed(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2}]"#)
+        try await Task.sleep(for: .milliseconds(50))
+        try await transport.send(Data(#"{"jsonrpc":"2.0","id":"random","error":{"code":-32600,"message":"Invalid Request"}}"#.utf8))
+        await inner.finish()
+        _ = try await ended.value
+        let elapsed = clock.now - start
+        XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300))
+        XCTAssertLessThan(elapsed, .seconds(5))
     }
 
     /// Notifications only: nothing to wait for, the stream ends at EOF.

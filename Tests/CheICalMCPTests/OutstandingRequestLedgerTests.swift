@@ -49,7 +49,9 @@ final class OutstandingRequestLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.isEmpty)
     }
 
-    /// A request the client cancels gets no reply from the SDK, so the cancel settles it.
+    /// The client does not expect a reply to a request it cancelled, so the cancel settles it. This
+    /// server's handlers do not check cancellation, so a reply may still be sent; settling it then
+    /// is a no-op (`testAReplyAfterACancelIsANoOp`).
     func testACancelledNotificationSettlesTheRequestItNames() {
         var ledger = OutstandingRequestLedger()
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#))
@@ -66,11 +68,50 @@ final class OutstandingRequestLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.isEmpty)
     }
 
-    /// The same id read twice is one outstanding entry: the reply settles it once.
-    func testADuplicateIdIsOneEntry() {
+    /// PR #409 verify round 1: entries are counted per id. The same id read twice is two
+    /// requests (the SDK answers each), so it takes two replies to settle.
+    func testTheSameIdReadTwiceTakesTwoReplies() {
         var ledger = OutstandingRequestLedger()
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#))
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#))
+        XCTAssertEqual(ledger.count, 2)
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":3,"result":{}}"#))
+        XCTAssertEqual(ledger.count, 1)
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":3,"result":{}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 1: an id reused after its reply was settled is a new request.
+    func testAnIdReusedAfterItsReplyIsOutstandingAgain() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+        XCTAssertEqual(ledger.count, 1)
+    }
+
+    /// PR #409 verify round 1: a numeric id that is not an integer is not recorded (the SDK's id
+    /// decoding rejects it and never replies under it). `1.0` is the integer 1.
+    func testANonIntegerNumericIdIsNotRecorded() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1.5,"method":"ping"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#))
+        XCTAssertTrue(ledger.isEmpty)
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":2.0,"method":"ping"}"#))
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":2,"result":{}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 1: a reply sent after the request was cancelled (this server's
+    /// handlers do not check cancellation, so it can still come) settles nothing and does not
+    /// underflow: a later request with that id is still counted.
+    func testAReplyAfterACancelIsANoOp() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#))
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#))
         XCTAssertEqual(ledger.count, 1)
     }
 
