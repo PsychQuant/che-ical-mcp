@@ -77,11 +77,15 @@ final class StdioEOFDrainTests: XCTestCase {
                    terminationStatus: process.terminationStatus, exitedBySelf: exitedBySelf, seconds: seconds)
     }
 
+    /// The ids answered on stdout, from single replies and batch replies.
     private func ids(_ lines: [String]) -> Set<String> {
-        Set(lines.compactMap { line in
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  object["result"] != nil || object["error"] != nil, let id = object["id"] else { return nil }
-            return "\(id)"
+        Set(lines.flatMap { line -> [String] in
+            guard let parsed = try? JSONSerialization.jsonObject(with: Data(line.utf8)) else { return [] }
+            let objects = (parsed as? [[String: Any]]) ?? [(parsed as? [String: Any]) ?? [:]]
+            return objects.compactMap { object in
+                guard object["result"] != nil || object["error"] != nil, let id = object["id"] else { return nil }
+                return "\(id)"
+            }
         })
     }
 
@@ -107,6 +111,21 @@ final class StdioEOFDrainTests: XCTestCase {
         XCTAssertTrue(run.exitedBySelf)
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertEqual(ids(run.stdoutLines), ["1", "2", "3"], "stdout: \(run.stdoutLines.map { String($0.prefix(80)) })")
+    }
+
+    /// PR #409 verify round 2 (MEDIUM): an id the SDK decodes as `Int` above 9e15 was not recorded,
+    /// so its reply was lost on EOF.
+    func testALargeIntegerIdReadBeforeEOFIsAnswered() throws {
+        let run = try run(#"{"jsonrpc":"2.0","id":10000000000000000,"method":"ping"}"# + "\n")
+        XCTAssertTrue(run.exitedBySelf)
+        XCTAssertEqual(ids(run.stdoutLines), ["10000000000000000"], "stdout: \(run.stdoutLines)")
+    }
+
+    /// A batch read before EOF is answered (the SDK handles it inline).
+    func testABatchReadBeforeEOFIsAnswered() throws {
+        let run = try run(#"[{"jsonrpc":"2.0","id":5,"method":"ping"},{"jsonrpc":"2.0","id":6,"method":"tools/list"}]"# + "\n")
+        XCTAssertTrue(run.exitedBySelf)
+        XCTAssertEqual(ids(run.stdoutLines), ["5", "6"], "stdout: \(run.stdoutLines.map { String($0.prefix(80)) })")
     }
 
     /// No request: EOF still ends the server at once, without waiting for the drain timeout.

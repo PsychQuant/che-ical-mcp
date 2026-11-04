@@ -26,7 +26,63 @@ final class OutstandingRequestLedgerTests: XCTestCase {
     func testANotificationIsNeverOutstanding() {
         var ledger = OutstandingRequestLedger()
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 2: the SDK decodes `"id": null` as the id `""` and answers under it, so
+    /// a null id is a request keyed like `""`.
+    func testANullIdIsARequestKeyedAsTheEmptyString() {
+        var ledger = OutstandingRequestLedger()
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#))
+        XCTAssertEqual(ledger.count, 1)
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":"","result":{}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 2: the SDK tries a message as a request before a notification, so a
+    /// `notifications/cancelled` that carries an id is a request (answered with an error); it is
+    /// recorded and does not settle the request it names.
+    func testACancelledWithAnIdIsARequestAndCancelsNothing() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":8,"method":"notifications/cancelled","params":{"requestId":7}}"#))
+        XCTAssertEqual(ledger.count, 2)
+    }
+
+    /// PR #409 verify round 2 (MEDIUM): ids the SDK decodes as `Int` beyond 2^53 or 9e15 must be
+    /// recorded (a Double path dropped them, and their replies with them on EOF).
+    func testLargeIntegerIdsAreRecordedAndSettled() {
+        for id in ["10000000000000000", "9007199254740993", "9223372036854775807", "-3"] {
+            var ledger = OutstandingRequestLedger()
+            ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":"# + id + #","method":"ping"}"#))
+            XCTAssertEqual(ledger.count, 1, id)
+            ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":"# + id + #","result":{}}"#))
+            XCTAssertTrue(ledger.isEmpty, id)
+        }
+    }
+
+    /// The SDK's `Int` decoding also takes integral literals such as `1e2`; an id beyond `Int64` is
+    /// rejected there and not recorded here.
+    func testIntegralDoubleLiteralsCountAndOutOfRangeIdsDoNot() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1e2,"method":"ping"}"#))
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":100,"result":{}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":9223372036854775808,"method":"ping"}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 2: request k, cancel k, request k again, then the cancelled request's
+    /// late reply: that reply is the cancelled one's, so the new request stays outstanding until
+    /// its own reply.
+    func testALateReplyToACancelledRequestDoesNotSettleANewRequestWithTheSameId() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":5,"method":"tools/call"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":5}}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":5,"method":"tools/call"}"#))
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":5,"result":{}}"#))
+        XCTAssertEqual(ledger.count, 1, "the late reply belongs to the cancelled request")
+        ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":5,"result":{}}"#))
         XCTAssertTrue(ledger.isEmpty)
     }
 
@@ -41,12 +97,16 @@ final class OutstandingRequestLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.isEmpty)
     }
 
-    func testABatchIsCountedPerMemberAndSettledPerReply() {
+    /// PR #409 verify round 2: SDK 0.12.0 handles a batch inline (`try await handleBatch`, which
+    /// writes the batch reply before the next message is read), so the receive loop cannot end
+    /// before it; batches are neither recorded nor settled.
+    func testBatchesAreNeitherRecordedNorSettled() {
         var ledger = OutstandingRequestLedger()
-        ledger.noteIncoming(data(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]"#))
-        XCTAssertEqual(ledger.count, 2)
-        ledger.noteOutgoing(data(#"[{"jsonrpc":"2.0","id":2,"result":{}},{"jsonrpc":"2.0","id":1,"result":{}}]"#))
+        ledger.noteIncoming(data(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]"#))
         XCTAssertTrue(ledger.isEmpty)
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+        ledger.noteOutgoing(data(#"[{"jsonrpc":"2.0","id":1,"result":{}}]"#))
+        XCTAssertEqual(ledger.count, 1, "a batch reply does not settle a single request")
     }
 
     /// The client does not expect a reply to a request it cancelled, so the cancel settles it. This

@@ -75,7 +75,7 @@ actor DrainingStdioTransport: Transport {
         let deadline = clock.now.advanced(by: drainTimeout)
         while !ledger.isEmpty || writesInFlight > 0 {
             guard clock.now < deadline, !Task.isCancelled else {
-                FileHandle.standardError.write(Data("CheICalMCP: stdin closed; \(ledger.count) request(s) still unanswered after \(drainTimeout), exiting without them\n".utf8))
+                FileHandle.standardError.write(Data("CheICalMCP: stdin closed; \(ledger.count) request(s) still unanswered and \(writesInFlight) reply write(s) unfinished after \(drainTimeout), exiting without them\n".utf8))
                 return
             }
             try? await Task.sleep(for: .milliseconds(10))

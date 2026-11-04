@@ -179,11 +179,11 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertLessThan(clock.now - start, .seconds(5), "settled despite the failed write")
     }
 
-    /// PR #409 verify round 1: a batch the SDK cannot decode is answered under a fresh id, so its
-    /// members never settle; the cap ends the drain.
-    func testAnUndecodableBatchIsBoundedByTheCap() async throws {
+    /// PR #409 verify round 2: batches are not recorded (the SDK answers them inline), so a batch
+    /// it cannot decode no longer holds the drain until the cap.
+    func testAnUndecodableBatchDoesNotHoldTheDrain() async throws {
         let inner = ScriptedTransport()
-        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .milliseconds(300))
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .seconds(10))
         let clock = ContinuousClock()
         let start = clock.now
         let ended = Task { () -> Int in
@@ -192,13 +192,38 @@ final class DrainingStdioTransportTests: XCTestCase {
             return n
         }
         await inner.feed(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2}]"#)
-        try await Task.sleep(for: .milliseconds(50))
-        try await transport.send(Data(#"{"jsonrpc":"2.0","id":"random","error":{"code":-32600,"message":"Invalid Request"}}"#.utf8))
         await inner.finish()
         _ = try await ended.value
-        let elapsed = clock.now - start
-        XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300))
-        XCTAssertLessThan(elapsed, .seconds(5))
+        XCTAssertLessThan(clock.now - start, .seconds(5))
+    }
+
+    /// PR #409 verify round 2: a reply whose write is still in flight holds the drain, even though
+    /// the request was settled before the write (round 1). Without the in-flight count the stream
+    /// ended under the write and the process could exit before it reached stdout.
+    func testAWriteInFlightHoldsTheDrainUntilItReturns() async throws {
+        let inner = ScriptedTransport()
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: .seconds(10))
+        let done = EndFlag()
+        let ended = Task { () -> Int in
+            var n = 0
+            for try await _ in await transport.receive() { n += 1 }
+            await done.set()
+            return n
+        }
+        await inner.feed(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        try await Task.sleep(for: .milliseconds(100))
+        await inner.setHoldSends(true)
+        let reply = Task { try await transport.send(Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8)) }
+        try await waitUntil { await inner.heldCount == 1 }
+        await inner.finish()
+        try await Task.sleep(for: .milliseconds(300))
+        let endedUnderTheWrite = await done.value
+        XCTAssertFalse(endedUnderTheWrite, "the drain must wait for the write in flight")
+        await inner.release()
+        try await reply.value
+        _ = try await ended.value
+        let endedAfter = await done.value
+        XCTAssertTrue(endedAfter)
     }
 
     /// Notifications only: nothing to wait for, the stream ends at EOF.
