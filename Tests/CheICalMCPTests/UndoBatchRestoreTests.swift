@@ -1033,4 +1033,81 @@ final class UndoBatchRestoreTests: XCTestCase {
         requireSendable(UndoOperation.self)
         requireSendable(UndoBatchPartiallyUndoneError.self)
     }
+
+    // MARK: - #322: a member that restores a series' exceptions
+
+    private let exceptionsDay: TimeInterval = 86_400
+    private var exceptionsStart: Date { Date(timeIntervalSince1970: 1_800_000_000) }
+    private func exceptionsSlot(_ week: Int) -> Date { exceptionsStart.addingTimeInterval(Double(week) * 7 * exceptionsDay) }
+
+    /// A series recorded with its exceptions (weeks 0 and 1 kept, week 2 edited, week 3 deleted).
+    private func seriesWithExceptions() -> UndoOperation {
+        let edited = UndoSnapshotFixtures.event(title: "Standup moved", startDate: exceptionsSlot(2).addingTimeInterval(1800))
+        let exceptions = SeriesExceptions(
+            window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
+            keptSlots: [exceptionsSlot(0), exceptionsSlot(1)], detached: [DetachedOccurrence(slot: exceptionsSlot(2), snapshot: edited)])
+        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart)
+            .withExceptions(exceptions))
+    }
+
+    /// Each member through the real arm (`SeriesExceptionsUndo.undoDeleteEvent`) on `store`.
+    private func runOnStore(_ members: [UndoOperation], _ store: FakeSeriesExceptionsStore) async throws -> [String] {
+        try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, execute: { member in
+            guard case .deleteEvent(let snapshot) = member else { throw SaveFailed.failed }
+            return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, in: store)
+        }, describe: { EventKitErrorSanitizer.sanitizeForResponse($0).code })
+    }
+
+    /// #322: a batch with a member that restores a series' exceptions restores them (the series
+    /// keeps its kept slots, the edited occurrence is a one-off) and its text carries the
+    /// exceptions note once, beside a one-off member.
+    func testABatchMemberRestoresTheSeriesExceptionsAndTheBatchTextSaysSo() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+        let members = [deleted("Review"), seriesWithExceptions()]
+
+        let texts = try await runOnStore(members, store)
+
+        XCTAssertEqual(texts.count, 2)
+        XCTAssertEqual(store.events.filter { $0.title == "Standup" }.map(\.start).sorted(), [exceptionsSlot(0), exceptionsSlot(1)])
+        XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 1)
+        let message = UndoOperation.batchUndoneMessage(members: members, count: texts.count)
+        XCTAssertEqual(message.components(separatedBy: UndoOperation.seriesExceptionsBatchNote).count - 1, 1, message)
+    }
+
+    /// #322: the member's compensating delete fails (permanent, `UnrecoverableUndoError` from
+    /// `SeriesExceptionsUndo.restoreFailure`): that member is dropped and the member never attempted
+    /// is kept, as for any permanent member error (#248).
+    func testAMemberWhoseCompensatingDeleteFailsIsDroppedAndTheRestKept() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+        store.failingSaveTitles = ["Standup moved"]
+        store.seriesRemovalFails = true
+
+        do {
+            _ = try await runOnStore([deleted("Review"), seriesWithExceptions()], store)
+            XCTFail("the failure must surface")
+        } catch {
+            let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(error)")
+            XCTAssertEqual(titles(partial.remaining), ["Review"], "the series ran first (newest) and was dropped; Review never ran")
+            XCTAssertEqual(partial.restoredCount, 0)
+            XCTAssertTrue(partial.message.contains("dropped from this history entry"), partial.message)
+        }
+    }
+
+    /// #322: alone, the same failure stands as the permanent error, and the record is discarded.
+    func testAnOnlyMemberWhoseCompensatingDeleteFailsDiscardsTheRecord() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+        store.failingSaveTitles = ["Standup moved"]
+        store.seriesRemovalFails = true
+
+        do {
+            _ = try await runOnStore([seriesWithExceptions()], store)
+            XCTFail("the failure must surface")
+        } catch {
+            XCTAssertTrue(error is UnrecoverableUndoError, "\(error)")
+            XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        }
+    }
 }
