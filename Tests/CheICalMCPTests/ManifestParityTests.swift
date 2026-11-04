@@ -169,6 +169,19 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary("undo").contains("names the fields"), summary("undo"))
     }
 
+    /// #377 verify: the undo of a series created here whose first occurrence was deleted later is
+    /// refused for good, so both places a client reads about undo list it where discard_id is the
+    /// only choice.
+    func testUndoDescriptionsNameTheSeriesWhoseFirstOccurrenceWasDeleted() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "undo" }?.description ?? ""
+        let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        XCTAssertTrue(declared.contains("or a series whose rule was shortened or whose first occurrence was deleted later)"), declared)
+        XCTAssertTrue(summary.contains("a series created here whose first occurrence was deleted later is refused until the user discards it"), summary)
+    }
+
     func testReminderReadToolsStateTheSignOfMinutesBefore() throws {
         let sign = "positive = before the due date, negative = after"
         let data = try Data(contentsOf: try locateManifest())

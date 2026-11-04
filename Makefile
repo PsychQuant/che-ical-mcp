@@ -1,4 +1,6 @@
 BINARY_NAME := CheICalMCP
+# `:=`, so only `make install INSTALL_DIR=...` changes it (an exported INSTALL_DIR does not).
+INSTALL_DIR := $(HOME)/bin
 
 # Swift 6 Concurrency Guard:
 # Try native build first; fall back to Swift 5 language mode if upstream
@@ -78,17 +80,23 @@ release-signed: verify-release-ready
 # Note: TCC dialogs do not appear on macOS 26 with ad-hoc signing —
 #       use `make release-signed` for testing TCC flows on macOS 26.
 #
-# rm -f forces a fresh inode: if any old CheICalMCP processes are still running
+# A fresh inode is required (install-local.sh renames a new file over the installed one;
+# the targets used rm -f before cp): if any old CheICalMCP processes are still running
 # (e.g. held by Claude Code MCP integrations or launchd), `cp` over the existing
 # file would reuse the same inode, and the macOS kernel caches code-signature
 # hashes per-inode — leading to "load code signature error 2" SIGKILL on the
 # new binary. See #62 for the upgrade-trap discovery during macOS 26 testing.
-install: release
-	rm -f ~/bin/$(BINARY_NAME)
-	cp .build/release/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
-	chmod +x ~/bin/$(BINARY_NAME)
-	codesign --force --sign - ~/bin/$(BINARY_NAME)
-	@echo "Installed: ~/bin/$(BINARY_NAME) (ad-hoc signed — dev only)"
+#
+# Both install targets go through scripts/install-local.sh (#239): it builds for the
+# host architecture, takes the product from `swift build --show-bin-path`, checks it
+# (exactly the host architecture, --version equal to AppVersion.current) and only then
+# replaces the installed file; signing and its checks run on the staged copy, so a
+# failure leaves the installed file as it was. It no longer copies the fixed release path, which under
+# swiftbuild is a directory every --arch build writes to (build-mcpb.sh leaves x86_64 there).
+# `make install INSTALL_DIR=/some/dir` installs elsewhere (default ~/bin).
+install:
+	./scripts/install-local.sh adhoc "$(INSTALL_DIR)" $(FALLBACK_FLAGS)
+	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME) (ad-hoc signed — dev only)"
 
 # Dev install with Developer ID signature (no notarization). Slower than
 # `make install` (Developer ID round-trip vs ad-hoc), but **fast enough for
@@ -113,28 +121,21 @@ install: release
 # `NOTARY_PROFILE` is NOT required (no notarization step).
 #
 # `verify-developer-id` runs FIRST (before `release`) so a missing
-# DEVELOPER_ID env var aborts BEFORE the ~30-second `swift build -c release`
+# DEVELOPER_ID env var aborts BEFORE the ~30-second release build in install-local.sh
 # (#50 verify Codex caught: original placement let the DEVELOPER_ID check
 # fire only after build, wasting the user's iteration time on a guaranteed
 # failure).
 
 # Internal helper target: hard-fail early if DEVELOPER_ID env var is missing.
 # Listed in .PHONY since it produces no file. Used as a left-most dep on
-# `install-signed` so make resolves it before the `release` build dep.
+# `install-signed` so make resolves it before the build in install-local.sh.
 verify-developer-id:
 	@: $${DEVELOPER_ID:?DEVELOPER_ID not set. See README 'Signing & Notarization' for setup. \
 	   For dev install on macOS 26 you only need DEVELOPER_ID — NOTARY_PROFILE is unused here.}
 
-install-signed: verify-developer-id release
-	rm -f ~/bin/$(BINARY_NAME)
-	cp .build/release/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
-	chmod +x ~/bin/$(BINARY_NAME)
-	codesign --force \
-	         --sign "$$DEVELOPER_ID" \
-	         --options runtime \
-	         --entitlements Sources/CheICalMCP/Entitlements.plist \
-	         ~/bin/$(BINARY_NAME)
-	@echo "Installed: ~/bin/$(BINARY_NAME) (Developer ID signed, NOT notarized — dev only)"
+install-signed: verify-developer-id
+	./scripts/install-local.sh developer-id "$(INSTALL_DIR)" $(FALLBACK_FLAGS)
+	@echo "Installed: $(INSTALL_DIR)/$(BINARY_NAME) (Developer ID signed, NOT notarized — dev only)"
 	@echo "ℹ macOS 26 TCC dialogs WILL trigger because the binary has Developer ID + hardened runtime."
 	@echo "ℹ For distribution to other users, use 'make release-signed' instead (adds notarization)."
 

@@ -68,6 +68,12 @@ jobs:
         # run is skipped, with a note, when the runner cannot execute it.
         run: bash scripts/tests/check-staged-product-test.sh
 
+      - name: make install product check tests
+        # #239: make install / install-signed copy a product they built in the same run
+        # (from --show-bin-path) and checked (host arch, --version); a wrong product is
+        # refused before the install directory is touched. swift is stubbed; seconds.
+        run: bash scripts/tests/install-local-test.sh
+
       - name: verify-release-ready tag selection tests
         # #310: the latest release tag is the newest v<digit>* tag by version; idd-N-*
         # tags and creation dates must not decide it. Throwaway git repositories, no build.

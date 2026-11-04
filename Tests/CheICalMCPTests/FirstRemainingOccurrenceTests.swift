@@ -352,6 +352,43 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
     }
 
+    /// #377: the one other stand-in probe in the event arm. It is the not-found hook of the
+    /// create-undo only (the lookup stays plain, asserted above), runs only after the series
+    /// failed to refresh (`SeriesCreateUndoTests`), and only decides the message: the stand-in is
+    /// never returned as the target.
+    func testTheCreateUndoProbesTheStandInOnlyForItsNotFoundMessage() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func verifiedHistoryTarget("))
+        let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
+        let body = String(source[from.upperBound..<to.lowerBound])
+        XCTAssertTrue(body.contains("missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },"),
+                      "the event arm's not-found hook")
+        XCTAssertEqual(source.components(separatedBy: "createUndoMissingError(").count, 3, "declared once, called once")
+        let helperFrom = try XCTUnwrap(source.range(of: "private func createUndoMissingError("))
+        let helperEnd = try XCTUnwrap(source.range(of: "\n    /// ", range: helperFrom.upperBound..<source.endIndex))
+        let helper = String(source[helperFrom.upperBound..<helperEnd.lowerBound])
+        XCTAssertFalse(helper.contains("\n    func "), "the extraction stays inside the helper")
+        XCTAssertTrue(helper.contains("SeriesCreateUndo.missingError("), "the decision is the tested seam")
+        XCTAssertTrue(helper.contains("stored: stored != nil"), "the object the lookup returned")
+        XCTAssertTrue(helper.contains("recurring: stored?.hasRecurrenceRules ?? false"), "the stored object's rules")
+        XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)"),
+                      "any remaining occurrence, edited-before or not")
+        XCTAssertTrue(helper.contains("standInStart: {"), "the stand-in's start goes to the seam")
+        // Round-3 LOWs: the closure body exactly (the scan stays lazy inside it and returns the
+        // stand-in's own start), and no spelling of the stale object's start anywhere in the helper.
+        XCTAssertTrue(helper.contains(
+            "standInStart: {\n                guard let stored else { return nil }\n                return firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)?.startDate\n            })"),
+            "the lazy closure returns the stand-in's own start")
+        XCTAssertEqual(helper.components(separatedBy: "firstRemainingOccurrence(").count, 2,
+                       "the scan runs only inside the closure")
+        XCTAssertFalse(helper.contains("stored.startDate"), "compared with the record's start in the seam, not the stale object's")
+        XCTAssertFalse(helper.contains("stored?.startDate"), "no other spelling of the stale object's start")
+        XCTAssertTrue(helper.contains("stored: EKEvent?) -> Error? {"), "the helper returns an error, never an event")
+        XCTAssertFalse(helper.contains("return standIn\n"), "the stand-in is not a target")
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {

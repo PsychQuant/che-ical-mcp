@@ -121,6 +121,7 @@ extension EventKitManager {
                     return storedEvent(id: expected.itemID)
                 },
                 refresh: { $0.refresh() },
+                missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },
                 conflicts: { event in
                     // Rounds 5–6: update-undo and the undo of a one-off move never write to an
                     // event that repeats or is an edited occurrence now; refused and discarded
@@ -175,6 +176,21 @@ extension EventKitManager {
                                         sourceID: $0.event.calendar?.source?.sourceIdentifier)
             },
             original: original.map { SeriesMoveUndo.OriginalCalendar(sourceID: $0.source?.sourceIdentifier) })
+    }
+
+    /// #377: the not-found message of an event undo, asked only after the lookup found nothing or
+    /// an object that did not refresh. For the undo of a create on a series, the earliest remaining
+    /// occurrence (edited-before or not) and whether it starts after the record's own start pick
+    /// the wording; the occurrence is never the target. The decision is
+    /// `SeriesCreateUndo.missingError`; nil keeps the plain not-found.
+    private func createUndoMissingError(of operation: UndoOperation, verb: UndoHistoryVerb, id: String,
+                                        stored: EKEvent?) -> Error? {
+        SeriesCreateUndo.missingError(
+            of: operation, verb: verb, stored: stored != nil, recurring: stored?.hasRecurrenceRules ?? false,
+            standInStart: {
+                guard let stored else { return nil }
+                return firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)?.startDate
+            })
     }
 
     /// D4 pre-flight for one member of a batch (nested batches are walked).
