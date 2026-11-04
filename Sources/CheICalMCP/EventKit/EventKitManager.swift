@@ -1150,7 +1150,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             event.structuredLocation = structured
         }
 
-        try eventStore.save(event, span: span)
+        // #373 verify round 2: a failed save (a read-only calendar, an alarm or recurrence EventKit
+        // rejects) would leave every field assigned above on the cached event, where a later save
+        // in this process could write it. Discard every unsaved change before rethrowing, as the
+        // move path does.
+        do {
+            try eventStore.save(event, span: span)
+        } catch {
+            event.rollback()
+            throw error
+        }
         markNeedsRefresh()
         // #236: an update that touched a recurring event is recorded only as a marker; its undo is
         // refused (RecurringUpdateKind). The rules after the update come from the request: a

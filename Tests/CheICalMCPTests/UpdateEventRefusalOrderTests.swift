@@ -52,6 +52,21 @@ final class UpdateEventRefusalOrderTests: XCTestCase {
                       "updateEvent passes the planned start and the planned all-day state to WeekdayCheck")
     }
 
+    /// #373 verify round 2 (DA): a save that fails (a read-only calendar, an alarm or recurrence
+    /// EventKit rejects) left every assigned field on the cached event. The save is wrapped so a
+    /// failure rolls the event back before the error is rethrown, like the move path does.
+    func testAFailedSaveRollsTheEventBack() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func updateEvent("))
+        let rest = source[from.upperBound...]
+        let end = rest.range(of: "\n    func ")?.lowerBound ?? rest.endIndex
+        let body = rest[..<end].filter { !$0.isWhitespace }
+        XCTAssertTrue(body.contains("do{tryeventStore.save(event,span:span)}catch{event.rollback()throwerror}"),
+                      "updateEvent rolls the event back when its save fails")
+    }
+
     /// The pin must see the refusals it is about; otherwise an edit that renames them would make
     /// the check above pass on nothing.
     func testThePinSeesTheRefusalsItOrders() throws {
