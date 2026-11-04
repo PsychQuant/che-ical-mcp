@@ -2523,7 +2523,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate)
             let event = try await verifiedEvent(of: operation, verb: .undo)
             oldSnapshot.apply(to: event, calendar: calendar)
-            try eventStore.save(event, span: .thisEvent)
+            // #274: a failed save would leave the restored fields on the cached event, where a later
+            // save in this process could write them. Discard every unsaved change before rethrowing,
+            // as `updateEvent` does since #379.
+            do {
+                try eventStore.save(event, span: .thisEvent)
+            } catch {
+                event.rollback()
+                throw error
+            }
             markNeedsRefresh()
             return "Undone: restored event '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
 
@@ -2547,7 +2555,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             let event = try await verifiedEvent(of: operation, verb: .undo)
             event.calendar = original
-            try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
+            // #274: a failed save would leave the calendar assignment on the cached event; roll it
+            // back before rethrowing (rollback() restores the calendar, checked on device 2026-10-04).
+            do {
+                try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
+            } catch {
+                event.rollback()
+                throw error
+            }
             markNeedsRefresh()
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
