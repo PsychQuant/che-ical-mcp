@@ -95,4 +95,13 @@ enum ReminderRelativeAlarms {
     static func leftoverDateOnlyNote(_ count: Int) -> String {
         "The reminder keeps \(count) relative alarm\(count == 1 ? "" : "s"), measured from the due date; on a date-only reminder when they fire has not been measured (#333). To remove them, call update_reminder with alarms_minutes_offsets: []."
     }
+
+    /// The note for a saved reminder, as `updateReminder` reports it (PR #415 verify round 2): the
+    /// due state and relative alarms are read off the saved reminder, and the due counts as touched
+    /// when the request gave a due date or `clear_due_date`.
+    static func leftoverNote(saved reminder: EKReminder, request: ReminderUpdateRequest) -> String? {
+        leftoverNote(requested: request.alarmOffsets, dueTouched: request.due != nil || request.clearDueDate,
+                     dueAfter: dueState(of: reminder.dueDateComponents),
+                     relativeCount: storedMinutesBefore(reminder).count)
+    }
 }

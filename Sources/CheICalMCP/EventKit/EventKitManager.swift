@@ -2273,10 +2273,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
             storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(
-                requested: alarmOffsets, dueTouched: due != nil || clearDueDate,
-                dueAfter: ReminderRelativeAlarms.dueState(of: reminder.dueDateComponents),
-                relativeCount: ReminderRelativeAlarms.storedMinutesBefore(reminder).count))
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request))
         // Same reason as update_event (#246): the identifier the reminder has after the save.
         let savedID = reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,

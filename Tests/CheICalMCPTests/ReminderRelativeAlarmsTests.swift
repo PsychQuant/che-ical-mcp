@@ -181,31 +181,93 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         XCTAssertTrue(ReminderRelativeAlarms.leftoverDateOnlyNote(1).contains("date-only"))
     }
 
-    /// PR #415 verify round 1: the #236 post-state guard on an alarm-only update and on a create
-    /// with alarms. Unchanged since the write, nothing differs (undo proceeds); an alarm edited
-    /// elsewhere is named. In memory: what a synced store reads back is the release gate's job.
-    func testThePostStateGuardAcceptsAnUnchangedAlarmWrite() throws {
+    /// PR #415 verify rounds 1-2: the #236 post-state guard on an alarm-only update and on a create
+    /// with alarms. The recorded snapshot is compared with a separately built reminder holding the
+    /// same values in new EventKit objects (what a later read gives), so the check is by value, not
+    /// by object identity: equal values pass the guard; an alarm changed elsewhere is named. What a
+    /// synced store returns is the release gate's job.
+    func testThePostStateGuardComparesAlarmsByValue() throws {
+        let due = DateComponents(year: 2026, month: 12, day: 10, hour: 9, minute: 0)
         let item = reminder()
-        item.dueDateComponents = DateComponents(year: 2026, month: 12, day: 10, hour: 9, minute: 0)
+        item.dueDateComponents = due
         item.addAlarm(locationAlarm())
         item.addAlarm(EKAlarm(relativeOffset: -600))
         let before = ReminderSnapshot(from: item)
         _ = try ReminderUpdateWrite.apply(ReminderUpdateRequest(identifier: "r", alarmOffsets: [15]), to: item, calendar: nil,
                                           save: {}, reload: { true }, rollback: {})
         let post = ReminderSnapshot(from: item)
-        XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: item), restoring: before), [])
+
+        func readBack(_ offsets: [Int]) -> EKReminder {
+            let copy = reminder()
+            copy.dueDateComponents = due
+            copy.addAlarm(locationAlarm())
+            ReminderRelativeAlarms.replace(on: copy, with: offsets)
+            return copy
+        }
+        let unchanged = readBack([15])
+        XCTAssertFalse(unchanged === item)
+        XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: unchanged), restoring: before), [])
         // Through the guard's own flow, as undo runs it.
         XCTAssertNoThrow(try UndoTargetCheck.check(
             .reminder(id: "r", title: "t", state: post, restoring: before), verb: .undo,
-            lookup: { item }, refresh: { _ in true },
+            lookup: { unchanged }, refresh: { _ in true },
             conflicts: { post.changedFields(in: ReminderSnapshot(from: $0), restoring: before) }))
-        ReminderRelativeAlarms.replace(on: item, with: [20])
-        XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: item), restoring: before), ["alarms"])
+        XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: readBack([20])), restoring: before), ["alarms"])
+        XCTAssertThrowsError(try UndoTargetCheck.check(
+            .reminder(id: "r", title: "t", state: post, restoring: before), verb: .undo,
+            lookup: { readBack([20]) }, refresh: { _ in true },
+            conflicts: { post.changedFields(in: ReminderSnapshot(from: $0), restoring: before) }))
 
         let created = reminder()
-        created.dueDateComponents = DateComponents(year: 2026, month: 12, day: 10, hour: 9, minute: 0)
+        created.dueDateComponents = due
         ReminderRelativeAlarms.replace(on: created, with: [15])
         let createdPost = ReminderSnapshot(from: created)
-        XCTAssertEqual(createdPost.changedFields(in: ReminderSnapshot(from: created), restoring: nil), [])
+        let createdReadBack = reminder()
+        createdReadBack.dueDateComponents = due
+        ReminderRelativeAlarms.replace(on: createdReadBack, with: [15])
+        XCTAssertEqual(createdPost.changedFields(in: ReminderSnapshot(from: createdReadBack), restoring: nil), [])
+    }
+
+    /// PR #415 verify round 2: an update that names its own alarms gets no leftover note.
+    func testALeftoverNoteNeedsNoRequestedAlarms() {
+        XCTAssertNil(ReminderRelativeAlarms.leftoverNote(requested: [15], dueTouched: true, dueAfter: .dateOnly, relativeCount: 1))
+        XCTAssertNil(ReminderRelativeAlarms.leftoverNote(requested: [15], dueTouched: true, dueAfter: .none, relativeCount: 1))
+    }
+
+    /// PR #415 verify round 2: the note is read off the saved reminder and the request, the way
+    /// `updateReminder` calls it (due state and relative alarms of the saved item; due touched by a
+    /// bare date or `clear_due_date`).
+    func testTheLeftoverNoteIsReadOffTheSavedReminder() {
+        let dateOnly = reminder()
+        dateOnly.dueDateComponents = DateComponents(year: 2026, month: 12, day: 11)
+        dateOnly.addAlarm(EKAlarm(relativeOffset: -900))
+        dateOnly.addAlarm(EKAlarm(absoluteDate: absolute))
+        dateOnly.addAlarm(locationAlarm())
+        let bareDay = ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2026, month: 12, day: 11)))
+        XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: dateOnly, request: bareDay), ReminderRelativeAlarms.leftoverDateOnlyNote(1),
+                       "only the relative alarm is counted")
+        XCTAssertNil(ReminderRelativeAlarms.leftoverNote(saved: dateOnly, request: ReminderUpdateRequest(identifier: "r", title: "t")),
+                     "an update that does not touch the due")
+        XCTAssertNil(ReminderRelativeAlarms.leftoverNote(saved: dateOnly, request: ReminderUpdateRequest(
+            identifier: "r", due: .day(DateComponents(year: 2026, month: 12, day: 11)), alarmOffsets: [])))
+
+        let undated = reminder()
+        undated.addAlarm(EKAlarm(relativeOffset: -900))
+        undated.addAlarm(EKAlarm(relativeOffset: -60))
+        XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: undated, request: ReminderUpdateRequest(identifier: "r", clearDueDate: true)),
+                       ReminderRelativeAlarms.leftoverNoDueNote(2))
+
+        let timed = reminder()
+        timed.dueDateComponents = DateComponents(year: 2026, month: 12, day: 11, hour: 9, minute: 0)
+        timed.addAlarm(EKAlarm(relativeOffset: -900))
+        XCTAssertNil(ReminderRelativeAlarms.leftoverNote(saved: timed, request: ReminderUpdateRequest(identifier: "r", due: .timed(absolute))))
+    }
+
+    /// The store path builds the note through that helper, from the saved reminder and the request.
+    func testUpdateReminderWiresTheLeftoverNote() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        XCTAssertEqual(code.components(separatedBy: "leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request)").count - 1, 1)
+        XCTAssertFalse(code.contains("ReminderRelativeAlarms.leftoverNote( requested:"), "no second, hand-wired computation")
     }
 }
