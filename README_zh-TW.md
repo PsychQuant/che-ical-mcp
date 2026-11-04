@@ -123,6 +123,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
 
+**修改後的 ID（#268）：** `update_event` 與 `update_reminder` 回報的是儲存之後的 ID。`calendar_name` 指向另一個帳號的日曆時 ID 可能改變（事件部分依 #226 的實機結果）；`id_changed` 說明它和你傳入的 ID 是否不同，只有改變時才會出現的 `previous_id` 是你傳入的 ID。
+
 </details>
 
 <details>

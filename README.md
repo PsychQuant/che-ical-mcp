@@ -124,6 +124,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 
 **Moving events (#226):** a move reassigns the event's calendar, so recurrence, attendees and every other field are kept. The identifier stays the same within an account and changes across accounts (each result reports `id_changed` and `new_event_id`). For a recurring event, `span: this` (default) moves only the occurrence named in `occurrence_dates`, which becomes a one-off; `span: all` moves the whole series; a recurring event without a date is refused. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`) and any `not_carried_over` fields.
 
+**Identifier after an update (#268):** `update_event` and `update_reminder` answer with the identifier the item has after the save. A `calendar_name` in another account can change it (the event part follows the #226 device finding); `id_changed` says whether it differs from the identifier you passed, and `previous_id`, present only when it changed, repeats that identifier.
+
 </details>
 
 <details>
