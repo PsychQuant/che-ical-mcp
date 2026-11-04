@@ -305,7 +305,10 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             if failedBeforeWrite {
                 written = " \(item ?? "The item that failed") failed before anything of it was written (its calendar or list was not found), so running undo again does not add a copy of it."
             } else {
-                written = " \(item.map { "The save of \($0)" } ?? "Its save") may have written it anyway (an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed), so running undo again can add a second copy: check first."
+                // PR #390 round 2: no cause named, so the sentence holds for every failure after the
+                // restore began (a save the store took, a reminder left pending, a series restore
+                // rolled back, #285).
+                written = " \(item.map { "The restore of \($0)" } ?? "Its restore") may have left something written, so running undo again can add a second copy: check first."
             }
             giveUp = written + " If that item keeps failing, or the next undo is refused for its calendar or list, ask the user whether to give up the rest of this undo; if they agree, read undo_history and call undo with discard_id set to its id."
                 + (remaining.count > 1 ? " That drops every item not yet restored, not only the one that failed." : "")
@@ -384,11 +387,13 @@ extension UndoOperation {
             : partial(unattempted + [failing], .inRecordedOrder, memberError)
     }
 
-    /// PR #390 round 1: the errors a member's restore raises before it writes anything, so its
-    /// failure cannot have left a copy: its calendar (`calendarNotFound`, `calendarNotFoundWithSource`,
-    /// and #269's `undoCalendarMissing`) or its reminder list (`undoListMissing`) was not found. A
-    /// closed list: any other error may come after the save began, and the text then asks to check
-    /// first.
+    /// PR #390 round 1: the "calendar or list not found" errors a member's restore raises before it
+    /// writes anything, so its failure cannot have left a copy: its calendar (`calendarNotFound`,
+    /// `calendarNotFoundWithSource`, #269's `undoCalendarMissing`) or its reminder list
+    /// (`undoListMissing`). A closed list, and only these: the text says the calendar or list was not
+    /// found. Other errors that also write nothing (an access-gate refusal, `ListDeletedDuringSave`)
+    /// are deliberately not listed, since that sentence would misname their cause; they get the
+    /// check-first text, which is cautious, not wrong.
     static func failsBeforeAnyWrite(_ error: Error) -> Bool {
         guard let error = error as? EventKitError else { return false }
         switch error {

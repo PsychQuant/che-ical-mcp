@@ -428,7 +428,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             return try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
         }
         let saved = try partial([deleted("Bob's lunch")], SaveFailed.failed)
-        XCTAssertTrue(saved.message.contains("The save of 'Bob\u{2019}s lunch' may have written it anyway"), saved.message)
+        XCTAssertTrue(saved.message.contains("The restore of 'Bob\u{2019}s lunch' may have left something written"), saved.message)
         XCTAssertTrue(saved.message.contains("running undo again can add a second copy: check first."), saved.message)
 
         let lookups: [Error] = [EventKitError.calendarNotFound(identifier: "cal-1"),
@@ -463,15 +463,22 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                          describe: { _ in "eventkit_error_1" })
             let composed = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
             XCTAssertTrue(composed.message.contains("For the items restored: Not carried over: absolute_alarms"), composed.message)
-            XCTAssertEqual(composed.message.contains("The save of 'E' may have written it anyway"), written, composed.message)
+            XCTAssertEqual(composed.message.contains("The restore of 'E' may have left something written"), written, composed.message)
             XCTAssertEqual(composed.message.contains("'E' failed before anything of it was written"), !written, composed.message)
             XCTAssertTrue(composed.message.hasSuffix(": eventkit_error_1"), composed.message)
         }
 
+        // PR #390 round 2: a one-member batch whose series restore failed and was rolled back
+        // (#285/#405) is an after-write failure, but neither a save that the store took nor a
+        // reminder left pending: the sentence names no such cause.
+        let series = try partial([deleted("S")], EventKitError.seriesExceptionsRestoreFailed(reason: "x"))
+        XCTAssertTrue(series.message.contains("The restore of 'S' may have left something written, so running undo again can add a second copy: check first."), series.message)
+        XCTAssertFalse(series.message.contains("the store took it") || series.message.contains("removal after a failed save"), series.message)
+
         // A nested batch's remainder has no one title: the sentence stays general.
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
         let nested = try partial([.batch([deleted("Y")])], inner)
-        XCTAssertTrue(nested.message.contains("Its save may have written it anyway"), nested.message)
+        XCTAssertTrue(nested.message.contains("Its restore may have left something written"), nested.message)
     }
 
     /// A permanent member error (`UnrecoverableUndoError`) means that member can never be restored.
@@ -886,13 +893,14 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// PR #282 round 5, findings 1, 6, 9: a failed save may have written the item (an event that
     /// committed and then threw; a reminder whose removal after the failure failed), so the text
     /// says a retry can add a second copy. A reminder that a new store finds counts as restored
-    /// (#280 round 7), so it is not one of them.
+    /// (#280 round 7), so it is not one of them. Since PR #390 round 2 the text names no cause, so it
+    /// also holds for a series restore that was rolled back (#285).
     func testThePartialErrorSaysARetryCanAddASecondCopy() {
         for restoredCount in [0, 2] {
             let error = UndoBatchPartiallyUndoneError(remaining: [deleted("A"), deleted("B")], restoredCount: restoredCount,
                                                       memberError: "eventkit_error_1")
             XCTAssertTrue(error.message.contains("running undo again can add a second copy"), error.message)
-            XCTAssertTrue(error.message.contains("an event whose save failed after the store took it, or a reminder whose removal after a failed save also failed"), error.message)
+            XCTAssertTrue(error.message.contains("Its restore may have left something written"), error.message)
             XCTAssertFalse(error.message.contains("differs"), error.message)
         }
     }
