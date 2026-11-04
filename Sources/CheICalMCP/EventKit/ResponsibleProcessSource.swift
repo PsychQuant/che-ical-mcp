@@ -93,6 +93,14 @@ enum ResponsibleHostClassifier {
 /// block, and the per-kind advice that the banner and the access-denied message reuse so
 /// all three name the same client.
 enum ResponsibleProcessFormatter {
+    /// Why a process macOS charges to a host was not re-executed onto CheICalMCP's own grant:
+    /// the one list the access-denied texts (SSH included, #362) and the advice share.
+    static func noReexecCauses(host: String) -> String {
+        "CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED was inherited, the re-exec failed "
+            + "(see the start-up line on stderr), a policy restricts \(host) (#367), or \(host) had full "
+            + "access when this server started and has lost it since"
+    }
+
     static func advice(for kind: ResponsibleHostKind) -> String {
         switch kind {
         case .selfBinary:
@@ -103,9 +111,7 @@ enum ResponsibleProcessFormatter {
             return "macOS checks \(name), which has no Calendar or Reminders purpose string, so it "
                 + "can never be prompted. When the host has no full Calendar and Reminders access, "
                 + "CheICalMCP re-executes itself so that it is checked under its own name, and this "
-                + "process was not re-executed: CHE_ICAL_MCP_NO_DISCLAIM is set, CHE_ICAL_MCP_DISCLAIMED "
-                + "was inherited, the re-exec failed (see the start-up line on stderr), or \(name) had "
-                + "full access when this server started and has lost it since (#343)."
+                + "process was not re-executed: \(noReexecCauses(host: name)) (#343)."
         case .appBundle(let name):
             return "macOS checks \(name)'s grant: System Settings → Privacy & Security → "
                 + "Calendar / Reminders → \(name)."

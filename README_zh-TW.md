@@ -451,21 +451,26 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 ### SSH 存取
 
-從 v1.23.0 起，SSH session 跟其他 host 一樣處理（狀態感知規則，[#343](https://github.com/PsychQuant/che-ical-mcp/issues/343)）：ssh 環境通常沒有自己的行事曆或提醒事項存取權限，所以 binary 會以自己為 responsible process 重新執行，macOS 檢查的是 **`CheICalMCP` 的授權**，也就是 `--setup` 建立的那一筆。在 ssh 裡執行 `CheICalMCP --print-tcc-path` 可以看到 macOS 檢查的是哪個程序（`TCC attribution`）。授權對話框無法在 SSH 裡出現，所以授權要在 Mac 本機上建立。
+從 v1.23.0 起，SSH session 跟其他 host 一樣處理（狀態感知規則，[#343](https://github.com/PsychQuant/che-ical-mcp/issues/343)）。先在 ssh 裡執行 `CheICalMCP --print-tcc-path`：它的 `TCC attribution` 那一行會寫出 macOS 檢查的是哪個程序，接下來的步驟依此而定。授權對話框無法在 SSH 裡出現，所以會跳出對話框的步驟都要在 Mac 本機上做。
 
-**步驟 1 — 在本機建立 CheICalMCP 自己的授權（建議）：**
-1. 在目標 Mac 的 Terminal.app（**不是**透過 SSH）執行 `~/bin/CheICalMCP --setup`（或 `--print-tcc-path` 顯示的 `.mcpb` binary 路徑）
-2. 在行事曆與提醒事項對話框點**允許**（先前若按過「不允許」，改到系統設定 → 隱私權與安全性 → 行事曆／提醒事項把 CheICalMCP 打開）
-3. 重新建立 SSH 連線（以及從中啟動的非互動工作）
+**macOS 檢查的是 CheICalMCP**（顯示 `(this binary)`；這是常見情況，因為 ssh 環境沒有自己的行事曆或提醒事項權限，binary 會重新執行成自己的授權）：
+1. 在目標 Mac 的 Terminal.app（**不是**透過 SSH）執行 `~/bin/CheICalMCP --setup`（或 `.mcpb` binary 的路徑）。它只在狀態是 `notDetermined` 時會跳出對話框；之後只會回報目前狀態。
+2. 先前若按過「不允許」（`denied`），改到系統設定 → 隱私權與安全性 → 行事曆／提醒事項把 CheICalMCP 打開。
+3. 重新建立 SSH 連線（以及從中啟動的非互動工作）。
 
-**步驟 2 — 只有在 SSH 裡仍被拒時：授予 sshd 完整磁碟存取權限：**
-1. 打開**系統設定 → 隱私權與安全性 → 完整磁碟存取權限**
-2. 把 `/usr/sbin/sshd` 加入清單（在檔案對話框按 <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>，輸入路徑）
-3. 重新建立 SSH 連線
+**macOS 檢查的是別的程序**：ssh 程序沒有重新執行成 CheICalMCP 自己的授權，原因是設定了 `CHE_ICAL_MCP_NO_DISCLAIM`、繼承了 `CHE_ICAL_MCP_DISCLAIMED`、重新執行失敗（看 stderr 的啟動訊息）、該程序受政策限制（[#367](https://github.com/PsychQuant/che-ical-mcp/issues/367)），或伺服器啟動時它有完整權限、之後被收回。本機 `--setup` 建立的授權只有在 ssh 程序重新執行成 CheICalMCP 時才會用到，所以：
+- **有名稱的 app**（例如你用來 ssh 的終端機 app）：在系統設定 → 隱私權與安全性，讓該 app 的行事曆與提醒事項都打開。
+- **`sshd`，或 macOS 沒有指名的程序**：授予 `sshd` 完整磁碟存取權限：
+  1. 打開**系統設定 → 隱私權與安全性 → 完整磁碟存取權限**
+  2. 把 `/usr/sbin/sshd` 加入清單（在檔案對話框按 <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>，輸入路徑）
+  3. 重新建立 SSH 連線
 
-> ⚠️ 步驟 2 會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的機器上使用。CheICalMCP 有了自己的授權之後是否仍需要這一步，目前還沒有實測（[#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)），所以保留作為備案。
->
-> **ssh 程序設定了 `CHE_ICAL_MCP_NO_DISCLAIM=1`（或重新執行失敗）時**，ssh 環境保留自己的歸屬：macOS 檢查的是該環境的授權，本機的 `--setup` 不會建立它。這時先做步驟 2（授予 `sshd` 完整磁碟存取權限，僅限完全由你控管的 Mac）；本機 `--setup` 建立的授權，只有在 ssh 程序重新執行成 CheICalMCP 時（也就是沒有設定 `CHE_ICAL_MCP_NO_DISCLAIM`）才會用到。如果 `--print-tcc-path` 顯示不出歸屬（kernel 查詢無法使用），兩種情況都有可能，拒絕存取的訊息會兩種都列出。
+  > ⚠️ 這會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的 Mac 上使用。
+- **ssh 程序設定了 `CHE_ICAL_MCP_NO_DISCLAIM`**：拿掉它，程序就會重新執行成 CheICalMCP 自己的授權，接著照第一種情況做。
+
+**`--print-tcc-path` 顯示歸屬無法取得**（kernel 查詢失敗）：沒有發生重新執行（重新執行需要這個查詢），macOS 檢查的是 ssh 環境自己的授權；照上面 `sshd` 的情況處理。
+
+重新執行後的 CheICalMCP 能否透過 ssh 用自己的授權讀取行事曆，目前還沒有在實機上量過（[#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)）。透過 ssh 時的拒絕存取訊息也依同樣的情況給步驟。
 
 ---
 

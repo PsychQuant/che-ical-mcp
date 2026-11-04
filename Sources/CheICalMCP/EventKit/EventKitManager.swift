@@ -283,7 +283,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if isSSH {
             return sshMessage(
                 type: type, isNonInteractive: isNonInteractive, deniedByStatus: deniedByStatus,
-                setupHint: setupHint, attribution: attribution)
+                setupHint: setupHint, attribution: attribution, printTCCPathHint: printTCCPathHint,
+                noDisclaimSet: noDisclaimSet)
         }
         if isNonInteractive {
             return """
@@ -407,18 +408,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         "Grant Full Disk Access to /usr/sbin/sshd: System Settings → Privacy & Security → Full Disk Access → add sshd "
         + "(this gives sshd broad file access; only on a Mac you fully control)"
 
-    /// The SSH access-denied message (#362), by the process macOS checks:
+    /// The SSH access-denied message (#362), by the process macOS checks (round-2 policy P1,
+    /// P4, P5; no reset of any kind, it is returned to the model):
     /// - `.selfBinary`: the ssh process re-executed onto CheICalMCP's own grant. The dialog
-    ///   cannot appear over ssh, so the grant is created on the Mac itself. Whether sshd's Full
-    ///   Disk Access is still needed once that grant exists is untested (no ssh login was
-    ///   available in the #362 run), so that step stays last, for access still refused.
-    /// - a host: the ssh process kept its own attribution (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed
-    ///   re-exec), so a local `--setup` grant is not the one macOS checks; sshd's Full Disk
-    ///   Access comes first.
-    /// - `nil`: the kernel lookup is unavailable, so both cases are given.
+    ///   cannot appear over ssh, so the grant is created on the Mac itself: `--setup` for a
+    ///   not-yet-asked status, the switch for a recorded "Don't Allow". No sshd step: the
+    ///   responsible process is not sshd.
+    /// - a host: the ssh process was not re-executed (the shared cause list,
+    ///   `ResponsibleProcessFormatter.noReexecCauses`). A named app gets "grant that app"; sshd
+    ///   or an unknown host gets the sshd Full Disk Access step; removing
+    ///   `CHE_ICAL_MCP_NO_DISCLAIM` is offered only when it is set.
+    /// - `nil`: the kernel lookup was unavailable, so no re-exec happened; treated as an
+    ///   unknown host.
     static func sshMessage(
         type: String, isNonInteractive: Bool, deniedByStatus: Bool, setupHint: String,
-        attribution: ResponsibleHostKind?
+        attribution: ResponsibleHostKind?, printTCCPathHint: String = "CheICalMCP --print-tcc-path",
+        noDisclaimSet: Bool = false
     ) -> String {
         let context = isNonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"
         let noDialog = isNonInteractive
@@ -427,44 +432,85 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let restart = isNonInteractive
             ? "restart both the SSH session and the non-interactive job (launchd service, CI runner, etc.)"
             : "restart the SSH session"
-        let localSetupBody = "the Mac itself (Terminal.app, not over SSH), run this binary's setup once: \(setupHint)"
-            + " — or switch CheICalMCP on in System Settings → Privacy & Security → \(type)"
-        let localSetup = "On \(localSetupBody)"
-        let header: String
-        let steps: [String]
-        switch attribution {
-        case .selfBinary?:
-            header = "\(type) access denied (\(context)). \(ResponsibleProcessFormatter.advice(for: .selfBinary)) \(noDialog)"
-            let first = deniedByStatus
-                ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
-                    + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
-                : localSetup
-            steps = [
-                first,
-                "Then \(restart)",
-                "If it is still refused over SSH after that (untested with CheICalMCP's own grant): \(sshdFullDiskAccessStep)",
-            ]
-        case nil:
-            header = "\(type) access denied (\(context)). \(noDialog) It is not known which process macOS checks "
-                + "here (the kernel lookup is unavailable; `CheICalMCP --print-tcc-path` may show it), so there are two cases:"
-            steps = [
-                "If this ssh process re-executed onto CheICalMCP (the default without CHE_ICAL_MCP_NO_DISCLAIM): \(localSetup)",
-                "If it kept the ssh context's attribution (CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed): "
-                    + sshdFullDiskAccessStep,
-                "After either step, \(restart)",
-            ]
-        case _?:
-            header = "\(type) access denied (\(context)). \(noDialog) macOS checks another process here, not CheICalMCP: "
-                + "this ssh process kept its own attribution (CHE_ICAL_MCP_NO_DISCLAIM is set, or the re-exec failed; "
-                + "`CheICalMCP --print-tcc-path` shows which process). Workarounds:"
-            steps = [
-                sshdFullDiskAccessStep,
-                "Or remove CHE_ICAL_MCP_NO_DISCLAIM from this ssh process's environment and, on \(localSetupBody). "
-                    + "A local --setup grant applies only when this ssh process re-executes onto CheICalMCP.",
-                "After either step, \(restart)",
-            ]
+        let ownGrantStep = deniedByStatus
+            ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
+                + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
+            : "On the Mac itself (Terminal.app, not over SSH), run this binary's setup once: \(setupHint) "
+                + "(it prompts only while the status is notDetermined; after that it just reports the state)"
+        let header = "\(type) access denied (\(context)). \(noDialog)"
+
+        if case .selfBinary? = attribution {
+            return ([
+                "\(header) \(ResponsibleProcessFormatter.advice(for: .selfBinary))",
+            ] + numbered([ownGrantStep, "Then \(restart)"])).joined(separator: "\n")
         }
-        return ([header] + numbered(steps)).joined(separator: "\n")
+
+        let who: String
+        var hostStep: String?
+        switch attribution {
+        case .appBundle(let name)?:
+            if let app = ResponsibleProcessFormatter.responseSafeAppName(name) {
+                who = app
+                hostStep = deniedByStatus
+                    ? "A \"Don't Allow\" is recorded for \(app), so no prompt will appear: switch \(app) on in "
+                        + "System Settings → Privacy & Security → \(type), and enable \(app) for both Calendar and Reminders"
+                    : "Grant \(app): enable \(app) for both Calendar and Reminders in System Settings → Privacy & Security"
+            } else {
+                who = "the app that launched this server"
+                hostStep = "Grant the app that launched this server (\(printTCCPathHint) shows its name) "
+                    + "for both Calendar and Reminders in System Settings → Privacy & Security"
+            }
+        case .otherExecutable(let path)? where Self.isSSHDaemon(path):
+            who = "sshd"
+            hostStep = nil
+        case .unknown?, nil:
+            who = "the process macOS checks"
+            hostStep = nil
+        case .claudeCode?, .otherExecutable?:
+            who = "the process macOS checks"
+            hostStep = "See which process that is with \(printTCCPathHint) in Terminal on the Mac"
+        case .selfBinary?:
+            preconditionFailure("handled above")
+        }
+        let usesSshd: Bool = {
+            switch attribution {
+            case .unknown?, nil: return true
+            case .otherExecutable(let path)?: return Self.isSSHDaemon(path)
+            default: return false
+            }
+        }()
+
+        let cause: String
+        if attribution == nil {
+            cause = "The kernel lookup was unavailable (it names the process macOS checks), so this ssh process was not "
+                + "re-executed onto CheICalMCP's own grant (the re-exec needs that lookup); macOS checks the ssh "
+                + "context's own grant."
+        } else {
+            cause = "macOS checks another process here (\(who)), not CheICalMCP: this ssh process was not "
+                + "re-executed onto CheICalMCP's own grant because "
+                + ResponsibleProcessFormatter.noReexecCauses(host: "the process macOS checks") + "."
+        }
+
+        var steps: [String] = []
+        if deniedByStatus && usesSshd {
+            steps.append("A \"Don't Allow\" is recorded for the process macOS checks: if it is listed in "
+                + "System Settings → Privacy & Security → \(type), switch it on")
+        }
+        if usesSshd { steps.append(sshdFullDiskAccessStep) }
+        if let hostStep { steps.append(hostStep) }
+        if noDisclaimSet {
+            steps.append("Or remove CHE_ICAL_MCP_NO_DISCLAIM from this ssh process's environment so it re-executes "
+                + "onto CheICalMCP's own grant, then: " + ownGrantStep)
+        }
+        steps.append("After any step, \(restart)")
+        return ([header + " " + cause] + numbered(steps)).joined(separator: "\n")
+    }
+
+    /// Whether `path` is the ssh daemon (`sshd`, or the per-session `sshd-session` of newer
+    /// macOS). Only the last path component is read, and nothing of the path is printed.
+    static func isSSHDaemon(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        return name == "sshd" || name == "sshd-session"
     }
 
     private static func numbered(_ steps: [String]) -> [String] {

@@ -484,21 +484,26 @@ Under a Claude Code **native install**, the real executable lives at a **version
 
 ### SSH Access
 
-From v1.23.0 an SSH session is handled like any other host ([the status-aware rule, #343](#claude-code-updates-rotate-the-host-side-grant-170)): an ssh context usually has no Calendar or Reminders access of its own, so the binary re-execs as its own responsible process and macOS checks the **`CheICalMCP` grant**, the one `--setup` creates. `CheICalMCP --print-tcc-path` run over ssh shows which process macOS checks (`TCC attribution`). The permission dialog cannot appear over SSH, so the grant has to be created on the Mac itself.
+From v1.23.0 an SSH session is handled like any other host ([the status-aware rule, #343](#claude-code-updates-rotate-the-host-side-grant-170)). Run `CheICalMCP --print-tcc-path` over ssh first: its `TCC attribution` line names the process macOS checks, and the steps depend on it. The permission dialog cannot appear over SSH, so anything that prompts has to run on the Mac itself.
 
-**Step 1 — Create CheICalMCP's own grant locally (recommended):**
-1. On the target Mac, in Terminal.app (**not** over SSH), run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path from `--print-tcc-path`)
-2. Click **Allow** on the Calendar and Reminders dialogs (if you pressed "Don't Allow" earlier, switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders instead)
-3. Restart the SSH session (and any non-interactive job started from it)
+**CheICalMCP is the process macOS checks** (`(this binary)`; the usual case, because an ssh context has no Calendar or Reminders access of its own, so the binary re-execs onto its own grant):
+1. On the target Mac, in Terminal.app (**not** over SSH), run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path). It prompts only while the status is `notDetermined`; after that it just reports the state.
+2. If you pressed "Don't Allow" earlier (`denied`), switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders instead.
+3. Restart the SSH session (and any non-interactive job started from it).
 
-**Step 2 — only if it is still denied over SSH: grant Full Disk Access to sshd:**
-1. Open **System Settings → Privacy & Security → Full Disk Access**
-2. Add `/usr/sbin/sshd` to the list (in the file dialog, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> and type the path)
-3. Restart the SSH session
+**Another process is checked**: the ssh process was not re-executed onto CheICalMCP's own grant, because `CHE_ICAL_MCP_NO_DISCLAIM` is set, `CHE_ICAL_MCP_DISCLAIMED` was inherited, the re-exec failed (see the start-up line on stderr), a policy restricts the process macOS checks ([#367](https://github.com/PsychQuant/che-ical-mcp/issues/367)), or it had full access when the server started and has lost it since. A local `--setup` grant applies only when the ssh process re-executes onto CheICalMCP, so:
+- **A named app** (for example a terminal app you ssh'd through): enable that app for both Calendar and Reminders in System Settings → Privacy & Security.
+- **`sshd`, or a process macOS does not name**: grant Full Disk Access to `sshd`:
+  1. Open **System Settings → Privacy & Security → Full Disk Access**
+  2. Add `/usr/sbin/sshd` to the list (in the file dialog, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> and type the path)
+  3. Restart the SSH session
 
-> ⚠️ Step 2 grants `sshd` broad file access — only use this on machines you fully control. Whether it is still needed once CheICalMCP's own grant exists has not been measured yet ([#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)), so it stays as the fallback.
->
-> **With `CHE_ICAL_MCP_NO_DISCLAIM=1` set for the ssh process (or when the re-exec fails)**, the ssh context keeps its own attribution: the grant macOS checks is that context's, which a local `--setup` does not create. There, start with Step 2 (Full Disk Access for `sshd`, only on a Mac you fully control); a local `--setup` grant applies only when the ssh process re-executes onto CheICalMCP, i.e. without `CHE_ICAL_MCP_NO_DISCLAIM`. If `--print-tcc-path` cannot show the attribution (the kernel lookup is unavailable), either case may apply, and the access-denied message gives both.
+  > ⚠️ This grants `sshd` broad file access — only use it on a Mac you fully control.
+- **`CHE_ICAL_MCP_NO_DISCLAIM` is set** for the ssh process: removing it lets the process re-execute onto CheICalMCP's own grant, and then the first case applies.
+
+**`--print-tcc-path` shows the attribution as unavailable** (the kernel lookup failed): no re-exec happened (it needs that lookup), so macOS checks the ssh context's own grant; treat it like `sshd` above.
+
+Whether a re-exec'd CheICalMCP reads the calendar over ssh with its own grant has not been measured on a device yet ([#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)). Access-denied messages over ssh follow the same cases.
 
 ### launchd / Automation
 

@@ -296,79 +296,129 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertNotEqual(selfMsg, hostMsg)
     }
 
-    // MARK: - #362: the SSH text follows the attribution
+    // MARK: - #362: the SSH text follows the attribution (round-2 policy P1, P4, P5)
 
     private func ssh(_ attribution: ResponsibleHostKind?, nonInteractive: Bool = false,
-                     denied: Bool = false) -> String {
+                     denied: Bool = false, noDisclaimSet: Bool = false) -> String {
         EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: true, isNonInteractive: nonInteractive,
-            isMCPB: false, deniedByStatus: denied, setupHint: hint, attribution: attribution)
+            isMCPB: false, deniedByStatus: denied, setupHint: hint, attribution: attribution,
+            printTCCPathHint: diagnose, noDisclaimSet: noDisclaimSet)
     }
 
-    /// Under the status-aware rule (#343) an ssh context without full access re-execs, so
-    /// macOS checks CheICalMCP's own grant: the text names it and gives the local `--setup`.
-    func testSSH_selfAttribution_namesCheICalMCPsOwnGrantAndTheLocalSetup() {
+    private func steps(_ msg: String) -> [String] {
+        msg.components(separatedBy: "\n").filter { $0.first?.isNumber == true }
+    }
+
+    private let fullDiskAccess = "Grant Full Disk Access to /usr/sbin/sshd"
+    private let sshdHost = ResponsibleHostKind.otherExecutable(path: "/usr/sbin/sshd")
+
+    /// Self-attributed: CheICalMCP's own grant, the local `--setup` only for a not-yet-asked
+    /// status (P4), and no sshd step: the responsible host is not sshd (P5).
+    func testSSH_selfAttribution_ownGrantLocalSetup_noSshdStep() {
         for nonInteractive in [false, true] {
             let msg = ssh(.selfBinary, nonInteractive: nonInteractive)
-            XCTAssertTrue(msg.contains("SSH"), msg)
             XCTAssertTrue(msg.contains("CheICalMCP's own grant"), msg)
-            XCTAssertTrue(msg.contains(hint), "the local --setup for this binary: \(msg)")
+            XCTAssertTrue(msg.contains(hint), msg)
+            XCTAssertTrue(msg.contains("prompts only while the status is notDetermined"), msg)
             XCTAssertTrue(msg.contains("not over SSH"), msg)
-            XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"), msg)
-            XCTAssertFalse(msg.contains("does not carry privacy permissions to SSH sessions"),
-                "the stale pre-#343 reason must not be given when CheICalMCP is checked: \(msg)")
+            XCTAssertFalse(msg.contains("Full Disk Access"), msg)
+            XCTAssertFalse(msg.contains("does not carry privacy permissions to SSH sessions"), msg)
         }
         XCTAssertTrue(ssh(.selfBinary, nonInteractive: true).contains("non-interactive job"))
-    }
-
-    /// Whether sshd's Full Disk Access is still needed with CheICalMCP's own grant was not
-    /// measured (no ssh login in the #362 run), so the step stays, as a last resort only.
-    func testSSH_selfAttribution_keepsTheSshdStepOnlyAsALastResort() {
-        let msg = ssh(.selfBinary)
-        XCTAssertTrue(msg.contains("Full Disk Access"), msg)
-        XCTAssertTrue(msg.contains("still refused"), msg)
-        XCTAssertTrue(msg.contains("untested"), "say the step is untested for this attribution: \(msg)")
-        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "the existing warning stays: \(msg)")
     }
 
     func testSSH_selfAttributionAlreadyDenied_offersTheSwitch() {
         let msg = ssh(.selfBinary, denied: true)
         XCTAssertTrue(msg.contains("Don't Allow"), msg)
         XCTAssertTrue(msg.contains("switch CheICalMCP on"), msg)
+        XCTAssertFalse(msg.contains(hint), msg)
     }
 
-    /// #362 verify: a host keeps its attribution over ssh (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed
-    /// re-exec), where a local `--setup` grant is not the one macOS checks. The text leads with
-    /// sshd's Full Disk Access, with its warning, and says when a local `--setup` applies.
-    func testSSH_hostAttribution_leadsWithSshdFullDiskAccess() {
-        let hosts: [ResponsibleHostKind] = [.claudeCode(version: "2.1.309"),
-                                            .appBundle(name: "Visual Studio Code"),
-                                            .otherExecutable(path: "/usr/sbin/sshd"), .unknown]
-        for host in hosts {
+    /// P5: the host branch's cause list is the one ResponsibleProcessFormatter uses.
+    func testSSH_hostAttribution_causesComeFromTheSharedSource() {
+        let causes = ResponsibleProcessFormatter.noReexecCauses(host: "the process macOS checks")
+        for marker in ["CHE_ICAL_MCP_NO_DISCLAIM is set", "CHE_ICAL_MCP_DISCLAIMED was inherited",
+                       "the re-exec failed", "a policy restricts", "lost it since"] {
+            XCTAssertTrue(causes.contains(marker), marker)
+        }
+        for host in [ResponsibleHostKind.appBundle(name: "Visual Studio Code"), sshdHost, .unknown] {
+            XCTAssertTrue(ssh(host).contains(causes), ssh(host))
+        }
+        XCTAssertTrue(ResponsibleProcessFormatter.advice(for: .claudeCode(version: "2.1.309"))
+            .contains(ResponsibleProcessFormatter.noReexecCauses(host: "Claude Code 2.1.309")))
+    }
+
+    /// P5: removing CHE_ICAL_MCP_NO_DISCLAIM is offered only when it is set.
+    func testSSH_hostAttribution_noDisclaimStepOnlyWhenSet() {
+        let host = ResponsibleHostKind.appBundle(name: "Visual Studio Code")
+        XCTAssertFalse(ssh(host).contains("remove CHE_ICAL_MCP_NO_DISCLAIM"), ssh(host))
+        let set = ssh(host, noDisclaimSet: true)
+        XCTAssertTrue(set.contains("remove CHE_ICAL_MCP_NO_DISCLAIM"), set)
+        XCTAssertTrue(set.contains(hint), "re-exec route: the local --setup: \(set)")
+        XCTAssertTrue(set.contains("prompts only while the status is notDetermined"), set)
+        let deniedSet = ssh(host, denied: true, noDisclaimSet: true)
+        XCTAssertFalse(deniedSet.contains(hint), "denied: the switch, not --setup: \(deniedSet)")
+    }
+
+    /// P5: a named app host gets "grant that app", as the non-SSH host remedy does; no sshd step.
+    func testSSH_appHost_grantsTheApp_noSshdStep() {
+        let msg = ssh(.appBundle(name: "Visual Studio Code"))
+        XCTAssertTrue(msg.contains("enable Visual Studio Code for both Calendar and Reminders"), msg)
+        XCTAssertFalse(msg.contains("Full Disk Access"), msg)
+    }
+
+    /// P5: the sshd step only when the responsible host is sshd or unknown, with its warning.
+    func testSSH_sshdOrUnknownHost_leadsWithSshdFullDiskAccess() {
+        for host in [sshdHost, .unknown, .otherExecutable(path: "/usr/libexec/sshd-session")] {
             for nonInteractive in [false, true] {
                 let msg = ssh(host, nonInteractive: nonInteractive)
                 XCTAssertTrue(msg.contains(nonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"), msg)
-                XCTAssertTrue(msg.contains("1. Grant Full Disk Access to /usr/sbin/sshd"), msg)
+                XCTAssertTrue(steps(msg).first?.contains(fullDiskAccess) == true, msg)
                 XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
-                XCTAssertTrue(msg.contains("CHE_ICAL_MCP_NO_DISCLAIM"), msg)
-                XCTAssertTrue(msg.contains("only when this ssh process re-executes onto CheICalMCP"), msg)
                 XCTAssertFalse(msg.contains("Run CheICalMCP once LOCALLY first"), msg)
-                XCTAssertFalse(msg.contains("/usr/sbin/sshd/"), "a host path is not echoed: \(msg)")
             }
         }
     }
 
-    /// #362 verify: with the kernel lookup unavailable, it is unknown which grant macOS checks,
-    /// so the text gives both cases.
-    func testSSH_unknownAttribution_givesBothCases() {
+    /// P5: another named executable gets no sshd step, and its path is not echoed.
+    func testSSH_otherExecutableHost_noSshdStep_pathNotEchoed() {
+        let msg = ssh(.otherExecutable(path: "/opt/x/hostbin"))
+        XCTAssertFalse(msg.contains("Full Disk Access"), msg)
+        XCTAssertFalse(msg.contains("/opt/x/hostbin"), msg)
+        XCTAssertFalse(msg.contains("hostbin"), msg)
+        XCTAssertTrue(msg.contains("--print-tcc-path"), msg)
+    }
+
+    /// P4: denied with a host → lead with the switch.
+    func testSSH_deniedHost_leadsWithTheSwitch() {
+        for host: ResponsibleHostKind? in [sshdHost, .unknown, nil] {
+            let msg = ssh(host, denied: true)
+            XCTAssertTrue(steps(msg).first?.contains("switch it on") == true, msg)
+        }
+        let app = ssh(.appBundle(name: "Visual Studio Code"), denied: true)
+        XCTAssertTrue(steps(app).first?.contains("switch Visual Studio Code on") == true, app)
+    }
+
+    /// P5: nil attribution = the kernel lookup was unavailable, so no re-exec happened.
+    func testSSH_unknownAttribution_saysNoReexecHappened() {
         for nonInteractive in [false, true] {
             let msg = ssh(nil, nonInteractive: nonInteractive)
-            XCTAssertTrue(msg.contains("SSH"), msg)
-            XCTAssertTrue(msg.contains("If this ssh process re-executed onto CheICalMCP"), msg)
-            XCTAssertTrue(msg.contains(hint), msg)
-            XCTAssertTrue(msg.contains("If it kept the ssh context's attribution"), msg)
-            XCTAssertTrue(msg.contains("Full Disk Access to /usr/sbin/sshd"), msg)
+            XCTAssertTrue(msg.contains("lookup was unavailable"), msg)
+            XCTAssertTrue(msg.contains("was not re-executed"), msg)
+            XCTAssertFalse(msg.contains("default"), msg)
+            XCTAssertTrue(msg.contains(fullDiskAccess), msg)
             XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
+        }
+    }
+
+    /// P1: no SSH text carries a reset.
+    func testSSH_noBranchCarriesAReset() {
+        for host: ResponsibleHostKind? in [nil, .selfBinary, .claudeCode(version: "2.1.309"),
+                                           .appBundle(name: "Visual Studio Code"), sshdHost, .unknown] {
+            for denied in [false, true] { for set in [false, true] {
+                XCTAssertFalse(ssh(host, denied: denied, noDisclaimSet: set).contains("tccutil"))
+            } }
         }
     }
 

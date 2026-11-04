@@ -80,14 +80,24 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(message.contains("SSH"), "SSH error should mention SSH")
         // #362: errorDescription reads the live attribution, so the expectation does too
         // (AccessDeniedMessageTests pins each attribution with an injected value).
+        Self.assertSSHTextMatchesTheLiveAttribution(message)
+    }
+
+    /// #362 round 2: the SSH text by the live attribution (each branch pinned with an injected
+    /// value in AccessDeniedMessageTests).
+    static func assertSSHTextMatchesTheLiveAttribution(_ message: String, file: StaticString = #filePath, line: UInt = #line) {
         switch EventKitManager.currentAttribution() {
         case .selfBinary?:
-            XCTAssertTrue(message.contains("CheICalMCP's own grant"), message)
-            XCTAssertTrue(message.contains("--setup"), "self-attributed: the local --setup: \(message)")
+            XCTAssertTrue(message.contains("CheICalMCP's own grant"), message, file: file, line: line)
+            XCTAssertTrue(message.contains("--setup"), "self-attributed: the local --setup: \(message)", file: file, line: line)
         case nil:
-            XCTAssertTrue(message.contains("If this ssh process re-executed onto CheICalMCP"), message)
+            XCTAssertTrue(message.contains("lookup was unavailable"), message, file: file, line: line)
+            XCTAssertTrue(message.contains("Full Disk Access to /usr/sbin/sshd"), message, file: file, line: line)
+        case .appBundle?:
+            XCTAssertTrue(message.contains("for both Calendar and Reminders") || message.contains("the app that launched"),
+                          message, file: file, line: line)
         case _?:
-            XCTAssertTrue(message.contains("1. Grant Full Disk Access to /usr/sbin/sshd"), message)
+            XCTAssertTrue(message.contains("macOS checks another process here"), message, file: file, line: line)
         }
     }
 
@@ -97,8 +107,9 @@ final class SetupCommandTests: XCTestCase {
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SSH"), "Combined error should mention SSH")
         XCTAssertTrue(message.contains("non-interactive"), "Combined error should mention non-interactive")
-        XCTAssertTrue(message.contains("--setup"), "Combined error should mention --setup")
-        XCTAssertTrue(message.contains("sshd"), "Combined error should mention sshd workaround")
+        // #362 round 2: the steps follow the live attribution (--setup only on the self branch,
+        // the sshd step only for an sshd or unknown host).
+        Self.assertSSHTextMatchesTheLiveAttribution(message)
         // #144 regression guard (Codex finding): the combined SSH + non-interactive
         // branch must NOT use launchd-only remediation wording — it fires for any
         // non-interactive context (CI runner / no TTY), not just launchd. The
