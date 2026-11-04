@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆 |
+| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
 | `delete_calendar` | 刪除行事曆 |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
@@ -79,22 +79,25 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `update_event` | 更新事件（含時區、重複規則、recurring span） |
 | `delete_event` | 刪除事件 |
 
+> **事件工具收到提醒事項的 ID（#260）**：`update_event`、`delete_event`、`copy_event`、`move_events_batch`、`delete_events_batch` 會回 `Event not found: <id>`（批次工具是該列的錯誤），不再讓 server 結束。沒有提醒事項權限時，EventKit 可能不會把它認成提醒事項，查詢仍可能讓 process 結束（#288）；提醒事項的 ID 通常來自提醒事項工具，而那些工具本來就需要這項權限。
+
 > **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。排除的日期是被移除的場次，不是被單獨修改的場次（2026-10-05 只在 iCloud 確認過，其他來源沒有檢查），所以不會擋下這次復原；建立之後被單獨修改過的場次則會（#236）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。
 
 </details>
 
 <details>
-<summary><b>提醒事項 (7)</b></summary>
+<summary><b>提醒事項 (8)</b></summary>
 
 | 工具 | 說明 |
 |------|------|
 | `list_reminders` | 列出提醒事項，支援篩選/排序/限制、標籤解析（v1.0.0） |
-| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣） |
+| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣）。存檔回報錯誤、但提醒其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
 | `update_reminder` | 更新提醒事項（含標籤、`clear_due_date`）（v1.3.0） |
 | `complete_reminder` | 標記為已完成/未完成 |
 | `delete_reminder` | 刪除提醒事項 |
 | `search_reminders` | 多關鍵字或標籤搜尋提醒事項（v1.3.0） |
 | `list_reminder_tags` | 列出所有已使用的標籤及使用次數（v1.3.0） |
+| `cleanup_completed_reminders` | 一次刪除所有已完成的提醒事項，預設 dry_run 預覽（v1.7.2）；一次 `undo` 就能重建刪掉的項目（#243） |
 
 
 **重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
@@ -120,7 +123,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `move_events_batch` | 原地把事件搬到另一個日曆，保留循環規則與與會者；循環事件用 `span` / `occurrence_dates`（#226） |
 | `delete_events_batch` | 依 ID 或日期範圍刪除事件，支援預覽模式（v1.0.0） |
 | `find_duplicate_events` | 跨日曆查找重複事件（v0.5.0） |
-| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0） |
+| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261） |
 | `delete_reminders_batch` | 批次刪除多個提醒事項（v0.9.0）；一次 `undo` 會重建這次刪除的提醒事項（#243） |
 
 **搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
@@ -137,7 +140,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `undo` | 復原最近一次行事曆/提醒事項操作 |
-| `redo` | 重做上次復原的操作。只有「完成」會再寫一次；建立、刪除、修改、搬移的 redo 什麼都不寫，回 `success: false` 並指出該用哪個工具，然後把這筆從 redo 紀錄移除（#247） |
+| `redo` | 重做上次復原的操作。只有「完成」會再寫一次；建立、刪除、修改、搬移的 redo 什麼都不寫，回 `success: false` 並指出該用哪個工具，然後把這筆從 redo 紀錄移除（#247）。不重做這些寫入是設計如此（#295）：要重做就用原本的工具再做一次 |
 | `undo_history` | 列出可復原的操作及時間戳記 |
 
 **復原不會蓋掉之後有人做的修改（#236）：** 復原建立、修改、搬移或完成的操作之前，會重新讀取事件或提醒事項，確認復原要覆寫或刪除的內容在那次操作之後沒有被改過（搬移只看日曆；在這裡建立的循環事件還會看有沒有單獨改過的場次，查到第一個場次之後四年內；場次的任何比對欄位與系列不同就算，包括鬧鐘、時區、地點與忙碌狀態（availability）；回到系列原值的場次不算；忙碌狀態只在場次與系列都有回報時才比對，所以在只有一邊回報的行事曆上，場次自己的忙碌狀態看不出來）。已經被改回復原要寫入的值的欄位不算。日曆 app 或伺服器自己做的兩種改變不算修改，不會擋下復原，修改的復原也會把它們蓋回去：鬧鐘的音效，以及為原本沒有座標的地點補上的座標。如果有被改過，就什麼都不寫，錯誤訊息列出改過的欄位，這筆紀錄留在 `undo_history`；要把修改改回來再復原，或用 `undo` 加 `discard_id` 放棄這次復原，由做出修改的人決定。有三種 create-undo 拒絕只能選擇要不要放棄：單獨修改過的場次放不回系列；無法檢查場次的系列（`unchecked_occurrences`）之後也一樣無法檢查；系列的重複規則被縮短（`recurrence`；修改或刪除某個場次及其後的場次會造成），被切掉的部分放不回去。重做「完成」時也會以復原留下的狀態做同樣的檢查。動到循環事件的 `update_event`（改單一場次、span "future" 或 "all"、加上或移除重複規則）不能復原：`undo` 什麼都不寫，訊息說明若要改回請到行事曆修改，並丟棄這筆紀錄，讓更早的操作仍可復原（#262：這種復原以前會刪掉系列的其餘場次）。一次性事件的修改或搬移，若在復原時該事件已變成重複事件或單獨修改過的場次（搬移的本來就是單獨修改過的場次也算），也一樣拒絕；所以修改的復原與一次性事件搬移的復原不會寫入循環事件（整個系列的搬移仍會整個搬回，這是設計如此）。循環事件修改的安全復原見 #263。

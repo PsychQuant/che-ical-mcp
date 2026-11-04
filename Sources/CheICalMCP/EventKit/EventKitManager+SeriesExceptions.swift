@@ -112,8 +112,8 @@ extension EventKitManager {
     /// Whether the calendar of `snapshot` already holds an occurrence of a recurring series with its
     /// title at its start (`OccurrenceSlotGuard`). The store is refreshed first when this server
     /// wrote since the last refresh, so the series an earlier undo just recreated is seen.
-    func seriesHoldsSlot(of snapshot: EventSnapshot) throws -> Bool {
-        let calendar = try snapshot.resolveCalendar(in: eventStore.calendars(for: .event), identifier: { $0.calendarIdentifier })
+    /// `calendar` is the snapshot's own, resolved by the caller (`restoreCalendar(for:kind:)`).
+    func seriesHoldsSlot(of snapshot: EventSnapshot, in calendar: EKCalendar) -> Bool {
         refreshIfNeeded()
         let end = max(snapshot.endDate, snapshot.startDate.addingTimeInterval(60))
         var holders: [OccurrenceSlotGuard.Holder] = []
