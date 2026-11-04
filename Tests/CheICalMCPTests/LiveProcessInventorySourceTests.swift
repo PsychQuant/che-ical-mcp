@@ -8,6 +8,13 @@ import XCTest
 /// named binaries inflating PID list) uncovered in CI.
 final class LiveProcessInventorySourceTests: XCTestCase {
 
+    /// #315: the tests that read what the real `ps` printed pass a generous budget, as
+    /// `LiveParentChainSourceTests` does since #316. Under the 500 ms production default a
+    /// loaded host made `ps -A` overrun it and the empty-match test fail with "ps timed out
+    /// after 500ms" (captured 2026-11-05, load average about 830). The timeout path itself stays
+    /// covered by `testEnumerateWithTinyTimeout_surfacesTimeoutOrCompletes`.
+    static let generousTimeoutMilliseconds = 10_000
+
     // MARK: - Missing binary
 
     func testEnumerateMissingPS_returnsFailureReason() {
@@ -25,7 +32,8 @@ final class LiveProcessInventorySourceTests: XCTestCase {
     func testEnumerateWithUnmatchableName_returnsEmptyWithoutFailure() {
         let source = LiveProcessInventorySource(
             psPath: "/bin/ps",
-            processName: "definitely-not-running-\(UUID().uuidString)"
+            processName: "definitely-not-running-\(UUID().uuidString)",
+            timeoutMilliseconds: Self.generousTimeoutMilliseconds
         )
         let result = source.enumerateCheICalMCPProcesses()
         XCTAssertTrue(result.processes.isEmpty,

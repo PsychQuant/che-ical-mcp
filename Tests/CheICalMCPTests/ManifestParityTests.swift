@@ -273,6 +273,22 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #295 (coordinator applied the diagnosis default A, 2026-11-05): redo staying
+    /// instruction-only for creates, deletes, updates and moves is the design, not a gap, and both
+    /// places a client reads about `redo` say so. Choosing to replay writes later is a contract
+    /// change (Spectra), which this pin makes visible.
+    func testRedoDescriptionsSayInstructionOnlyIsTheDesign() throws {
+        let design = "does not replay a create, delete, update or move"
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "redo" }?.description ?? ""
+        let summary = entries.first { $0["name"] as? String == "redo" }?["description"] as? String ?? ""
+        for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+            XCTAssertTrue(text.contains(design) && text.contains("by design"), "\(place) redo: \(text)")
+        }
+    }
+
     /// PR #282 round 3, finding 4: the `undo` description and its manifest summary are edited by
     /// #242 (PR #277), #244 (PR #278) and #248 (PR #282), each one line, so a merge that drops one
     /// clause passes every other test. Each clause is pinned in both places a client reads it; the
@@ -317,6 +333,15 @@ final class ManifestParityTests: XCTestCase {
             ("#248: a batch undo that fails part-way keeps only the items not yet restored",
              "A batch undo that fails part-way keeps only the items not yet restored.",
              "a batch undo that fails part-way keeps only the items not yet restored;"),
+            ("#269: an event's recorded calendar not found, the record kept",
+             "The undo of a delete_event, an update_event or a move of an event is refused the same way, its record kept, when the calendar it restores into is not found under its recorded identifier (judged after a Calendar access check and one re-read of the calendars, which can still show an older view); the error names the event, not the calendar or its account",
+             "likewise when an event's recorded calendar is not found"),
+            ("#269: a missing calendar is refused before the repeats-now discard, the record kept",
+             "an update_event or a move of a one-off event that repeats or is an edited occurrence by the time of the undo (revert either in Calendar if wanted; the calendar it restores into is read first, so when that calendar is missing the missing-calendar refusal comes first and the record is kept)",
+             nil),
+            ("#269: giving up a delete_event undo loses the event",
+             "giving up the undo of a delete_event loses the deleted event",
+             "discarding a delete_event undo loses the deleted event"),
         ]
         let (declared, summary) = try descriptions(of: "undo")
         // Round 7, findings 4, 8, 12, 13: after the five-entry cap no text may say a batch undo names
