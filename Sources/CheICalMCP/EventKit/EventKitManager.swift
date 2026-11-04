@@ -1035,6 +1035,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
     static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series)."
+    /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
+    /// by `event_ids`) reports it. That tool by `event_ids` cannot take an `occurrence_date`, so the
+    /// text names the ways a batch caller has to a single occurrence instead.
+    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'."
+
+    /// #335 item 6: a reason as a batch row reports it: the edited-before hint becomes
+    /// `standInEditedBeforeBatchReason`; every other reason (the all-edited hint, whose `/RID=` ids
+    /// work in `event_ids` too, and "Event not found") is unchanged.
+    static func batchRowReason(_ reason: String) -> String {
+        reason == standInEditedBeforeReason ? standInEditedBeforeBatchReason : reason
+    }
+
+    /// `batchRowReason` for an error a batch row reports through `writeFailureLog` (the `dry_run`
+    /// preview by `event_ids`); other errors pass through.
+    static func batchRowError(_ error: Error) -> Error {
+        if case EventKitError.standInRefused(let reason) = error {
+            return EventKitError.standInRefused(reason: batchRowReason(reason))
+        }
+        return error
+    }
+
     /// The fixed hint for a bare id of a series whose remaining occurrences were all edited on
     /// their own (#335 item 1; device, iCloud, 2026-10-26: the bare id is not found even with
     /// `occurrence_date`, while the id `list_events` gives an occurrence updates that one).
