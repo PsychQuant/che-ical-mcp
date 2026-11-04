@@ -590,7 +590,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note.",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule without moving the due date, and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -629,6 +629,44 @@ class CheICalMCPServer {
                                 ])
                             ]),
                             "required": .array([.string("title"), .string("latitude"), .string("longitude"), .string("proximity")])
+                        ]),
+                        "recurrence": .object([
+                            "type": .string("object"),
+                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it and after it is completed the reminder repeats on the rule's days (device, iCloud), and the response adds recurrence_note; pass due_date in the same call to move it. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder. Cannot be combined with clear_recurrence. Undo restores the previous rule."),
+                            "properties": .object([
+                                "frequency": .object([
+                                    "type": .string("string"),
+                                    "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")]),
+                                    "description": .string("Recurrence frequency")
+                                ]),
+                                "interval": .object([
+                                    "type": .string("integer"),
+                                    "description": .string("Repeat every N units (default 1)")
+                                ]),
+                                "end_date": .object([
+                                    "type": .string("string"),
+                                    "description": .string("When to stop recurring (ISO8601 date). Mutually exclusive with occurrence_count.")
+                                ]),
+                                "occurrence_count": .object([
+                                    "type": .string("integer"),
+                                    "description": .string("Maximum number of occurrences. Mutually exclusive with end_date.")
+                                ]),
+                                "days_of_week": .object([
+                                    "type": .string("array"),
+                                    "items": .object(["type": .string("integer")]),
+                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                ]),
+                                "days_of_month": .object([
+                                    "type": .string("array"),
+                                    "items": .object(["type": .string("integer")]),
+                                    "description": .string("For monthly: days of month to repeat (1-31)")
+                                ])
+                            ]),
+                            "required": .array([.string("frequency")])
+                        ]),
+                        "clear_recurrence": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Set to true to remove the reminder's recurrence rule, making it one-off; the due date stays. A repeating reminder must have a due date, so clear_due_date on a reminder that keeps repeating is refused: pass clear_recurrence with it to make the reminder one-off without a due date. Cannot be combined with recurrence. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
@@ -1864,6 +1902,15 @@ class CheICalMCPServer {
         let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
+        // #354: the rule; both together, or a rule with clear_due_date, are refused here.
+        let recurrenceRule = try parseRecurrenceRule(from: arguments)
+        let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
+        if recurrenceRule != nil && clearRecurrence {
+            throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
+        }
+        if recurrenceRule != nil && clearDueDate {
+            throw ToolError.invalidParameter(ReminderRecurrenceWrite.noDueMessage)
+        }
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
         if due != nil || clearDueDate {
             try ReminderRelativeAlarms.check(alarmOffsets, due: ReminderRelativeAlarms.dueState(requested: due, clearDue: clearDueDate, existing: nil))
@@ -1912,12 +1959,19 @@ class CheICalMCPServer {
             clearLocationTrigger: clearLocationTrigger,
             clearDueDate: clearDueDate,
             realignToDue: realignToDue,
-            alarmOffsets: alarmOffsets
+            alarmOffsets: alarmOffsets,
+            recurrenceRule: recurrenceRule,
+            clearRecurrence: clearRecurrence
         ))
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
         if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
-        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }   // PR #415 verify round 1
+        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }
+        // #354: the rule and the due read back off the saved reminder; a note when the due is off the rule's days.
+        if let recurrence = update.recurrence {
+            response.merge(reminderMetadata(hasRecurrence: recurrence.hasRecurrence, rules: recurrence.rules, due: recurrence.due)) { $1 }
+            if let note = recurrence.offRuleNote { response["recurrence_note"] = note }
+        }   // PR #415 verify round 1
         // #268: the identifier after the save (a move to another account's list may change it).
         response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether

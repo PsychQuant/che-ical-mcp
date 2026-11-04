@@ -265,6 +265,27 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 
+## Release gate：update_reminder 改重複規則與它的 undo（#354）
+
+#354 的規則改寫只有純函式、記憶體內的 `apply` 與 handler 的單元測試；寫入後的讀回在 `--cli` 上看過，undo 是
+stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
+之後），只用名稱含 `#354` 的拋棄式清單：
+
+1. 建每週四、到期在週四的提醒 → `update_reminder` 帶 `recurrence`（每週五）→ 回應 `reminder_recurrence_rules` 是
+   `[6]`、`due` 仍是週四、有 `recurrence_note`、`id_changed: false` → `undo` → `list_reminders` 讀回每週四；
+2. 同樣的提醒 `clear_recurrence: true` → 讀回 `has_recurrence: false`、到期日不變 → `undo` → 讀回每週四；
+3. 單次提醒加上規則 → `undo` → 讀回單次；
+4. 重複提醒 `clear_due_date: true` → 拒絕、什麼都沒寫；再同時帶 `clear_recurrence: true` → 變成沒有到期日的單次提醒
+   → `undo` → 讀回每週四、到期日回來；
+5. 改成每週五後等至少 60 秒、什麼都不改 → `undo` 要成功（post-state guard 比對規則；以 `recurrence` 拒絕就是同步
+   後規則的讀回變了，要回報）。
+
+**需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
+
+6. 打開 Reminders.app 看第 1 步改成每週五、到期仍在週四的提醒（undo 之前）：記錄它顯示的日期與重複設定。
+
+結果記在 #354。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
+
 ## Release gate：create_reminder fallback 第二次存檔失敗後的 rollback（#308）
 
 #308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
