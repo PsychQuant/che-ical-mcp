@@ -244,18 +244,18 @@ func emitStartupBanner() {
     // the explanation too (verify DA-1) — and the kernel lookup only happens on the
     // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
-    let calendarStatus = statusSource.authorizationStatus(for: .event)
-    let remindersStatus = statusSource.authorizationStatus(for: .reminder)
-    let calendarGranted = calendarStatus == .fullAccess
-    let remindersGranted = remindersStatus == .fullAccess
+    // Statuses → banner inputs in one tested pure function (#368 round 2).
+    let inputs = TCCDriftDetector.BannerStatusInputs(
+        calendar: statusSource.authorizationStatus(for: .event),
+        reminders: statusSource.authorizationStatus(for: .reminder))
 
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
         diskBinaryMtime: mtime,
-        eventKitAccessGranted: calendarGranted && remindersGranted,
-        eventKitRestricted: SelfDisclaim.hostIsRestricted(calendar: calendarStatus, reminders: remindersStatus)
+        eventKitAccessGranted: inputs.eventKitAccessGranted,
+        eventKitRestricted: inputs.eventKitRestricted
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
@@ -265,9 +265,9 @@ func emitStartupBanner() {
         runningBinaryPath: resolvedPath,
         pid: ProcessInfo.processInfo.processIdentifier,
         bundleID: bundleID,
-        calendarAccessGranted: calendarGranted,
-        calendarRestricted: calendarStatus == .restricted,
-        remindersNeedSetup: remindersStatus != .fullAccess && remindersStatus != .restricted
+        calendarAccessGranted: inputs.calendarAccessGranted,
+        calendarRestricted: inputs.calendarRestricted,
+        remindersStatus: inputs.remindersStatus
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }
