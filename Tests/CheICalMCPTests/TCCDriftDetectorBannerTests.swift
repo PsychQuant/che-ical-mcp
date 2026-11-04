@@ -347,6 +347,9 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             until: { $0.contains("[banner] che-ical-mcp") && $0.contains(resolvedBinaryPath) }
         )
 
+        // Judged first: a timeout means the `until` predicate (header && path) never matched, so the
+        // stderr assertions below would record a failure that a later XCTSkip cannot retract (#366).
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 10, "The banner spawn (the banner should arrive before the cap)")
         XCTAssertTrue(
             run.stderr.contains("[banner] che-ical-mcp"),
             "Default startup should emit banner. Got stderr: \(run.stderr.prefix(200))"
@@ -355,7 +358,6 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
             run.stderr.contains(resolvedBinaryPath),
             "Banner should include the realpath-resolved binary path (#129 — banner uses BinaryPathResolver). Got stderr: \(run.stderr.prefix(300)), resolved: \(resolvedBinaryPath)"
         )
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 10, "The banner spawn (the banner should arrive before the cap)")
         let arrival = try XCTUnwrap(
             run.untilMatchedAfter,
             "The banner header and the resolved binary path never both reached stderr, so there is no arrival time to check"
