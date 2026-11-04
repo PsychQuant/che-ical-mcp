@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 
 /// #261: saves an object that has never been written and, when the save fails, takes it back out
@@ -52,7 +53,8 @@ import EventKit
 /// failures were induced: an event was staged with `save(_:span:commit: false)` into a calendar
 /// deleted through a second store, so the store's next commit failed. No failure arising in normal
 /// use made a reminder save fail at commit time: a reminder saved into a list deleted elsewhere
-/// succeeded (#281), and one refused by validation left nothing pending. Under the induced failure:
+/// returned without an error and wrote nothing (#281, below), and one refused by validation left
+/// nothing pending. Under the induced failure:
 /// - a new reminder (`save(_:commit: true)`) or reminder list (`saveCalendar(_:commit: true)`)
 ///   stayed pending; once the staged event was removed, the next save wrote it. `rollback()` did
 ///   not drop it; `remove(_:commit: false)` / `removeCalendar(_:commit: false)` did. The first
@@ -144,6 +146,22 @@ import EventKit
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
 /// - stores other than iCloud.
+///
+/// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
+/// through another store after the list was looked up. `save(_:commit: true)` returned without an
+/// error and the reminder existed nowhere (a store made afterwards found nothing; on device,
+/// iCloud, once on 2026-10-07 and 3 of 3 on 2026-11-05). Right after such a save the saving store
+/// read the list (`calendar(withIdentifier:)`) as nil (3 of 3) and the reminder
+/// (`calendarItem(withIdentifier:)`) as nil (2 of 2, the runs that read it), both also after
+/// `refreshSourcesIfNecessary`; after a normal save it read both as present (1 of 1). So `saveNewReminder` passes `verified`, which refreshes this store and
+/// throws `ListDeletedDuringSave` only for that pair (`reminderWritten`). The shape needs the
+/// deletion to land between the list lookup and the save inside one call: through the server, a
+/// list deleted elsewhere before a call was already gone when that call looked it up
+/// (`create_reminder` refused with calendar-not-found right after the deletion and 3 s later; a
+/// delete-undo refused with `undoListMissing`), since `findCalendar` reads the lists live. The
+/// in-call race itself was not staged through the server (it needs a hook between the lookup and
+/// the save). Not checked: other sources than iCloud, and a new reminder list saved into a source
+/// deleted elsewhere (`createCalendar` passes no `verified`).
 ///
 /// Every outcome is one line on stderr; the lines for a found item and for a failed removal name
 /// the save's error by domain and code. The caller gets the save's error unless a new store finds
@@ -274,17 +292,19 @@ enum NewObjectSave {
     }
 
     /// Runs `save` and returns the names of compared fields the store holds differently from the
-    /// object: none after a save that returned. When the save throws, asks `committed`. `.saved`
+    /// object: none after a save that returned. A save that returned is then checked with
+    /// `verified` (#281), which throws when nothing was written; its error leaves `run` with
+    /// nothing else run (no new store, no discard, no report). When the save throws, asks
+    /// `committed` (and never `verified`). `.saved`
     /// reports `.committedThenThrew` and returns none; `.differs` reports `.committedButDiffers`
     /// and returns the names. Either way the object is kept and the caller goes on as after a
     /// save, telling its own caller about the names (`responseFields`, `undoSuffix`). `.absent`
     /// or nil runs `discard`, reports one outcome (`.unchecked` when nil and the removal ran,
     /// `.nothingPending` or `.discardFailed`), and rethrows the save's error.
-    static func run(save: () throws -> Void, committed: () -> Found?, discard: () throws -> Void,
-                    report: (Outcome) -> Void) throws -> [String] {
+    static func run(save: () throws -> Void, verified: () throws -> Void = {}, committed: () -> Found?,
+                    discard: () throws -> Void, report: (Outcome) -> Void) throws -> [String] {
         do {
             try save()
-            return []
         } catch {
             let found = committed()
             if found == .saved {
@@ -303,6 +323,40 @@ enum NewObjectSave {
                        ? .nothingPending : .discardFailed(save: error, discard: discardError))
             }
             throw error
+        }
+        try verified()
+        return []
+    }
+
+    /// #281: whether a reminder whose save returned was written, from what the saving store reads
+    /// right after it. Only a list that reads gone together with a reminder that does not resolve
+    /// is "not written": the pair seen on device for a save into a list deleted elsewhere (2 of 2
+    /// runs that read both), while a normal save read both present (1 of 1). Either one alone counts as written, so a
+    /// transient read cannot turn a real save into a reported failure and a retry into a second copy.
+    static func reminderWritten(listGone: Bool, itemResolves: Bool) -> Bool {
+        !listGone || itemResolves
+    }
+
+    /// `saveNewReminder`'s `verified` check: throws `ListDeletedDuringSave` when
+    /// `reminderWritten` says nothing was written. `restoring` picks the delete-undo wording.
+    static func confirmWritten(listGone: Bool, itemResolves: Bool, restoring: Bool) throws {
+        guard reminderWritten(listGone: listGone, itemResolves: itemResolves) else {
+            throw ListDeletedDuringSave(restoring: restoring)
+        }
+    }
+
+    /// #281: a reminder saved into a list that was deleted elsewhere between the list lookup and
+    /// the save: the save returned and nothing was written. Author-written text with no list
+    /// title, account or reminder title in it (#37). Not an `UnrecoverableUndoError`, so a
+    /// delete-undo keeps its record (`UndoFailureDisposition.restore`, #191); the next undo then
+    /// reads the lists first and refuses with `undoListMissing`, which says how to give it up.
+    struct ListDeletedDuringSave: LocalizedError, TrustedErrorMessage, Equatable {
+        let restoring: Bool
+
+        var errorDescription: String? {
+            restoring
+                ? "Cannot undo the deletion of the reminder: its list was deleted while the reminder was being restored, so nothing was written and the history entry was kept. The next undo reports the list as unavailable and says how to give the entry up."
+                : "The reminder list was deleted while the reminder was being saved; nothing was created."
         }
     }
 
