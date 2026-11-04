@@ -112,7 +112,8 @@ final class OccurrenceDateZoneTests: XCTestCase {
         // Verify round 1: the lookup (calendar access + store read) comes after every check that
         // needs no calendar, right before the write.
         let resolve = try XCTUnwrap(body.range(of: "OccurrenceDateInput.resolve("))
-        for check in ["\"alarms_minutes_offsets\"", "parseRecurrenceRule(", "\"clear_recurrence\"", "\"clear_timezone\"",
+        for check in ["InputValidation.parseAlarmOffsets(", "parseRecurrenceRule(",   // #333: the shared parser
+                      "\"clear_recurrence\"", "\"clear_timezone\"",
                       "Cannot specify both timezone and clear_timezone"] {
             let at = try XCTUnwrap(body.range(of: check), check)
             XCTAssertLessThan(at.lowerBound, resolve.lowerBound, check)

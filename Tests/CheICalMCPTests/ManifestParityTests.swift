@@ -583,4 +583,19 @@ final class ManifestParityTests: XCTestCase {
             }
         }
     }
+
+    /// PR #415 verify round 2: update_reminder says when `alarms_note` appears, in its description,
+    /// in its `alarms_minutes_offsets` parameter and in the manifest summary.
+    func testUpdateReminderDescribesTheLeftoverAlarmsNote() throws {
+        let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_reminder" })
+        let declared = tool.description ?? ""
+        XCTAssertTrue(declared.contains("alarms_note"), declared)
+        XCTAssertTrue(declared.contains("keeps relative alarms"), declared)
+        let parameter = tool.inputSchema.objectValue?["properties"]?.objectValue?["alarms_minutes_offsets"]?.objectValue?["description"]?.stringValue ?? ""
+        XCTAssertTrue(parameter.contains("alarms_note"), parameter)
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "update_reminder" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("alarms_note"), summary)
+    }
 }
