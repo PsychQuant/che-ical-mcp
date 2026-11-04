@@ -380,11 +380,23 @@ final class UndoBatchRestoreTests: XCTestCase {
         }
     }
 
-    func testAFailureOfTheOnlyMemberRethrowsTheMemberErrorUnchanged() {
+    /// #292 item 3: the only member left fails before anything is restored. The record is put back
+    /// as it was, and the error, like every part-way error, says that the member's save may have
+    /// written it, so a retry can add a second copy, and gives the member's own error last. It used
+    /// to be the member error alone, which says nothing of the second copy.
+    func testAFailureOfTheOnlyMemberAsksToCheckFirstAndEndsWithTheMemberError() throws {
         let failure = UndoOperation.batchUndoFailure(members: [deleted("A")],
                                                      interrupted: .init(completed: 0, underlying: SaveFailed.failed),
-                                                     describe: { _ in XCTFail("nothing to describe"); return "" })
-        XCTAssertTrue(failure is SaveFailed, "nothing was written and nothing else waits: \(failure)")
+                                                     describe: { _ in "eventkit_error_1" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(titles(partial.remaining), ["A"], "the record as it was")
+        XCTAssertEqual(partial.restoredCount, 0)
+        XCTAssertEqual(partial.failing, .runsLast)
+        XCTAssertTrue(partial.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), partial.message)
+        XCTAssertTrue(partial.message.contains("running undo again can add a second copy: check first."), partial.message)
+        XCTAssertTrue(partial.message.hasSuffix(": eventkit_error_1"), partial.message)
+        XCTAssertFalse(partial.message.contains("0 item") || partial.message.contains("the other"), partial.message)
+        XCTAssertFalse(partial.message.contains("not only the one that failed"), "one item left: \(partial.message)")
     }
 
     /// A permanent member error (`UnrecoverableUndoError`) means that member can never be restored.
@@ -736,8 +748,9 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     /// A batch holding a member that may not run last keeps the recorded order: after a write the
-    /// failing member stays in its place and runs first again; with nothing written the member error
-    /// stands and the record is put back whole.
+    /// failing member stays in its place and runs first again; with nothing written the record is put
+    /// back whole, and the error says no item is confirmed restored and asks to check first (#292
+    /// items 2 and 3).
     func testMembersThatMayNotRunLastKeepTheirRecordedOrder() throws {
         let members = ["A", "B", "C"].map(edited)
         let failure = UndoOperation.batchUndoFailure(members: members,
@@ -751,7 +764,37 @@ final class UndoBatchRestoreTests: XCTestCase {
         let nothing = UndoOperation.batchUndoFailure(members: members,
                                                      interrupted: .init(completed: 0, underlying: SaveFailed.failed),
                                                      describe: { _ in "eventkit_error_1" })
-        XCTAssertTrue(nothing is SaveFailed, "\(nothing)")
+        let whole = try XCTUnwrap(nothing as? UndoBatchPartiallyUndoneError, "\(nothing)")
+        XCTAssertEqual(whole.failing, .inRecordedOrder)
+        XCTAssertEqual(ids(whole.remaining), ["A", "B", "C"], "the record as it was")
+        XCTAssertTrue(whole.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), whole.message)
+        XCTAssertTrue(whole.message.contains("check first"), whole.message)
+    }
+
+    /// #292 item 2: with no item restored, neither shape counts "0 items" or speaks of restored
+    /// ones. Both are reached only through a nested batch whose own partial error restored nothing
+    /// (no tool records one today): kept in recorded order, and run last as the only member left.
+    func testANestedFailureWithNothingRestoredSaysNoItemIsConfirmedRestored() throws {
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Z"), deleted("Y")], restoredCount: 0,
+                                                  memberError: "eventkit_error_1")
+        let nested = UndoOperation.batch([deleted("Y"), deleted("Z")])
+        let shapes: [(members: [UndoOperation], failing: UndoBatchPartiallyUndoneError.FailingMember)] = [
+            ([edited("A"), nested], .inRecordedOrder),
+            ([nested], .runsLast),
+        ]
+        for (members, failing) in shapes {
+            let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 0, underlying: inner),
+                                                         describe: { _ in "unused" })
+            let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+            XCTAssertEqual(partial.failing, failing)
+            XCTAssertEqual(partial.restoredCount, 0)
+            XCTAssertTrue(partial.message.hasPrefix("Undo of this batch stopped with no item confirmed restored:"), partial.message)
+            for wrong in ["0 items", "0 item", "the other", "part-way", "restored ones"] {
+                XCTAssertFalse(partial.message.contains(wrong), "\(failing): \(wrong): \(partial.message)")
+            }
+            XCTAssertTrue(partial.message.contains("check first"), partial.message)
+            XCTAssertTrue(partial.message.hasSuffix(": eventkit_error_1"), partial.message)
+        }
     }
 
     /// The reminder batch builder records only reminder deletes (#243).
@@ -962,12 +1005,13 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// the outer members restored before it and the nested batch's own restored members are both
     /// named, outer first, and the cap counts them together.
     func testANestedFailureNamesTheOuterAndTheInnerRestoredDifferences() throws {
+        // #292 item 4a: four outer reminders restored (`completed: 4`), each with its difference.
         let outer = (1...4).map { UndoRestoredDifference(title: "O\($0)", storeDiffers: ["due"]) }
         let innerDiffering = (1...3).map { UndoRestoredDifference(title: "I\($0)", storeDiffers: ["notes"]) }
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 3, memberError: "eventkit_error_1",
                                                   restoredDiffering: innerDiffering)
-        let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")]), reminderDeleted("R")]
-        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 1, underlying: inner),
+        let members: [UndoOperation] = [deleted("X"), .batch([deleted("Y")])] + (1...4).map { reminderDeleted("O\($0)") }
+        let failure = UndoOperation.batchUndoFailure(members: members, interrupted: .init(completed: 4, underlying: inner),
                                                      differing: outer, describe: { _ in "unused" })
         let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
         XCTAssertEqual(partial.restoredDiffering, outer + innerDiffering, "outer first, then the nested batch's")

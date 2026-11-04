@@ -282,8 +282,10 @@ final class UndoBatchWiringTests: XCTestCase {
 
     // MARK: - #243: the reminder batch delete record (findings 8 (1), 11)
 
-    /// The snapshot is taken after the only-completed check, kept only after `remove` succeeded,
-    /// and recorded once after the loop.
+    /// The snapshot is taken after the only-completed check and before `remove` (#292 item 1:
+    /// taken after it, the snapshot would record a list the reminder no longer belongs to, and the
+    /// batch undo's pre-check and restore would target the wrong list), kept only after `remove`
+    /// succeeded, and recorded once after the loop.
     func testTheReminderBatchDeleteRecordsOnlyTheRemindersItRemoved() throws {
         let body = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false)", in: Self.manager))
         let gate = try XCTUnwrap(Self.offset(of: Self.call("BatchDeleteFilter.shouldSkipUncompleted("), in: body))
@@ -293,6 +295,7 @@ final class UndoBatchWiringTests: XCTestCase {
         let loopEnd = try XCTUnwrap(Self.offset(of: Self.call("failures.append((id, sanitized.code))"), in: body))
         let record = try XCTUnwrap(Self.offset(of: Self.call("if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) { await CalendarUndoManager.shared.record(undo)"), in: body))
         XCTAssertLessThan(gate, snapshot, "snapshot after the only-completed check")
+        XCTAssertLessThan(snapshot, remove, "snapshot before the remove")
         XCTAssertLessThan(remove, keep, "kept only after remove succeeded")
         XCTAssertLessThan(loopEnd, record, "recorded once, after the loop")
         XCTAssertEqual(Self.count("undoSnapshots.append(", in: body), 1)
