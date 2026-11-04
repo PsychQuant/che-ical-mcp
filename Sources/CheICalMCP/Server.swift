@@ -46,6 +46,7 @@ class CheICalMCPServer {
     // 3 methods the cleanup handler needs).
     private let reminderCleanupSource: any EventKitManaging
     private let eventCopySource: any EventCopySource
+    private let eventDeletionSource: any EventDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -83,6 +84,7 @@ class CheICalMCPServer {
     init(reminderCleanupSource: any EventKitManaging = EventKitManager.shared,
          reminderReadSource: any ReminderReadSource = EventKitManager.shared,
          eventCopySource: any EventCopySource = EventKitManager.shared,
+         eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -94,6 +96,7 @@ class CheICalMCPServer {
         self.undoExecutionSource = undoExecutionSource
         self.reminderWriteSource = reminderWriteSource
         self.eventCopySource = eventCopySource
+        self.eventDeletionSource = eventDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -864,7 +867,7 @@ class CheICalMCPServer {
             // Feature 6: Copy Event
             Tool(
                 name: "copy_event",
-                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees and the event's own structured location (its coordinates) are not copied. Alarms are copied with their date or offset (when the event is a recurring series whose first occurrence was deleted, the copy is of its first remaining occurrence, and an alarm with an absolute date is put at that occurrence's start instead), location (coordinates and radius), email address and sound; a procedure alarm (one that opens a file or runs a script) becomes a plain alarm at the same time. If saving the copy fails while it carries location, email or sound alarms, which some calendars refuse, the error gives the failure code and names those alarm kinds (location_alarms, email_alarms, alarm_sounds) as a possible cause; the original is not removed. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method, and not_carried_over when a fallback copy did not keep structured_location or availability: only those two keys are listed there, since a move that would drop recurrence or attendees is refused and a procedure alarm turned plain is not reported; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
+                description: "Copy an event to another calendar. The copy is a new event with a new identifier; recurrence, attendees and the event's own structured location (its coordinates) are not copied. Availability (busy, free, tentative, unavailable) is copied when the target calendar supports the value; otherwise the copy gets the calendar's default. The result lists not_carried_over (structured_location, availability) when the copy did not keep them. Alarms are copied with their date or offset (when the event is a recurring series whose first occurrence was deleted, the copy is of its first remaining occurrence, and an alarm with an absolute date is put at that occurrence's start instead), location (coordinates and radius), email address and sound; a procedure alarm (one that opens a file or runs a script) becomes a plain alarm at the same time. If saving the copy fails while it carries location, email or sound alarms, which some calendars refuse, the error gives the failure code and names those alarm kinds (location_alarms, email_alarms, alarm_sounds) as a possible cause; the original is not removed. With delete_original true the event is moved instead, the same way as move_events_batch (in place first; new_id equals event_id unless id_changed is true; the result reports method, and not_carried_over when a fallback copy did not keep structured_location or availability (availability is kept when the target calendar supports the value): only those two keys are listed there, since a move that would drop recurrence or attendees is refused and a procedure alarm turned plain is not reported; a move to the event's own calendar writes nothing and reports action unchanged); recurring events are refused here, use move_events_batch with span and occurrence_dates. When a move falls back to copy and delete, undo restores the deleted original and the copy remains. If deletion fails after a fallback copy, inspect the target calendar before retrying.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -881,7 +884,7 @@ class CheICalMCPServer {
             // Feature 7: Move Events Batch
             Tool(
                 name: "move_events_batch",
-                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields. not_carried_over lists only recurrence (a split occurrence becomes a one-off), absolute_alarms (a split occurrence's absolute-date alarms become alarms at its start), structured_location and availability; a procedure alarm turned plain is not listed. If saving a copy fails while it carries location, email or sound alarms, which some calendars refuse, that event's error gives the failure code and names those alarm kinds as a possible cause; the original is not removed. Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original and the copy remains.",
+                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields. not_carried_over lists only recurrence (a split occurrence becomes a one-off), absolute_alarms (a split occurrence's absolute-date alarms become alarms at its start), structured_location and availability (a copy keeps availability when the target calendar supports the value); a procedure alarm turned plain is not listed. If saving a copy fails while it carries location, email or sound alarms, which some calendars refuse, that event's error gives the failure code and names those alarm kinds as a possible cause; the original is not removed. Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original and the copy remains.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1484,18 +1487,21 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("event_id is required")
         }
 
-        // Use the event's own timezone for occurrence_date parsing to match findOccurrence's day boundary
-        let eventTz = await eventKitManager.getEventTimezone(identifier: eventId)
+        // A value without offset is read in the event's own zone, to match findOccurrence's day
+        // boundary; the zone is read after access is ensured and from the refreshed event (#270,
+        // #271). OccurrenceDateInput decides from the span and the value whether it is needed.
         let spanStr = arguments["span"]?.stringValue ?? "this"
-        let occurrenceDate: Date? = try arguments["occurrence_date"]?.stringValue.map { try parseFlexibleDate($0, defaultTimezone: eventTz) }
+        let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
+            arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
+            zoneLookup: { try await self.eventDeletionSource.occurrenceDateTimeZone(identifier: eventId) })
 
         if spanStr == "all" {
-            try await eventKitManager.deleteEventSeries(identifier: eventId)
+            try await eventDeletionSource.deleteEventSeries(identifier: eventId)
             return try actionResult(["action": "deleted", "id": eventId, "span": "all"])
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
-        try await eventKitManager.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
+        try await eventDeletionSource.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
         return try actionResult(["action": "deleted", "id": eventId, "span": spanStr])
     }
 
@@ -2668,6 +2674,9 @@ class CheICalMCPServer {
             response["id_changed"] = move.eventIdentifier != eventId
             response["method"] = move.method.rawValue
             if !move.notCarriedOver.isEmpty { response["not_carried_over"] = move.notCarriedOver }
+        } else if !newEvent.notCarriedOver.isEmpty {
+            // #272: a plain copy reports what it did not keep too, with the same keys.
+            response["not_carried_over"] = newEvent.notCarriedOver
         }
         return try actionResult(response)
     }
@@ -2712,9 +2721,12 @@ class CheICalMCPServer {
                 }
                 guard !text.isEmpty else { continue }
                 // Date-only values are read in the event's own time zone, as delete_event does,
-                // so findOccurrence searches the right day (verify #4).
-                let eventZone = await eventCopySource.eventTimeZone(identifier: ids[index])
-                occurrenceDates[index] = try parseFlexibleDate(text, defaultTimezone: eventZone)
+                // so findOccurrence searches the right day (verify #4); the zone is looked up only
+                // for a value without offset (#270 verify).
+                let id = ids[index]
+                occurrenceDates[index] = try await OccurrenceDateInput.resolve(
+                    text, iso: dateFormatter, span: span.rawValue,
+                    zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
             }
         }
 

@@ -1209,11 +1209,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return event
     }
 
-    /// Get the timezone of an event by identifier (nil if not found or no timezone set).
-    /// `delete_event` calls this before any other lookup, so it too goes through the reminder
-    /// check (#260): a reminder's id gives nil here and not found from the delete.
-    func getEventTimezone(identifier: String) -> TimeZone? {
-        return storedEvent(id: identifier)?.timeZone
+    /// The zone a date-only `occurrence_date` is read in for `delete_event` and
+    /// `move_events_batch` (`OccurrenceDateInput.resolve` asks for it only when the value needs a
+    /// zone): the zone of the event the write will resolve (nil if not found or no zone set).
+    /// Access is ensured first (#270): before access was ever granted the lookup finds nothing and
+    /// the date would be read in the server zone. A failed check is thrown, the same error the
+    /// write's own check reports, instead of falling back to the host zone (verify LOW). The event
+    /// is resolved the way the write resolves it, refreshed (#271): a stored object can keep its
+    /// old zone after an edit made elsewhere. No edited-before refusal, since only the zone is
+    /// needed; the write applies its own, and that refusal only ever turns the pick into nil
+    /// (`FirstRemainingOccurrence.pick`), so whenever the write resolves an event it is the one
+    /// whose zone was read. A reminder's id gives nil here and not found from the write (#260).
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
+        try await ensureCalendarAccess()
+        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
+    }
+
+    /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
+    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
+    /// `moveEvent`) read the same field through here, so a code change cannot make them differ; a
+    /// zone edit landing between the lookup and the write still can (accepted, round 2).
+    static func occurrenceZone(of event: EKEvent) -> TimeZone? {
+        event.timeZone
     }
 
     /// Find a specific occurrence of a recurring event on a given date.
@@ -1221,11 +1238,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
     /// one series, and the first enumerated one is not necessarily the one asked for.
     func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
-        var calendar = Calendar.current
-        if let tz = timeZone { calendar.timeZone = tz }
-        let dayStart = calendar.startOfDay(for: date)
-        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return nil }
-        let predicate = eventStore.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
+        guard let window = OccurrenceDay.window(containing: date, in: timeZone) else { return nil }
+        let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in
@@ -1252,7 +1266,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // record is classified by are taken before the removal.
         let snapshots: DeletedEventSnapshots
         if hadRules, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: masterEvent.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
@@ -1650,12 +1664,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Copies an event to another calendar. The copy is a new event; see `makeCopy` for the
     /// fields it keeps, and `EventCopyOperation.saveCopy` for a refused copy. Moves go through
-    /// `moveEvent` / `moveEventForCopyTool` (#226).
+    /// `moveEvent` / `moveEventForCopyTool` (#226). Returns the saved copy and the fields it did
+    /// not keep (#272), read after the save with the move paths' rule.
     func copyEvent(
         identifier: String,
         toCalendarName: String,
         toCalendarSource: String? = nil
-    ) async throws -> EKEvent {
+    ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
         try await ensureCalendarAccess()
         guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
@@ -1672,7 +1687,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                         logFailure: { Self.logCopyFailure(handler: "copyEvent", identifier: identifier, error: $0) }) {
             try eventStore.save(newEvent, span: .thisEvent)
         }
-        return newEvent
+        return (newEvent, Self.fieldsNotCarriedOver(from: sourceEvent, to: newEvent))
     }
 
     /// A refused copy that carries location, email or sound alarms is reported by name
@@ -1733,7 +1748,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: master.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master)) else {
                 throw EventKitError.moveRefused(reason: "No occurrence of this event falls on occurrence_date.")
             }
             subject = occurrence
@@ -1810,7 +1825,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return targetCalendar
     }
 
-    /// The fields a copy keeps. Recurrence and attendees are not among them; the move
+    /// The fields a copy keeps, availability included when the target calendar supports the
+    /// value (#272). Recurrence and attendees are not among them; the move
     /// policy refuses before a copy would drop those (#226). `alarms` replaces the source's
     /// own: the copy-out passes `copyOutAlarms`, which puts a split occurrence's absolute
     /// alarms at its start.
@@ -1826,6 +1842,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         copy.isAllDay = source.isAllDay
         copy.timeZone = source.timeZone
         copy.calendar = calendar
+        // #272: the source's availability when the target calendar supports it (#245's support
+        // rule; decided after the calendar is set, since support depends on it). Otherwise the
+        // calendar's default stays, and `fieldsNotCarriedOver` lists `availability`.
+        if let value = EventSnapshot.availabilityForCopy(source: source.availability,
+                                                         supported: calendar.supportedEventAvailabilities) {
+            copy.availability = value
+        }
         // #230: whole alarms; rebuilt from offsets, absolute and location alarms landed at the
         // event start and email alarms became display alarms.
         for alarm in alarms ?? (source.alarms ?? []).map(AlarmSnapshot.init(from:)) {
@@ -1853,7 +1876,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                            copyAvailability: EKEventAvailability) -> [String] {
         var lost: [String] = []
         if hasCoordinates { lost.append("structured_location") }
-        if sourceAvailability != copyAvailability { lost.append("availability") }
+        // A source without availability (`.notSupported`: subscribed, holiday or local
+        // calendars) had nothing to lose (#272 verify).
+        if sourceAvailability != .notSupported, sourceAvailability != copyAvailability { lost.append("availability") }
         return lost
     }
 
