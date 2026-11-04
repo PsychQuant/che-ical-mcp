@@ -5,13 +5,17 @@ import Foundation
 /// Tests for time validation logic in event updates
 /// These tests verify the fix for the update_event bug where
 /// changing only start_time could result in startDate > endDate
+///
+/// #306: dates are built in the Gregorian calendar, not `Calendar.current`: under an `ar_SA` launch
+/// locale (Islamic calendar) `DateComponents(year: 2026, month: 1, day: 31)` rolled over to month 2,
+/// since the first Islamic month has 30 days.
 final class TimeValidationTests: XCTestCase {
 
     // MARK: - Duration Preservation Tests
 
     func testDurationPreservation() {
         // Given: An event from 14:00 to 15:00 (1 hour duration)
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         let originalStart = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 25, hour: 14, minute: 0
         ))!
@@ -41,7 +45,7 @@ final class TimeValidationTests: XCTestCase {
 
     func testDurationPreservationMultiDay() {
         // Given: A multi-day event (conference)
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         let originalStart = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 10, hour: 9, minute: 0
         ))!
@@ -67,7 +71,7 @@ final class TimeValidationTests: XCTestCase {
     // MARK: - Time Range Validation Tests
 
     func testValidTimeRange() {
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         let start = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 31, hour: 14, minute: 0
         ))!
@@ -79,7 +83,7 @@ final class TimeValidationTests: XCTestCase {
     }
 
     func testInvalidTimeRangeDetection() {
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         // Invalid: end time is before start time
         let start = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 31, hour: 15, minute: 0
@@ -92,7 +96,7 @@ final class TimeValidationTests: XCTestCase {
     }
 
     func testInvalidTimeRangeAcrossDates() {
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         // The problematic scenario: changing 1/25 to 1/31 but keeping old end date
         let start = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 31, hour: 14, minute: 0
@@ -107,7 +111,7 @@ final class TimeValidationTests: XCTestCase {
     // MARK: - Edge Cases
 
     func testSameStartAndEndTime() {
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         let sameTime = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 31, hour: 14, minute: 0
         ))!
@@ -118,7 +122,7 @@ final class TimeValidationTests: XCTestCase {
 
     func testAllDayEventAllowsSameDate() {
         // For all-day events, the date component matters more than time
-        let calendar = Calendar.current
+        let calendar = Calendar.gregorian(in: .current)
         let date = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 31
         ))!
@@ -135,7 +139,7 @@ final class TimeValidationTests: XCTestCase {
     // consistently. All-day events are exempt.
 
     private func date160(_ hour: Int, _ minute: Int = 0) -> Date {
-        Calendar.current.date(from: DateComponents(
+        Calendar.gregorian(in: .current).date(from: DateComponents(
             year: 2026, month: 1, day: 31, hour: hour, minute: minute
         ))!
     }

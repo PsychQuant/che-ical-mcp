@@ -7,7 +7,8 @@ import Foundation
 
 /// #191 — VALUE snapshot of an EKRecurrenceRule. The previous design stored the
 /// raw EKRecurrenceRule object; after the original event was deleted that
-/// reference went stale, and re-attaching it in applySnapshot made the save
+/// reference went stale, and re-attaching it when the snapshot was written back (then
+/// `applySnapshot`; now `EventSnapshot.apply` after `restoreCalendar(for:kind:)`) made the save
 /// fail (EKCADErrorDomain 1010, #186 on-device). Rebuilding a fresh rule from
 /// plain values closes that class structurally.
 struct RecurrenceRuleSnapshot: Equatable {

@@ -75,7 +75,7 @@ final class EventSnapshotTests: XCTestCase {
     // MARK: - apply (#253 verify #4)
 
     /// Update-undo writes the snapshot back through `EventSnapshot.apply`, the same path
-    /// `applySnapshot` takes; before, only `AlarmSnapshot.restore` was tested, so dropping the
+    /// the event undo takes after `restoreCalendar(for:kind:)`; before, only `AlarmSnapshot.restore` was tested, so dropping the
     /// alarm write from the undo path left the suite green.
     func testApplyRestoresTheFieldsAndAlarmsOfAnUpdatedEvent() {
         let event = eventWithEveryKindOfAlarm()
