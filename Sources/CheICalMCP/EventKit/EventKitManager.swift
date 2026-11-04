@@ -2799,10 +2799,12 @@ enum EventKitError: LocalizedError {
     /// for this reminder and the record is kept (`UndoFailureDisposition.of` gives `.restore`, the
     /// #206 / #236 D2 posture for not-found). The claim is about this reminder only: in a batch
     /// undo other members may already have been written. `kind` decides what the message says
-    /// giving the undo up loses. The three titles are store-derived (a shared list's title is set
-    /// by someone else, #37 F1), so the message shows them through `undoShownTitle`, as labelled
-    /// values ahead of the instructions, and leaves out a title that shows as nothing.
-    case undoListMissing(list: String, account: String?, reminder: String, hasIdentifier: Bool, kind: ReminderRestoreKind)
+    /// giving the undo up loses. The message names the reminder through `undoShownTitle` (left out
+    /// when it shows as nothing) and neither the list nor its account (#290): a shared list's title
+    /// is set by someone else and an account name is often an e-mail address (#37), and this text
+    /// is trusted and sits next to the `discard_id` instruction, as the batch pre-check's refusal
+    /// names none of them (PR #282).
+    case undoListMissing(reminder: String, hasIdentifier: Bool, kind: ReminderRestoreKind)
 
     var errorDescription: String? {
         switch self {
@@ -2893,17 +2895,15 @@ enum EventKitError: LocalizedError {
             return reason
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."
-        case .undoListMissing(let list, let account, let reminder, let hasIdentifier, let kind):
-            let recorded = [("list", list), ("account", account ?? ""), ("reminder", reminder)]
-                .map { ($0.0, undoShownTitle($0.1)) }
-                .filter { !$0.1.isEmpty }
-                .map { "\($0.0) '\($0.1)'" }
-                .joined(separator: ", ")
-            let named = recorded.isEmpty ? "" : " (\(recorded))"
+        case .undoListMissing(let reminder, let hasIdentifier, let kind):
+            let shown = undoShownTitle(reminder)
+            let named = shown.isEmpty ? "" : " (reminder '\(shown)')"
             let which = kind == .recreateDeleted
-                ? "the deletion of a reminder: the list it was in when it was deleted\(named)"
-                : "the update of a reminder: the list it was in before the update\(named)"
-            let state = hasIdentifier ? "was not found under its recorded identifier" : "was recorded without an identifier, so it cannot be found"
+                ? "the deletion of a reminder\(named): the list it was in when it was deleted"
+                : "the update of a reminder\(named): the list it was in before the update"
+            let state = hasIdentifier
+                ? "is not available (deleted, or its account turned off or still syncing); it was not found under its recorded identifier"
+                : "was recorded without an identifier, so it cannot be found"
             // Without an identifier the entry can never be undone, only given up.
             let blocked = hasIdentifier ? "until it is undone or given up" : "until it is given up"
             let retry = hasIdentifier
