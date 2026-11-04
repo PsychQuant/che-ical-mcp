@@ -148,7 +148,7 @@ struct ReminderDueValue: Equatable, Sendable {
 
     var dictionary: [String: Any] {
         let date = String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
-        // HH:MM:SS; a missing minute/second is 00, as EventKit treats it. Sub-second
+        // HH:MM:SS; a missing minute/second is 00, as EventKit treats it. Sub-second (truncated)
         // precision is milliseconds on both `time` and `date_time`, printed only when it is
         // non-zero (#252: a start EventKit fills in reads back with `nanosecond = 0` while the
         // due has none, and the same time must render the same string on both).
@@ -157,12 +157,19 @@ struct ReminderDueValue: Equatable, Sendable {
         let time: String? = components.hour.map {
             String(format: "%02d:%02d:%02d", $0, components.minute ?? 0, components.second ?? 0) + fraction
         }
-        // chronologicalDate already carries the sub-second part; only the rendering changes.
-        let instant = components.hour != nil && components.timeZone != nil ? chronologicalDate : nil
+        // `date_time` shows the same truncated milliseconds as `time` (#252 verify: the ISO 8601
+        // formatter rounds, so 999 999 999 ns read .999 on `time` and the next second on
+        // `date_time`). The whole second is the instant without its sub-second part, and the
+        // fraction is the one `time` carries. chronologicalDate still decides whether there is an
+        // instant at all (it refuses a nanosecond outside 0..<1e9).
+        var wholeSecond = components
+        wholeSecond.nanosecond = nil
+        let instant = components.hour != nil && components.timeZone != nil && chronologicalDate != nil
+            ? ReminderDueValue(components: wholeSecond)?.chronologicalDate : nil
         return ["date": date, "time": nullable(time),
                 "timezone": nullable(components.timeZone?.identifier),
                 "calendar_identifier": nullable(components.calendar.map { String(describing: $0.identifier) }),
-                "date_time": nullable(instant.map { utcString($0, fractional: millis != 0) })]
+                "date_time": nullable(instant.map { String(utcString($0).dropLast()) + fraction + "Z" })]
     }
 }
 
@@ -180,9 +187,10 @@ private func nullable<T>(_ value: T?) -> Any {
     return NSNull()
 }
 
-private func utcString(_ date: Date, fractional: Bool = false) -> String {
+/// `yyyy-MM-ddTHH:mm:ssZ` in UTC, whole seconds (the `Z` is always the last character).
+private func utcString(_ date: Date) -> String {
     let formatter = ISO8601DateFormatter()
     formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.formatOptions = fractional ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+    formatter.formatOptions = [.withInternetDateTime]
     return formatter.string(from: date)
 }

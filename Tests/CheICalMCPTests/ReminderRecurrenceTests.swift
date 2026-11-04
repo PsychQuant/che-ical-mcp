@@ -158,6 +158,20 @@ final class ReminderRecurrenceTests: XCTestCase {
         XCTAssertEqual(json["date_time"] as? String, "2026-09-05T12:30:05.250Z")
     }
 
+    /// #252 verify: `time` truncates to milliseconds, and `date_time` must show the same digits
+    /// (the ISO 8601 formatter rounds), with no carry into the next second in one field only.
+    func testTimeAndDateTimeShowTheSameTruncatedMilliseconds() throws {
+        for (nanos, ms) in [(1_500_000, "001"), (999_999_999, "999"), (250_000_000, "250")] {
+            var c = DateComponents()
+            c.year = 2026; c.month = 9; c.day = 5; c.hour = 12; c.minute = 30; c.second = 5
+            c.nanosecond = nanos
+            c.timeZone = TimeZone(secondsFromGMT: 0)
+            let json = try XCTUnwrap(ReminderDueValue(components: c)).dictionary
+            XCTAssertEqual(json["time"] as? String, "12:30:05.\(ms)", "nanosecond \(nanos)")
+            XCTAssertEqual(json["date_time"] as? String, "2026-09-05T12:30:05.\(ms)Z", "nanosecond \(nanos)")
+        }
+    }
+
     /// #252: the rendering is milliseconds, so a sub-second part below one millisecond (or zero)
     /// prints no fraction on either field, and the two fields agree.
     func testSubMillisecondDueRendersNoFraction() throws {
