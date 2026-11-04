@@ -58,6 +58,27 @@ struct EventWriteValue: Sendable, Equatable {
     /// Set only by `update_event` when the save was of one occurrence edited on its own (span
     /// "this"): the identifier of its series after the save (#268 verify round 2).
     var seriesIdentifier: String? = nil
+    /// Set only by `update_event` when `occurrence_date` matched one occurrence of a series (not
+    /// span "all"): that occurrence's start before the update, and the zone it was matched in
+    /// (#383 verify).
+    var matchedOccurrence: MatchedOccurrence? = nil
+}
+
+/// The occurrence an `update_event` call's `occurrence_date` matched (#383 verify).
+struct MatchedOccurrence: Sendable, Equatable {
+    let start: Date
+    let zone: TimeZone?
+}
+
+/// `update_event`'s `occurrence_start`: the matched occurrence's start as ISO 8601 with the offset
+/// of the zone it was matched in, this Mac's zone for a floating event (#383 verify).
+enum OccurrenceStart {
+    static func string(_ start: Date, zone: TimeZone?) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = zone ?? .current
+        return formatter.string(from: start)
+    }
 }
 
 /// Narrow seam for the event write handlers (CLAUDE.md "Test Seam Convention"): #268, so a test
@@ -70,6 +91,10 @@ protocol EventWriteSource: Sendable {
     /// `create_events_batch`'s advisory lookup of existing events with a similar title (kept on the
     /// seam so a handler test does not read the host's calendars).
     func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue]
+    /// #383: the zone `update_event` reads an offset-less `occurrence_date` in, the zone its search
+    /// takes the day boundary in (`EventKitManager.occurrenceDateTimeZone`, shared with
+    /// `delete_event` and `move_events_batch` since #270).
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone?
 }
 
 /// An existing event `create_events_batch` names as similar to a batch title.
@@ -99,7 +124,9 @@ extension EventKitManager: EventWriteSource {
             structuredLocation: request.structuredLocation, span: request.span,
             occurrenceDate: request.occurrenceDate, applyToAll: request.applyToAll,
             timezone: request.timezone, clearTimezone: request.clearTimezone)
-        return EventWriteValue(saved.event, seriesIdentifier: saved.seriesIdentifier)
+        var value = EventWriteValue(saved.event, seriesIdentifier: saved.seriesIdentifier)
+        value.matchedOccurrence = saved.matchedOccurrence
+        return value
     }
 
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue {
