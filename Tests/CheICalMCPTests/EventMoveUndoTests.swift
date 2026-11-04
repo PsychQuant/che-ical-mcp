@@ -74,7 +74,8 @@ final class EventMoveUndoStandInTests: XCTestCase {
                                            seriesWithoutStandIn: true)
         let message = error.message
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "not found keeps the record (spec)")
-        XCTAssertTrue(message.hasPrefix("Cannot undo: the event 'Standup' is still stored under its recorded identifier"), message)
+        XCTAssertTrue(message.hasPrefix("Cannot undo: the recorded identifier of the event 'Standup' still resolves, but neither the series nor an occurrence that could stand in for it can be read"), message)
+        XCTAssertFalse(message.contains("is still stored"), "an observation, not an unchecked claim")
         XCTAssertFalse(message.contains("deleted or moved to another account"), message)
         XCTAssertFalse(message.contains("first occurrence was deleted"), "a cause the code never checked")
         XCTAssertTrue(message.contains("may have been deleted"), message)
@@ -90,7 +91,7 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
     private let expected = UndoPostState.eventCalendar(id: "S", title: "Standup", calendarIdentifier: "cal-B",
                                                        restoringCalendarIdentifier: "cal-A")
 
-    private func decide(stored: Bool = true, resolved: SeriesMoveUndo.Resolved<String>?,
+    private func decide(stored: @escaping () -> Bool = { true }, resolved: SeriesMoveUndo.Resolved<String>?,
                         original: SeriesMoveUndo.OriginalCalendar? = .init(sourceID: "icloud")) throws -> String? {
         try SeriesMoveUndo.decide(expected, verb: .undo, stored: stored, resolved: resolved, original: original)
     }
@@ -99,22 +100,38 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
         .init(event: "occurrence", viaStandIn: viaStandIn, calendarID: calendar, sourceID: source)
     }
 
+    private func assertStandInRefused(_ body: @autoclosure () throws -> String?, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(try body(), file: file, line: line) { error in
+            guard case EventKitError.standInRefused(let reason) = error else { return XCTFail("\(error)", file: file, line: line) }
+            XCTAssertTrue(reason.contains("discard_id"), reason, file: file, line: line)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore, file: file, line: line)
+        }
+    }
+
+    /// The calendar the undo moves back to is the record's `restoringCalendarIdentifier`, never
+    /// the destination: reading the destination would compare the stand-in's account with itself.
+    func testTheRestoringCalendarIsTheRecordsOriginalCalendar() {
+        XCTAssertEqual(SeriesMoveUndo.restoringCalendarID(of: expected), "cal-A")
+    }
+
+    func testOtherPostStatesHaveNoRestoringCalendar() {
+        let reminder = UndoPostState.reminderCompletion(id: "R", title: "Pay rent",
+                                                        state: .init(isCompleted: true, completionDate: nil), restoring: nil)
+        XCTAssertNil(SeriesMoveUndo.restoringCalendarID(of: reminder))
+    }
+
     func testAStandInInTheSameAccountIsTheTarget() throws {
         XCTAssertEqual(try decide(resolved: standIn()), "occurrence")
     }
 
     func testAStandInMovingBackToAnotherAccountIsRefusedAndKept() {
-        XCTAssertThrowsError(try decide(resolved: standIn(), original: .init(sourceID: "google"))) { error in
-            guard case EventKitError.standInRefused(let reason) = error else { return XCTFail("\(error)") }
-            XCTAssertTrue(reason.contains("discard_id"), reason)
-            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
-        }
+        assertStandInRefused(try decide(resolved: standIn(), original: .init(sourceID: "google")))
     }
 
     /// An unknown source counts as another account, as `movesAcrossAccounts` has it.
     func testAnUnknownSourceIsRefused() {
-        XCTAssertThrowsError(try decide(resolved: standIn(source: nil)))
-        XCTAssertThrowsError(try decide(resolved: standIn(), original: .init(sourceID: nil)))
+        assertStandInRefused(try decide(resolved: standIn(source: nil)))
+        assertStandInRefused(try decide(resolved: standIn(), original: .init(sourceID: nil)))
     }
 
     /// A series object that refreshes is not the stand-in: the move back is the same in-place
@@ -129,20 +146,34 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
         XCTAssertEqual(try decide(resolved: standIn(calendar: "cal-C", source: "google")), "occurrence")
     }
 
-    /// The original calendar is gone: the move arm refuses with `calendarNotFound`.
-    func testAMissingOriginalCalendarIsLeftToTheArm() throws {
-        XCTAssertEqual(try decide(resolved: standIn(), original: nil), "occurrence")
+    /// Fails closed: a stand-in in the destination whose original calendar does not resolve is
+    /// refused here with the error the move arm would give, and the record is kept.
+    func testAMissingOriginalCalendarIsRefusedAsCalendarNotFound() {
+        XCTAssertThrowsError(try decide(resolved: standIn(), original: nil)) { error in
+            guard case EventKitError.calendarNotFound(let identifier, _) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(identifier, "cal-A")
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
     }
 
     func testAStoredSeriesWithoutAStandInIsTheResidualNotFound() {
-        XCTAssertThrowsError(try decide(stored: true, resolved: nil)) { error in
+        XCTAssertThrowsError(try decide(stored: { true }, resolved: nil)) { error in
             guard let missing = error as? UndoTargetMissingError else { return XCTFail("\(error)") }
-            XCTAssertTrue(missing.message.contains("is still stored under its recorded identifier"), missing.message)
+            XCTAssertTrue(missing.message.contains("still resolves, but neither the series nor an occurrence that could stand in for it can be read"), missing.message)
             XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         }
     }
 
     func testNothingStoredIsNotFoundThroughTheCheck() throws {
-        XCTAssertNil(try decide(stored: false, resolved: nil))
+        XCTAssertNil(try decide(stored: { false }, resolved: nil))
+    }
+
+    /// The store is asked whether the id is stored only when nothing resolved.
+    func testStoredIsAskedOnlyWhenNothingResolved() throws {
+        var asked = 0
+        _ = try decide(stored: { asked += 1; return true }, resolved: standIn())
+        XCTAssertEqual(asked, 0)
+        _ = try? decide(stored: { asked += 1; return true }, resolved: nil)
+        XCTAssertEqual(asked, 1)
     }
 }

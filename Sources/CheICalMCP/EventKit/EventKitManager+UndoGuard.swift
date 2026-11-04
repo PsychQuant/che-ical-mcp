@@ -161,14 +161,14 @@ extension EventKitManager {
     private func seriesMoveUndoTarget(_ expected: UndoPostState, verb: UndoHistoryVerb) throws -> EKEvent? {
         let id = expected.itemID
         let resolved = freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)
-        var restoring: String?
-        if case .eventCalendar(_, _, _, let calendarIdentifier) = expected { restoring = calendarIdentifier }
-        // A recorded calendar that no longer resolves gives nil here; the move arm then refuses
-        // with `calendarNotFound` before any write.
-        let original = restoring.flatMap { restoring in eventStore.calendar(withIdentifier: restoring) }
+        // A recorded calendar that no longer resolves gives nil here; `decide` refuses a stand-in
+        // with `calendarNotFound`, and the move arm refuses the series object the same way.
+        let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap { restoring in
+            eventStore.calendar(withIdentifier: restoring)
+        }
         return try SeriesMoveUndo.decide(
             expected, verb: verb,
-            stored: resolved != nil || storedEvent(id: id) != nil,
+            stored: { storedEvent(id: id) != nil },
             resolved: resolved.map {
                 SeriesMoveUndo.Resolved(event: $0.event, viaStandIn: $0.viaStandIn,
                                         calendarID: $0.event.calendar?.calendarIdentifier,

@@ -336,7 +336,10 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
         XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
         let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
-        let helper = String(source[helperFrom.upperBound...].prefix(1600))
+        let helperEnd = try XCTUnwrap(source.range(of: "\n    /// ", range: helperFrom.upperBound..<source.endIndex),
+                                      "the helper ends where the next doc comment starts")
+        let helper = String(source[helperFrom.upperBound..<helperEnd.lowerBound])
+        XCTAssertFalse(helper.contains("\n    func "), "the extraction stays inside the helper")
         XCTAssertTrue(helper.contains("freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"), "resolved as the move resolved")
         // The store facts reach the decision (`SeriesMoveUndoDecisionTests`) from the right objects.
         XCTAssertTrue(helper.contains("SeriesMoveUndo.decide("), "the decision is the tested seam")
@@ -344,7 +347,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("sourceID: $0.event.calendar?.source?.sourceIdentifier"), "the stand-in's account")
         XCTAssertTrue(helper.contains("calendarID: $0.event.calendar?.calendarIdentifier"), "the stand-in's calendar")
         XCTAssertTrue(helper.contains("sourceID: $0.source?.sourceIdentifier"), "the original calendar's account")
-        XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "the original calendar from the record")
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.restoringCalendarID(of: expected)"), "the original calendar from the record (tested seam)")
+        XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "resolved from that identifier")
+        XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
     }
 
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally

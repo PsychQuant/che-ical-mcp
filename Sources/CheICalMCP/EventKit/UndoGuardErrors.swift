@@ -133,8 +133,8 @@ extension UndoTargetChangedError: TrustedErrorMessage {}
 /// yet), or the record has no identifier. Kept like every not-found (#191; `undo-history-discard`
 /// spec); the message says how to drop the entry, and offers running it again only for an item
 /// that may still be syncing (round 2, findings 18 and 20). `seriesWithoutStandIn` (#369): the
-/// series object of a whole-series move record is still stored but does not refresh and has no
-/// stand-in; the message names the possible causes without asserting one (none was checked).
+/// recorded identifier of a whole-series move still resolves, but the series object does not
+/// refresh and has no stand-in; the message names the possible causes without asserting one (none was checked).
 /// `TrustedErrorMessage` on the same terms as `UndoTargetChangedError`.
 struct UndoTargetMissingError: LocalizedError, Sendable {
     let message: String
@@ -147,7 +147,7 @@ struct UndoTargetMissingError: LocalizedError, Sendable {
             ? "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id"
             : "ask the user whether to give up this redo; any new change clears the redo history"
         if hasIdentifier, seriesWithoutStandIn {
-            message = "Cannot \(verb.rawValue): the \(item) is still stored under its recorded identifier, but neither the series nor a remaining occurrence that could stand in for it can be read. It may have been deleted or moved, or every occurrence left may have been edited on its own. Nothing was written and \(kept): \(giveUp). Run \(verb.rawValue) again only if it may still be syncing."
+            message = "Cannot \(verb.rawValue): the recorded identifier of the \(item) still resolves, but neither the series nor an occurrence that could stand in for it can be read. It may have been deleted or moved, or every occurrence left may have been edited on its own. Nothing was written and \(kept): \(giveUp). Run \(verb.rawValue) again only if it may still be syncing."
         } else if hasIdentifier {
             message = "Cannot \(verb.rawValue): the \(item) was not found under its recorded identifier. Nothing was written and \(kept). If it was deleted or moved to another account, no retry can find it: \(giveUp). Run \(verb.rawValue) again only if it may still be syncing."
         } else {
