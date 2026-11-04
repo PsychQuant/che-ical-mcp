@@ -204,6 +204,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             \(type) access for \(checked).
             """
         }
+        // #362: under the status-aware rule (#343) an ssh context without full access re-execs,
+        // so macOS checks CheICalMCP's own grant there; the pre-#343 text below only fits a
+        // host that keeps its attribution (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed re-exec).
+        if isSSH, case .selfBinary? = attribution {
+            return sshSelfAttributedMessage(
+                type: type, isNonInteractive: isNonInteractive, deniedByStatus: deniedByStatus,
+                setupHint: setupHint)
+        }
         if isSSH && isNonInteractive {
             return """
             \(type) access denied (SSH + non-interactive session detected). \
@@ -344,6 +352,34 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             4. Restart Claude Desktop/Code
             """
         }
+    }
+
+    /// The SSH denial when macOS checks CheICalMCP's own grant (#362). The dialog cannot appear
+    /// over ssh, so the grant is created on the Mac itself. Whether sshd's Full Disk Access is
+    /// still needed once that grant exists was not measured (no ssh login was available in the
+    /// #362 run), so that step stays, last and with its warning.
+    static func sshSelfAttributedMessage(
+        type: String, isNonInteractive: Bool, deniedByStatus: Bool, setupHint: String
+    ) -> String {
+        let context = isNonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"
+        let restart = isNonInteractive
+            ? "restart both the SSH session and the non-interactive job (launchd service, CI runner, etc.)"
+            : "restart the SSH session"
+        let first = deniedByStatus
+            ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
+                + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
+            : "On the Mac itself (Terminal.app, not over SSH: the permission dialog cannot appear over SSH), "
+                + "run this binary's setup once: \(setupHint) — or switch CheICalMCP on in "
+                + "System Settings → Privacy & Security → \(type)"
+        return ([
+            "\(type) access denied (\(context)). \(ResponsibleProcessFormatter.advice(for: .selfBinary))",
+        ] + numbered([
+            first,
+            "Then \(restart)",
+            "If it is still denied over SSH after that, grant Full Disk Access to /usr/sbin/sshd: "
+                + "System Settings → Privacy & Security → Full Disk Access → add sshd "
+                + "(this gives sshd broad file access; only on a Mac you fully control)",
+        ])).joined(separator: "\n")
     }
 
     private static func numbered(_ steps: [String]) -> [String] {

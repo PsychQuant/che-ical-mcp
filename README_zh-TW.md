@@ -451,19 +451,21 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 ### SSH 存取
 
-macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**授予的。SSH session 跑在 `sshd` 底下，是不同的安全環境 — 因此在本機授予 Terminal 或 Claude Code 的權限**不會**延伸到 SSH。
+從 v1.23.0 起，SSH session 跟其他 host 一樣處理（狀態感知規則，[#343](https://github.com/PsychQuant/che-ical-mcp/issues/343)）：ssh 環境通常沒有自己的行事曆或提醒事項存取權限，所以 binary 會以自己為 responsible process 重新執行，macOS 檢查的是 **`CheICalMCP` 的授權**，也就是 `--setup` 建立的那一筆。在 ssh 裡執行 `CheICalMCP --print-tcc-path` 可以看到 macOS 檢查的是哪個程序（`TCC attribution`）。授權對話框無法在 SSH 裡出現，所以授權要在 Mac 本機上建立。
 
-**方法 A — 先在本機執行一次（建議）：**
-1. 在目標 Mac 上**本機**（非 SSH）執行一次 `CheICalMCP`
-2. TCC 對話框出現時授予行事曆和提醒事項存取權限
-3. 之後 SSH session 應能沿用該 binary 的授權
+**步驟 1 — 在本機建立 CheICalMCP 自己的授權（建議）：**
+1. 在目標 Mac 的 Terminal.app（**不是**透過 SSH）執行 `~/bin/CheICalMCP --setup`（或 `--print-tcc-path` 顯示的 `.mcpb` binary 路徑）
+2. 在行事曆與提醒事項對話框點**允許**（先前若按過「不允許」，改到系統設定 → 隱私權與安全性 → 行事曆／提醒事項把 CheICalMCP 打開）
+3. 重新建立 SSH 連線（以及從中啟動的非互動工作）
 
-**方法 B — 授予 sshd 完整磁碟存取權限：**
+**步驟 2 — 只有在 SSH 裡仍被拒時：授予 sshd 完整磁碟存取權限：**
 1. 打開**系統設定 → 隱私權與安全性 → 完整磁碟存取權限**
 2. 點 **+**，按 <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>，輸入 `/usr/sbin/sshd` 加入
 3. 重新建立 SSH 連線
 
-> ⚠️ 方法 B 會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的機器上使用。
+> ⚠️ 步驟 2 會授予 `sshd` 廣泛的檔案存取權限 — 請僅在完全由你控管的機器上使用。CheICalMCP 有了自己的授權之後是否仍需要這一步，目前還沒有實測（[#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)），所以保留作為備案。
+>
+> 設定 `CHE_ICAL_MCP_NO_DISCLAIM=1`（或重新執行失敗）時，ssh 環境保留自己的歸屬，情況同 v1.23.0 以前：macOS 檢查的是該環境的授權，本機的 `--setup` 不會建立它，步驟 2 是因應方式。
 
 ---
 

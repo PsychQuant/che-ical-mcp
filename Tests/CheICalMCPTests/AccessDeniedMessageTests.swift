@@ -281,6 +281,60 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertTrue(msg.contains("SSH session detected"))
     }
 
+    // MARK: - #362: the SSH text follows the attribution
+
+    private func ssh(_ attribution: ResponsibleHostKind?, nonInteractive: Bool = false,
+                     denied: Bool = false) -> String {
+        EventKitManager.accessDeniedMessage(
+            type: "Calendar", isSSH: true, isNonInteractive: nonInteractive,
+            isMCPB: false, deniedByStatus: denied, setupHint: hint, attribution: attribution)
+    }
+
+    /// Under the status-aware rule (#343) an ssh context without full access re-execs, so
+    /// macOS checks CheICalMCP's own grant: the text names it and gives the local `--setup`.
+    func testSSH_selfAttribution_namesCheICalMCPsOwnGrantAndTheLocalSetup() {
+        for nonInteractive in [false, true] {
+            let msg = ssh(.selfBinary, nonInteractive: nonInteractive)
+            XCTAssertTrue(msg.contains("SSH"), msg)
+            XCTAssertTrue(msg.contains("CheICalMCP's own grant"), msg)
+            XCTAssertTrue(msg.contains(hint), "the local --setup for this binary: \(msg)")
+            XCTAssertTrue(msg.contains("not over SSH"), msg)
+            XCTAssertTrue(msg.contains("System Settings → Privacy & Security → Calendar"), msg)
+            XCTAssertFalse(msg.contains("does not carry privacy permissions to SSH sessions"),
+                "the stale pre-#343 reason must not be given when CheICalMCP is checked: \(msg)")
+        }
+        XCTAssertTrue(ssh(.selfBinary, nonInteractive: true).contains("non-interactive job"))
+    }
+
+    /// Whether sshd's Full Disk Access is still needed with CheICalMCP's own grant was not
+    /// measured (no ssh login in the #362 run), so the step stays, as a last resort only.
+    func testSSH_selfAttribution_keepsTheSshdStepOnlyAsALastResort() {
+        let msg = ssh(.selfBinary)
+        XCTAssertTrue(msg.contains("Full Disk Access"), msg)
+        XCTAssertTrue(msg.contains("still denied"), msg)
+        XCTAssertTrue(msg.contains("broad file access"), "the existing warning stays: \(msg)")
+    }
+
+    func testSSH_selfAttributionAlreadyDenied_offersTheSwitch() {
+        let msg = ssh(.selfBinary, denied: true)
+        XCTAssertTrue(msg.contains("Don't Allow"), msg)
+        XCTAssertTrue(msg.contains("switch CheICalMCP on"), msg)
+    }
+
+    /// A host keeps its attribution over ssh (`CHE_ICAL_MCP_NO_DISCLAIM`, a failed re-exec):
+    /// the host steps stay as they were.
+    func testSSH_hostOrUnknownAttribution_keepsTheHostSteps() {
+        let hosts: [ResponsibleHostKind?] = [nil, .claudeCode(version: "2.1.309"),
+                                             .appBundle(name: "Visual Studio Code"), .otherExecutable(path: "/usr/sbin/sshd"), .unknown]
+        for host in hosts {
+            let msg = ssh(host)
+            XCTAssertTrue(msg.contains("SSH session detected"), msg)
+            XCTAssertTrue(msg.contains("Full Disk Access"), msg)
+            XCTAssertFalse(msg.contains("CheICalMCP's own grant"), msg)
+            XCTAssertTrue(ssh(host, nonInteractive: true).contains("SSH + non-interactive session detected"))
+        }
+    }
+
     // SSH takes precedence over deniedByStatus (an SSH denial is not the #154 signature).
     func testSSHPrecedesDeniedByStatus() {
         let msg = EventKitManager.accessDeniedMessage(

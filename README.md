@@ -484,19 +484,21 @@ Under a Claude Code **native install**, the real executable lives at a **version
 
 ### SSH Access
 
-macOS TCC (Transparency, Consent, and Control) grants privacy permissions **per-application**. SSH sessions run under `sshd`, which is a different security context — so permissions granted to Terminal or Claude Code locally do **not** carry over to SSH.
+From v1.23.0 an SSH session is handled like any other host ([the status-aware rule, #343](#claude-code-updates-rotate-the-host-side-grant-170)): an ssh context usually has no Calendar or Reminders access of its own, so the binary re-execs as its own responsible process and macOS checks the **`CheICalMCP` grant**, the one `--setup` creates. `CheICalMCP --print-tcc-path` run over ssh shows which process macOS checks (`TCC attribution`). The permission dialog cannot appear over SSH, so the grant has to be created on the Mac itself.
 
-**Workaround A — Run locally first (recommended):**
-1. Run `CheICalMCP` once on the target Mac **locally** (not over SSH)
-2. Grant Calendar and Reminders access when the TCC dialog appears
-3. SSH sessions should then inherit the grant for the `CheICalMCP` binary
+**Step 1 — Create CheICalMCP's own grant locally (recommended):**
+1. On the target Mac, in Terminal.app (**not** over SSH), run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path from `--print-tcc-path`)
+2. Click **Allow** on the Calendar and Reminders dialogs (if you pressed "Don't Allow" earlier, switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders instead)
+3. Restart the SSH session (and any non-interactive job started from it)
 
-**Workaround B — Grant Full Disk Access to sshd:**
+**Step 2 — only if it is still denied over SSH: grant Full Disk Access to sshd:**
 1. Open **System Settings → Privacy & Security → Full Disk Access**
 2. Click **+**, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>, type `/usr/sbin/sshd`, and add it
 3. Restart the SSH session
 
-> ⚠️ Workaround B grants `sshd` broad file access — only use this on machines you fully control.
+> ⚠️ Step 2 grants `sshd` broad file access — only use this on machines you fully control. Whether it is still needed once CheICalMCP's own grant exists has not been measured yet ([#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)), so it stays as the fallback.
+>
+> With `CHE_ICAL_MCP_NO_DISCLAIM=1` (or when the re-exec fails), the ssh context keeps its own attribution and the pre-v1.23.0 situation applies: the grant macOS checks is that context's, which a local `--setup` does not create, and Step 2 is the workaround.
 
 ### launchd / Automation
 

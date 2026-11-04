@@ -78,7 +78,10 @@ final class SetupCommandTests: XCTestCase {
         let error = EventKitError.accessDenied(type: "Calendar", isSSH: true, isNonInteractive: false)
         let message = error.errorDescription ?? ""
         XCTAssertTrue(message.contains("SSH"), "SSH error should mention SSH")
-        XCTAssertFalse(message.contains("--setup"), "SSH-only error should not mention --setup")
+        // #362: errorDescription reads the live attribution. When the test runner is its own
+        // responsible process the SSH text names CheICalMCP's grant and its local `--setup`
+        // (AccessDeniedMessageTests pins each attribution); every variant keeps the sshd step.
+        XCTAssertTrue(message.contains("Full Disk Access"), "every SSH variant keeps the sshd step")
     }
 
     func testAccessDeniedSSHAndLaunchdMessage() {
