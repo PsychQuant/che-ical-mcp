@@ -8,10 +8,25 @@ import Foundation
 /// - update with `occurrenceDate` and span this: a detached occurrence `occurrence-<seconds>` of the
 ///   series (`seriesIdentifier`); with span future: a new series `split-<id>`;
 /// - update of an id starting with `allday-`: the stored event is all-day, 2027-04-10 (host zone);
-/// - create titled `duplicate`: answered as a duplicate.
+/// - create titled `duplicate`: answered as a duplicate;
+/// - `occurrenceDateTimeZone`: answers `occurrenceZone` (#383) and records the identifier asked for;
+///   the identifier `denied` throws `accessDenied`. An occurrence edit (date given, not span all)
+///   reports the matched occurrence as starting at that date, in `occurrenceZone`.
 actor FakeEventWriteSource: EventWriteSource {
     private(set) var updates: [EventUpdateRequest] = []
     private(set) var creates: [EventCreateRequest] = []
+    private(set) var zoneLookups: [String] = []
+    private let occurrenceZone: TimeZone?
+
+    init(occurrenceZone: TimeZone? = nil) {
+        self.occurrenceZone = occurrenceZone
+    }
+
+    func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
+        zoneLookups.append(identifier)
+        if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
+        return occurrenceZone
+    }
 
     static let host = Calendar.gregorian(in: .current)
     static var storedStart: Date {
@@ -43,9 +58,13 @@ actor FakeEventWriteSource: EventWriteSource {
         let isAllDay = request.isAllDay ?? storedAllDay
         let start = request.startDate ?? Self.storedStart
         let end = request.endDate ?? Self.storedStart.addingTimeInterval(storedAllDay ? 86_399 : 3600)
-        return EventWriteValue(eventIdentifier: id, title: request.title ?? "Saved", isAllDay: isAllDay,
-                               startDate: isAllDay ? Self.host.startOfDay(for: start) : start, endDate: end,
-                               seriesIdentifier: seriesIdentifier)
+        var value = EventWriteValue(eventIdentifier: id, title: request.title ?? "Saved", isAllDay: isAllDay,
+                                    startDate: isAllDay ? Self.host.startOfDay(for: start) : start, endDate: end,
+                                    seriesIdentifier: seriesIdentifier)
+        if let occurrence = request.occurrenceDate, !request.applyToAll {
+            value.matchedOccurrence = MatchedOccurrence(start: occurrence, zone: occurrenceZone)
+        }
+        return value
     }
 
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue {

@@ -53,7 +53,7 @@
     },
     {
       "name": "list_events",
-      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 146,000 days, about 400 years)"
+      "description": "List calendar events in a date range with optional detail_level, fields, display_timezone, filtering, sorting, and limiting (any range is searched in full, up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "create_event",
@@ -61,7 +61,7 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
     },
     {
       "name": "delete_event",
@@ -89,11 +89,11 @@
     },
     {
       "name": "search_events",
-      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit (ranges up to 146,000 days, about 400 years)"
+      "description": "Search events by keyword(s) with AND/OR matching, optional detail_level, fields, display_timezone, and limit (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "list_events_quick",
-      "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit"
+      "description": "List events with quick time range shortcuts (today, tomorrow, this_week, etc.) with optional detail_level, fields, display_timezone, and limit; reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "create_events_batch",
@@ -101,7 +101,7 @@
     },
     {
       "name": "check_conflicts",
-      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years)"
+      "description": "Check for overlapping events in a time range with attendees/organizer (ranges up to 146,000 days, about 400 years); reports item_timezone (the event's own time zone, null when floating)"
     },
     {
       "name": "copy_event",
