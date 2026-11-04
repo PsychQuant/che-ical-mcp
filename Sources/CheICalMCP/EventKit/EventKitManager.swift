@@ -2007,9 +2007,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         /// #267 (PR #298 verify round 2): the duplicate found has a due with a time. A bare-date
         /// create matches a reminder stored at 00:00 of that day and leaves it as it is.
         var duplicateHasTime = false
-        /// #301: a created date-only reminder's `date_sync`, judged on the saved reminder
-        /// (`ReminderDateSync.confirmSaved`), as `update_reminder` reports it. Nil for a timed or
-        /// undated create and for a duplicate.
+        /// #301 / #308: a created reminder's `date_sync`, judged on the saved reminder
+        /// (`ReminderCreateWrite.readBack`), as `update_reminder` reports it, for a date-only and a
+        /// timed due. Nil for an undated create and for a duplicate.
         var dateSync: ReminderDateSync.Report? = nil
     }
 
@@ -2083,11 +2083,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         reminder.priority = priority
         reminder.calendar = calendar
 
-        var dayReport: ReminderDateSync.Report?
+        var dateReport: ReminderDateSync.Report?
         if case .day(let day)? = due {
             // #267: a date-only reminder. No alarms exist yet, so only the start and due are written.
             // #301: the report is judged on the saved reminder below.
-            dayReport = ReminderDateSync.setDueDay(reminder, to: day)
+            dateReport = ReminderDateSync.setDueDay(reminder, to: day)
         } else if case .timed(let due)? = due {
             // #134: populate dueDateComponents.timeZone so iCloud Web / macOS
             // Today-view render the time at the host's wall clock instead of
@@ -2098,7 +2098,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // contract is "always store with explicit timezone".
             // #299: built by the same function as `update_reminder`'s timed due, in the
             // Gregorian calendar, not the host's region calendar.
-            reminder.dueDateComponents = ReminderDateSync.timedDueComponents(for: due)
+            // #308: same write, and its report is judged on the saved reminder below.
+            dateReport = ReminderCreateWrite.writeTimedDue(reminder, components: ReminderDateSync.timedDueComponents(for: due))
         }
 
         // Add alarms
@@ -2127,12 +2128,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         let storeDiffers = try saveNewReminder(reminder, handler: "createReminder")
         markNeedsRefresh()
-        // #301: read the date-only create back, as `update_reminder` does. A date-only write never
-        // runs the fallback, so there is nothing to save or roll back.
-        var dateSync: ReminderDateSync.Report?
-        if let dayReport {
-            dateSync = ReminderDateSync.confirmSaved(reminder, report: dayReport, save: {}, reload: { reminder.refresh() }, rollback: {})
-        }
+        // #301 / #308: read every dated create back, as `update_reminder` does. A timed due that lost
+        // its time or zone runs the #237 fallback and saves the new reminder again; this happens
+        // before the result is built and the undo entry is recorded, so both see the re-read state.
+        let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport,
+                                                    save: { try eventStore.save(reminder, commit: true) },
+                                                    reload: { reminder.refresh() },
+                                                    rollback: { reminder.rollback() })
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
                                           dateSync: dateSync)
         let createdID = result.reminder.calendarItemIdentifier

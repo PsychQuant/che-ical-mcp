@@ -89,7 +89,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_reminders` | 列出提醒事項，支援篩選/排序/限制、標籤解析（v1.0.0） |
-| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267），回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301） |
+| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣） |
 | `update_reminder` | 更新提醒事項（含標籤、`clear_due_date`）（v1.3.0） |
 | `complete_reminder` | 標記為已完成/未完成 |
 | `delete_reminder` | 刪除提醒事項 |
