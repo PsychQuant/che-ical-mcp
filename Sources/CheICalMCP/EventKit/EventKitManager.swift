@@ -1178,7 +1178,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
     /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
-    /// `moveEvent`) both take it from here, so they cannot drift apart.
+    /// `moveEvent`) read the same field through here, so a code change cannot make them differ; a
+    /// zone edit landing between the lookup and the write still can (accepted, round 2).
     static func occurrenceZone(of event: EKEvent) -> TimeZone? {
         event.timeZone
     }
@@ -1188,11 +1189,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
     /// one series, and the first enumerated one is not necessarily the one asked for.
     func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
-        var calendar = Calendar.current
-        if let tz = timeZone { calendar.timeZone = tz }
-        let dayStart = calendar.startOfDay(for: date)
-        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return nil }
-        let predicate = eventStore.predicateForEvents(withStart: dayStart, end: dayEnd, calendars: nil)
+        guard let window = OccurrenceDay.window(containing: date, in: timeZone) else { return nil }
+        let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
 
         var target: EKEvent?
         eventStore.enumerateEvents(matching: predicate) { event, stop in

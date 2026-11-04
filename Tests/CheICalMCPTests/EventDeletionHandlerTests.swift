@@ -15,7 +15,7 @@ private actor DeletionFake: EventDeletionSource {
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
         lookups.append(identifier)
         if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
-        return TimeZone(identifier: "America/New_York")
+        return TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-12-06"))
     }
     func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws {
         deletes.append(Delete(identifier: identifier, span: span, occurrenceDate: occurrenceDate))
@@ -26,9 +26,10 @@ private actor DeletionFake: EventDeletionSource {
 }
 
 final class EventDeletionHandlerTests: XCTestCase {
-    /// New York midnight of Dec 6; with the host in Asia/Taipei a host-zone parse gives 11:00 on
-    /// Dec 5 in New York, the neighbouring day.
-    private let newYorkMidnight = ISO8601DateFormatter().date(from: "2026-12-06T00:00:00-05:00")
+    /// Midnight of Dec 6 in the event's zone (New York, or Tokyo on a host with New York's offset,
+    /// round 4); a host-zone parse gives another instant on any host.
+    private let newYorkMidnight: Date? = TestZones.midnight("2026-12-06",
+        in: TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-12-06")))
 
     private func delete(_ fake: DeletionFake, _ args: [String: Value]) async throws {
         let server = try await CheICalMCPServer(eventDeletionSource: fake)

@@ -14,21 +14,22 @@ final class OccurrenceDateInputTests: XCTestCase {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
-    private let newYork = TimeZone(identifier: "America/New_York")!
+    /// Named for the usual case; Asia/Tokyo when the host has New York's offset (round 4).
+    private let newYork = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-12-06"))
 
-    /// Host Asia/Taipei, event America/New_York: "2026-12-06" is midnight of Dec 6 in New York,
-    /// which in Taipei is already 13:00 that day; read in the host zone it would be Dec 5 11:00
-    /// in New York, the neighbouring day the delete then searched.
+    /// E.g. host Asia/Taipei, event America/New_York: "2026-12-06" is midnight of Dec 6 in New
+    /// York, which in Taipei is already 13:00 that day; read in the host zone it would be Dec 5
+    /// 11:00 in New York, the neighbouring day the delete then searched. The event zone is chosen
+    /// to differ from the host's (round 4), so the test discriminates on any host.
     func testADateOnlyValueIsReadInTheEventsZone() async throws {
         let date = try await OccurrenceDateInput.resolve("2026-12-06", iso: iso, span: "this") { self.newYork }
-        XCTAssertEqual(date, iso.date(from: "2026-12-06T00:00:00-05:00"))
-        let taipeiMidnight = try FlexibleDate.parse("2026-12-06", defaultTimezone: TimeZone(identifier: "Asia/Taipei"), iso: iso)
-        XCTAssertNotEqual(date, taipeiMidnight)
+        XCTAssertEqual(date, TestZones.midnight("2026-12-06", in: newYork))
+        XCTAssertNotEqual(date, try FlexibleDate.parse("2026-12-06", iso: iso), "differs from the host-zone reading")
     }
 
     func testADateTimeWithoutOffsetIsReadInTheEventsZone() async throws {
         let date = try await OccurrenceDateInput.resolve("2026-12-06T09:30:00", iso: iso, span: "this") { self.newYork }
-        XCTAssertEqual(date, iso.date(from: "2026-12-06T09:30:00-05:00"))
+        XCTAssertEqual(date, TestZones.midnight("2026-12-06", in: newYork).addingTimeInterval(9.5 * 3600))
     }
 
     /// No occurrence_date, or one with an explicit offset: the zone is not looked up, so no
@@ -50,7 +51,7 @@ final class OccurrenceDateInputTests: XCTestCase {
             var lookups = 0
             let date = try await OccurrenceDateInput.resolve("2026-12-06", iso: iso, span: span) { lookups += 1; return self.newYork }
             XCTAssertEqual(lookups, 1, span)
-            XCTAssertEqual(date, iso.date(from: "2026-12-06T00:00:00-05:00"), span)
+            XCTAssertEqual(date, TestZones.midnight("2026-12-06", in: newYork), span)
         }
     }
 

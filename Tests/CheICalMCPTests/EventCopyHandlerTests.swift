@@ -25,7 +25,7 @@ private actor CopyFake: EventCopySource {
 
     func eventTimeZone(identifier: String) async throws -> TimeZone? {
         if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
-        return identifier.hasPrefix("ny-") ? TimeZone(identifier: "America/New_York") : nil
+        return identifier.hasPrefix("ny-") ? TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21")) : nil
     }
 
     struct MoveCall: Equatable { let identifier: String; let occurrenceDate: Date?; let span: EventMovePolicy.Span }
@@ -279,10 +279,10 @@ final class EventCopyHandlerTests: XCTestCase {
         let server = try await CheICalMCPServer(eventCopySource: fake)
         _ = try await move(server, ["event_ids": .array([.string("ny-series")]),
                                     "occurrence_dates": .array([.string("2026-10-21")])])
-        var ny = Calendar(identifier: .gregorian)
-        ny.timeZone = TimeZone(identifier: "America/New_York")!
+        // Round 4: the fake's zone differs from the host's on any host (New York, or Tokyo).
+        let zone = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21"))
         let calls = await fake.moveCalls
-        XCTAssertEqual(calls.first?.occurrenceDate, ny.date(from: DateComponents(year: 2026, month: 10, day: 21)))
+        XCTAssertEqual(calls.first?.occurrenceDate, TestZones.midnight("2026-10-21", in: zone))
     }
 
     /// #270 round 3: an access error from the zone lookup reaches the caller before any move.

@@ -11,7 +11,8 @@ import Foundation
 /// - otherwise the lookup is called; an error from it (calendar access) is thrown before anything
 ///   is parsed, so the date is never read in the host zone instead. A nil zone keeps the host
 ///   zone: for an event not found, the write then reports not found (unless the event appeared
-///   in between); for an event with no zone set (all-day or floating), the search side also uses
+///   in between: then the date was read in the host zone and the search can land on the
+///   neighbouring day); for an event with no zone set (all-day or floating), the search side also uses
 ///   the host zone (`findOccurrence` with a nil zone), so both sides agree.
 /// A call without occurrence_date runs no access check, refresh or stand-in scan for it.
 enum OccurrenceDateInput {
