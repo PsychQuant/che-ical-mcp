@@ -309,6 +309,22 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #295 (coordinator applied the diagnosis default A, 2026-11-05): redo staying
+    /// instruction-only for creates, deletes, updates and moves is the design, not a gap, and both
+    /// places a client reads about `redo` say so. Choosing to replay writes later is a contract
+    /// change (Spectra), which this pin makes visible.
+    func testRedoDescriptionsSayInstructionOnlyIsTheDesign() throws {
+        let design = "does not replay a create, delete, update or move"
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "redo" }?.description ?? ""
+        let summary = entries.first { $0["name"] as? String == "redo" }?["description"] as? String ?? ""
+        for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+            XCTAssertTrue(text.contains(design) && text.contains("by design"), "\(place) redo: \(text)")
+        }
+    }
+
     /// PR #282 round 3, finding 4: the `undo` description and its manifest summary are edited by
     /// #242 (PR #277), #244 (PR #278) and #248 (PR #282), each one line, so a merge that drops one
     /// clause passes every other test. Each clause is pinned in both places a client reads it; the
