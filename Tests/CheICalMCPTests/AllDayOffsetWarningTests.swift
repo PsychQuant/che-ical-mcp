@@ -20,18 +20,34 @@ final class AllDayOffsetWarningTests: XCTestCase {
 
     // MARK: - written offset
 
-    func testWrittenOffsetIsReadFromTheSuffixOfAFullValue() {
-        XCTAssertEqual(AllDayOffsetWarning.writtenOffset("2027-04-11T23:59:59+07:00")?.secondsFromGMT(), 7 * 3600)
-        XCTAssertEqual(AllDayOffsetWarning.writtenOffset("2027-04-11T23:59:59-05:30")?.secondsFromGMT(), -(5 * 3600 + 1800))
-        XCTAssertEqual(AllDayOffsetWarning.writtenOffset("2027-04-11T23:59:59+0700")?.secondsFromGMT(), 7 * 3600)
-        XCTAssertEqual(AllDayOffsetWarning.writtenOffset("2027-04-11T23:59:59Z")?.secondsFromGMT(), 0)
-        XCTAssertEqual(AllDayOffsetWarning.writtenOffset("2027-04-11T23:59:59.250+07:00")?.secondsFromGMT(), 7 * 3600)
+    private func offset(_ text: String) throws -> Int? {
+        AllDayOffsetWarning.writtenOffset(text, parsed: try date(text, taipei))?.secondsFromGMT()
     }
 
-    func testAValueWithoutAnOffsetHasNone() {
-        for text in ["2027-04-11", "2027-04-11T23:59:59", "14:00", "14:00:00", "2027-04-11T23:59"] {
-            XCTAssertNil(AllDayOffsetWarning.writtenOffset(text), text)
+    /// The offset is what the server's parser applied, read back from the parsed instant, so every
+    /// form `ISO8601DateFormatter` accepts counts (verify round 2: `+07`, `UTC`, `GMT+7`, `z`).
+    func testWrittenOffsetIsTheOneTheParserApplied() throws {
+        let cases: [(String, Int)] = [
+            ("2027-04-11T23:59:59+07:00", 7 * 3600), ("2027-04-11T23:59:59-05:30", -(5 * 3600 + 1800)),
+            ("2027-04-11T23:59:59+0700", 7 * 3600), ("2027-04-11T23:59:59+07", 7 * 3600),
+            ("2027-04-11T23:59:59Z", 0), ("2027-04-11T23:59:59z", 0), ("2027-04-11T23:59:59UTC", 0),
+            ("2027-04-11T23:59:59GMT+7", 7 * 3600), ("2027-04-11T23:59:59GMT+07:00", 7 * 3600),
+        ]
+        for (text, seconds) in cases {
+            XCTAssertEqual(try offset(text), seconds, text)
         }
+    }
+
+    func testAValueWithoutAnOffsetHasNone() throws {
+        for text in ["2027-04-11", "2027-04-11T23:59:59", "14:00", "14:00:00"] {
+            XCTAssertNil(try offset(text), text)
+        }
+    }
+
+    /// A `UTC`-suffixed end moves the day like `Z` does.
+    func testAUTCSuffixWarnsLikeZ() throws {
+        XCTAssertEqual(try warnings(start: "2027-04-10", end: "2027-04-11T20:00:00UTC"),
+                       [.init(field: "end_time", writtenDay: "2027-04-11", hostDay: "2027-04-12")])
     }
 
     // MARK: - warnings
@@ -130,7 +146,7 @@ final class AllDayOffsetWarningTests: XCTestCase {
             XCTAssertEqual(warning.suggestedValues.count, 2)
             let first = try date(start, taipei)
             for value in warning.suggestedValues {
-                XCTAssertNil(AllDayOffsetWarning.writtenOffset(value), value)
+                XCTAssertNil(try offset(value), value)
                 let resent = try date(value, taipei)
                 let created = try AllDayRange.normalize(start: first, end: resent, calendar: taipei)
                 XCTAssertEqual(dayString(created.end), warning.writtenDay, "create with \(value)")

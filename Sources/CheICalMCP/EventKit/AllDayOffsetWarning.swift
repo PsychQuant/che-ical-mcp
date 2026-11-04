@@ -49,19 +49,20 @@ enum AllDayOffsetWarning {
         }
     }
 
-    /// The offset written at the end of a full ISO 8601 value (`Z`, `±hh:mm`, `±hhmm`), or nil when
-    /// the value has none (a date, a local date-time, a time).
-    static func writtenOffset(_ text: String) -> TimeZone? {
-        guard let timeStart = text.firstIndex(of: "T") else { return nil }
-        let time = text[text.index(after: timeStart)...]
-        if time.hasSuffix("Z") || time.hasSuffix("z") { return TimeZone(secondsFromGMT: 0) }
-        guard let match = time.range(of: #"[+-][0-9]{2}:?[0-9]{2}$"#, options: .regularExpression) else { return nil }
-        let suffix = time[match]
-        let sign = suffix.first == "-" ? -1 : 1
-        let digits = suffix.dropFirst().filter(\.isNumber)
-        guard digits.count == 4, let hours = Int(digits.prefix(2)), let minutes = Int(digits.suffix(2)) else { return nil }
-        return TimeZone(secondsFromGMT: sign * (hours * 3600 + minutes * 60))
+    /// The offset a full ISO 8601 value was parsed with, or nil when the value has none (a date,
+    /// a local date-time, a time). Read from the parsed instant (the wall clock of the value's
+    /// first 19 characters, taken as UTC, minus the instant), so every suffix the server's parser
+    /// accepts counts: `Z`, `z`, `±hh:mm`, `±hhmm`, `±hh`, `UTC`, `GMT+7` (PR #387 verify round 2).
+    /// - Parameter parsed: the date the server parsed from `text`.
+    static func writtenOffset(_ text: String, parsed: Date) -> TimeZone? {
+        // A local date-time is exactly the 19-character wall clock; anything after it is an offset.
+        guard text.count > wallClockLength, text.contains("T"),
+              let wall = FlexibleDate.formatter("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone(secondsFromGMT: 0)!)
+                .date(from: String(text.prefix(wallClockLength))) else { return nil }
+        return TimeZone(secondsFromGMT: Int(wall.timeIntervalSince(parsed).rounded()))
     }
+
+    private static let wallClockLength = 19
 
     /// - Parameters:
     ///   - start, end: the dates of the all-day range the call produced (for `update_event`, the
@@ -74,13 +75,13 @@ enum AllDayOffsetWarning {
         let hostFirst = day(start, host)
         var writtenFirst = hostFirst
         var result: [Warning] = []
-        if let startText, let zone = writtenOffset(startText) {
+        if let startText, let zone = writtenOffset(startText, parsed: start) {
             writtenFirst = day(start, Calendar.gregorian(in: zone))
             if writtenFirst != hostFirst {
                 result.append(Warning(field: "start_time", writtenDay: writtenFirst, hostDay: hostFirst))
             }
         }
-        if let endText, let zone = writtenOffset(endText) {
+        if let endText, let zone = writtenOffset(endText, parsed: end) {
             let writtenLast = lastDay(end, Calendar.gregorian(in: zone), firstDay: writtenFirst)
             let hostLast = lastDay(end, host, firstDay: hostFirst)
             if writtenLast != hostLast {
