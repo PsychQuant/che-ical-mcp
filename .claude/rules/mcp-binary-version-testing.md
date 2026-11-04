@@ -248,13 +248,20 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
    同標題、`is_completed: false` 的那一筆（完成的那一筆會變成另一個 id），確認它的到期日剛好晚一週、時間相同，
    再看它的 `alarms` 仍是 `minutes_before: 15`（「鬧鐘跟著每一次重複移動」目前只是 EventKit 的預期語意）。
 
+7. `alarms_note` 的數目：建帶時間到期日與 `[15]` 的提醒 → `update_reminder` 帶 `clear_due_date: true`（不帶
+   `alarms_minutes_offsets`）→ 回應的 `alarms_note` 說留下 1 個，與 `list_reminders` 讀回的 `alarms` 相符（這條路徑
+   存檔後不重讀，數目是記憶體裡的值）。再建一個，用只給日期的 `due_date` 做一次，同樣比對。
+
 **需要使用者在場的兩步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 
-7. 這一步用自己的提醒（第 1 步的提醒在第 3 步已清掉相對鬧鐘、第 5 步的會被 undo 刪掉，都不能用）：
-   `create_reminder` 帶時間的到期日與 `[15]`，`list_reminders` 讀回 `minutes_before: 15` → 打開 Reminders.app
+8. 這一步用自己的提醒（第 1 步的提醒在第 3 步已清掉相對鬧鐘、第 5 步的會被 undo 刪掉，都不能用）：
+   `create_reminder` 帶**至少一天後**的時間到期日與 `[15]`（遠的到期日，它的鬧鐘才不會在第 9 步等待時響起被算錯；
+   看完就刪掉它），`list_reminders` 讀回 `minutes_before: 15` → 打開 Reminders.app
    看它：顯示的日期與時間要是**這一步給的到期時間**，不是「到期減 15 分鐘」（#227 / #235 看過 Reminders.app
    會把鬧鐘時間當成提醒的日期顯示）。
-8. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。
+9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。到期當下若又出一次通知，
+   **記錄下來、不算失敗**：Reminders 對有到期時間的提醒本來就會在到期時通知，這一步要驗的只是那個提前 2 分鐘
+   的相對鬧鐘有沒有響；到期前 2 分鐘沒有通知才算失敗。
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 

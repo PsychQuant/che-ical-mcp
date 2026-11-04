@@ -261,6 +261,13 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         timed.dueDateComponents = DateComponents(year: 2026, month: 12, day: 11, hour: 9, minute: 0)
         timed.addAlarm(EKAlarm(relativeOffset: -900))
         XCTAssertNil(ReminderRelativeAlarms.leftoverNote(saved: timed, request: ReminderUpdateRequest(identifier: "r", due: .timed(absolute))))
+        // PR #415 verify round 3: a timed due_date that the store keeps only as a day (the #237
+        // fallback that did not take) is judged by what was saved, not by what was asked.
+        let lostTime = reminder()
+        lostTime.dueDateComponents = DateComponents(year: 2026, month: 12, day: 11)
+        lostTime.addAlarm(EKAlarm(relativeOffset: -900))
+        XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: lostTime, request: ReminderUpdateRequest(identifier: "r", due: .timed(absolute))),
+                       ReminderRelativeAlarms.leftoverDateOnlyNote(1))
     }
 
     /// The store path builds the note through that helper, from the saved reminder and the request.
@@ -268,6 +275,8 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
         XCTAssertEqual(code.components(separatedBy: "leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request)").count - 1, 1)
-        XCTAssertFalse(code.contains("ReminderRelativeAlarms.leftoverNote( requested:"), "no second, hand-wired computation")
+        // PR #415 verify round 3: compared without whitespace, so a line break cannot hide a second call.
+        let compact = code.filter { !$0.isWhitespace }
+        XCTAssertFalse(compact.contains("ReminderRelativeAlarms.leftoverNote(requested:"), "no second, hand-wired computation")
     }
 }
