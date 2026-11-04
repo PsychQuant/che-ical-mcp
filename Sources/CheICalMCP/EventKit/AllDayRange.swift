@@ -60,14 +60,27 @@ enum AllDayRange {
             return UpdatePlan(start: storedStart, end: storedEnd, isAllDay: isAllDay, datesToWrite: nil)
         }
 
+        // #373: turning an all-day event into a timed one needs both times. With one of them the
+        // other came from the stored all-day pair: a start-only call kept the stored length (a
+        // one-day event became a timed event of 23 h 59 min 59 s), an end-only call kept 00:00.
+        let toTimedHalfGiven = flipsFlag && !isAllDay && ((newStart == nil) != (newEnd == nil))
+        if toTimedHalfGiven {
+            throw EventKitError.invalidTimeRange(message:
+                "Only \(newStart != nil ? "start_time" : "end_time") was given. " + allDayToTimedHint)
+        }
+
         let start = newStart ?? storedStart
         let end: Date
         if let newEnd {
             end = newEnd
-        } else if let newStart, isAllDay, storedAllDay {
-            // An all-day event moved by its start keeps its number of days, not its seconds. The
-            // stored pair is read with the same rule (#364 verify round 1): an end some other client
-            // or source stored as an exact next midnight is a boundary, not a day.
+        } else if let newStart, isAllDay {
+            // An event that is all-day after the update and is moved by its start keeps the number of
+            // days its stored range touches, timed or not (#374: a timed event turned all-day used
+            // to keep its elapsed time and then round, so the day count depended on the new start's
+            // time of day; the flag-only call already counted the days the timed range touched). The
+            // stored pair is read with the same rule (#364 verify round 1): an end stored as an exact
+            // next midnight is a boundary, not a day. A timed pair is read in `calendar`'s zone
+            // (the host zone), like the flag-only path (#190 floating days).
             let stored = (try? normalize(start: storedStart, end: storedEnd, calendar: calendar))
                 ?? (start: calendar.startOfDay(for: storedStart), end: storedEnd)
             // Counted from calendar dates, not elapsed time: a day that starts at 01:00 (DST at
@@ -92,13 +105,16 @@ enum AllDayRange {
             start: start, end: end, isAllDay: false,
             hint: datesGiven
                 ? "When changing the date, provide both start_time and end_time."
-                : "Turning an all-day event into a timed one needs start_time and end_time for the timed event.")
+                : allDayToTimedHint)
         // A flag-only `all_day: false` writes no dates (#364 verify round 3): it has no new dates to
         // write, and writing the stored ones back while the event is still all-day is the order in
         // which EventKit read a midnight end as one more day. A call that brings timed dates still
         // writes them before the flag; that order predates #364 (see the device check on PR #371).
         return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: datesGiven ? (start, end) : nil)
     }
+
+    private static let allDayToTimedHint =
+        "Turning an all-day event into a timed one needs start_time and end_time for the timed event."
 
     /// Noon of the day `date` falls on: two noons are whole days apart however long the days in
     /// between are, and noon exists on every day (DST changes happen at night).

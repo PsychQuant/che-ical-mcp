@@ -173,3 +173,32 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     的 session MCP 上重做一次。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
+
+## Release gate：timed → all-day 只帶 start_time 的天數（#374）
+
+#374 的規則（只帶 `start_time` 把 timed 事件改成 all-day 時，保留 timed 範圍碰到的天數）只有
+`AllDayRange.planUpdate` 的單元測試；寫入的是 #364 裝置檢查已涵蓋的 normalized all-day pair，
+所以這是確認、不是新的前提。**出 #374 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`
+（stateless，見上表），只在名稱含 `#374` 的拋棄式日曆上：
+
+1. 建一個 timed 事件 `22:00` 到隔天 `02:00`；
+2. `update_event` 帶 `all_day: true, start_time: <某個日期>`（不帶 `end_time`）；
+3. `list_events` 讀回：是兩天的 all-day 事件（第一天 `00:00` 到第二天 `23:59:59`）。
+
+結果記在 #374。結束後刪掉拋棄式日曆。
+
+## Release gate：update_event 存檔失敗後的 rollback（#373）
+
+#373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
+實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
+之後），只用名稱含 `#373` 的拋棄式日曆：
+
+1. 在拋棄式日曆建一個一次性事件；
+2. 對它做一次 EventKit 會拒絕的 `update_event`（例如帶新標題，加上 `calendar_name` 指向一個唯讀日曆，
+   像訂閱的節日日曆），確認回傳錯誤；
+3. 在同一個 session 對同一個事件做一次只改 `notes` 的 `update_event`；
+4. `list_events` 讀回：標題仍是原本的標題、仍在拋棄式日曆，只有 notes 改了。
+
+結果記在 #373 與 #274。結束後刪掉拋棄式日曆。
