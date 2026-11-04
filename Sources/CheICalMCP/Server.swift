@@ -2902,10 +2902,11 @@ class CheICalMCPServer {
                     } catch {
                         preview.append([
                             "event_id": id,
+                            // #335 item 6: the batch's own words for a refused series id.
                             "error": EventKitErrorSanitizer.writeFailureLog(
                                 handler: "deleteEventsBatch",
                                 identifier: id,
-                                error: error
+                                error: EventKitManager.batchRowError(error)
                             )
                         ])
                     }

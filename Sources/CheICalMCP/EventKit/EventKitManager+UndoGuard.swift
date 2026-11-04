@@ -75,9 +75,10 @@ extension EventKitManager {
                          : EventKitError.eventNotFound(identifier: id)
     }
 
-    /// `notFoundError(id:)` as the short reason a batch row reports.
+    /// `notFoundError(id:)` as the short reason a batch row reports, in the batch's own words
+    /// (`batchRowReason`, #335 item 6).
     func notFoundReason(id: String) -> String {
-        if case EventKitError.standInRefused(let reason) = notFoundError(id: id) { return reason }
+        if case EventKitError.standInRefused(let reason) = notFoundError(id: id) { return Self.batchRowReason(reason) }
         return "Event not found"
     }
 
