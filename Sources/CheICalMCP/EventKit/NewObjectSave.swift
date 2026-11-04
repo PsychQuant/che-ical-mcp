@@ -47,9 +47,14 @@ import EventKit
 ///   defensive discard without probe evidence". The cost is the other way round: an item whose
 ///   save did not commit stays pending and the next save of any tool writes it, a retry's own save
 ///   included, with no undo record; and an item that can never commit may make later saves in this
-///   process fail until a restart (not tried). The caller gets `EventKitError.saveUnchecked`, which
-///   says what was kept, that a check right away may not see it, not to create it again until
-///   another save or a restart has settled it, and that undo will not remove it. A restore
+///   process fail until a restart (not tried). The saving store itself may see the pending item
+///   (only a new store was seen not to): `list_calendars` may list a kept reminder list and a
+///   retried `create_calendar` report it as existing (`isDuplicate`), with nothing saved (not
+///   tried); a kept list is not left out of that duplicate check (PR #421 round 2: it would need
+///   the manager to track kept items, for a branch never seen on device), and the message says so.
+///   The caller gets `EventKitError.saveUnchecked`, which says what was kept, that a check right
+///   away proves nothing, not to create it again until another save or a restart has settled it,
+///   and that undo will not remove it. A restore
 ///   (`discard`; the undo of `delete_reminder`) removes the object as before #289: its undo record
 ///   is kept on failure, so a retry restores the reminder, while a kept pending copy would be
 ///   written by the next save and a retried undo would make a second one. The nil branch was not
@@ -83,8 +88,9 @@ import EventKit
 /// - a store made after the failure did not find the failed object (54 of 54), while the store
 ///   that saved it did. Such a store found each normally saved reminder and list (10 of 10,
 ///   about 30 ms). A store made while about ten others that have read their sources are alive in
-///   the process has no sources and finds nothing: `freshStoreFinds` then gives no answer, and the
-///   object is kept (`unchecked`, #289). The check's own stores are released (the counts above).
+///   the process has no sources and finds nothing: `freshStoreFinds` then gives no answer. Before
+///   #289 the object was then discarded; now a create keeps it (`uncheckedKept`) and a restore
+///   removes it (`unchecked`, `NoAnswer`). The check's own stores are released (the counts above).
 ///
 /// The comparison, on device, by run:
 /// - 2026-10-08 05:22, before any comparison (identifier only): 4 objects saved through this

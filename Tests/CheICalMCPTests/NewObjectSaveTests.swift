@@ -271,10 +271,11 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(NewObjectSave.Fields(list: list), .init(["title": "l", "account": ""]))
     }
 
-    /// #289: no answer (the new store had no sources) is no evidence either way, so the object is
-    /// kept, not removed: a removal of a save that did commit would delete it at the next write by
-    /// any tool, with no undo record. `unchecked` is reported, and the caller gets an error that
-    /// says the item may be saved and to check before trying again.
+    /// #289: on a create (`onNoAnswer: .keep`), no answer (the new store had no sources) is no
+    /// evidence either way, so the object is kept, not removed: a removal of a save that did commit
+    /// would delete it at the next write by any tool, with no undo record. `uncheckedKept` is
+    /// reported, and the caller gets `saveUnchecked`, which says what was kept and when a check
+    /// can tell (`testTheUncheckedErrorSaysWhatWasKeptAndHowToCheck`).
     func testAFailedSaveThatCouldNotBeCheckedIsKeptAndReported() {
         let result = run(committed: nil, onNoAnswer: .keep, discard: { XCTFail("not removed without evidence") })
         XCTAssertEqual(result.calls, ["save", "committed", "report uncheckedKept"])
@@ -294,12 +295,27 @@ final class NewObjectSaveTests: XCTestCase {
         let text = (result.error as? LocalizedError)?.errorDescription ?? ""
         XCTAssertTrue(result.error is TrustedErrorMessage, "\(String(describing: result.error))")
         for phrase in ["(eventkit_error_1)", "could not be read to check", "was not removed", "may already be saved",
-                       "stays pending", "the save of a retry", "may not see an item that is still pending",
-                       "Do not create it again", "no undo entry", "undo does not remove it"] {
+                       "stays pending", "leave two", "may fail until it restarts", "dropped if the server restarts",
+                       "proves nothing", "may be reported as existing", "Do not create it again",
+                       "delete it by hand"] {
             XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
         }
+        XCTAssertEqual(text.components(separatedBy: "(not tried)").count - 1, 3,
+                       "the fail-until-restart cost, the drop on restart and what this server lists are marked not tried: \(text)")
         XCTAssertFalse(text.contains("Private"), text)
         XCTAssertFalse(text.contains("discard_id"), "a create records no undo entry: \(text)")
+    }
+
+    /// PR #421 round 2: in `create_reminders_batch` the other rows of the same call do record undo
+    /// entries, so the text speaks of this item, says a later row's save writes it, and says that
+    /// undo removes the newest recorded operation (which may be a later row), not this item.
+    func testTheUncheckedErrorIsRightInsideABatch() {
+        let text = (run(committed: nil, onNoAnswer: .keep).error as? LocalizedError)?.errorDescription ?? ""
+        for phrase in ["a later row of the same batch", "This item has no undo entry",
+                       "undo removes the newest recorded operation, not this item"] {
+            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        }
+        XCTAssertFalse(text.contains("this call recorded none") || text.contains("undo would undo the operation before it"), text)
     }
 
     /// PR #421 round 1: on the restore path (delete-undo, single and batch member) the undo record

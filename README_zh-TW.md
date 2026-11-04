@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
+| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
@@ -91,7 +91,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_reminders` | 列出提醒事項，支援篩選/排序/限制、標籤解析（v1.0.0） |
-| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣）。存檔回報錯誤、但提醒其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
+| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣）。存檔回報錯誤、但提醒其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；save 失敗又無法確認是否已存時，提醒事項會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `update_reminder` | 更新提醒事項（含標籤、`clear_due_date`）（v1.3.0） |
 | `complete_reminder` | 標記為已完成/未完成 |
 | `delete_reminder` | 刪除提醒事項 |
@@ -125,7 +125,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `move_events_batch` | 原地把事件搬到另一個日曆，保留循環規則與與會者；循環事件用 `span` / `occurrence_dates`（#226） |
 | `delete_events_batch` | 依 ID 或日期範圍刪除事件，支援預覽模式（v1.0.0） |
 | `find_duplicate_events` | 跨日曆查找重複事件（v0.5.0） |
-| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261） |
+| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261）；save 失敗又無法確認的列會保留，其錯誤說明再建之前要怎麼確認（#289） |
 | `delete_reminders_batch` | 批次刪除多個提醒事項（v0.9.0）；一次 `undo` 會重建這次刪除的提醒事項（#243） |
 
 **搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
