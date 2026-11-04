@@ -316,6 +316,42 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         }
     }
 
+    /// #369: the undo lookup resolves the stand-in exactly as the move did (no edited-before
+    /// refusal, the cross-account refusal kept), and only behind the series-move predicate, so a
+    /// create-undo never compares its series snapshot with a middle occurrence.
+    func testTheUndoLookupResolvesTheStandInOnlyForASeriesMove() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func verifiedHistoryTarget("))
+        let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
+        let body = String(source[from.upperBound..<to.lowerBound])
+        let gate = try XCTUnwrap(body.range(of: "if operation.resolvesThroughStandIn {"), "the stand-in sits behind the predicate")
+        let close = try XCTUnwrap(body.range(of: "\n                    }\n", range: gate.upperBound..<body.endIndex))
+        let gated = String(body[gate.upperBound..<close.lowerBound])
+        XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(expected, verb: verb)"), "the helper is called inside the gate")
+        let outside = String(body[..<gate.lowerBound]) + String(body[close.upperBound...])
+        XCTAssertFalse(outside.contains("seriesMoveUndoTarget("), "and nowhere else in the event arm")
+        XCTAssertTrue(outside.contains("return storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
+        XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
+        XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
+        let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
+        let helperEnd = try XCTUnwrap(source.range(of: "\n    /// ", range: helperFrom.upperBound..<source.endIndex),
+                                      "the helper ends where the next doc comment starts")
+        let helper = String(source[helperFrom.upperBound..<helperEnd.lowerBound])
+        XCTAssertFalse(helper.contains("\n    func "), "the extraction stays inside the helper")
+        XCTAssertTrue(helper.contains("freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"), "resolved as the move resolved")
+        // The store facts reach the decision (`SeriesMoveUndoDecisionTests`) from the right objects.
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.decide("), "the decision is the tested seam")
+        XCTAssertTrue(helper.contains("viaStandIn: $0.viaStandIn"), "the resolution's own origin")
+        XCTAssertTrue(helper.contains("sourceID: $0.event.calendar?.source?.sourceIdentifier"), "the stand-in's account")
+        XCTAssertTrue(helper.contains("calendarID: $0.event.calendar?.calendarIdentifier"), "the stand-in's calendar")
+        XCTAssertTrue(helper.contains("sourceID: $0.source?.sourceIdentifier"), "the original calendar's account")
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.restoringCalendarID(of: expected)"), "the original calendar from the record (tested seam)")
+        XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "resolved from that identifier")
+        XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
+    }
+
     /// Judged by its slot, not by where it was moved: moved later than the stand-in but originally
     /// before it still blocks; moved earlier but originally after it does not.
     func testTheEditedOccurrenceIsJudgedByItsSlot() {

@@ -85,3 +85,17 @@ extension UndoOperation {
         return UnrecoverableUndoError(message: "Cannot undo the \(action) of the event '\(undoShownTitle(title))': \(reason). Undo does not write to recurring events, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. \(remedy)")
     }
 }
+
+extension UndoOperation {
+    /// #369: whether the undo of this record resolves its event through the stand-in (#326) when
+    /// the series object does not refresh, as the forward write did. Only a whole-series move:
+    /// `moveEvent` resolved the series through the stand-in and saved it with `.futureEvents`, and
+    /// the undo makes the same save back, comparing only the calendar. Every other record keeps
+    /// the plain lookup: a create-undo compares a snapshot of the series object, which a middle
+    /// occurrence never matches (and its delete would start from that occurrence); a one-off move
+    /// or update must not reach an occurrence of a series at all.
+    var resolvesThroughStandIn: Bool {
+        if case .moveEvent(_, _, _, _, true) = self { return true }
+        return false
+    }
+}
