@@ -109,6 +109,9 @@ extension EventKitManager {
         }
         switch expected.kind {
         case .event:
+            // #269 verify: as the reminder case checks Reminders access, so that a store without
+            // access is reported as that, not as a missing event or calendar.
+            try await ensureCalendarAccess()
             let deletesSeries: Bool
             if case .createEvent = operation, verb == .undo { deletesSeries = true } else { deletesSeries = false }
             return try UndoTargetCheck.check(
@@ -166,8 +169,12 @@ extension EventKitManager {
         // A recorded calendar that no longer resolves gives nil here; `decide` refuses a stand-in
         // still in the destination with the record's refusal (#269), and the move arm refuses the
         // series object the same way.
+        // A miss is read once more after the view is marked stale (#269 verify, the batch order).
         let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap { restoring in
-            eventStore.calendar(withIdentifier: restoring)
+            EventRestoreCalendar.lookup(read: {
+                refreshIfNeeded()
+                return eventStore.calendar(withIdentifier: restoring)
+            }, invalidate: { markNeedsRefresh() })
         }
         return try SeriesMoveUndo.decide(
             expected, verb: verb,
@@ -230,9 +237,8 @@ extension EventKitManager {
                 var eventCalendars: [EKCalendar] = []
                 var reminderLists: [EKCalendar] = []
                 if needsCalendars {
-                    try await self.ensureCalendarAccess()
-                    self.refreshIfNeeded()
-                    eventCalendars = self.eventStore.calendars(for: .event)
+                    // The entry the single event undo reads its calendars through (#269).
+                    eventCalendars = try await self.eventCalendarsForRestore()
                 }
                 if needsLists {
                     // The entry the reminder restore reads its lists through (#242).

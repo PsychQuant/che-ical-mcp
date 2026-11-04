@@ -273,7 +273,7 @@ extension UndoOperation {
             return .event(id: id, title: title, state: created, restoring: nil)
         case .updateEvent(let id, let oldSnapshot, let saved):
             return .event(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
-        case .moveEvent(let id, let fromCalendarIdentifier, let toCalendarIdentifier, let title, _, _, _):
+        case .moveEvent(let id, let fromCalendarIdentifier, let toCalendarIdentifier, let title, _):
             return .eventCalendar(id: id, title: title, calendarIdentifier: toCalendarIdentifier,
                                   restoringCalendarIdentifier: fromCalendarIdentifier)
         case .createReminder(let id, let title, let created):

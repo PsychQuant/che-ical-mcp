@@ -39,7 +39,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
             .createEvent(id: "e", title: "Standup", created: event),
             .deleteEvent(snapshot: event),
             .updateEvent(id: "e", oldSnapshot: event, saved: event),
-            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil),
+            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "r", title: "Pay rent", created: reminder),
             .deleteReminder(snapshot: reminder),
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),

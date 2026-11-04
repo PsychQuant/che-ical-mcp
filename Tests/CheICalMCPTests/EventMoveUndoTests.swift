@@ -6,13 +6,13 @@ import XCTest
 /// not by delete + recreate (which is what the copy path records, #208).
 final class EventMoveUndoTests: XCTestCase {
     func testMoveRecordDescribesTheMoveAndSanitizesTheTitle() {
-        let op = UndoOperation.moveEvent(id: "new-id", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup\u{1B}[31m", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+        let op = UndoOperation.moveEvent(id: "new-id", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup\u{1B}[31m", isSeries: false)
         XCTAssertTrue(op.description.hasPrefix("Moved event: "))
         XCTAssertFalse(op.description.contains("\u{1B}"), "titles reach undo_history verbatim; they must be sanitized")
     }
 
     func testMoveRecordIsNotACompletionRecord() {
-        let op = UndoOperation.moveEvent(id: "new-id", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+        let op = UndoOperation.moveEvent(id: "new-id", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true)
         XCTAssertNil(op.completionWrite(undo: true, now: Date()))
         XCTAssertNil(op.completionWrite(undo: false, now: Date()))
     }
@@ -22,7 +22,7 @@ final class EventMoveUndoTests: XCTestCase {
 /// did (#326); every other record keeps the plain lookup.
 final class EventMoveUndoStandInTests: XCTestCase {
     func testAWholeSeriesMoveResolvesThroughTheStandIn() {
-        let op = UndoOperation.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+        let op = UndoOperation.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true)
         XCTAssertTrue(op.resolvesThroughStandIn)
     }
 
@@ -38,11 +38,11 @@ final class EventMoveUndoStandInTests: XCTestCase {
         event.endDate = event.startDate.addingTimeInterval(3600)
         let snapshot = EventSnapshot(from: event)
         let others: [UndoOperation] = [
-            .moveEvent(id: "E", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil),
+            .moveEvent(id: "E", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: false),
             .createEvent(id: "S", title: "Standup", created: snapshot),
             .updateEvent(id: "E", oldSnapshot: snapshot, saved: snapshot),
             .deleteFollowingOccurrences(title: "Standup"),
-            .batch([.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true, fromCalendarTitle: "Original", fromCalendarAccount: nil)]),
+            .batch([.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B", title: "Standup", isSeries: true)]),
         ]
         for op in others {
             XCTAssertFalse(op.resolvesThroughStandIn, op.description)
@@ -158,10 +158,10 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
             XCTAssertTrue(error is MissingOriginal, "\(error)")
         }
         let move = UndoOperation.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B",
-                                           title: "Standup", isSeries: true, fromCalendarTitle: "Work", fromCalendarAccount: nil)
+                                           title: "Standup", isSeries: true)
         XCTAssertThrowsError(try decide(resolved: standIn(), original: nil, missingOriginal: { move.moveBackCalendarMissing })) { error in
-            guard case EventKitError.undoCalendarMissing(let calendar, _, _, _, .moveBack) = error else { return XCTFail("\(error)") }
-            XCTAssertEqual(calendar, "Work")
+            guard case EventKitError.undoCalendarMissing(let event, _, .moveBack) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(event, "Standup")
             XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         }
     }

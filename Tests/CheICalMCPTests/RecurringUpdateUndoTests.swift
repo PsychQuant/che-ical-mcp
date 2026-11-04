@@ -67,7 +67,7 @@ final class RecurringUpdateUndoTests: XCTestCase {
     /// one-off event refuses the same way when the event repeats or is an edited occurrence now;
     /// a series move (`isSeries`) is undone for the whole series by design (#226).
     func testUndoOfAOneOffMoveRefusesAnEventThatRepeatsNow() throws {
-        let move = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Review", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+        let move = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Review", isSeries: false)
         XCTAssertNil(move.recurringTargetRefusal(hasRecurrenceRules: false, isDetached: false))
         for (rules, detached, reason) in [(true, false, "repeats now"), (false, true, "edited occurrence")] {
             let error = try XCTUnwrap(move.recurringTargetRefusal(hasRecurrenceRules: rules, isDetached: detached))
@@ -79,7 +79,7 @@ final class RecurringUpdateUndoTests: XCTestCase {
             XCTAssertTrue(message.contains("move it back") && message.contains("move_events_batch") && message.contains("calendar_name"),
                           "a move is reverted by moving it back (round 7): \(message)")
         }
-        let seriesMove = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: true, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+        let seriesMove = UndoOperation.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: true)
         XCTAssertNil(seriesMove.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: false), "a series move is undone as a series")
     }
 

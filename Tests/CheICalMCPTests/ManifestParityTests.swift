@@ -274,7 +274,7 @@ final class ManifestParityTests: XCTestCase {
              "A batch undo that fails part-way keeps only the items not yet restored.",
              "a batch undo that fails part-way keeps only the items not yet restored;"),
             ("#269: an event's recorded calendar not found, the record kept",
-             "The undo of a delete_event, an update_event or a move of an event is refused the same way, its record kept, when the calendar it restores into is not found under its recorded identifier; the error names that calendar",
+             "The undo of a delete_event, an update_event or a move of an event is refused the same way, its record kept, when the calendar it restores into is not found under its recorded identifier (checked after Calendar access and a refreshed re-read); the error names the event, not the calendar or its account",
              "likewise when an event's recorded calendar is not found"),
             ("#269: giving up a delete_event undo loses the event",
              "giving up the undo of a delete_event loses the deleted event",

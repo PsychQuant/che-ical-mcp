@@ -78,7 +78,7 @@ final class UndoRecordPostStateTests: XCTestCase {
             (.createEvent(id: "e", title: title, created: event), "Created event: \(shown)"),
             (.deleteEvent(snapshot: event), "Deleted event: \(shown)"),
             (.updateEvent(id: "e", oldSnapshot: event, saved: event), "Updated event: \(shown)"),
-            (.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil), "Moved event: \(shown)"),
+            (.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false), "Moved event: \(shown)"),
             (.createReminder(id: "r", title: title, created: reminder), "Created reminder: \(shown)"),
             (.deleteReminder(snapshot: reminder), "Deleted reminder: \(shown)"),
             (.updateReminder(id: "r", oldSnapshot: reminder, saved: reminder), "Updated reminder: \(shown)"),
@@ -94,7 +94,7 @@ final class UndoRecordPostStateTests: XCTestCase {
     func testMoveEventUndoComparesOnlyTheCalendarItWasMovedTo() throws {
         let event = makeEvent(title: "Standup")
         let op = UndoOperation.moveEvent(id: "moved", fromCalendarIdentifier: "from",
-                                         toCalendarIdentifier: calendar.calendarIdentifier, title: "Standup", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil)
+                                         toCalendarIdentifier: calendar.calendarIdentifier, title: "Standup", isSeries: false)
 
         let expected = try XCTUnwrap(op.undoPostState)
         guard case .eventCalendar(let id, _, let calendarIdentifier, let restoring) = expected else { return XCTFail("\(expected)") }
@@ -198,7 +198,7 @@ final class UndoRecordPostStateTests: XCTestCase {
         let messageOnlyRedo: [UndoOperation] = [
             .createEvent(id: "e", title: "E", created: event),
             .updateEvent(id: "e", oldSnapshot: event, saved: event),
-            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "E", isSeries: false, fromCalendarTitle: "Original", fromCalendarAccount: nil),
+            .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "E", isSeries: false),
             .createReminder(id: "r", title: "R", created: reminder),
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
         ]

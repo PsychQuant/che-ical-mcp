@@ -139,16 +139,32 @@ struct EventSnapshot {
         self.availability = availability ?? event.availability
     }
     /// Names can be duplicated across accounts; history restores only its original calendar.
-    /// #269: a missing calendar throws `EventKitError.undoCalendarMissing`, named with this
-    /// snapshot's calendar title, account and event title, as `ReminderSnapshot.resolveList` names
-    /// a missing list (#242); `kind` decides what its message says giving the undo up loses.
+    /// #269: a missing calendar throws `EventKitError.undoCalendarMissing` (`calendarMissing`), which
+    /// names the event only, as `ReminderSnapshot.resolveList` names only the reminder (#290);
+    /// `kind` decides what its message says giving the undo up loses. A single undo reaches this
+    /// through `EventKitManager.restoreCalendar(for:kind:)`, which checks access and re-reads a
+    /// stale view first.
     func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String, for kind: EventRestoreKind) throws -> T {
-        guard !calendarIdentifier.isEmpty,
-              let calendar = calendars.first(where: { identifier($0) == calendarIdentifier }) else {
-            throw EventKitError.undoCalendarMissing(calendar: calendarTitle, account: calendarSource, event: title,
-                                                    hasIdentifier: !calendarIdentifier.isEmpty, kind: kind)
+        try Self.calendar(recorded: calendarIdentifier, in: calendars, identifier: identifier) {
+            Self.calendarMissing(recordedIdentifier: calendarIdentifier, event: title, for: kind)
+        }
+    }
+
+    /// The match `resolveCalendar` and the move-undo make, on any recorded identifier: only a
+    /// non-empty identifier equal to it matches, so an empty one (an event recorded without a
+    /// calendar, #286) matches no calendar, not even one whose identifier is empty too.
+    static func calendar<T>(recorded: String, in calendars: [T], identifier: (T) -> String,
+                            orThrow missing: () -> Error) throws -> T {
+        guard !recorded.isEmpty, let calendar = calendars.first(where: { identifier($0) == recorded }) else {
+            throw missing()
         }
         return calendar
+    }
+
+    /// #269: the refusal for a calendar that is not found under `recordedIdentifier`; an empty one
+    /// gives the no-identifier wording (no retry, blocked until given up).
+    static func calendarMissing(recordedIdentifier: String, event: String, for kind: EventRestoreKind) -> EventKitError {
+        .undoCalendarMissing(event: event, hasIdentifier: !recordedIdentifier.isEmpty, kind: kind)
     }
 
     /// Writes every recorded field to `event`, with `calendar` already resolved from
@@ -356,12 +372,8 @@ enum UndoOperation {
     case completeRecurringReminder(before: ReminderCompletionSnapshot, requestedCompleted: Bool, redoCompletionDate: Date?)
     /// #226: an in-place calendar change. `id` is the identifier *after* the move (a move across
     /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
-    /// the event is still in `toCalendarIdentifier` (#236). #269: `fromCalendarTitle` and
-    /// `fromCalendarAccount` (its account's title) are what the refusal names when that calendar is
-    /// missing at undo time (`moveBackCalendarMissing`); no default, so a recording site cannot
-    /// leave them out. The stack is in memory only, so no record predates them.
-    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool,
-                   fromCalendarTitle: String, fromCalendarAccount: String?)
+    /// the event is still in `toCalendarIdentifier` (#236).
+    case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -391,7 +403,7 @@ enum UndoOperation {
             return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
             return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
-        case .moveEvent(_, _, _, let title, _, _, _):
+        case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(undoVisibleTitle(title))"
         case .createReminder(_, let title, _):
             return "Created reminder: \(undoVisibleTitle(title))"
@@ -710,7 +722,7 @@ extension UndoOperation {
         case .updateRecurringEvent(_, let title, _):
             // Its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
-        case .moveEvent(_, _, _, let title, _, _, _):
+        case .moveEvent(_, _, _, let title, _):
             return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + nothingWritten
         case .createReminder(_, let title, _):
             return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten

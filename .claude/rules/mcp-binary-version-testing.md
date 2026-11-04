@@ -172,17 +172,21 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）；出版前在重啟後
     的 session MCP 上重做一次。
 12. **還原目標日曆不見了（#269）**：拋棄式日曆（名稱含 `#269`）。session MCP：
-    (a) 在日曆 A 建一次性事件 → `delete_event` → 刪掉日曆 A → `undo`：要以「Cannot undo the deletion of an event:
-        the calendar it was in when it was deleted (calendar '…#269…', account '…', event '…') was not found under its
-        recorded identifier.」拒絕，什麼都沒寫、`undo_history` 最上面仍是「Deleted event」，最後一句是「To go on, ask the
-        user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its
-        id.」，不點名任何其他工具 → `undo` 帶該筆的 `discard_id` 移除它；
+    (a) 在日曆 A 建一次性事件 → `delete_event` → 刪掉日曆 A → `undo`：要以「Cannot undo the deletion of an event
+        (event '…'): the calendar it was in when it was deleted is not available (deleted, or its account turned off or
+        still syncing); it was not found under its recorded identifier.」拒絕，訊息裡**沒有日曆名稱也沒有帳號**（#37、
+        #290），什麼都沒寫、`undo_history` 最上面仍是「Deleted event」，最後一句是「To go on, ask the user whether to give
+        up this undo; if they agree, read undo_history and call undo with discard_id set to its id.」，不點名任何其他工具
+        → `undo` 帶該筆的 `discard_id` 移除它；
     (b) 日曆 C、D：在 C 建一次性事件 → `move_events_batch` 搬到 D → 刪掉日曆 C → `undo`：「Cannot undo the move of an
-        event: the calendar it was moved from (calendar '…C…', …)」，事件仍在 D → `discard_id` 移除；
+        event (event '…'): the calendar it was moved from is not available …」，事件仍在 D → `discard_id` 移除；
     (c) 經 stand-in 的整串搬移（第 10 步的 (a)(b)）之後刪掉 A → `undo`：同 (b) 的訊息（`SeriesMoveUndo.decide`
         那一處），系列仍在 B。
+    (d) 對照組（日曆還在）：在拋棄式日曆建一次性事件 → `delete_event` → `undo`：要成功還原（這次讀日曆會先做 Calendar
+        access 檢查，日曆在就不會被判成不見）。
     若回的仍是「Calendar not found: <identifier>」，就是測試表面還是舊 binary。2026-11-04 已在 iCloud 用 repo 內
-    build 的 binary 做過 (a)(b)(c)：(a)(b) 各在一個 stdio process 裡，(c) 的系列建立與刪第一個場次用 `--cli`、搬移與
+    build 的 binary 做過 (a)(b)(c)（PR #389 第一輪 verify 前的版本，當時的訊息還帶日曆名與帳號；第一輪修正後的
+    裝置結果見 #269 的 Verify-fix）：(a)(b) 各在一個 stdio process 裡，(c) 的系列建立與刪第一個場次用 `--cli`、搬移與
     undo 在一個 stdio process 裡；三者都回上面的訊息、`discard_id` 都移除了該筆，跨 process 的 `list_events` 確認事件
     仍在搬去的日曆。(c) 從訊息分不出是 `decide` 還是 move arm 丟的（兩處同一個訊息）。update-undo 的那一臂沒有在裝置上做。
     出版前在重啟後的 session MCP 上重做一次。
