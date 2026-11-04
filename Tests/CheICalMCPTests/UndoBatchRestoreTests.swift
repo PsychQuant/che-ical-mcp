@@ -453,6 +453,21 @@ final class UndoBatchRestoreTests: XCTestCase {
             }
         }
 
+        // #323 (PR #406): the part-way text names what the restored members did, from their outcomes,
+        // next to the failed item and whether it can have been written.
+        for (error, written) in [(SaveFailed.failed as Error, true),
+                                 (EventKitError.undoCalendarMissing(event: "E", hasIdentifier: true, kind: .recreateDeleted), false)] {
+            let failure = UndoOperation.batchUndoFailure(members: [deleted("E"), occurrence("O")],
+                                                         interrupted: .init(completed: 1, underlying: error),
+                                                         events: [.occurrenceOneOff(notCarriedOver: ["absolute_alarms"])],
+                                                         describe: { _ in "eventkit_error_1" })
+            let composed = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+            XCTAssertTrue(composed.message.contains("For the items restored: Not carried over: absolute_alarms"), composed.message)
+            XCTAssertEqual(composed.message.contains("The save of 'E' may have written it anyway"), written, composed.message)
+            XCTAssertEqual(composed.message.contains("'E' failed before anything of it was written"), !written, composed.message)
+            XCTAssertTrue(composed.message.hasSuffix(": eventkit_error_1"), composed.message)
+        }
+
         // A nested batch's remainder has no one title: the sentence stays general.
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
         let nested = try partial([.batch([deleted("Y")])], inner)
