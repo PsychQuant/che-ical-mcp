@@ -37,7 +37,7 @@ func safeDateFromComponents(_ components: DateComponents?) -> Date? {
 /// MCP Server for EventKit integration
 class CheICalMCPServer {
     private let server: Server
-    private let transport: StdioTransport
+    private let transport: DrainingStdioTransport
     private let eventKitManager = EventKitManager.shared
     // #31: narrow `EventKitManaging` surface injected at init time so tests
     // can supply `FakeEventKitManager` for the cleanup handler without
@@ -107,7 +107,8 @@ class CheICalMCPServer {
             capabilities: .init(tools: .init())
         )
 
-        transport = StdioTransport()
+        // #345: answer requests already read before exiting on stdin EOF.
+        transport = DrainingStdioTransport()
 
         // Register handlers
         await registerHandlers()
