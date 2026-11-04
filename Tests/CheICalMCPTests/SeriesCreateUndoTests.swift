@@ -162,6 +162,12 @@ final class SeriesCreateUndoTests: XCTestCase {
             of: op, verb: .undo, stored: true, recurring: true,
             standInStart: { created.startDate }) as? UndoTargetMissingError)
         XCTAssertFalse(same.message.contains("first occurrence"), same.message)
+        // Round-3 LOW: an earlier stand-in is the other half of "does not start later"
+        // (`start != recorded` would otherwise survive).
+        let earlier = try XCTUnwrap(SeriesCreateUndo.missingError(
+            of: op, verb: .undo, stored: true, recurring: true,
+            standInStart: { created.startDate.addingTimeInterval(-60) }) as? UndoTargetMissingError)
+        XCTAssertFalse(earlier.message.contains("first occurrence"), earlier.message)
     }
 
     func testTheTitleIsShownAsOtherUndoErrorsShowIt() throws {

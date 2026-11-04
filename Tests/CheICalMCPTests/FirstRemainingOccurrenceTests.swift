@@ -376,8 +376,15 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)"),
                       "any remaining occurrence, edited-before or not")
         XCTAssertTrue(helper.contains("standInStart: {"), "the stand-in's start goes to the seam")
-        XCTAssertTrue(helper.contains("?.startDate"), "the stand-in's own start")
+        // Round-3 LOWs: the closure body exactly (the scan stays lazy inside it and returns the
+        // stand-in's own start), and no spelling of the stale object's start anywhere in the helper.
+        XCTAssertTrue(helper.contains(
+            "standInStart: {\n                guard let stored else { return nil }\n                return firstRemainingOccurrence(of: stored, id: id, refuseWhenEditedBefore: false)?.startDate\n            })"),
+            "the lazy closure returns the stand-in's own start")
+        XCTAssertEqual(helper.components(separatedBy: "firstRemainingOccurrence(").count, 2,
+                       "the scan runs only inside the closure")
         XCTAssertFalse(helper.contains("stored.startDate"), "compared with the record's start in the seam, not the stale object's")
+        XCTAssertFalse(helper.contains("stored?.startDate"), "no other spelling of the stale object's start")
         XCTAssertTrue(helper.contains("stored: EKEvent?) -> Error? {"), "the helper returns an error, never an event")
         XCTAssertFalse(helper.contains("return standIn\n"), "the stand-in is not a target")
     }

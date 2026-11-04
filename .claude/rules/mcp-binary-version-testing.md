@@ -125,9 +125,11 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    另在該來源的兩個拋棄式日曆做第 10 步（經 stand-in 的整串搬移之 undo，#369）：它靠搬移後舊的系列物件
    回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「still resolves, but neither the series nor an
    occurrence that could stand in for it can be read」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
-   也在該來源的拋棄式日曆做第 11 步（#377）：它靠舊的系列物件回報原本的開始時間、剩下的場次開始得比它晚，
-   這只在 iCloud 看過（2026-11-04）。若 undo 以「although an occurrence of it can still be read」的中性訊息拒絕，
-   就是該來源的舊物件開始時間跟著變了，要回報。
+   也在該來源的拋棄式日曆做第 11 步（#377）：它靠舊的系列物件 refresh 失敗、仍掃得到最早剩下的場次，且該場次
+   的開始時間晚於 create 紀錄的開始時間（`created.startDate`），這只在 iCloud 看過（2026-11-04）。若 undo 以
+   「although an occurrence of it can still be read」的中性訊息拒絕，就是該來源最早剩下的（未單獨修改的）場次
+   沒有晚於紀錄的開始時間，要回報。已知限制（低可能性，不修）：第一個場次還在但被單獨改過、而系列物件又因別的
+   原因 refresh 失敗時，掃描會跳過它（detached），訊息會把它說成「第一個場次被刪」。
 10. **經 stand-in 的整串搬移之 undo（#369）**：系列的建立與刪第一個場次要用 `--cli`（各自獨立的 process）做，
     不要在 session MCP 上做，讓這兩個寫入不進 session 的 undo stack，最上面兩筆才會是 (b) 列的那兩筆。拋棄式日曆 A、B（同一 iCloud 帳號）：
     (a) `--cli`：在 A 建每週 5 次的系列 → `--cli`：`delete_event` span `this` 刪第一個場次；
