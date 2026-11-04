@@ -45,6 +45,8 @@ protocol EventFormattingSource {
     var structuredLocationFragment: [String: Any]? { get }
     var attendeesFragment: [[String: Any]]? { get }
     var organizerFragment: [String: Any]? { get }
+    /// #240: the time-based alarms (location alarms left out); `formatEventDict` sorts them.
+    var alarmsFragment: [ReminderReadSnapshot.Alarm] { get }
 }
 
 // MARK: - EKEvent conformance
@@ -89,6 +91,8 @@ extension EKEvent: EventFormattingSource {
     var organizerFragment: [String: Any]? {
         formatAttendeesInfo(self).organizer
     }
+
+    var alarmsFragment: [ReminderReadSnapshot.Alarm] { AlarmReadOutput.timeBased(alarms) }
 }
 
 // MARK: - Free recurrence-rule formatter
