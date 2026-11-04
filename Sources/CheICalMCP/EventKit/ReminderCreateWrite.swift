@@ -26,16 +26,28 @@ enum ReminderCreateWrite {
     /// Judges a created reminder after its save, or returns nil for a create without a due date
     /// (nothing to judge; it is not re-read). `save` writes to the store, `reload` re-reads the
     /// reminder (`EKObject.refresh()`), `rollback` discards unsaved changes (`EKObject.rollback()`).
+    ///
     /// A timed due that read back without its time or zone runs the #237 fallback, which saves the
-    /// new reminder a second time; a failed second save is rolled back and reported as
-    /// `aligned: false`, never thrown, since the create itself is saved. A date-only due never runs
-    /// the fallback. The caller judges before it records the undo entry, so the entry holds what a
-    /// fallback save left.
-    static func readBack(_ reminder: EKReminder, report: ReminderDateSync.Report?, save: () throws -> Void,
-                         reload: () -> Bool, rollback: () -> Void,
+    /// reminder a second time. A failed second save calls `rollback` and is reported as
+    /// `aligned: false`, never thrown, since the create itself is saved. Whether `rollback()`
+    /// drops the pending change of an object that is already in the store has not been seen on a
+    /// device (#274 open question; release-gate step in `.claude/rules/mcp-binary-version-testing.md`).
+    /// A date-only due never runs the fallback.
+    ///
+    /// `storeDiffers` is what `saveNewReminder` returned. Non-empty means the first save threw and a
+    /// new store found the reminder with fields held differently (#261): the fallback is then not
+    /// run (`fallback: false`), since saving again an object whose first save threw is the #261
+    /// hazard and a second save would also leave the reported `store_differs` stale; the read-back
+    /// is judged as it is. An empty list covers both a save that returned and one that threw but was
+    /// found as written; `saveNewReminder` does not tell them apart.
+    ///
+    /// The caller judges before it records the undo entry, so the entry holds what a fallback save
+    /// left.
+    static func readBack(_ reminder: EKReminder, report: ReminderDateSync.Report?, storeDiffers: [String],
+                         save: () throws -> Void, reload: () -> Bool, rollback: () -> Void,
                          log: (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) -> ReminderDateSync.Report? {
         guard let report else { return nil }
         return ReminderDateSync.confirmSaved(reminder, report: report, save: save, reload: reload, rollback: rollback,
-                                             tool: "create_reminder", log: log)
+                                             tool: "create_reminder", fallback: storeDiffers.isEmpty, log: log)
     }
 }

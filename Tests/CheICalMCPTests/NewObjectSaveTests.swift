@@ -461,11 +461,15 @@ final class NewObjectSaveTests: XCTestCase {
             let name = construction.groups[1]
             var body = segment(of: code, at: construction.start)
             XCTAssertEqual(try matches(#"try saveNewReminder\( ?\#(name) ?,"#, in: body).count, 1, body)
-            // #308: the one bare save allowed is the read-back's #237 fallback in `createReminder`,
-            // which saves a reminder `saveNewReminder` has already saved (a second save of an
-            // existing object; `confirmSaved` rolls it back when it fails). It must come after
-            // `saveNewReminder`, and is taken out before the count.
-            let fallback = #"ReminderCreateWrite\.readBack\( ?\#(name) ?, ?report: ?\w+ ?, ?save: ?\{ ?try \w+\.save\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#
+            // #308: the one bare save allowed is the read-back's #237 fallback in `createReminder`.
+            // It runs after `saveNewReminder` returned, so on a reminder the store has taken in. That
+            // is a second save of an existing object only when the first save returned: after a
+            // save that threw but was found (#261), `readBack` is handed `storeDiffers` and skips the
+            // fallback when it is non-empty; one that threw and was found as written returns the
+            // same empty list as a save that returned, so the two cannot be told apart here. It must
+            // come after `saveNewReminder` and be passed `storeDiffers`, and is taken out before the
+            // count.
+            let fallback = #"ReminderCreateWrite\.readBack\( ?\#(name) ?, ?report: ?\w+ ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try \w+\.save\( ?\#(name) ?, ?commit: ?true ?\) ?\}"#
             if let range = body.range(of: fallback, options: .regularExpression) {
                 let first = try XCTUnwrap(body.range(of: #"try saveNewReminder\( ?\#(name) ?,"#, options: .regularExpression))
                 XCTAssertLessThan(first.lowerBound, range.lowerBound, "the fallback saves only after saveNewReminder")
@@ -488,7 +492,7 @@ final class NewObjectSaveTests: XCTestCase {
         // between (`ReminderCreateWrite.readBack`, which does not throw; a timed one may save again
         // through the #237 fallback), and its report rides with the result.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.

@@ -1804,7 +1804,8 @@ class CheICalMCPServer {
         if !tags.isEmpty {
             fields["tags"] = tags
         }
-        // #301: a date-only create says whether the saved reminder reads back as asked.
+        // #301 / #308: a dated create (date-only or timed) says whether the saved reminder reads
+        // back as asked.
         if let dateSync = result.dateSync { fields["date_sync"] = dateSync.dictionary }
         fields.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
         return try actionResult(fields)
@@ -2065,7 +2066,7 @@ class CheICalMCPServer {
                     entry["skipped"] = true
                     if let note = Self.dateOnlyDuplicateNote(due: batchDue, result: result) { entry["note"] = note }
                 } else if let dateSync = result.dateSync {
-                    entry["date_sync"] = dateSync.dictionary   // #301
+                    entry["date_sync"] = dateSync.dictionary   // #301 / #308: a dated create
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
                 results.append(entry)

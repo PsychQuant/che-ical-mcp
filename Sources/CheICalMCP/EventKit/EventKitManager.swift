@@ -2129,9 +2129,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let storeDiffers = try saveNewReminder(reminder, handler: "createReminder")
         markNeedsRefresh()
         // #301 / #308: read every dated create back, as `update_reminder` does. A timed due that lost
-        // its time or zone runs the #237 fallback and saves the new reminder again; this happens
+        // its time or zone runs the #237 fallback and saves the new reminder again, unless the first
+        // save threw and the store holds fields differently (`storeDiffers`, #261). This happens
         // before the result is built and the undo entry is recorded, so both see the re-read state.
-        let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport,
+        let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers,
                                                     save: { try eventStore.save(reminder, commit: true) },
                                                     reload: { reminder.refresh() },
                                                     rollback: { reminder.rollback() })

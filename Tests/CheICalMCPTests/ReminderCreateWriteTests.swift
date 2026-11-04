@@ -59,7 +59,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         var reloads = 0
 
         let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
-            reminder, report: report,
+            reminder, report: report, storeDiffers: [],
             save: { XCTFail("no second save") }, reload: { reloads += 1; return true },
             rollback: { XCTFail("nothing to roll back") }, log: { XCTFail("no fallback: \($0)") }))
 
@@ -77,7 +77,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         var logged: [String] = []
 
         let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
-            reminder, report: report,
+            reminder, report: report, storeDiffers: [],
             save: { saves += 1 },
             reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) }; return true },
             rollback: { XCTFail("nothing to roll back") }, log: { logged.append($0) }))
@@ -99,7 +99,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         var logged: [String] = []
 
         let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
-            reminder, report: report,
+            reminder, report: report, storeDiffers: [],
             save: { throw NSError(domain: "test", code: 1) },
             reload: { self.dropZone(reminder); return true },
             rollback: { rolledBack = true }, log: { logged.append($0) }))
@@ -115,7 +115,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         let report = ReminderCreateWrite.writeTimedDue(reminder, components: nineInNewYork())
 
         let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
-            reminder, report: report,
+            reminder, report: report, storeDiffers: [],
             save: { XCTFail("nothing written on state that was not re-read") }, reload: { false },
             rollback: {}, log: { _ in }))
 
@@ -128,9 +128,43 @@ final class ReminderCreateWriteTests: XCTestCase {
         let report = ReminderDateSync.setDueDay(reminder, to: DateComponents(year: 2026, month: 11, day: 20))
 
         let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
-            reminder, report: report,
+            reminder, report: report, storeDiffers: [],
             save: { XCTFail("a date-only write never runs the fallback") }, reload: { true },
             rollback: { XCTFail("nothing to roll back") }, log: { XCTFail("\($0)") }))
+
+        XCTAssertEqual(confirmed.aligned, true)
+    }
+
+    /// Verify round 1: when the first save threw and a new store found the reminder with fields
+    /// held differently (`store_differs` non-empty), the fallback is not run: no second save of an
+    /// object whose first save threw (#261), nothing written, and the read-back judged as it is.
+    func testAThrewButCommittedCreateWithDifferingFieldsIsNotSavedAgain() throws {
+        let reminder = newReminder()
+        let report = ReminderCreateWrite.writeTimedDue(reminder, components: nineInNewYork())
+        var logged: [String] = []
+
+        let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
+            reminder, report: report, storeDiffers: ["due time zone"],
+            save: { XCTFail("no second save after a first save that threw") },
+            reload: { self.dropZone(reminder); return true },
+            rollback: { XCTFail("nothing written, nothing to roll back") }, log: { logged.append($0) }))
+
+        XCTAssertEqual(confirmed.aligned, false)
+        XCTAssertNil(reminder.dueDateComponents?.timeZone, "the read-back is left as it is")
+        XCTAssertEqual(logged.count, 1)
+        XCTAssertTrue(logged.allSatisfy { $0.hasPrefix("create_reminder: ") && $0.contains("not written again") }, "\(logged)")
+    }
+
+    /// With differing fields but a due that read back as written, there is nothing to fall back
+    /// from: the read-back is judged as usual.
+    func testAThrewButCommittedCreateWhoseDueReadsBackIsJudgedAsUsual() throws {
+        let reminder = newReminder()
+        let report = ReminderCreateWrite.writeTimedDue(reminder, components: nineInNewYork())
+
+        let confirmed = try XCTUnwrap(ReminderCreateWrite.readBack(
+            reminder, report: report, storeDiffers: ["title"],
+            save: { XCTFail("no second save") }, reload: { true },
+            rollback: { XCTFail() }, log: { XCTFail("\($0)") }))
 
         XCTAssertEqual(confirmed.aligned, true)
     }
@@ -139,7 +173,7 @@ final class ReminderCreateWriteTests: XCTestCase {
     func testAnUndatedCreateIsNotReadBack() {
         let reminder = newReminder()
 
-        XCTAssertNil(ReminderCreateWrite.readBack(reminder, report: nil,
+        XCTAssertNil(ReminderCreateWrite.readBack(reminder, report: nil, storeDiffers: [],
                                                   save: { XCTFail() }, reload: { XCTFail(); return true },
                                                   rollback: { XCTFail() }, log: { _ in XCTFail() }))
     }
@@ -153,7 +187,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = SourceScan.collapsingWhitespace(body)
         XCTAssertTrue(flat.contains("dateReport = ReminderCreateWrite.writeTimedDue(reminder, components: ReminderDateSync.timedDueComponents(for: due))"), flat)
-        XCTAssertTrue(flat.contains("let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { reminder.rollback() })"), flat)
+        XCTAssertTrue(flat.contains("let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { reminder.rollback() })"), flat)
         let save = try XCTUnwrap(flat.range(of: "saveNewReminder("))
         let readBack = try XCTUnwrap(flat.range(of: "ReminderCreateWrite.readBack("))
         let snapshot = try XCTUnwrap(flat.range(of: "ReminderWriteSnapshot(from: reminder), isDuplicate: false"))

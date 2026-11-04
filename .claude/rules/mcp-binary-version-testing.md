@@ -202,3 +202,24 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 4. `list_events` 讀回：標題仍是原本的標題、仍在拋棄式日曆，只有 notes 改了。
 
 結果記在 #373 與 #274。結束後刪掉拋棄式日曆。
+
+## Release gate：create_reminder fallback 第二次存檔失敗後的 rollback（#308）
+
+#308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
+掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
+`reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
+`rollback` 有被呼叫；`rollback()` 是否真的丟掉一筆已在 store 的提醒事項上待存的改動，**沒有在
+裝置上看過**——這正是 #274 對 reminder 尚未回答的問題，兩者用同一個探測就能一起回答。
+
+前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
+讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
+的那個版本打 tag 之前**：
+
+1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
+   `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
+   `create_reminder: the saved due date read back without its time or zone` 這行。
+2. 沒有這樣的來源時，這一步不能在裝置上做：在 #274 的 reminder 探測（`update_reminder` 存檔失敗後
+   同一個 session 的下一次寫入）做完之前，把 #308 的 fallback rollback 視為未驗證，release note
+   照 CHANGELOG 的寫法說明，不寫成已確認。
+
+結果記在 #308 與 #274。結束後刪掉拋棄式清單。
