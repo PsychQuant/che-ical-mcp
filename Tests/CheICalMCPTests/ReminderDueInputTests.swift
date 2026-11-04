@@ -167,7 +167,7 @@ final class ReminderDueInputTests: XCTestCase {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: source))
         let flat = SourceScan.collapsingWhitespace(body)
-        XCTAssertTrue(flat.contains("if case .day(let day)? = due { dayReport = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due {"), flat)
+        XCTAssertTrue(flat.contains("if case .day(let day)? = due { dateReport = ReminderDateSync.setDueDay(reminder, to: day) } else if case .timed(let due)? = due { dateReport = ReminderCreateWrite.writeTimedDue(reminder, components: ReminderDateSync.timedDueComponents(for: due)) }"), flat)
         XCTAssertTrue(flat.contains("findDuplicateReminder(title: title, due: due, calendar: calendar)"), flat)
     }
 

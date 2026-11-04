@@ -17,9 +17,9 @@ final class EventCopyOperationTests: XCTestCase {
     func testRestoreUsesExactCalendarIdentityAndRejectsMissingSource() throws {
         let saved = snapshot()
         let calendars = [(id: "other-account", title: "Work"), (id: saved.calendarIdentifier, title: "Work")]
-        let selected = try saved.resolveCalendar(in: calendars, identifier: { $0.id })
+        let selected = try saved.resolveCalendar(in: calendars, identifier: { $0.id }, for: .recreateDeleted)
         XCTAssertEqual(selected.id, saved.calendarIdentifier)
-        XCTAssertThrowsError(try saved.resolveCalendar(in: [calendars[0]], identifier: { $0.id }))
+        XCTAssertThrowsError(try saved.resolveCalendar(in: [calendars[0]], identifier: { $0.id }, for: .recreateDeleted))
     }
 
     func testMoveReturnsSourceUndoOnlyAfterSuccessfulDeletion() throws {

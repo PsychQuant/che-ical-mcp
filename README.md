@@ -63,7 +63,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_calendars` | List all calendars and reminder lists (includes source_type) |
-| `create_calendar` | Create a new calendar |
+| `create_calendar` | Create a new calendar. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `delete_calendar` | Delete a calendar |
 | `update_calendar` | Rename a calendar or change its color (v0.9.0) |
 
@@ -79,6 +79,8 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `update_event` | Update an event (including timezone, recurrence, span for recurring) |
 | `delete_event` | Delete an event (with occurrence support for recurring) |
 
+> **A reminder's identifier given to an event tool (#260)**: `update_event`, `delete_event`, `copy_event`, `move_events_batch` and `delete_events_batch` answer `Event not found: <id>` (a row error in the batch tools) instead of ending the server. Without Reminders access EventKit may not report the item as a reminder, and the lookup can still end the process (#288); a reminder's identifier normally comes from the reminder tools, which need that access.
+
 > **Recurrence exclusions (#182)**: `create_event` (and each `create_events_batch` item) accepts `recurrence.excluded_occurrence_dates` to skip specific dates in a recurring series at creation time — applied with best-effort all-or-nothing semantics (any failure removes the entire new series via compensating delete; rollback failure is reported, never silent; the first occurrence cannot be excluded), and one `undo` removes the whole series including exclusions. The excluded dates are removed occurrences, not edited ones (checked on iCloud only, 2026-10-05; other stores were not checked), so they do not stop that undo; an occurrence edited on its own after the series was created does (#236). Known limitation: on idempotent retry, a duplicate recurring series with every requested date already absent is `skipped`, but extra exclusions already present on the existing series (beyond those requested) are not detected.
 
 </details>
@@ -89,7 +91,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_reminders` | List reminders with filter/sort/limit, tags extraction (v1.0.0) |
-| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267), and the response then carries `date_sync` with `aligned` judged on the saved reminder (#301) |
+| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267); with a due date, bare or timed, the response carries `date_sync` with `aligned` judged on the saved reminder (#301, #308; a timed due that lost its time zone on save is written again and saved a second time, as `update_reminder` does). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `update_reminder` | Update a reminder (including tags, `clear_due_date`) (v1.3.0) |
 | `complete_reminder` | Mark as completed/incomplete |
 | `delete_reminder` | Delete a reminder |
@@ -121,10 +123,14 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `move_events_batch` | Move events to another calendar in place, keeping recurrence and attendees; `span` / `occurrence_dates` for recurring events (#226) |
 | `delete_events_batch` | Delete events by IDs or date range, with dry-run preview (v1.0.0) |
 | `find_duplicate_events` | Find duplicate events across calendars (v0.5.0) |
-| `create_reminders_batch` | Create multiple reminders at once (v0.9.0) |
+| `create_reminders_batch` | Create multiple reminders at once (v0.9.0); a row may carry `store_differs` and `note`, as `create_reminder` does (#261) |
 | `delete_reminders_batch` | Delete multiple reminders at once (v0.9.0); one `undo` recreates them (#243) |
 
 **Moving events (#226):** a move reassigns the event's calendar, so recurrence, attendees and every other field are kept. The identifier stays the same within an account and changes across accounts (each result reports `id_changed` and `new_event_id`). For a recurring event, `span: this` (default) moves only the occurrence named in `occurrence_dates`, which becomes a one-off; `span: all` moves the whole series; a recurring event without a date is refused. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`) and any `not_carried_over` fields.
+
+**Identifier after an update (#268):** `update_event` and `update_reminder` answer with the identifier the item has after the save. It changes in three cases only: a `calendar_name` in another account (the event part follows the #226 device finding; an edit of one occurrence with a calendar of another account is refused, since it would move the whole series), `update_event` with `span: "future"` from a later occurrence (the new series' identifier), and span `future` or `all` with the identifier of an occurrence edited on its own, which splits the series (#335). `id_changed` says whether it differs from the identifier you passed, and `previous_id`, present only when it changed, repeats that identifier. An edit of one occurrence (`occurrence_date`, span `this`) answers the series' identifier as `id` and adds `occurrence_id`, the identifier of that occurrence alone; use it with span `this` only.
+
+**All-day dates with an offset (#372):** all-day dates are whole days read in this Mac's time zone. A `start_time` or `end_time` written with another offset is converted first and can land on another day (`2027-04-11T23:59:59+07:00` on a `+08:00` Mac is 04-12, so the event gets one more day). The event is still saved that way; `create_event`, each `create_events_batch` result and `update_event` (when the event is all-day after the call, for the dates it gave) add a `warnings` list whose entries name the `field`, its day in the written offset (`written_day`), the day in this Mac's zone the request's dates are written with (`host_day`; a skipped duplicate writes nothing, and its message says the existing event was not changed) and a `message`. The comparison is on the days, so an offset whose day agrees, or a value without an offset, gives no warning. Send all-day dates without an offset.
 
 </details>
 
@@ -134,7 +140,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `undo` | Undo the most recent calendar/reminder operation |
-| `redo` | Redo the last undone operation. Only completions are written again; for a create, delete, update or move, redo writes nothing, answers `success: false` with the tool to use, and drops that entry from the redo history (#247) |
+| `redo` | Redo the last undone operation. Only completions are written again; for a create, delete, update or move, redo writes nothing, answers `success: false` with the tool to use, and drops that entry from the redo history (#247). Not replaying those writes is the design (#295): the tool that made them repeats them |
 | `undo_history` | List undoable operations with timestamps |
 
 **Undo does not overwrite a change a person made since (#236):** an undo of a create, update, move or completion first re-reads the event or reminder and checks that nothing the undo would overwrite or delete was changed since that operation (for a move, the calendar; for a recurring event created here, also occurrences edited on their own, looked for up to four years from the first occurrence; an occurrence counts when it differs from the series in any compared field, alarms, time zone, place and availability included, and one back at the series' values does not; availability counts only when both the occurrence and the series report one, so on a store that reports it on one side only an occurrence's own availability is not seen). A field already changed back to the value the undo writes does not count. Two changes a calendar app or server makes on its own are not treated as edits, so they never block an undo and an update-undo overwrites them: an alarm sound, and coordinates added to a place that had none. If something was changed, nothing is written, the error names the changed fields, and the entry stays in `undo_history`; whoever made the change should decide whether to change it back and undo again, or to give up that undo with `undo` + `discard_id`. Three create-undo refusals leave only the choice whether to discard: occurrences edited on their own, which cannot be put back into the series; a series whose occurrences could not be checked (`unchecked_occurrences`), which cannot be checked later either; and a series whose rule was shortened (`recurrence`; an update or delete of an occurrence and the following ones does this), whose cut-off part cannot be put back. Redo of a completion makes the same check against the state the undo left. An `update_event` that touched a recurring event (one occurrence, span "future" or "all", or rules added or removed) cannot be undone: `undo` on it writes nothing, says to revert the change in Calendar if it should be reverted, and drops that entry so earlier ones stay undoable (#262: such an undo used to delete the rest of a series). The undo of an earlier update or move of a one-off event is refused the same way if the event repeats or is an edited occurrence by the time of the undo (a move of an already edited occurrence included), so update-undo and one-off move-undo never write to a recurring event (a series move-undo still moves the whole series back, by design). A safe restore for recurring updates is #263.
@@ -310,7 +316,10 @@ Set the display timezone for individual events — essential for multi-timezone 
 
 - **`timezone`** parameter accepts IANA identifiers (e.g., `Europe/Berlin`, `America/New_York`, `Asia/Taipei`)
 - When `timezone` is provided, naive datetimes (without offset) are interpreted in that timezone
+  - except `update_event`'s `occurrence_date`, which names an occurrence of the event as it is now: without an offset it is read in the event's current time zone, as on `delete_event` and `move_events_batch` (#383, #270)
+  - with an offset it is used as given, and its day is taken in the event's current time zone; the response's `occurrence_start` gives the start of the occurrence it matched
 - Event output includes the event's own timezone in `timezone` field and formats `start_date_local`/`end_date_local` accordingly
+- Event output also reports `item_timezone` (#386): the event's own time zone identifier (usually IANA), or `null` when the event stores no time zone (a floating event; all-day events are floating). `timezone` falls back to the host time zone for those, so `item_timezone` is what tells them apart from an event stored in the host zone. With `display_timezone`, the `*_local` strings are in that zone; neither field changes
 - Available on `create_event`, `update_event`, and `create_events_batch`
 - Undo/redo preserves per-event timezone
 
@@ -518,9 +527,9 @@ CheICalMCP --setup
 # Step 3: The binary now has permission — launchd jobs can use it
 ```
 
-> **Detection**: CheICalMCP automatically detects non-interactive sessions (missing `TERM` env var or direct launchd child) and provides targeted error messages with `--setup` instructions. This works even for indirect launch chains (launchd → Claude Code → CheICalMCP).
+> **Detection**: CheICalMCP treats a session as non-interactive, where a permission dialog cannot appear, when the process is a direct launchd child, when there is no window-server (GUI login) session, or, for the MCP server only, when the `CI` variable is set; it then gives targeted error messages with `--setup` instructions. `TERM` is not used (#165): a server that a GUI app such as Claude Desktop starts has no `TERM` but is in the GUI session, so it is interactive, and an SSH shell with `TERM` but no GUI session is not. For an indirect launch chain (launchd → Claude Code → CheICalMCP) the parent is not launchd, so the GUI session decides: under a LaunchDaemon, or with no GUI login, it is non-interactive; under a per-user LaunchAgent in the logged-in GUI session it counts as interactive and the access request is made. That reading follows from the rule; it has not been checked on a device.
 >
-> **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (no `TERM` / direct launchd child) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
+> **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (a direct launchd child, or no GUI session; a `CI` variable does not count for `--setup`, #143) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
 >
 > **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, switch CheICalMCP on in **System Settings → Privacy & Security → Calendar/Reminders**; if it is not listed, run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path) from Terminal — the access request adds it.
 

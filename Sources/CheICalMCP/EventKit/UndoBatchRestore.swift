@@ -49,7 +49,7 @@ enum UndoRestoreDestination {
             let container: C?
             switch destination {
             case .eventCalendar(let snapshot):
-                container = try? snapshot.resolveCalendar(in: eventCalendars, identifier: identifier)
+                container = try? snapshot.resolveCalendar(in: eventCalendars, identifier: identifier, for: .recreateDeleted)
             case .reminderList(let snapshot):
                 container = try? snapshot.resolveList(in: reminderLists, identifier: identifier, for: .recreateDeleted)
             }

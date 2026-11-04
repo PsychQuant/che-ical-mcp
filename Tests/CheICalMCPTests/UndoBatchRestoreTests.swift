@@ -414,7 +414,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
         let lookups: [Error] = [EventKitError.calendarNotFound(identifier: "cal-1"),
                                 EventKitError.calendarNotFoundWithSource(name: "Work", source: "iCloud"),
-                                EventKitError.undoListMissing(list: "L", account: nil, reminder: "R", hasIdentifier: true,
+                                EventKitError.undoListMissing(reminder: "R", hasIdentifier: true,
                                                               kind: .recreateDeleted)]
         for error in lookups {
             for members in [[reminderDeleted("R")], [deleted("A"), reminderDeleted("R")]] {
@@ -423,7 +423,6 @@ final class UndoBatchRestoreTests: XCTestCase {
                 XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
             }
         }
-
         // A nested batch's remainder has no one title: the sentence stays general.
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
         let nested = try partial([.batch([deleted("Y")])], inner)

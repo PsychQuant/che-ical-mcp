@@ -14,6 +14,12 @@ import XCTest
 /// is part of the contract.
 final class LiveTCCDatabaseSourceTests: XCTestCase {
 
+    /// #315: the tests that run the real `sqlite3` pass a generous budget, for the same reason as
+    /// `LiveProcessInventorySourceTests` (#257 class: a test about parsing must not fail on the
+    /// 500 ms production timeout of a loaded host). The timeout path stays covered by
+    /// `testReadsWithTinyTimeout_surfacesAsFailure`.
+    static let generousTimeoutMilliseconds = 10_000
+
     // MARK: - Missing binaries / files
 
     func testReadsMissingSQLite3_returnsFailureReason() {
@@ -51,7 +57,7 @@ final class LiveTCCDatabaseSourceTests: XCTestCase {
         let fakeDB = tempDir.appendingPathComponent("fake.db")
         try Data("not a sqlite database".utf8).write(to: fakeDB)
 
-        let source = LiveTCCDatabaseSource(databasePath: fakeDB.path)
+        let source = LiveTCCDatabaseSource(databasePath: fakeDB.path, timeoutMilliseconds: Self.generousTimeoutMilliseconds)
         let result = source.readCheICalMCPEntries()
         XCTAssertTrue(result.entries.isEmpty)
         guard let reason = result.failureReason else {
@@ -92,7 +98,7 @@ final class LiveTCCDatabaseSourceTests: XCTestCase {
         seedProcess.waitUntilExit()
         XCTAssertEqual(seedProcess.terminationStatus, 0, "seed sqlite3 invocation must succeed")
 
-        let source = LiveTCCDatabaseSource(databasePath: dbPath)
+        let source = LiveTCCDatabaseSource(databasePath: dbPath, timeoutMilliseconds: Self.generousTimeoutMilliseconds)
         let result = source.readCheICalMCPEntries()
         XCTAssertNil(result.failureReason, "happy-path read must produce nil failureReason — got: \(String(describing: result.failureReason))")
         XCTAssertEqual(result.entries.count, 1, "LIKE filter must match exactly the CheICalMCP row — got \(result.entries.count) rows")
