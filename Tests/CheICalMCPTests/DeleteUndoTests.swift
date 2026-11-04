@@ -378,16 +378,13 @@ final class DeleteUndoTests: XCTestCase {
     /// Verify round 2, finding 5: a batch undo names what its restored occurrences did not carry
     /// over, once, as the single undo does; a batch that moved nothing says only the count.
     func testABatchUndoTextNamesWhatItsRestoredOccurrencesDidNotCarryOver() {
-        let snapshot = UndoSnapshotFixtures.event(title: "Standup")
-        let moved = UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: ["absolute_alarms"])
-        let kept = UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: [])
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [moved, kept, moved], count: 3),
+        // #323: from what the members' undos returned (a one-off each), not from the records.
+        let movedOut = UndoEventOutcome.occurrenceOneOff(notCarriedOver: ["absolute_alarms"])
+        let keptOut = UndoEventOutcome.occurrenceOneOff(notCarriedOver: [])
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 3, events: [movedOut, keptOut, movedOut]),
                        "Undone batch (3 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [.batch([kept, moved])], count: 2),
-                       "Undone batch (2 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)",
-                       "nested batches are walked")
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [kept, .deleteEvent(snapshot: snapshot)], count: 2),
-                       "Undone batch (2 operations)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 2, events: [keptOut]),
+                       "Undone batch (2 operations)", "a one-off event member returns no outcome")
     }
 
     /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
@@ -403,15 +400,12 @@ final class DeleteUndoTests: XCTestCase {
 
     /// The batch text names it once too, after `absolute_alarms`, for a series member at any depth.
     func testABatchUndoTextSaysASeriesCameBackFromItsRules() {
-        let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
-        let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
-        let moved = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Standup"), notCarriedOver: ["absolute_alarms"])
         let rules = "Restored from the series rules alone, because its exceptions were not checked when it was deleted: an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit; undoing the earlier delete of that occurrence afterwards writes nothing when the restored series already holds its slot"
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff, .batch([series])], count: 2),
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 2, events: [.seriesFromRules]),
                        "Undone batch (2 operations). " + rules)
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [series, moved], count: 2),
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 2, events: [.seriesFromRules, .occurrenceOneOff(notCarriedOver: ["absolute_alarms"])]),
                        "Undone batch (2 operations). Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start). " + rules)
-        XCTAssertEqual(UndoOperation.batchUndoneMessage(members: [oneOff], count: 1), "Undone batch (1 operation)")
+        XCTAssertEqual(UndoOperation.batchUndoneMessage(count: 1), "Undone batch (1 operation)")
     }
 
     /// The whole-event arm of `executeUndo` reports through that text. Since #322 the arm runs
@@ -421,14 +415,14 @@ final class DeleteUndoTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)"#, in: body)
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)\.text"#, in: body)
         XCTAssertEqual(call.count, 1)
         if let call = call.first {
             XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
             XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
         let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"return\s+UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let\s+text\s*=\s*UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to
@@ -444,7 +438,7 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(call.count, 1)
         if let call = call.first { XCTAssertGreaterThan(call.lowerBound, arm.lowerBound) }
         let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation]) async throws", in: source))
-        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(members:\s*ops,\s*count:\s*outcome\.texts\.count,\s*differing:\s*outcome\.differing\)"#, in: body)
+        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing\)"#, in: body)
         XCTAssertEqual(message.count, 1)
     }
 

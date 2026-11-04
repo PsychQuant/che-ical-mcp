@@ -333,9 +333,9 @@ final class UndoCalendarMissingTests: XCTestCase {
         // `SeriesExceptionsStoreSource` seam, whose production `restoreCalendar` is
         // `restoreCalendar(for:kind:)`; the call sequences are pinned there, unchanged.
         let delete = try XCTUnwrap(arm("deleteEvent", of: undo))
-        XCTAssertTrue(delete.contains("return try await undoDeletedEvent(snapshot)"), delete)
+        XCTAssertTrue(delete.contains("return try await undoDeletedEvent(snapshot).text"), delete)
         let occurrence = try XCTUnwrap(arm("deleteOccurrence", of: undo))
-        XCTAssertTrue(occurrence.contains("return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)"), occurrence)
+        XCTAssertTrue(occurrence.contains("return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver).text"), occurrence)
         let wrappers = "EventKit/EventKitManager+SeriesExceptions.swift"
         let readDelete = try body("private func undoDeletedEvent<", in: wrappers)
         XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeleted) return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)"), readDelete)

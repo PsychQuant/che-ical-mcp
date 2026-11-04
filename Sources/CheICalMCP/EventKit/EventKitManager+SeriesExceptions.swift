@@ -25,7 +25,7 @@ extension EventKitManager {
     }
 
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.undoDeleteEvent`).
-    func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> String {
+    func undoDeletedEvent(_ snapshot: EventSnapshot) async throws -> (text: String, outcome: UndoEventOutcome?) {
         if let store = seriesExceptionsStoreOverride {
             return try await undoDeletedEvent(snapshot, on: store)
         }
@@ -33,7 +33,7 @@ extension EventKitManager {
     }
 
     /// The `.deleteOccurrence` undo arm (`SeriesExceptionsUndo.undoDeleteOccurrence`).
-    func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> String {
+    func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String]) async throws -> (text: String, outcome: UndoEventOutcome) {
         if let store = seriesExceptionsStoreOverride {
             return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, on: store)
         }
@@ -43,14 +43,15 @@ extension EventKitManager {
     /// #269: the recorded calendar, read as every event undo reads it (a missing one is refused with
     /// the way on, `EventKitError.undoCalendarMissing`, the record kept); then the arm, synchronously
     /// on this actor, as before #322 moved it.
-    private func undoDeletedEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, on store: Store) async throws -> String {
+    private func undoDeletedEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, on store: Store) async throws
+        -> (text: String, outcome: UndoEventOutcome?) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeleted)
         return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)
     }
 
     /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).
     private func undoDeletedOccurrence<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, notCarriedOver: [String],
-                                                                          on store: Store) async throws -> String {
+                                                                          on store: Store) async throws -> (text: String, outcome: UndoEventOutcome) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence)
         return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)
     }
