@@ -116,8 +116,17 @@ final class DrainingStdioTransportTests: XCTestCase {
         await p.transport.disconnect()
     }
 
-    private func waitUntil(_ condition: () async -> Bool) async throws {
-        for _ in 0..<500 where !(await condition()) { try await Task.sleep(for: .milliseconds(10)) }
+    private struct WaitTimedOut: Error {}
+
+    /// Returns as soon as `condition` holds; fails the test and throws if it does not within 5 s
+    /// (PR #409 verify round 3: it used to return quietly either way).
+    private func waitUntil(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
+        for _ in 0..<500 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("condition did not hold within 5 s", file: file, line: line)
+        throw WaitTimedOut()
     }
 
     /// PR #409 verify round 1 (MEDIUM): a reply settles its request before the write is awaited,

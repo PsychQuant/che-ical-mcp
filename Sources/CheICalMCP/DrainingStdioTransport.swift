@@ -2,9 +2,12 @@ import Foundation
 import Logging
 import MCP
 
-/// #345: `StdioTransport` with a drain on stdin EOF. The SDK's server handles each request in a
-/// task nobody awaits, and the process ends when `server.run()` returns after the receive stream
-/// ends, so a request read just before EOF was dropped unanswered. This wrapper records each
+/// #345: `StdioTransport` with a drain on stdin EOF. It covers requests whose line ends with a
+/// newline: the SDK's `StdioTransport` ends its stream at EOF without yielding a last line that
+/// has none, so such a request never reaches this wrapper (SDK framing, left as it is).
+///
+/// The SDK's server handles each request in a task nobody awaits, and the process ends when
+/// `server.run()` returns after the receive stream ends, so a request read just before EOF was dropped unanswered. This wrapper records each
 /// request it passes on (`OutstandingRequestLedger`) and settles it when the reply goes out
 /// through `send`; when the inner stream ends it waits until nothing is outstanding before ending
 /// its own stream. With nothing outstanding (no request at all) it ends at once, so EOF still

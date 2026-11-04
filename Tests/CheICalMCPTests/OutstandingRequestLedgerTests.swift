@@ -4,7 +4,9 @@ import XCTest
 
 /// #345: the bookkeeping behind `DrainingStdioTransport`. A request (an object with `method` and a
 /// non-null `id`) read from stdin is outstanding until a response (`result` or `error`) with the
-/// same `id` is sent, or a `notifications/cancelled` names it (the SDK then sends no reply).
+/// same `id` is sent, or a `notifications/cancelled` names it (the client no longer expects a
+/// reply; this server's handlers do not check cancellation, so one may still be sent, and the SDK
+/// drops it only when the cancel arrives before the handler starts).
 final class OutstandingRequestLedgerTests: XCTestCase {
     private func data(_ json: String) -> Data { Data(json.utf8) }
 
@@ -20,6 +22,36 @@ final class OutstandingRequestLedgerTests: XCTestCase {
         var ledger = OutstandingRequestLedger()
         ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":"abc","method":"tools/call"}"#))
         ledger.noteOutgoing(data(#"{"jsonrpc":"2.0","id":"abc","error":{"code":-32601,"message":"x"}}"#))
+        XCTAssertTrue(ledger.isEmpty)
+    }
+
+    /// PR #409 verify round 3: the SDK decodes requests, notifications and responses only with
+    /// `"jsonrpc": "2.0"`, so a message without it is neither recorded nor allowed to cancel.
+    func testAMessageWithoutJSONRPC2IsIgnored() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"id":1,"method":"ping"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"1.0","id":2,"method":"ping"}"#))
+        XCTAssertTrue(ledger.isEmpty)
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":3,"method":"tools/call"}"#))
+        ledger.noteIncoming(data(#"{"method":"notifications/cancelled","params":{"requestId":3}}"#))
+        XCTAssertEqual(ledger.count, 1, "a cancel without jsonrpc 2.0 cancels nothing")
+    }
+
+    /// PR #409 verify round 3: a cancel whose `requestId` is null names no request in the SDK (it
+    /// decodes to nil), so it must not settle a request whose id was null (read as "").
+    func testACancelWithANullRequestIdCancelsNothing() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":null,"method":"tools/call"}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":null}}"#))
+        XCTAssertEqual(ledger.count, 1)
+    }
+
+    /// PR #409 verify round 3: the SDK tries a message as a response before a request, so an
+    /// incoming object with `result` or `error` is a response and gets no reply; it is not recorded.
+    func testAnIncomingObjectWithResultOrErrorIsAResponse() {
+        var ledger = OutstandingRequestLedger()
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":1,"method":"ping","result":{}}"#))
+        ledger.noteIncoming(data(#"{"jsonrpc":"2.0","id":2,"method":"ping","error":{"code":-1,"message":"x"}}"#))
         XCTAssertTrue(ledger.isEmpty)
     }
 
