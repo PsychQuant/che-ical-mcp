@@ -6,7 +6,8 @@ import Foundation
 /// closures (the closure-seam variant, #182), so the order of the writes, the save, the checks on
 /// the saved reminder and the rollback can be tested with in-memory EventKit objects.
 ///
-/// Everything that can refuse the call runs before the first write: `checkRealign` here, and the
+/// Everything that can refuse the call runs before the first write: `checkRealign` and
+/// `checkAlarms` here, and the
 /// `calendar_name` lookup in the caller, which passes the resolved list in. A refused call leaves
 /// the reminder untouched; the reminder object lives on in the server's store, so a change left
 /// on it would be written by whatever saves it next.
@@ -36,6 +37,13 @@ enum ReminderUpdateWrite {
         }
     }
 
+    /// #333: a relative alarm needs the reminder to have a timed due date after the call
+    /// (`ReminderRelativeAlarms.check`). The caller runs it before its lookups; `apply` again.
+    static func checkAlarms(_ request: ReminderUpdateRequest, existingDue: DateComponents?) throws {
+        try ReminderRelativeAlarms.check(request.alarmOffsets, due: ReminderRelativeAlarms.dueState(
+            requested: request.due, clearDue: request.clearDueDate, existing: existingDue))
+    }
+
     /// Applies `request` to `reminder`, saves it, and returns the date sync judged on the saved
     /// reminder (`ReminderDateSync.confirmSaved`), or `nil` when the due date was not touched.
     /// `save` writes to the store, `reload` re-reads the reminder (`EKObject.refresh()`, false
@@ -48,6 +56,7 @@ enum ReminderUpdateWrite {
         // The seam-level guard: the caller runs it before its own lookups too, but `apply` does not
         // rely on that.
         try checkRealign(request, existingDue: reminder.dueDateComponents)
+        try checkAlarms(request, existingDue: reminder.dueDateComponents)
         if let title = request.title { reminder.title = title }
         if let notes = request.notes { reminder.notes = notes }
         if let priority = request.priority { reminder.priority = priority }
@@ -81,6 +90,12 @@ enum ReminderUpdateWrite {
             alarm.structuredLocation = structured
             alarm.proximity = trigger.proximity
             reminder.addAlarm(alarm)
+        }
+
+        // #333: after the due date is set, so a date-only due no longer has these to keep (#267);
+        // only relative alarms are replaced, the location and absolute-date alarms stay.
+        if let offsets = request.alarmOffsets {
+            ReminderRelativeAlarms.replace(on: reminder, with: offsets)
         }
 
         do {

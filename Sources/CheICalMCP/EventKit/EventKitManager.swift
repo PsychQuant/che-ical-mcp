@@ -2052,6 +2052,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         /// (`ReminderCreateWrite.readBack`), as `update_reminder` reports it, for a date-only and a
         /// timed due. Nil for an undated create and for a duplicate.
         var dateSync: ReminderDateSync.Report? = nil
+        /// #333: the relative alarms read off the saved reminder (minutes before), when the create
+        /// asked for `alarmOffsets`; nil otherwise and for a duplicate, which writes none.
+        var storedRelativeAlarms: [Double]? = nil
     }
 
     /// #301: the duplicate reported among the matches. A list can hold both a date-only and a
@@ -2105,6 +2108,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         locationTrigger: LocationTriggerInput? = nil
     ) async throws -> CreateReminderResult {
         try await ensureReminderAccess()
+        // #333: refused before any lookup or write (the handler checks first too).
+        try ReminderRelativeAlarms.check(alarmOffsets, due: ReminderRelativeAlarms.dueState(requested: due, clearDue: false, existing: nil))
 
         // Resolve calendar first (required for both duplicate check and creation)
         guard let name = calendarName else {
@@ -2143,12 +2148,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             dateReport = ReminderCreateWrite.writeTimedDue(reminder, components: ReminderDateSync.timedDueComponents(for: due))
         }
 
-        // Add alarms
+        // #333: relative alarms, minutes before the due date.
         if let offsets = alarmOffsets {
-            for offset in offsets {
-                let alarm = EKAlarm(relativeOffset: TimeInterval(-offset * 60))
-                reminder.addAlarm(alarm)
-            }
+            ReminderRelativeAlarms.replace(on: reminder, with: offsets)
         }
 
         // Add recurrence rule
@@ -2178,7 +2180,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                                     reload: { reminder.refresh() },
                                                     rollback: { reminder.rollback() })
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
-                                          dateSync: dateSync)
+                                          dateSync: dateSync,
+                                          storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) })
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
@@ -2235,7 +2238,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         locationTrigger: LocationTriggerInput? = nil,
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false,
-        realignToDue: Bool = false
+        realignToDue: Bool = false,
+        alarmOffsets: [Int]? = nil
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
@@ -2249,10 +2253,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let request = ReminderUpdateRequest(
             identifier: identifier, title: title, notes: notes, due: due, priority: priority,
             calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
-            clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue)
+            clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue,
+            alarmOffsets: alarmOffsets)
         // PR #256 verify round 1: everything that can refuse the call runs before the first write,
-        // so a refused call leaves the cached reminder untouched (#235 no-due check, list lookup).
+        // so a refused call leaves the cached reminder untouched (#235 no-due check, #333 alarm
+        // check, list lookup).
         try ReminderUpdateWrite.checkRealign(request, existingDue: reminder.dueDateComponents)
+        try ReminderUpdateWrite.checkAlarms(request, existingDue: reminder.dueDateComponents)
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
@@ -2262,7 +2269,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reload: { reminder.refresh() },
             rollback: { reminder.rollback() })
         markNeedsRefresh()
-        let result = ReminderUpdateResult(reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync)
+        let result = ReminderUpdateResult(
+            reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
+            storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
+            // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request))
         // Same reason as update_event (#246): the identifier the reminder has after the save.
         let savedID = reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
