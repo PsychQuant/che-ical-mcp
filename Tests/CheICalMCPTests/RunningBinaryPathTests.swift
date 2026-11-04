@@ -52,6 +52,32 @@ final class RunningBinaryPathTests: XCTestCase {
         XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: file.path), canonical(file))
     }
 
+    /// Verify LOW (#360): with no kernel path, a bare argv[0] is looked up on `PATH` first
+    /// (the way the shell found it), not resolved against the current directory.
+    func testNilKernelPath_bareArgv0_walksPATHBeforeTheCurrentDirectory() throws {
+        let name = "rbp-\(UUID().uuidString.prefix(8))"
+        let binDir = tempDir.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+        let onPath = binDir.appendingPathComponent(name)
+        try Data().write(to: onPath)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: onPath.path)
+        let work = tempDir.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try Data().write(to: work.appendingPathComponent(name))
+        FileManager.default.changeCurrentDirectoryPath(work.path)
+        let savedPATH = getenv("PATH").map { String(cString: $0) }
+        setenv("PATH", binDir.path, 1)
+        defer { if let savedPATH { setenv("PATH", savedPATH, 1) } else { unsetenv("PATH") } }
+
+        XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: name), canonical(onPath))
+    }
+
+    func testNilKernelPath_bareArgv0NotOnPATH_fallsBackToArgv0Resolution() {
+        let name = "rbp-missing-\(UUID().uuidString.prefix(8))"
+        XCTAssertEqual(RunningBinaryPath.resolve(kernelPath: nil, argv0: name),
+                       BinaryPathResolver.resolveArgv0(name))
+    }
+
     func testSymlinkedKernelPath_isCanonicalized() throws {
         let real = tempDir.appendingPathComponent("target")
         try Data().write(to: real)

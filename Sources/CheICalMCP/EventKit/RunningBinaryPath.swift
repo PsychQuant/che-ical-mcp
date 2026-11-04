@@ -8,8 +8,9 @@ import Foundation
 /// first, canonicalized with `realpath(3)` so it matches what the argv[0] resolution gave for
 /// an absolute or symlinked argv[0] (the drift detector compares it with TCC.db entries).
 /// argv[0] is only the fallback when the kernel returns nothing: a bare argv[0] (`CheICalMCP`
-/// started through `PATH`) has no slash, so `realpath` resolves it against the current
-/// directory and can name a file there that never ran.
+/// started through `PATH`) has no slash, so `realpath` would resolve it against the current
+/// directory and could name a file there that never ran; the fallback walks `PATH` first
+/// (`resolveWithPATHFallback`) and uses `resolveArgv0` only when that finds nothing.
 ///
 /// Every place that shows or acts on "this binary" uses it: the access-denied `--setup` hint,
 /// the `.mcpb` install check, `--print-tcc-path`, the startup banner and the `--setup` window.
@@ -19,6 +20,11 @@ enum RunningBinaryPath {
         if let kernelPath, !kernelPath.isEmpty {
             // An absolute path: resolveArgv0 is realpath(3) with a standardized fallback.
             return BinaryPathResolver.resolveArgv0(kernelPath)
+        }
+        // A bare argv[0] came from a PATH lookup: repeat it before falling back to realpath,
+        // which would resolve the bare name against the current directory (#360 verify).
+        if let onPath = try? BinaryPathResolver.resolveWithPATHFallback(argv0) {
+            return onPath
         }
         return BinaryPathResolver.resolveArgv0(argv0)
     }
