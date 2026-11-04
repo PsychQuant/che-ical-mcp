@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -148,7 +149,66 @@ final class CalendarEmptinessTests: XCTestCase {
                       && compare.lowerBound < removal.lowerBound, "generation, events, fetch, compare, removal, in that order")
         let awaits = SourcePins.ranges(ofPattern: #"\bawait\b"#, in: String(code[check.lowerBound..<removal.lowerBound]))
         XCTAssertEqual(awaits.count, 1, "the reminder fetch is the only suspension before the removal")
+    }
+
+    /// PR #413 security review: a writer that moved the generation late (in a `defer`, or after its
+    /// own `await`) could commit during `deleteCalendar`'s reminder fetch and still pass the
+    /// compare. The manager's store counts its own commits instead (`CountingEventStore`): the
+    /// manager holds one, every write method is overridden to count in a `defer` and do nothing
+    /// else, `writeGeneration` includes the count, and the only other stores the server makes are
+    /// the setup's, the authorization default's and `NewObjectSave`'s read-only one.
+    func testEveryCommitThroughTheManagersStoreMovesTheGenerationAtOnce() throws {
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        XCTAssertEqual(SourcePins.ranges(of: "let eventStore: CountingEventStore", in: manager).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let store = CountingEventStore()", in: manager).count, 1)
+        let generation = try XCTUnwrap(SourcePins.body(of: "var writeGeneration: Int", in: manager))
+        XCTAssertEqual(SourcePins.ranges(of: "eventStore.commitCount", in: generation).count, 1)
+
+        let store = try SourcePins.source("EventKit/CountingEventStore.swift")
+        let overrides = SourcePins.ranges(ofPattern: #"override func [a-zA-Z]+\("#, in: store)
+        XCTAssertEqual(overrides.count, 9, "every EKEventStore write method: save/remove event (two each), save/remove reminder, save/remove calendar, commit")
+        for method in ["override func save(_ event: EKEvent, span: EKSpan)", "override func save(_ event: EKEvent, span: EKSpan, commit: Bool)",
+                       "override func remove(_ event: EKEvent, span: EKSpan)", "override func remove(_ event: EKEvent, span: EKSpan, commit: Bool)",
+                       "override func save(_ reminder: EKReminder, commit: Bool)", "override func remove(_ reminder: EKReminder, commit: Bool)",
+                       "override func saveCalendar(_ calendar: EKCalendar, commit: Bool)", "override func removeCalendar(_ calendar: EKCalendar, commit: Bool)",
+                       "override func commit()"] {
+            let body = try XCTUnwrap(SourcePins.body(of: method, in: store), method)
+            let code = SourcePins.code(body).replacingOccurrences(of: "\n", with: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            XCTAssertTrue(code.hasSuffix("throws { defer { commitCount &+= 1 } try super.\(code.split(separator: "super.").last ?? "")"), "\(method): \(code)")
+            XCTAssertEqual(code.components(separatedBy: "try ").count - 1, 1, "only the super call: \(method)")
+            XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: body).count, 0, method)
+        }
+
+        // The other stores the server makes: none writes (a write through one would not be counted).
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let sources = root.appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var made: [String] = []
+        for file in files {
+            let relative = String(file.path.dropFirst(sources.path.count + 1))
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            for _ in SourcePins.ranges(ofPattern: #"\bEKEventStore\(\)"#, in: code) { made.append(relative) }
+        }
+        XCTAssertEqual(made.sorted(), ["EventKit/AuthorizationStatusSource.swift", "EventKit/NewObjectSave.swift", "SetupRunner.swift"],
+                       "a new EKEventStore elsewhere could write past the count")
+    }
+
+    /// The count moves on a write that throws, too (a save may throw after the store took it).
+    func testTheStoreCountsAWriteThatThrows() {
+        let store = Self.countingStore
+        let before = store.commitCount
+        XCTAssertThrowsError(try store.save(EKReminder(eventStore: store), commit: true), "a reminder with no list cannot be saved")
+        XCTAssertEqual(store.commitCount, before + 1)
+    }
+
+    /// One store for the test target's process, as `SharedTestStore` (#283).
+    private static let countingStore = CountingEventStore()
+
+    func testTheGenerationIncludesRefreshMarks() throws {
         let mark = try XCTUnwrap(SourcePins.body(of: "func markNeedsRefresh()", in: try SourcePins.source("EventKit/EventKitManager.swift")))
-        XCTAssertEqual(SourcePins.ranges(of: "writeGeneration &+= 1", in: mark).count, 1, "every write this server commits moves the generation")
+        XCTAssertEqual(SourcePins.ranges(of: "refreshMarks &+= 1", in: mark).count, 1, "a stale mark moves the generation too")
+        let generation = try XCTUnwrap(SourcePins.body(of: "var writeGeneration: Int", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertEqual(SourcePins.ranges(of: "refreshMarks", in: generation).count, 1)
     }
 }

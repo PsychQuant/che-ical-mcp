@@ -32,8 +32,9 @@ protocol EventKitManaging: Sendable {
 
 /// EventKit wrapper for Calendar and Reminders operations
 actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionSource {
-    // Internal for same-actor feature extensions; still actor-isolated.
-    let eventStore: EKEventStore
+    // Internal for same-actor feature extensions; still actor-isolated. It counts its own commits
+    // (`CountingEventStore`, #328).
+    let eventStore: CountingEventStore
     private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
     /// #322: a test's `SeriesExceptionsStoreSource` (`forTesting(probe:seriesExceptionsStore:)`);
@@ -53,7 +54,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ///   instance so request attribution matches data-ops.
     fileprivate init(authorizationSource: AuthorizationStatusSource? = nil,
                      seriesExceptionsStore: (any SeriesExceptionsStoreSource)? = nil) {
-        let store = EKEventStore()
+        let store = CountingEventStore()
         self.eventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
         self.seriesExceptionsStoreOverride = seriesExceptionsStore
@@ -424,13 +425,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Mark that EventKit sources need to be refreshed (called after write operations)
     func markNeedsRefresh() {
         needsRefresh = true
-        writeGeneration &+= 1
+        refreshMarks &+= 1
     }
 
-    /// #328 (PR #413 verify r1): moves with every `markNeedsRefresh`, which follows each write this
-    /// manager commits (and a few reads that want a fresh view, which only makes the check below
-    /// refuse more often). `deleteCalendar(requireEmpty:)` compares it across its one suspension.
-    private(set) var writeGeneration = 0
+    private var refreshMarks = 0
+
+    /// #328 (PR #413 verify r1 and security review): moves with every commit made through this
+    /// manager's store, in the same synchronous step as the commit (`CountingEventStore`), and with
+    /// every `markNeedsRefresh` (a few reads too, which only makes the check refuse more often).
+    /// `deleteCalendar(requireEmpty:)` compares it across its one suspension, so a write committed
+    /// during it is seen even when its writer marks the store stale later (in a `defer`, or after
+    /// its own `await`).
+    var writeGeneration: Int { eventStore.commitCount &+ refreshMarks }
 
     // MARK: - Calendars
 
