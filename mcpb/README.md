@@ -45,7 +45,7 @@ Interpret the result:
 | `auth_value` | Meaning | Action |
 |---|---|---|
 | `2` | Granted | No action needed — calendar tools should work. If they don't, the v1.9.0 per-call gate (#108 Phase 2) will surface the underlying reason as an explicit `accessDenied` error in tool output rather than silently masking it. |
-| `0` | Denied | Reset and re-grant via Step 2 + the troubleshooting `tccutil reset` snippet below. |
+| `0` | Denied | Clear the stale entry (see [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) below), then re-grant via Steps 2–3. |
 | _(empty / no row)_ | Never asked | Proceed to Step 2 to trigger the dialog. |
 
 ### Step 2 — locate the installed binary
@@ -87,14 +87,13 @@ Quit and reopen Claude Desktop. Calendar tool calls should now succeed.
 
 ### Dialog doesn't appear at all
 
-TCC may have a stale `denied` record blocking the new prompt. Reset and retry:
+TCC may have a stale `denied` record blocking the new prompt. Clear it in System Settings and retry:
 
-```bash
-tccutil reset Calendar com.checheng.CheICalMCP
-tccutil reset Reminders com.checheng.CheICalMCP
-```
+1. Open **System Settings → Privacy & Security → Calendar** (then **Reminders**).
+2. Select **CheICalMCP** and remove it with the **−** button (switching it off and on can keep a stale code requirement).
+3. Re-run Step 3.
 
-Then re-run Step 3.
+> Do not use `tccutil reset Calendar com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration (#357). A bare `tccutil reset Calendar` (no bundle id) wipes Calendar grants for every app on the Mac.
 
 ### Alt method — manually toggle in System Settings
 
@@ -109,7 +108,7 @@ If `--setup` keeps failing, you can grant access manually:
 
 > **Corrected #114**: pre-v1.9.0 this section claimed cdhash invalidation was the cause. That hypothesis was disproved by #108 Phase 1 smoke (TCC grants survived 5 binary swaps because csreq is stable across cdhash for the same Developer-ID identity). The real silent-failure mode was the in-process `has*Access` cache anti-pattern, structurally fixed in v1.9.0 (#108 Phase 2): every Calendar/Reminders call now reads fresh TCC state instead of trusting a cached boolean.
 
-If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, follow the troubleshooting `tccutil reset` snippet to re-grant. Stale-cache silent failures cannot happen with the per-call gate.
+If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, clear the stale entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and re-grant. Stale-cache silent failures cannot happen with the per-call gate.
 
 If you're on **v1.8.x or earlier** AND seeing this symptom, upgrading to v1.9.0+ is the structural fix; the manual Steps 1–4 remediation is a stopgap for that older release line. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis and the disproved-hypothesis audit trail.
 

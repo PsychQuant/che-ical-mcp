@@ -1,6 +1,6 @@
 ---
 name: troubleshoot-tcc
-description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, tccutil reset, and --setup re-prompt flow.
+description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, clearing a stale System Settings entry, and --setup re-prompt flow.
 allowed-tools:
   - Bash
   - Read
@@ -115,14 +115,11 @@ Read the chain like this:
 - Contains `.../claude/versions/<version>` → **Claude Code** context (the version-number binary is the responsible process; this half is reliable — the versioned binary stays resident in the live tree).
 - **Claude Desktop** is identified by *absence*: the `Helpers/disclaimer` shim typically `exec`-replaces itself with the server binary, so it usually does **not** appear as a live ancestor. A Desktop-spawned server's chain is roughly `CheICalMCP → Claude → launchd` with **no** `claude/versions/…` segment. So: chain lacks the `claude/versions/…` segment **and** the running binary is the `.mcpb` path (from Step 1) → treat as Desktop / self-responsible.
 
-### Step 4: Reset stale TCC entries (only if `denied` or post-upgrade silent fail)
+### Step 4: Clear stale TCC entries (only if `denied` or post-upgrade silent fail)
 
-```bash
-tccutil reset Calendar com.checheng.CheICalMCP
-tccutil reset Reminders com.checheng.CheICalMCP
-```
+In System Settings → Privacy & Security → **Calendar** (then **Reminders**): if `CheICalMCP` is listed and off, switch it on; that is enough for a recorded "Don't Allow". If the entry is stale (the banner reports a path or code-requirement mismatch, #154), select it and remove it with the **−** button, then go to Step 5 so `--setup` mints a fresh grant. Switching it off and on can keep the pinned code requirement.
 
-> **Caveat**: TCC stores `.mcpb` clients by **binary path** rather than bundle ID. `tccutil reset SERVICE BUNDLE_ID` may report "Successfully reset" but actually no-op when the underlying entry is path-keyed. If the issue persists after reset + Step 5, fall back to manual System Settings toggle (Step 6).
+> **Do not use `tccutil reset`** (#357): `tccutil reset <service> com.checheng.CheICalMCP` fails with `OSStatus error -10814` for this bare (non-bundled) binary, because LaunchServices has no registration for the bundle id; and a bare `tccutil reset Calendar` (no bundle id) wipes Calendar grants for every app on the Mac. See the README erratum.
 
 ### Step 5: Trigger re-prompt via `--setup`
 

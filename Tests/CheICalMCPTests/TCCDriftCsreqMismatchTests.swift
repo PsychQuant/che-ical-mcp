@@ -141,7 +141,11 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        XCTAssertTrue(banner.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
+        // #357: remove the entry that pins the old requirement (a toggle can keep it), then --setup.
+        XCTAssertTrue(banner.contains("− button"), banner)
+        XCTAssertTrue(banner.contains("System Settings → Privacy & Security → Calendar"), banner)
+        XCTAssertTrue(banner.contains("' --setup"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }
 

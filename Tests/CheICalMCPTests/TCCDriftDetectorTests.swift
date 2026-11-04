@@ -342,6 +342,26 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
+    // #357: no banner line offers `tccutil reset`, for any signal and either kind of path.
+    func testFormatBanner_noSignalOffersTccutil() {
+        let signals: [DriftSignal] = [
+            .tccPathMismatch(service: "kTCCServiceCalendar", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
+            .tccPathMismatch(service: "kTCCServiceReminders", runningBinaryPath: runningPath, recordedClient: "/o/CheICalMCP"),
+            .csreqMismatch(service: "kTCCServiceCalendar", hasEntitlement: false),
+            .csreqMismatch(service: "kTCCServiceReminders", hasEntitlement: true),
+            .hostAttributedUngranted(host: .claudeCode(version: "2.1.206"), hostPath: "/x/claude"),
+            .hostRestrictedByPolicy(host: .appBundle(name: "Visual Studio Code"), hostPath: "/x/code"),
+        ]
+        for path in [runningPath, "/path/with\n[banner] FAKE/CheICalMCP"] {
+            for granted in [true, false] {
+                let banner = TCCDriftDetector.formatBanner(
+                    report: DriftReport(signals: signals, skipReasons: []), version: "1.0.0",
+                    runningBinaryPath: path, pid: 1, bundleID: bundleID, calendarAccessGranted: granted)
+                XCTAssertFalse(banner.contains("tccutil"), banner)
+            }
+        }
+    }
+
     func testFormatBannerNoSetupHintWhenCalendarGranted() {
         let banner = TCCDriftDetector.formatBanner(
             report: DriftReport(signals: [], skipReasons: []),
@@ -383,7 +403,10 @@ final class TCCDriftDetectorTests: XCTestCase {
 
         // Per-signal lines + their actionable hints.
         XCTAssertTrue(banner.contains("TCC.db Calendar entry path mismatch"))
-        XCTAssertTrue(banner.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
+        // #357: the remedy is System Settings, then this binary's --setup (no tccutil reset).
+        XCTAssertTrue(banner.contains("System Settings → Privacy & Security → Calendar"), banner)
+        XCTAssertTrue(banner.contains("'\(runningPath)' --setup"), banner)
+        XCTAssertFalse(banner.contains("tccutil"), banner)
         XCTAssertTrue(banner.contains("3 stale CheICalMCP processes running"))
         XCTAssertTrue(banner.contains("pkill -f"))
         // Drift status surfaces signal count.
@@ -608,8 +631,8 @@ final class TCCDriftDetectorTests: XCTestCase {
         XCTAssertTrue(banner.contains("\\n"), "expected escaped \\n in safe-display hint")
         // 3. No copy-paste command — the `'/path/...'` shell-quoted form is suppressed.
         XCTAssertFalse(
-            banner.contains("tccutil reset Calendar com.checheng.CheICalMCP &&"),
-            "should not emit copy-paste tccutil command for path with control chars"
+            banner.contains("' --setup"),
+            "should not emit a copy-paste --setup command for path with control chars"
         )
         XCTAssertFalse(
             banner.contains("pkill -f '/path"),
@@ -682,7 +705,7 @@ final class TCCDriftDetectorTests: XCTestCase {
         let expectedQuoted = "'/Users/test/O'\\''Hara/CheICalMCP'"
         XCTAssertTrue(
             banner.contains(expectedQuoted),
-            "tccutil actionable command must use POSIX single-quote escaping for paths with apostrophes. Got: \(banner)"
+            "--setup actionable command must use POSIX single-quote escaping for paths with apostrophes. Got: \(banner)"
         )
         XCTAssertTrue(
             banner.contains("pkill -f " + expectedQuoted),

@@ -9,15 +9,26 @@ import XCTest
 final class PrintTCCPathSectionTests: XCTestCase {
 
     private let path = "/Users/test/bin/CheICalMCP"
-    private let bundleID = "com.checheng.CheICalMCP"
 
     private func section(_ calendar: EKAuthorizationStatus, _ reminders: EKAuthorizationStatus) -> String {
         EventKitManager.printTCCPathRepromptSection(
-            bundleID: bundleID, binaryPath: path, calendarStatus: calendar, remindersStatus: reminders)
+            binaryPath: path, calendarStatus: calendar, remindersStatus: reminders)
     }
 
     func testSection_carriesTheSetupCommandForThisBinary() {
         XCTAssertTrue(section(.denied, .denied).contains("'\(path)' --setup"))
+    }
+
+    // #357: `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare
+    // binary, so the section is "Re-prompt" and points at System Settings instead.
+    func testSection_offersNoTccutil_andPointsAtSystemSettings() {
+        for status in [EKAuthorizationStatus.notDetermined, .denied, .restricted, .fullAccess] {
+            let s = section(status, status)
+            XCTAssertFalse(s.contains("tccutil"), s)
+            XCTAssertTrue(s.hasPrefix("Re-prompt"), s)
+            XCTAssertTrue(s.contains("System Settings → Privacy & Security"), s)
+            XCTAssertTrue(s.contains("− button"), s)
+        }
     }
 
     // #368: a `restricted` status is a policy; the re-prompt section cannot reach it.
