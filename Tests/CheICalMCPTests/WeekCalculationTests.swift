@@ -6,11 +6,21 @@ import Foundation
 /// cultural conventions for first day of week correctly
 final class WeekCalculationTests: XCTestCase {
 
+    /// #306: the Gregorian calendar in the host zone. `Calendar.current` follows the host's region
+    /// calendar, so under a Buddhist host `DateComponents(year: 2026, …)` was Buddhist 2026
+    /// (Gregorian 1483, before the Gregorian reform, where the weekdays do not line up either).
+    /// This file does not import the module, so it does not use `Calendar.gregorian(in:)`.
+    private func gregorian() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }
+
     // MARK: - Week Start Calculation Tests
 
     /// Test that Monday-start week correctly identifies week boundaries
     func testMondayWeekStart() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 2 // Monday
 
         // Wednesday, January 29, 2026
@@ -32,7 +42,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test that Sunday-start week correctly identifies week boundaries
     func testSundayWeekStart() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 1 // Sunday
 
         // Wednesday, January 29, 2026
@@ -54,7 +64,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test that Saturday-start week correctly identifies week boundaries
     func testSaturdayWeekStart() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 7 // Saturday
 
         // Wednesday, January 29, 2026
@@ -78,7 +88,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test behavior when today is Monday and week starts on Monday
     func testTodayIsFirstDayOfWeek_Monday() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 2 // Monday
 
         // Monday, January 26, 2026
@@ -97,7 +107,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test behavior when today is Sunday and week starts on Sunday
     func testTodayIsFirstDayOfWeek_Sunday() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 1 // Sunday
 
         // Sunday, January 25, 2026
@@ -118,7 +128,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test week calculation across month boundary
     func testWeekSpanningMonthBoundary() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 2 // Monday
 
         // Thursday, February 2, 2026
@@ -139,7 +149,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test week calculation across year boundary
     func testWeekSpanningYearBoundary() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 2 // Monday
 
         // Friday, January 2, 2026
@@ -162,7 +172,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test next_week calculation with Monday start
     func testNextWeekCalculation_Monday() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 2 // Monday
 
         // Wednesday, January 29, 2026
@@ -184,7 +194,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Test next_week calculation with Sunday start
     func testNextWeekCalculation_Sunday() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
         calendar.firstWeekday = 1 // Sunday
 
         // Wednesday, January 29, 2026
@@ -208,7 +218,7 @@ final class WeekCalculationTests: XCTestCase {
 
     /// Verify that week duration is always 7 days regardless of start day
     func testWeekDurationIsSevenDays() {
-        var calendar = Calendar.current
+        var calendar = gregorian()
 
         let testDate = calendar.date(from: DateComponents(
             year: 2026, month: 1, day: 29

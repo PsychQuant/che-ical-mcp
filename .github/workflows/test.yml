@@ -97,3 +97,11 @@ jobs:
           STATUS=${PIPESTATUS[0]}
           echo "Exit status: $STATUS"
           exit $STATUS
+
+      - name: swift test under a Buddhist launch locale
+        # #304 / #306: the date output must not depend on the host's region calendar or digits.
+        # `-AppleLocale` makes Locale.current and Calendar.current Buddhist inside the xctest
+        # process (`-XCTest All` is required for xctest to accept the flag). Reuses the test
+        # bundle the step above built.
+        run: |
+          xcrun xctest -AppleLocale "en_US@calendar=buddhist" -XCTest All "$(swift build --show-bin-path)/CheICalMCPTests.xctest"
