@@ -2478,8 +2478,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // (#236, #262), and `verifiedEvent` refuses an event that repeats now. The snapshot
             // holds no rules, so `apply` writes none here (its rules branch serves delete-undo).
             // The calendar is read first (#269, PR #389 round 2): `restoreCalendar` suspends, and
-            // after the #236 post-state check nothing may suspend before the write. When both the
-            // calendar is missing and the event changed, the missing-calendar refusal comes first.
+            // after the #236 post-state check nothing may suspend before the write. That is about
+            // actor reentrancy only (no other call of this server can run in between); a change
+            // another process (Calendar.app, a sync) saves between the check and the save is not
+            // excluded. When the calendar is missing, its refusal comes first and the record is kept,
+            // whether the event changed, repeats now, is detached or is not found.
             let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate)
             let event = try await verifiedEvent(of: operation, verb: .undo)
             oldSnapshot.apply(to: event, calendar: calendar)
@@ -2498,7 +2501,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #269: the original calendar is read as every event undo reads it (`restoreCalendar`),
             // and a missing one is refused with the way on, the record kept. It is read before the
             // #236 post-state check (PR #389 round 2), so nothing suspends between that check and
-            // the write; a missing calendar is therefore refused before a changed event is.
+            // the write (actor reentrancy only; another process's change in between is not
+            // excluded). A missing calendar is therefore refused, and the record kept, before a
+            // changed, repeating, detached or missing event is.
             let original = try await restoreCalendar {
                 try EventSnapshot.calendar(recorded: fromCalendarIdentifier, in: $0, identifier: { $0.calendarIdentifier },
                                            orThrow: { EventKitError.moveBackCalendarMissing(fromCalendarIdentifier: fromCalendarIdentifier, event: title) })
