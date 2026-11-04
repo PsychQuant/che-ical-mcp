@@ -12,7 +12,8 @@ import Foundation
 /// deleted occurrence as a one-off event, #244); every other record writes to an existing item,
 /// which the post-state check covers, or writes nothing.
 enum UndoRestoreDestination {
-    /// The recorded calendar, resolved as `applySnapshot` resolves it (`EventSnapshot.resolveCalendar`).
+    /// The recorded calendar, resolved as the event undo resolves it (`restoreCalendar(for:kind:)`, which
+    /// calls `EventSnapshot.resolveCalendar`).
     case eventCalendar(EventSnapshot)
     /// The list `applyReminderSnapshot` picks.
     case reminderList(ReminderSnapshot)
@@ -38,7 +39,7 @@ enum UndoRestoreDestination {
     /// not in `eventCalendars` / `reminderLists` (`.missing`), or is there but does not allow changes
     /// (`.readOnly`: a read-only shared or subscribed one, where the save would fail part-way through
     /// the batch, PR #282 round 2, finding 5). The lookups are the ones the restore makes, by
-    /// recorded identifier: `EventSnapshot.resolveCalendar` (`applySnapshot`) and
+    /// recorded identifier: `EventSnapshot.resolveCalendar` (`restoreCalendar(for:kind:)`) and
     /// `ReminderSnapshot.resolveList(for: .recreateDeleted)` (`applyReminderSnapshot` for the
     /// `.deleteReminder` undo). A list that only shares the recorded title, such as another
     /// account's "Reminders", does not pass (PR #282 round 1, finding 1). Generic over the list type

@@ -316,20 +316,40 @@ final class EventRangeQueryTests: XCTestCase {
     /// each side) or the recorded window (`exceptions.window`, a scan window). A new caller, or a
     /// caller passing another range, fails here.
     func testTheExceptionsRangePrimitiveOnlyGetsTheBoundedWindows() throws {
+        // PR #400 verify round 2: every `inCalendarOf:` label in Sources is enumerated (comments and
+        // strings blanked), so a call whose range is itself a call, or an unqualified call inside a
+        // store, cannot slip past a pattern. Each label is a declaration of the requirement or a
+        // call of it; for a call, the range argument is the text between its `events(in:` and its
+        // `, inCalendarOf:`, sliced by position, so nested parentheses do not matter.
         let sources = repoRoot.appendingPathComponent("Sources/CheICalMCP")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var declarations: [String] = []
         var calls: [String] = []
         for file in files {
             let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
-            for range in SourcePins.ranges(ofPattern: #"\.events\(in:[^)]*inCalendarOf:[^)]*\)"#, in: code) {
-                calls.append(file.lastPathComponent + ": " + String(code[range]))
+            for label in SourcePins.ranges(of: "inCalendarOf", in: code) {
+                let before = code[..<label.lowerBound]
+                let open = try XCTUnwrap(before.range(of: "events(in", options: .backwards),
+                                         "\(file.lastPathComponent): `inCalendarOf` outside an `events(in` call or declaration")
+                var argument = String(code[open.upperBound..<label.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if argument.hasPrefix(":") { argument = String(argument.dropFirst()).trimmingCharacters(in: .whitespaces) }
+                let isDeclaration = code[..<open.lowerBound].hasSuffix("func ")
+                if isDeclaration {
+                    declarations.append(file.lastPathComponent + ": " + argument)
+                } else {
+                    calls.append(file.lastPathComponent + ": " + argument)
+                }
             }
         }
+        XCTAssertEqual(declarations.sorted(), [
+            "SeriesExceptionsStoreSource.swift: range: DateInterval,",
+            "SeriesExceptionsStoreSource.swift: range: DateInterval,",
+        ], "the requirement and the EventKit adapter only")
         XCTAssertEqual(calls.sorted(), [
-            "SeriesExceptionsUndo.swift: .events(in: exceptions.window, inCalendarOf: restored)",
-            "SeriesExceptionsUndo.swift: .events(in: range, inCalendarOf: series)",
-        ])
+            "SeriesExceptionsUndo.swift: exceptions.window,",
+            "SeriesExceptionsUndo.swift: range,",
+        ], "a listing range of the scan window, or the recorded window")
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in SeriesExceptionsPlanner\.listingRanges\(for: window\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: capture).count, 1,

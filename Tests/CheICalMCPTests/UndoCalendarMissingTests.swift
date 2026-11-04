@@ -349,6 +349,34 @@ final class UndoCalendarMissingTests: XCTestCase {
         XCTAssertTrue(undoOccurrence.contains("store.apply(snapshot, to: event, calendar: calendar)"), undoOccurrence)
         let production = try body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift")
         XCTAssertTrue(production.contains("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), production)
+        // PR #400 verify round 2: the adapter's requirement is that closure, whole; anything else
+        // (its own synchronous `calendarNow`) would skip #269's access check and re-read.
+        let adapterRead = try body("func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar",
+                                   in: "EventKit/SeriesExceptionsStoreSource.swift")
+        XCTAssertEqual(adapterRead, "func restoreCalendar(for snapshot: EventSnapshot, kind: EventRestoreKind) async throws -> EKCalendar { try await readRestoreCalendar(snapshot, kind) }")
+        // #389's negative scans, extended to where the two delete arms now live.
+        for (declaration, file) in [("static func undoDeleteEvent<", seam), ("static func undoDeleteOccurrence<", seam),
+                                    ("private func undoDeletedEvent<", wrappers), ("private func undoDeletedOccurrence<", wrappers)] {
+            let arm = try body(declaration, in: file)
+            for forbidden in ["calendarNotFound", "calendar(withIdentifier:", "calendars(for: .event)", "calendarNow("] {
+                XCTAssertFalse(arm.contains(forbidden), "\(declaration): \(forbidden)")
+            }
+        }
+        // `calendarNow` (the synchronous lookup without #269's read) is declared by the requirement
+        // and the adapter, and called once: the exceptions one-off. A closed enumeration over Sources.
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var uses: [String] = []
+        for file in files {
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            for use in SourcePins.ranges(of: "calendarNow(", in: code) {
+                uses.append(file.lastPathComponent + (code[..<use.lowerBound].hasSuffix("func ") ? " declares" : " calls"))
+            }
+        }
+        XCTAssertEqual(uses.sorted(), ["SeriesExceptionsStoreSource.swift declares", "SeriesExceptionsStoreSource.swift declares",
+                                       "SeriesExceptionsUndo.swift calls"])
         // PR #389 round 2 (LOW): the update and move arms read the calendar before the #236
         // post-state check, so no suspension point sits between that check and the write.
         let update = try XCTUnwrap(arm("updateEvent", of: undo))
