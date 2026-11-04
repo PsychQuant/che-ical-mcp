@@ -16,9 +16,9 @@ final class MCPBInstallSanitizerTests: XCTestCase {
 
     // MARK: - Detection contract (no mutation)
 
-    /// `EventKitManager.isMCPBClaudeDesktopInstall` reads `CommandLine.arguments[0]`
-    /// and BinaryPathResolver-resolves it. In the test process, argv[0] points at
-    /// the xctest runner — not under `Claude Extensions/local.mcpb.`. So the flag
+    /// `EventKitManager.isMCPBClaudeDesktopInstall` reads the running binary's path from
+    /// the kernel (`RunningBinaryPath`, argv[0] only as a fallback, #360). In the test
+    /// process that is the xctest runner — not under `Claude Extensions/local.mcpb.`. So the flag
     /// is `false` in the test environment. We assert this so future detection
     /// changes don't silently regress the test environment behavior.
     func testDetection_returnsFalseInTestEnvironment() {

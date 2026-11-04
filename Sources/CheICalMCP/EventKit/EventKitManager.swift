@@ -101,9 +101,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// channel-specific (only `.mcpb` is affected; Claude Code plugin path
     /// `~/bin/CheICalMCP` is unaffected — different spawn chain).
     static let isMCPBClaudeDesktopInstall: Bool = {
-        let argv0 = CommandLine.arguments.first ?? ""
-        let resolved = BinaryPathResolver.resolveArgv0(argv0)
-        return resolved.contains("Claude Extensions/local.mcpb.")
+        // The kernel's path, not argv[0] against the current directory (#360).
+        RunningBinaryPath.current().contains("Claude Extensions/local.mcpb.")
     }()
 
     /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
@@ -132,14 +131,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(EventKitErrorSanitizer.escapeForStderr(path))  (escaped: the path has control characters)"
     }
 
-    /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the
-    /// same realpath(3) path `--print-tcc-path` / the banner use) and format the `--setup`
+    /// Resolve the running binary's canonical path (`RunningBinaryPath`: the kernel's path,
+    /// argv[0] only as a fallback, #360 — the same path `--print-tcc-path` / the banner use)
+    /// and format the `--setup`
     /// remediation hint. The `.mcpb` install's binary lives at a buried path users can't
     /// easily locate, so denial messages surface the exact command to grant THIS binary's
     /// TCC permission — the foreground `--setup` is what makes the dialog present (#163).
     static func resolvedSetupCommandHint() -> String {
-        let argv0 = CommandLine.arguments.first ?? AppVersion.name
-        return setupCommandHint(binaryPath: BinaryPathResolver.resolveArgv0(argv0))
+        setupCommandHint(binaryPath: RunningBinaryPath.current())
     }
 
     /// Pure formatter for the `EventKitError.accessDenied` remediation message. Every

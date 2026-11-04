@@ -66,7 +66,7 @@ final class SetupModel: ObservableObject {
 
     init(
         probe: AuthorizationStatusSource = LiveAuthorizationStatusSource(),
-        binaryPath: String = BinaryPathResolver.resolveArgv0(CommandLine.arguments.first ?? AppVersion.name)
+        binaryPath: String = RunningBinaryPath.current()  // kernel path first (#360)
     ) {
         self.probe = probe
         self.binaryPath = binaryPath

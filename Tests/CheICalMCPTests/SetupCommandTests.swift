@@ -147,7 +147,8 @@ final class SetupCommandTests: XCTestCase {
         XCTAssertTrue(hint.contains("--setup"))
     }
 
-    /// The resolved hint reads argv[0] (the xctest runner here) and still ends in `--setup`.
+    /// The resolved hint reads the running binary's path from the kernel (`RunningBinaryPath`,
+    /// #360; the xctest runner here) and still ends in `--setup`.
     func testResolvedSetupCommandHint_containsSetupFlag() {
         let hint = EventKitManager.resolvedSetupCommandHint()
         XCTAssertTrue(hint.contains("--setup"), "resolved hint must contain the --setup flag")

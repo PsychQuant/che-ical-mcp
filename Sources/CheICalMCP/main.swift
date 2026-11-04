@@ -89,8 +89,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     // commands. Designed for the .mcpb-installed scenario where users can't easily
     // find the extracted binary path on their own.
 
-    let argv0 = CommandLine.arguments[0]
-    let absolute = BinaryPathResolver.resolveArgv0(argv0)
+    // #360: the kernel's path of this binary, not argv[0] resolved against the cwd.
+    let absolute = RunningBinaryPath.current()
 
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
 
@@ -226,12 +226,10 @@ func emitStartupBanner() {
         return
     }
 
-    let argv0 = CommandLine.arguments.first ?? ""
-    // Resolved via `BinaryPathResolver` (#129) — same realpath(3) canonical path that
-    // `--print-tcc-path` and `--self-update` now use. Eliminates the multi-hop symlink
-    // discrepancy (#121) and the false-positive drift signal from `destinationOfSymbolicLink`'s
-    // 1-hop limitation (#128).
-    let resolvedPath = BinaryPathResolver.resolveArgv0(argv0)
+    // The kernel's path (`proc_pidpath`), canonicalized with realpath(3) like #129's argv[0]
+    // resolution, so the multi-hop symlink fixes of #121 / #128 still hold; argv[0] is only the
+    // fallback, because a bare argv[0] resolves against the current directory (#360).
+    let resolvedPath = RunningBinaryPath.current()
 
     let mtime: Date? = {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
