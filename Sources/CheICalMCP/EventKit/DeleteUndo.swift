@@ -62,8 +62,10 @@ struct DeletedEventSnapshots {
     /// #326 `freshEvent` hands such a series' first remaining occurrence in as `series`, so that
     /// occurrence now counts as the first and a span future delete from it is recorded whole (the
     /// remaining occurrences are all that is removed, and `seriesResolves` is false afterwards).
-    /// That recorded undo has not been checked on device: undo is stateful, which `--cli` cannot
-    /// show (tracked in #335). Both objects report the slot as
+    /// That recorded undo was checked on device (#335, iCloud, 2026-11-01 and again 2026-11-05 in one
+    /// stdio process): a weekly series of 5 with its first occurrence deleted, deleted through the
+    /// stand-in with span future and with span all, came back on undo as a new series with the
+    /// same 4 dates. Both objects report the slot as
     /// `occurrenceDate` equal to `startDate` for a timed, an all-day and a New York series
     /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool
