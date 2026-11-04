@@ -2987,6 +2987,10 @@ enum EventKitError: LocalizedError {
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
     case seriesExceptionsRestoreFailed(reason: String)
+    /// #289: a new reminder or list whose save threw, and whose check could not be answered (a new
+    /// store with no sources), was kept: it may already be saved or be written by the next save.
+    /// `code` is the save's sanitized code.
+    case saveUnchecked(code: String)
     /// #328: `delete_calendar` with `require_empty` found the calendar not empty; nothing deleted.
     case calendarNotEmpty(reason: String)
     /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
@@ -3106,6 +3110,8 @@ enum EventKitError: LocalizedError {
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
+        case .saveUnchecked(let code):
+            return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed: it may already be saved, or be written by the next save of any tool. Check before trying again: creating it again, or running the same undo again, may make a second copy. For an undo, if the item is there, give the history entry up with discard_id instead of running undo again."
         case .calendarNotEmpty(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):

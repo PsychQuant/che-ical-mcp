@@ -40,9 +40,16 @@ import EventKit
 ///   whose due date agrees within a minute (or neither has one), `create_calendar` for a calendar
 ///   of the same title and type, and either returns what it finds. Whether those checks see an
 ///   item still pending was read from the code, not tried.
-/// - no answer (the new store has no sources) is a discard too. This is the one exception to the
-///   #261 rule "no defensive discard without probe evidence", tracked in #289: nothing shows that
-///   such a save did not commit. Grounds: the caller has already been told the save failed; on
+/// - no answer (the new store has no sources): the object is kept, not discarded (#289). Nothing
+///   shows that such a save did not commit, and discarding a save that did would delete the item at
+///   the next write by any tool, with no undo record, which cannot be reversed; #261's rule is "no
+///   defensive discard without probe evidence". The cost is the other way round: an item whose
+///   save did not commit stays pending and the next save of any tool may write it, with no undo
+///   record. The caller gets `EventKitError.saveUnchecked`, which says so: the item may already be
+///   saved or be written later, so check before creating it again or running the same undo again
+///   (either may make a second copy), and for an undo give the entry up with `discard_id` if the
+///   item is there. The nil branch was not produced on device (#289): before #289 it was a discard,
+///   kept as the one exception on these grounds: the caller has already been told the save failed; on
 ///   device a new store had no sources only with about ten stores that have read their sources
 ///   alive in one process, while the server keeps one such store (`EventKitManager`; the store
 ///   made at startup only reads the authorization status) plus the one this check makes and
@@ -72,7 +79,7 @@ import EventKit
 ///   that saved it did. Such a store found each normally saved reminder and list (10 of 10,
 ///   about 30 ms). A store made while about ten others that have read their sources are alive in
 ///   the process has no sources and finds nothing: `freshStoreFinds` then gives no answer, and the
-///   object is discarded (`unchecked`). The check's own stores are released (the counts above).
+///   object is kept (`unchecked`, #289). The check's own stores are released (the counts above).
 ///
 /// The comparison, on device, by run:
 /// - 2026-10-08 05:22, before any comparison (identifier only): 4 objects saved through this
@@ -198,8 +205,8 @@ enum NewObjectSave {
         /// object (`Found.differs`): a partial write, or an edit made elsewhere between the commit
         /// and the check. The item is kept, `run` returns the names, and the call succeeds.
         case committedButDiffers(fields: [String], save: Error)
-        /// That store had no sources and could not answer; the object was removed anyway, and the
-        /// removal ran without an error.
+        /// That store had no sources and could not answer; the object was kept, not removed (#289),
+        /// and the caller gets `EventKitError.saveUnchecked`.
         case unchecked
         /// The save was the refusal seen before the store took the object in, and the removal threw
         /// the error that refusal gave (`isNothingPending`).
@@ -320,8 +327,9 @@ enum NewObjectSave {
     /// reports `.committedThenThrew` and returns none; `.differs` reports `.committedButDiffers`
     /// and returns the names. Either way the object is kept and the caller goes on as after a
     /// save, telling its own caller about the names (`responseFields`, `undoSuffix`). `.absent`
-    /// or nil runs `discard`, reports one outcome (`.unchecked` when nil and the removal ran,
-    /// `.nothingPending` or `.discardFailed`), and rethrows the save's error.
+    /// runs `discard`, reports `.nothingPending` or `.discardFailed` when the removal throws, and
+    /// rethrows the save's error. Nil (no answer) runs no `discard` (#289): it reports `.unchecked`
+    /// and throws `EventKitError.saveUnchecked` with the save's sanitized code.
     static func run(save: () throws -> Void, verified: () throws -> Void = {}, committed: () -> Found?,
                     discard: () throws -> Void, report: (Outcome) -> Void) throws -> [String] {
         do {
@@ -336,9 +344,13 @@ enum NewObjectSave {
                 report(.committedButDiffers(fields: fields, save: error))
                 return fields
             }
+            guard found != nil else {
+                // #289: no evidence either way, so nothing is removed.
+                report(.unchecked)
+                throw EventKitError.saveUnchecked(code: EventKitErrorSanitizer.sanitize(error).code)
+            }
             do {
                 try discard()
-                if found == nil { report(.unchecked) }
             } catch let discardError {
                 report(isNothingPending(save: error, discard: discardError)
                        ? .nothingPending : .discardFailed(save: error, discard: discardError))
@@ -414,7 +426,7 @@ enum NewObjectSave {
         case .committedButDiffers(let fields, let save):
             return "\(site): the save threw \(code(save)), and a new store finds the item, but its \(fields.joined(separator: ", ")) differ from what was written (a partial write or an edit made elsewhere); it is kept and the call succeeds with a note naming them"
         case .unchecked:
-            return "\(site): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing"
+            return "\(site): the save threw and a new store could not be read, so whether it was saved is unknown; it was kept (not removed), since removing a save that committed would delete it at the next write (#289)"
         case .nothingPending:
             return "\(site): the save was refused before the store took the item in; nothing to remove"
         case .discardFailed(let save, let discard):
