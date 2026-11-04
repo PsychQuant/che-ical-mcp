@@ -127,7 +127,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **修改後的 ID（#268）：** `update_event` 與 `update_reminder` 回報的是儲存之後的 ID。ID 只在三種情況改變：`calendar_name` 指向另一個帳號的日曆或清單（事件部分依 #226 的實機結果；改單一場次時指定另一個帳號的日曆會被拒絕，因為那會搬動整個系列）、`update_event` 從後面的場次以 `span: "future"` 切出新系列（回報新系列的 ID），以及用單獨改過的場次自己的 ID 搭配 span `future` 或 `all`，這會把系列切開（#335）。`id_changed` 說明它和你傳入的 ID 是否不同，只有改變時才會出現的 `previous_id` 是你傳入的 ID。只改單一場次（`occurrence_date`、span `this`）時，`id` 是系列的 ID，另附 `occurrence_id`，即那個場次自己的 ID；它只能搭配 span `this` 使用。
 
-**帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、事件實際使用的那一天（`host_day`）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
+**帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、請求的日期在這台 Mac 時區下會寫成的那一天（`host_day`；重複而被略過的建立不會寫入，訊息會說既有事件沒有改變）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
 
 </details>
 
