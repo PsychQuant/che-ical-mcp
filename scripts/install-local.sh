@@ -15,7 +15,8 @@
 #      architecture, `--version` equal to AppVersion.current in Version.swift);
 #   5. sign the STAGED file, verify the signature (`codesign --verify --strict`; for
 #      developer-id also the TeamIdentifier of that identity) and run the check again;
-#   6. only then replace the installed file: rm -f first, for a fresh inode (#62), then copy.
+#   6. only then replace the installed file: copy to a temp file in the install directory and
+#      rename it over the installed file (atomic; the rename gives a fresh inode, #62).
 # Any refusal, including a failed signing or post-sign check, leaves the installed file as
 # it was (#239 verify).
 #
@@ -118,6 +119,14 @@ elif [[ "$SIGNATURE" != *"TeamIdentifier=$TEAM_ID"* ]]; then
 fi
 check_staged_product "$STAGED" "$ARCH" "$NAME" "$VERSION" || exit 1
 
+# The replace is atomic (#239 verify round 2): copy into a temp file in the install directory,
+# then rename it over the installed file. A failed copy leaves the old install in place, and the
+# rename gives the installed path a fresh inode, which is what the old rm -f was for (#62).
 mkdir -p "$DIR"
-rm -f "$DEST"
-cp "$STAGED" "$DEST"
+NEW_FILE=$(mktemp "$DIR/.$NAME.install.XXXXXX")
+trap 'rm -rf "$STAGE_DIR"; rm -f "$NEW_FILE"' EXIT
+if ! cp "$STAGED" "$NEW_FILE" || ! chmod 755 "$NEW_FILE"; then
+    echo "Error: cannot copy the checked product into $DIR; the installed file is unchanged (#239)" >&2
+    exit 1
+fi
+mv -f "$NEW_FILE" "$DEST"

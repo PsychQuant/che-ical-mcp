@@ -100,6 +100,29 @@ refused "a missing product" adhoc "$TMP/empty-bin" "no $HOST product"
 refused "a failed ad-hoc signature" adhoc "$TMP/good" "signing failed" CHE_ICAL_CODESIGN="$TMP/stub/codesign-fails"
 refused "a signature codesign did not make" adhoc "$TMP/good" "not ad-hoc signed" CHE_ICAL_CODESIGN="$TMP/stub/codesign-noop"
 
+# 6b. The final replace is atomic: a copy into the install directory that fails leaves the old
+# install in place (the copy goes to a temp file there, which is then renamed over it).
+mkdir -p "$TMP/cpstub"
+cat > "$TMP/cpstub/cp" <<'EOF2'
+#!/bin/bash
+last="${@: -1}"
+case "$last" in "$FAIL_CP_UNDER"/*) echo "stub: cp refused" >&2; exit 1 ;; esac
+exec /bin/cp "$@"
+EOF2
+/bin/chmod u+x "$TMP/cpstub/cp"
+refused "a copy into the install directory that fails" adhoc "$TMP/good" "" \
+    PATH="$TMP/cpstub:$PATH" FAIL_CP_UNDER="$TMP/dest-a-copy-into-the-install-directory-that-fails"
+left=$(ls -A "$TMP/dest-a-copy-into-the-install-directory-that-fails")
+[ "$left" = CheICalMCP ] && ok "a failed copy leaves no temp file behind" || bad "a failed copy leaves no temp file behind — left: $left"
+# The replaced file is a new inode (#62) and stays executable.
+ino_before=$(stat -f %i "$TMP/dest1/CheICalMCP")
+out=$(run_install adhoc "$TMP/good" "$TMP/dest1") && rc=0 || rc=$?
+ino_after=$(stat -f %i "$TMP/dest1/CheICalMCP")
+[ $rc -eq 0 ] && [ "$ino_before" != "$ino_after" ] && [ -x "$TMP/dest1/CheICalMCP" ] \
+    && ok "a reinstall replaces the file with a new, executable inode" \
+    || bad "a reinstall replaces the file with a new, executable inode — rc=$rc inode $ino_before -> $ino_after: $out"
+[ "$(ls -A "$TMP/dest1")" = CheICalMCP ] && ok "a reinstall leaves no temp file behind" || bad "a reinstall leaves no temp file behind — $(ls -A "$TMP/dest1")"
+
 # 7. developer-id: an identity that is not in the keychain stops before anything is built.
 rm -f "$TMP/calls"
 refused "a Developer ID that is not in the keychain" developer-id "$TMP/good" "cannot sign with Developer ID" \

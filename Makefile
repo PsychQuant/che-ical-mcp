@@ -80,7 +80,8 @@ release-signed: verify-release-ready
 # Note: TCC dialogs do not appear on macOS 26 with ad-hoc signing —
 #       use `make release-signed` for testing TCC flows on macOS 26.
 #
-# rm -f forces a fresh inode: if any old CheICalMCP processes are still running
+# A fresh inode is required (install-local.sh renames a new file over the installed one;
+# the targets used rm -f before cp): if any old CheICalMCP processes are still running
 # (e.g. held by Claude Code MCP integrations or launchd), `cp` over the existing
 # file would reuse the same inode, and the macOS kernel caches code-signature
 # hashes per-inode — leading to "load code signature error 2" SIGKILL on the
