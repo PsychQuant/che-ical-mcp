@@ -179,7 +179,30 @@ final class AllDayRangeTests: XCTestCase {
         XCTAssertNil(p.datesToWrite, "nothing about the dates was requested, so nothing is written")
     }
 
+    /// #364 verify round 2: a flag-only `all_day: false` turns the stored pair into a timed range,
+    /// so it is checked like one (it used to skip the check and could save a zero-length event).
+    func testPlanUpdateFlagOnlyAllDayToTimedIsChecked() throws {
+        XCTAssertThrowsError(try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1), storedAllDay: true,
+                                      requestedAllDay: false))
+        let p = try plan(storedStart: at(2027, 3, 1), storedEnd: at(2027, 3, 1, 23, 59, 59), storedAllDay: true,
+                         requestedAllDay: false)
+        XCTAssertFalse(p.isAllDay)
+        XCTAssertEqual([p.start, p.end], [at(2027, 3, 1), at(2027, 3, 1, 23, 59, 59)])
+    }
+
     // MARK: a day that is not 24 hours long
+
+    /// #364 verify round 2: zones that start DST at midnight begin that day at 01:00, so "one day
+    /// after the start of the day, minus a second" lands on 00:59:59 of the NEXT day. The last
+    /// second must come from the start of the next day.
+    func testADayThatStartsAt0100EndsOnItself() throws {
+        let santiago = TimeZone(identifier: "America/Santiago")!
+        let sc = Calendar.gregorian(in: santiago)
+        let day = sc.date(from: DateComponents(year: 2026, month: 9, day: 6, hour: 12))!
+        let r = try AllDayRange.normalize(start: day, end: day, calendar: sc)
+        let l = sc.dateComponents([.month, .day, .hour, .minute, .second], from: r.end)
+        XCTAssertEqual([l.month, l.day, l.hour, l.minute, l.second], [9, 6, 23, 59, 59])
+    }
 
     func testADSTDayEndsAtItsOwnLastSecond() throws {
         let newYork = TimeZone(identifier: "America/New_York")!

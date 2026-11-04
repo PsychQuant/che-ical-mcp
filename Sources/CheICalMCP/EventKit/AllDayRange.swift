@@ -53,8 +53,10 @@ enum AllDayRange {
         calendar: Calendar
     ) throws -> UpdatePlan {
         let isAllDay = requestedAllDay ?? storedAllDay
-        let turnsAllDay = isAllDay && !storedAllDay
-        guard newStart != nil || newEnd != nil || turnsAllDay else {
+        // A flip of the flag in either direction re-reads the stored pair under the new state
+        // (#364 verify round 2: a flag-only `all_day: false` used to skip the timed check).
+        let flipsFlag = isAllDay != storedAllDay
+        guard newStart != nil || newEnd != nil || flipsFlag else {
             return UpdatePlan(start: storedStart, end: storedEnd, isAllDay: isAllDay, datesToWrite: nil)
         }
 
@@ -89,8 +91,11 @@ enum AllDayRange {
         return UpdatePlan(start: start, end: end, isAllDay: false, datesToWrite: (start, end))
     }
 
+    /// The last second of `day`, taken from the start of the next day: in a zone that starts DST at
+    /// midnight the day itself begins at 01:00, and "one day later, minus a second" would land on
+    /// 00:59:59 of the next day (#364 verify round 2).
     private static func lastSecond(of day: Date, calendar: Calendar) -> Date {
         let dayAfter = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
-        return dayAfter.addingTimeInterval(-1)
+        return calendar.startOfDay(for: dayAfter).addingTimeInterval(-1)
     }
 }

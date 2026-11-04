@@ -37,4 +37,24 @@ final class CreateDuplicateKeyTests: XCTestCase {
             title: "Sync", start: day(11, 9), isAllDay: false,
             candidateTitle: "Other", candidateStart: day(11, 9), candidateAllDay: false))
     }
+
+    /// #364 verify round 2: a timed create used to match a same-titled ALL-DAY event that covers
+    /// its start (any all-day event on that day overlaps the search window) and create nothing.
+    func testATimedCreateDoesNotMatchAnAllDayEvent() {
+        XCTAssertFalse(EventKitManager.isCreateDuplicate(
+            title: "Conference", start: day(11, 9), isAllDay: false,
+            candidateTitle: "Conference", candidateStart: day(11), candidateAllDay: true))
+    }
+
+    /// The rule is only worth something if createEvent passes the request's all-day flag to it.
+    func testCreateEventPassesItsAllDayFlagToTheDuplicateCheck() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let from = try XCTUnwrap(source.range(of: "func createEvent("))
+        XCTAssertTrue(source[from.upperBound...].prefix(4000)
+            .contains("findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar)"))
+        let finder = try XCTUnwrap(source.range(of: "private func findDuplicateEvent("))
+        XCTAssertTrue(source[finder.upperBound...].prefix(1200).contains("Self.isCreateDuplicate("))
+    }
 }

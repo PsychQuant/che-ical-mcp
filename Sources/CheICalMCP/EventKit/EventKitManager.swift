@@ -625,12 +625,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// #364 verify round 1: an all-day create's start is midnight after normalization, and a
     /// same-titled all-day event on the previous day (ending 23:59:59) overlaps the search window,
     /// so for an all-day create only an all-day event starting at the same instant matches.
+    /// Round 2: a timed create matches only a timed event, since every all-day event on that day
+    /// overlaps the window too.
     static func isCreateDuplicate(
         title: String, start: Date, isAllDay: Bool,
         candidateTitle: String?, candidateStart: Date?, candidateAllDay: Bool
     ) -> Bool {
         guard candidateTitle == title else { return false }
-        guard isAllDay else { return true }
+        guard isAllDay else { return !candidateAllDay }
         return candidateAllDay && candidateStart == start
     }
 
