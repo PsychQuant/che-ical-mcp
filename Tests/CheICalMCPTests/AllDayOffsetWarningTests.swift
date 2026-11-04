@@ -118,4 +118,50 @@ final class AllDayOffsetWarningTests: XCTestCase {
             [.init(field: "start_time", writtenDay: "2027-04-10", hostDay: "2027-04-11")], hostZone: .current)
         XCTAssertEqual((fields["warnings"] as? [[String: Any]])?.count, 1)
     }
+
+    // MARK: - #372 verify: the hint re-sent gives the written day
+
+    /// Following the end hint must keep the written last day: a bare date as end_time after the
+    /// first day is an exclusive end, so the hint offers `<day>T23:59:59` or the day after.
+    func testTheEndHintsResentThroughTheAllDayRuleEndOnTheWrittenDay() throws {
+        for (start, end) in [("2027-04-10", "2027-04-11T23:59:59+07:00"), ("2027-04-10", "2027-04-12T00:00:00+07:00"),
+                             ("2027-04-11", "2027-04-11T23:59:59+07:00")] {
+            let warning = try XCTUnwrap(try warnings(start: start, end: end).first { $0.field == "end_time" })
+            XCTAssertEqual(warning.suggestedValues.count, 2)
+            let first = try date(start, taipei)
+            for value in warning.suggestedValues {
+                XCTAssertNil(AllDayOffsetWarning.writtenOffset(value), value)
+                let resent = try date(value, taipei)
+                let created = try AllDayRange.normalize(start: first, end: resent, calendar: taipei)
+                XCTAssertEqual(dayString(created.end), warning.writtenDay, "create with \(value)")
+                let updated = try AllDayRange.planUpdate(
+                    storedStart: created.start, storedEnd: created.end, storedAllDay: true,
+                    newStart: nil, newEnd: resent, requestedAllDay: nil, calendar: taipei)
+                XCTAssertEqual(dayString(updated.end), warning.writtenDay, "update with \(value)")
+            }
+            XCTAssertTrue(warning.dictionary(hostZone: taipei.timeZone)["message"].map { "\($0)" }?
+                .contains(warning.suggestedValues[0]) == true)
+        }
+    }
+
+    func testTheStartHintResentStartsOnTheWrittenDay() throws {
+        let warning = try XCTUnwrap(try warnings(start: "2027-04-10T20:00:00Z", end: "2027-04-12").first)
+        XCTAssertEqual(warning.suggestedValues, ["2027-04-10"])
+        let resent = try date(warning.suggestedValues[0], taipei)
+        let created = try AllDayRange.normalize(start: resent, end: try date("2027-04-12", taipei), calendar: taipei)
+        XCTAssertEqual(dayString(created.start), warning.writtenDay)
+    }
+
+    /// The old advice, a bare `written_day` as end_time, drops that day: the case the hint avoids.
+    func testABareWrittenDayAsEndWouldDropIt() throws {
+        let first = try date("2027-04-10", taipei)
+        let created = try AllDayRange.normalize(start: first, end: try date("2027-04-11", taipei), calendar: taipei)
+        XCTAssertEqual(dayString(created.end), "2027-04-10")
+    }
+
+    private func dayString(_ date: Date) -> String {
+        let parts = taipei.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+    }
 }
+

@@ -20,15 +20,31 @@ enum AllDayOffsetWarning {
         /// The same day in the host zone: the one the event is saved with.
         let hostDay: String
 
+        /// Values without an offset that give `writtenDay` back under the all-day rule. For the
+        /// start, the bare date. For the end, the last second of that day or the bare date of the
+        /// day after (an exclusive end): a bare `writtenDay` as end_time after the first day would
+        /// exclude it (PR #387 verify round 1).
+        var suggestedValues: [String] {
+            guard field == "end_time" else { return [writtenDay] }
+            return [writtenDay + "T23:59:59", AllDayOffsetWarning.dayAfter(writtenDay) ?? writtenDay + "T23:59:59"]
+        }
+
         func dictionary(hostZone: TimeZone) -> [String: Any] {
+            let hint: String
+            if field == "start_time" {
+                hint = "the event starts on \(hostDay). To start on \(writtenDay), send start_time \(writtenDay) without an offset."
+            } else {
+                let values = suggestedValues
+                hint = "the event ends on \(hostDay). To end on \(writtenDay), send end_time \(values[0]) without an offset, "
+                    + "or the bare date \(values[1]) (the day after, an exclusive end)."
+            }
             let which = field == "start_time" ? "first" : "last"
             return [
                 "field": field,
                 "written_day": writtenDay,
                 "host_day": hostDay,
                 "message": "\(field) carries an offset that puts the \(which) day on \(writtenDay), but all-day dates "
-                    + "are read in this Mac's time zone (\(hostZone.identifier)), where it is \(hostDay); the event "
-                    + "uses \(hostDay). Send the date without an offset to mean \(writtenDay).",
+                    + "are read in this Mac's time zone (\(hostZone.identifier)), where it is \(hostDay); " + hint,
             ]
         }
     }
@@ -88,6 +104,16 @@ enum AllDayOffsetWarning {
         guard end == midnight, endDay > firstDay,
               let dayBefore = calendar.date(byAdding: .day, value: -1, to: midnight) else { return endDay }
         return day(dayBefore, calendar)
+    }
+
+    /// The `yyyy-MM-dd` after `day` (a calendar date, so computed in UTC Gregorian).
+    static func dayAfter(_ day: String) -> String? {
+        let utc = Calendar.gregorian(in: TimeZone(secondsFromGMT: 0)!)
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3,
+              let date = utc.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])),
+              let next = utc.date(byAdding: .day, value: 1, to: date) else { return nil }
+        return Self.day(next, utc)
     }
 
     /// `yyyy-MM-dd` of `date` in `calendar` (Gregorian, so the strings sort as dates).

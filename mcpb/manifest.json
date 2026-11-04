@@ -57,11 +57,11 @@
     },
     {
       "name": "create_event",
-      "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone"
+      "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone (an all-day date whose offset moves it to another day in this Mac's zone is reported in warnings)"
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a span future split changed it, and occurrence_id for an edit of one occurrence) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a span future split changed it, and occurrence_id for an edit of one occurrence; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
     },
     {
       "name": "delete_event",
@@ -97,7 +97,7 @@
     },
     {
       "name": "create_events_batch",
-      "description": "Create multiple events at once"
+      "description": "Create multiple events at once (each result reports all-day dates whose offset moves the day in warnings)"
     },
     {
       "name": "check_conflicts",
