@@ -1013,7 +1013,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
-    ) async throws -> (event: EKEvent, seriesIdentifier: String?) {
+    ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {
         try await ensureCalendarAccess()
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
@@ -1040,13 +1040,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // When applyToAll is true, operate on master event directly (correct for "all" series updates).
         // "this" or "future" on recurring → require occurrence_date to find the right occurrence.
         let event: EKEvent
+        // #383 verify: the occurrence occurrence_date matched, read before any field is assigned,
+        // reported as occurrence_start so the caller can see which day was edited.
+        var matchedOccurrence: MatchedOccurrence?
         if !masterEvent.hasRecurrenceRules {
             event = masterEvent
         } else if applyToAll {
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: timezone ?? masterEvent.timeZone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 throw EventKitError.eventNotFound(identifier: "\(identifier) (no occurrence on \(date))")
             }
             // Span future at the stand-in itself is the same whole-series save (verify round 3).
@@ -1055,6 +1058,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 occurrenceStart: occurrence.startDate, standInStart: masterEvent.startDate) {
                 throw EventKitError.standInRefused(reason: Self.standInSplitReason)
             }
+            matchedOccurrence = MatchedOccurrence(start: occurrence.startDate, zone: Self.occurrenceZone(of: masterEvent))
             event = occurrence
         } else {
             throw EventKitError.invalidTimeRange(
@@ -1243,7 +1247,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             masterRefreshed: masterRefreshed,
             master: masterRefreshed ? masterEvent.eventIdentifier : nil,
             occurrence: event.eventIdentifier)
-        return (event, seriesIdentifier)
+        return (event, seriesIdentifier, matchedOccurrence)
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and
@@ -1263,8 +1267,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
-    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent` and
-    /// `moveEvent`) read the same field through here, so a code change cannot make them differ; a
+    /// (`occurrenceDateTimeZone`) and the search side (`findOccurrence` in `deleteEvent`,
+    /// `moveEvent` and, since #383, `updateEvent`) read the same field through here, so a code change cannot make them differ; a
     /// zone edit landing between the lookup and the write still can (accepted, round 2).
     static func occurrenceZone(of event: EKEvent) -> TimeZone? {
         event.timeZone
@@ -2129,7 +2133,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder.addAlarm(alarm)
         }
 
-        let storeDiffers = try saveNewReminder(reminder, handler: "createReminder")
+        let storeDiffers = try saveNewReminder(reminder, handler: "createReminder", restoring: false)
         markNeedsRefresh()
         // #301: read the date-only create back, as `update_reminder` does. A date-only write never
         // runs the fallback, so there is nothing to save or roll back.
@@ -2153,8 +2157,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// entry, the delete-undo's restore). Returns the compared fields the store holds differently
     /// (empty after a save or when it holds the reminder as written), for the caller to name
     /// through `NewObjectSave.differingFieldsNote`.
-    private func saveNewReminder(_ reminder: EKReminder, handler: String) throws -> [String] {
-        try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+    ///
+    /// #281: a save that returns is checked in this store, as it is (no refresh; see
+    /// `NewObjectSave`): does the list (by the identifier the reminder had before the save) and the
+    /// reminder still resolve. A save
+    /// into a list deleted elsewhere between the caller's list lookup and this save returns without
+    /// error and writes nothing; it reads as a gone list and an unresolvable reminder, and
+    /// `NewObjectSave.ListDeletedDuringSave` is thrown (`restoring` picks the delete-undo wording),
+    /// so no undo entry is recorded for a create and a delete-undo keeps its record.
+    private func saveNewReminder(_ reminder: EKReminder, handler: String, restoring: Bool) throws -> [String] {
+        let listID = reminder.calendar?.calendarIdentifier
+        return try NewObjectSave.run(save: { try eventStore.save(reminder, commit: true) },
+                              verified: {
+                                  try NewObjectSave.confirmWritten(
+                                      listGone: listID.map { eventStore.calendar(withIdentifier: $0) == nil } ?? false,
+                                      itemResolves: eventStore.calendarItem(withIdentifier: reminder.calendarItemIdentifier) != nil,
+                                      restoring: restoring)
+                              },
                               committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
                               discard: { try eventStore.remove(reminder, commit: false) },
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
@@ -2638,7 +2657,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// a second copy. The names are data: callers build their note from them, never from text.
     func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String]) {
         let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })
-        let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder")
+        let storeDiffers = try saveNewReminder(reminder, handler: "undo.deleteReminder", restoring: true)
         markNeedsRefresh()
         return (snapshot.title, storeDiffers)
     }
