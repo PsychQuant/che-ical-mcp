@@ -122,8 +122,8 @@ struct EventSnapshot {
         self.title = event.title ?? ""
         self.startDate = event.startDate
         self.endDate = event.endDate
-        // An event without a calendar is recorded without an identifier (its undo is refused with
-        // `calendarNotFound` by `resolveCalendar`); the calendar was read through the implicitly
+        // An event without a calendar is recorded without an identifier (its undo is refused by
+        // `resolveCalendar` with `undoCalendarMissing`'s no-identifier wording, #269); the calendar was read through the implicitly
         // unwrapped `calendar` and crashed on it (#286, as `ReminderSnapshot` in PR #277).
         self.calendarIdentifier = event.calendar?.calendarIdentifier ?? ""
         self.calendarTitle = event.calendar?.title ?? ""
@@ -142,12 +142,32 @@ struct EventSnapshot {
         self.availability = availability ?? event.availability
     }
     /// Names can be duplicated across accounts; history restores only its original calendar.
-    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String) throws -> T {
-        guard !calendarIdentifier.isEmpty,
-              let calendar = calendars.first(where: { identifier($0) == calendarIdentifier }) else {
-            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+    /// #269: a missing calendar throws `EventKitError.undoCalendarMissing` (`calendarMissing`), which
+    /// names the event only, as `ReminderSnapshot.resolveList` names only the reminder (#290);
+    /// `kind` decides what its message says giving the undo up loses. A single undo reaches this
+    /// through `EventKitManager.restoreCalendar(for:kind:)`, which checks access and re-reads a
+    /// stale view first.
+    func resolveCalendar<T>(in calendars: [T], identifier: (T) -> String, for kind: EventRestoreKind) throws -> T {
+        try Self.calendar(recorded: calendarIdentifier, in: calendars, identifier: identifier) {
+            Self.calendarMissing(recordedIdentifier: calendarIdentifier, event: title, for: kind)
+        }
+    }
+
+    /// The match `resolveCalendar` and the move-undo make, on any recorded identifier: only a
+    /// non-empty identifier equal to it matches, so an empty one (an event recorded without a
+    /// calendar, #286) matches no calendar, not even one whose identifier is empty too.
+    static func calendar<T>(recorded: String, in calendars: [T], identifier: (T) -> String,
+                            orThrow missing: () -> Error) throws -> T {
+        guard !recorded.isEmpty, let calendar = calendars.first(where: { identifier($0) == recorded }) else {
+            throw missing()
         }
         return calendar
+    }
+
+    /// #269: the refusal for a calendar that is not found under `recordedIdentifier`; an empty one
+    /// gives the no-identifier wording (no retry, blocked until given up).
+    static func calendarMissing(recordedIdentifier: String, event: String, for kind: EventRestoreKind) -> EventKitError {
+        .undoCalendarMissing(event: event, hasIdentifier: !recordedIdentifier.isEmpty, kind: kind)
     }
 
     /// Writes every recorded field to `event`, with `calendar` already resolved from
@@ -206,6 +226,17 @@ struct EventSnapshot {
 enum ReminderRestoreKind: Sendable {
     case recreateDeleted
     case revertUpdate
+}
+
+/// #269: the event undo a calendar is looked up for, the counterpart of `ReminderRestoreKind`.
+/// Giving up a delete-undo loses the deleted event or occurrence (this tool cannot recreate it any
+/// more); giving up an update-undo leaves the event as it is now, a move-undo leaves it in the
+/// calendar it was moved to.
+enum EventRestoreKind: Sendable, Equatable {
+    case recreateDeleted
+    case recreateDeletedOccurrence
+    case revertUpdate
+    case moveBack
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
@@ -718,7 +749,7 @@ extension UndoOperation {
             if !operations.isEmpty, operations.allSatisfy({ if case .deleteReminder = $0 { return true }; return false }) {
                 return "Cannot redo the deletion of \(count) reminder\(count == 1 ? "" : "s"): redo does not delete the restored reminders. Use delete_reminders_batch to delete them again." + nothingWritten
             }
-            return "Cannot redo this batch of \(count) operations: redo does not repeat them. Repeat them with the tools that made them." + nothingWritten
+            return "Cannot redo this batch of \(count) operation\(count == 1 ? "" : "s"): redo does not repeat them. Repeat them with the tools that made them." + nothingWritten
         }
     }
 
