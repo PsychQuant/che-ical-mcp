@@ -124,3 +124,16 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
+
+## Release gate：timed → all-day 只帶 start_time 的天數（#374）
+
+#374 的規則（只帶 `start_time` 把 timed 事件改成 all-day 時，保留 timed 範圍碰到的天數）只有
+`AllDayRange.planUpdate` 的單元測試；寫入的是 #364 裝置檢查已涵蓋的 normalized all-day pair，
+所以這是確認、不是新的前提。**出 #374 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`
+（stateless，見上表），只在名稱含 `#374` 的拋棄式日曆上：
+
+1. 建一個 timed 事件 `22:00` 到隔天 `02:00`；
+2. `update_event` 帶 `all_day: true, start_time: <某個日期>`（不帶 `end_time`）；
+3. `list_events` 讀回：是兩天的 all-day 事件（第一天 `00:00` 到第二天 `23:59:59`）。
+
+結果記在 #374。結束後刪掉拋棄式日曆。
