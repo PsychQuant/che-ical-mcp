@@ -110,13 +110,9 @@ struct ReminderReadSnapshot: Sendable {
                                       radius: location.radius > 0 ? location.radius : nil,
                                       proximity: proximity)
         }
-        // A location alarm reads back with absoluteDate nil and relativeOffset 0, so
-        // it has to be set aside before the absolute/relative split (#231).
-        let alarms = Alarm.listed((reminder.alarms ?? []).compactMap { alarm in
-            guard alarm.structuredLocation == nil else { return nil }
-            if let date = alarm.absoluteDate { return .absolute(date) }
-            return .relative(seconds: alarm.relativeOffset)
-        })
+        // Location alarms set aside before the absolute/relative split (#231), in the helper
+        // events share (#240).
+        let alarms = Alarm.listed(AlarmReadOutput.timeBased(reminder.alarms))
         self.init(id: reminder.calendarItemIdentifier, title: reminder.title, notes: reminder.notes,
                   isCompleted: reminder.isCompleted, priority: reminder.priority,
                   calendarTitle: reminder.calendar?.title ?? "", dueDateComponents: reminder.dueDateComponents,

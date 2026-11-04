@@ -48,6 +48,8 @@ class CheICalMCPServer {
     private let eventCopySource: any EventCopySource
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
+    /// #331: the date-range listing and batch deletes of `delete_events_batch`.
+    private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -80,6 +82,7 @@ class CheICalMCPServer {
          eventCopySource: any EventCopySource = EventKitManager.shared,
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
+         eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -93,6 +96,7 @@ class CheICalMCPServer {
         self.eventCopySource = eventCopySource
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
+        self.eventBatchDeletionSource = eventBatchDeletionSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -204,7 +208,7 @@ class CheICalMCPServer {
             // Event Tools
             Tool(
                 name: "list_events",
-                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
+                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -250,7 +254,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer, alarms")
                         ])
                     ]),
                     "required": .array([.string("start_date"), .string("end_date")])
@@ -704,7 +708,7 @@ class CheICalMCPServer {
             // Feature 2: Search Events (enhanced with multi-keyword support)
             Tool(
                 name: "search_events",
-                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
+                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -739,7 +743,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer, alarms")
                         ])
                     ])
                 ]),
@@ -749,7 +753,7 @@ class CheICalMCPServer {
             // Feature 3: Quick Time Range
             Tool(
                 name: "list_events_quick",
-                description: "List events with quick time range shortcuts. Supports international week definitions. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone.",
+                description: "List events with quick time range shortcuts. Supports international week definitions. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -787,7 +791,7 @@ class CheICalMCPServer {
                         "fields": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer")
+                            "description": .string("Field names to include per event (e.g., ['title', 'start_date_local', 'calendar']). Overrides detail_level. 'id' always included. Available: title, start_date, start_date_local, end_date, end_date_local, timezone, item_timezone, is_all_day, calendar, location, notes, url, is_recurring, recurrence_rules, event_recurrence_rules, structured_location, attendees, organizer, alarms")
                         ])
                     ]),
                     "required": .array([.string("range")])
@@ -855,7 +859,7 @@ class CheICalMCPServer {
             // Feature 5: Conflict Check
             Tool(
                 name: "check_conflicts",
-                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating, the zone of the *_local strings.",
+                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating, the zone of the *_local strings. Each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1663,16 +1667,8 @@ class CheICalMCPServer {
             "start": ReminderDueValue(components: ReminderDueReading.startAsRead(reminder.startDateComponents,
                                                                                  due: reminder.dueDateComponents))?.dictionary ?? NSNull(),
             // Sorted and filtered here too, so the order holds however the snapshot was built.
-            "alarms": ReminderReadSnapshot.Alarm.listed(reminder.alarms).map { [self] alarm -> [String: Any] in
-                switch alarm {
-                case .relative(let seconds):
-                    // Positive means before the due date; `+ 0` turns -0.0 into 0.
-                    return ["kind": "relative", "minutes_before": -seconds / 60 + 0]
-                case .absolute(let date):
-                    return ["kind": "absolute", "absolute_date": dateFormatter.string(from: date),
-                            "absolute_date_local": localDateFormatter.string(from: date)]
-                }
-            }
+            "alarms": AlarmReadOutput.dictionaries(reminder.alarms, absolute: { [dateFormatter] in dateFormatter.string(from: $0) },
+                                                   absoluteLocal: { [localDateFormatter] in localDateFormatter.string(from: $0) })
         ]
         if let startDate = ReminderDueReading.displayInstant(reminder.startDateComponents, zone: zone) {
             fields["start_date"] = dateFormatter.string(from: startDate)
@@ -2873,7 +2869,7 @@ class CheICalMCPServer {
             // #185 — routed through the manager's batch method so the whole call is
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
             let uniqueIds = Array(Set(items.map(\.identifier)))
-            let result = try await eventKitManager.deleteEventSeriesBatch(identifiers: uniqueIds)
+            let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(identifiers: uniqueIds)
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -2890,7 +2886,7 @@ class CheICalMCPServer {
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
-        let result = try await eventKitManager.deleteEventsBatch(items: items, span: span, slots: slots)
+        let result = try await eventBatchDeletionSource.deleteEventsBatch(items: items, span: span, slots: slots)
         var response: [String: Any] = [
             "dry_run": false,
             "mode": mode,
@@ -2942,10 +2938,11 @@ class CheICalMCPServer {
                     } catch {
                         preview.append([
                             "event_id": id,
+                            // #335 item 6: the batch's own words for a refused series id.
                             "error": EventKitErrorSanitizer.writeFailureLog(
                                 handler: "deleteEventsBatch",
                                 identifier: id,
-                                error: error
+                                error: EventKitManager.batchRowError(error)
                             )
                         ])
                     }
@@ -2985,7 +2982,7 @@ class CheICalMCPServer {
                 "searched_to": EventRangeQuery.localText(searched.end)
             ]
 
-            let events = try await eventKitManager.listEvents(
+            let events = try await eventBatchDeletionSource.listEventsForDeletion(
                 startDate: searched.start,
                 endDate: searched.end,
                 calendarName: calendarName,
@@ -2994,7 +2991,7 @@ class CheICalMCPServer {
             // Items with per-occurrence dates (supports multiple occurrences of same series); with
             // span "future", in slot order (verify rounds 3-5).
             let deletionItems = EventRangeQuery.deletionItems(
-                events.map { (identifier: $0.eventIdentifier, start: $0.startDate, slot: $0.occurrenceDate) }, span: spanStr
+                events.map { (identifier: $0.identifier, start: $0.start, slot: $0.slot) }, span: spanStr
             )
             let batchItems = deletionItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
             // #325 verify rounds 1-3: over a range wider than EventKit's old cut (every one-sided
@@ -3013,9 +3010,9 @@ class CheICalMCPServer {
                 let previewed = previewLimit.map { Array(events.prefix($0)) } ?? events
                 let preview = previewed.map { event -> [String: Any] in
                     [
-                        "event_id": event.eventIdentifier ?? "",
-                        "start_date_local": localDateFormatter.string(from: event.startDate),
-                        "end_date_local": localDateFormatter.string(from: event.endDate)
+                        "event_id": event.identifier ?? "",
+                        "start_date_local": localDateFormatter.string(from: event.start),
+                        "end_date_local": localDateFormatter.string(from: event.end)
                     ]
                 }
                 var response: [String: Any] = [
@@ -3155,6 +3152,9 @@ class CheICalMCPServer {
             if let organizer = event.organizerFragment {
                 dict["organizer"] = organizer
             }
+            // #240: the reminder shape (#231); absolute_date_local in the zone of the other *_local strings.
+            dict["alarms"] = AlarmReadOutput.dictionaries(event.alarmsFragment, absolute: { [dateFormatter] in dateFormatter.string(from: $0) },
+                                                          absoluteLocal: { [self] in formatLocal($0, in: tz) })
         }
         if let fields = fields {
             let allowed = fields.union(["id"])
