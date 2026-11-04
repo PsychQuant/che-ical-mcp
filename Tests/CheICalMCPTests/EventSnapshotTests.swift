@@ -142,19 +142,30 @@ final class EventSnapshotTests: XCTestCase {
     }
 
     /// Its undo is refused like any other missing destination: an empty identifier matches no
-    /// calendar, not even one whose identifier is empty too.
-    func testTheUndoOfAnEventWithoutACalendarIsRefusedAsCalendarNotFound() {
+    /// calendar, not even one whose identifier is empty too. Since #269 the refusal is
+    /// `undoCalendarMissing` with the no-identifier wording: no retry, blocked until given up.
+    func testTheUndoOfAnEventWithoutACalendarIsRefusedAsRecordedWithoutAnIdentifier() throws {
         let event = EKEvent(eventStore: store)
+        event.title = "Review"
         event.startDate = absoluteDate
         event.endDate = absoluteDate.addingTimeInterval(3600)
         let snapshot = EventSnapshot(from: event)
 
-        XCTAssertThrowsError(try snapshot.resolveCalendar(in: [(id: "work", title: "Work"), (id: "", title: "")],
-                                                          identifier: { $0.id })) { error in
-            guard case EventKitError.calendarNotFound(let identifier, _) = error else {
-                return XCTFail("unexpected error: \(error)")
+        for kind in [EventRestoreKind.recreateDeleted, .recreateDeletedOccurrence, .revertUpdate] {
+            XCTAssertThrowsError(try snapshot.resolveCalendar(in: [(id: "work", title: "Work"), (id: "", title: "")],
+                                                              identifier: { $0.id }, for: kind)) { error in
+                guard case EventKitError.undoCalendarMissing(let shown, let hasIdentifier, let thrownKind) = error else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+                XCTAssertEqual(shown, "Review")
+                XCTAssertFalse(hasIdentifier)
+                XCTAssertEqual(thrownKind, kind)
+                let text = (error as? EventKitError)?.errorDescription ?? ""
+                XCTAssertTrue(text.contains("was recorded without an identifier, so it cannot be found."), text)
+                XCTAssertTrue(text.contains("until it is given up."), text)
+                XCTAssertFalse(text.contains("Run undo again"), text)
+                XCTAssertFalse(text.contains("is not available"), text)
             }
-            XCTAssertEqual(identifier, "")
         }
     }
 

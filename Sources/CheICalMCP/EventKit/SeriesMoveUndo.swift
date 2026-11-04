@@ -30,7 +30,9 @@ enum SeriesMoveUndo {
     ///   `UndoTargetCheck` reports as not found;
     /// - nothing resolved but the identifier is stored: the residual not-found;
     /// - a stand-in still in the recorded destination: refused when the original calendar does
-    ///   not resolve (fails closed with the move arm's `calendarNotFound`), and when the way back
+    ///   not resolve (fails closed with `missingOriginal()`, the record's refusal that the move arm
+    ///   throws too, #269; the bare lookup error only for a record that is not a move, which no
+    ///   `.eventCalendar` post-state comes from), and when the way back
     ///   leaves the account or an account is unknown, as the forward move refuses it
     ///   (`refusesMoveThroughStandIn`). Both are kept, since neither is one of the spec's discard
     ///   scenarios;
@@ -47,7 +49,8 @@ enum SeriesMoveUndo {
     /// seen only by the second one. The window is a few lines of code long, so it is accepted
     /// rather than closed by moving the account check into the comparison.
     static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () -> Bool,
-                              resolved: Resolved<Event>?, original: OriginalCalendar?) throws -> Event? {
+                              resolved: Resolved<Event>?, original: OriginalCalendar?,
+                              missingOriginal: () -> Error?) throws -> Event? {
         guard let resolved else {
             guard stored() else { return nil }
             throw UndoTargetMissingError(verb: verb, kind: expected.kind, title: expected.title,
@@ -55,7 +58,7 @@ enum SeriesMoveUndo {
         }
         guard resolved.viaStandIn, case .eventCalendar(_, _, let destination, let restoring) = expected,
               resolved.calendarID == destination else { return resolved.event }
-        guard let original else { throw EventKitError.calendarNotFound(identifier: restoring) }
+        guard let original else { throw missingOriginal() ?? EventKitError.calendarNotFound(identifier: restoring) }
         if FirstRemainingOccurrence.refusesMoveThroughStandIn(
             viaStandIn: true, wholeSeries: true,
             acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: resolved.sourceID,
