@@ -91,9 +91,13 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
     private let expected = UndoPostState.eventCalendar(id: "S", title: "Standup", calendarIdentifier: "cal-B",
                                                        restoringCalendarIdentifier: "cal-A")
 
+    private struct MissingOriginal: Error {}
+
     private func decide(stored: @escaping () -> Bool = { true }, resolved: SeriesMoveUndo.Resolved<String>?,
-                        original: SeriesMoveUndo.OriginalCalendar? = .init(sourceID: "icloud")) throws -> String? {
-        try SeriesMoveUndo.decide(expected, verb: .undo, stored: stored, resolved: resolved, original: original)
+                        original: SeriesMoveUndo.OriginalCalendar? = .init(sourceID: "icloud"),
+                        missingOriginal: () -> Error? = { MissingOriginal() }) throws -> String? {
+        try SeriesMoveUndo.decide(expected, verb: .undo, stored: stored, resolved: resolved, original: original,
+                                  missingOriginal: missingOriginal)
     }
 
     private func standIn(calendar: String = "cal-B", source: String? = "icloud", viaStandIn: Bool = true) -> SeriesMoveUndo.Resolved<String> {
@@ -147,13 +151,36 @@ final class SeriesMoveUndoDecisionTests: XCTestCase {
     }
 
     /// Fails closed: a stand-in in the destination whose original calendar does not resolve is
-    /// refused here with the error the move arm would give, and the record is kept.
-    func testAMissingOriginalCalendarIsRefusedAsCalendarNotFound() {
+    /// refused here with the record's refusal (#269, the error the move arm gives), and the record
+    /// is kept.
+    func testAMissingOriginalCalendarIsRefusedWithTheRecordsRefusal() {
         XCTAssertThrowsError(try decide(resolved: standIn(), original: nil)) { error in
+            XCTAssertTrue(error is MissingOriginal, "\(error)")
+        }
+        let move = UndoOperation.moveEvent(id: "S", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B",
+                                           title: "Standup", isSeries: true)
+        XCTAssertThrowsError(try decide(resolved: standIn(), original: nil, missingOriginal: { move.moveBackCalendarMissing })) { error in
+            guard case EventKitError.undoCalendarMissing(let event, _, .moveBack) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(event, "Standup")
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
+    }
+
+    /// A record that is not a move has no refusal of its own (no `.eventCalendar` post-state comes
+    /// from one): the bare lookup error with the restoring identifier, still kept.
+    func testWithoutTheRecordsRefusalTheLookupErrorRemains() {
+        XCTAssertThrowsError(try decide(resolved: standIn(), original: nil, missingOriginal: { nil })) { error in
             guard case EventKitError.calendarNotFound(let identifier, _) = error else { return XCTFail("\(error)") }
             XCTAssertEqual(identifier, "cal-A")
             XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         }
+    }
+
+    /// The record's refusal is asked for only when the original calendar is missing.
+    func testTheRefusalIsAskedOnlyWhenTheOriginalIsMissing() throws {
+        var asked = 0
+        XCTAssertEqual(try decide(resolved: standIn(), missingOriginal: { asked += 1; return MissingOriginal() }), "occurrence")
+        XCTAssertEqual(asked, 0)
     }
 
     func testAStoredSeriesWithoutAStandInIsTheResidualNotFound() {
