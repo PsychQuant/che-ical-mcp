@@ -286,7 +286,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Mon & Fri."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -342,7 +342,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in two cases only: calendar_name moves the event to a calendar in another account, or span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is. Otherwise id is event_id and id_changed is false; an edit of one occurrence (occurrence_date with span 'this') keeps the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud <series>/RID=<seconds>), which later calls can use to address just that occurrence.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (with occurrence_date and span 'this' too, since a new calendar moves the whole series); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -357,7 +357,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Mon & Fri."),
+                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -1494,7 +1494,8 @@ class CheICalMCPServer {
 
         // #268: the identifier after the save (a move to another account's calendar changes it).
         var response: [String: Any] = ["action": "updated", "title": event.title ?? ""]
-        response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier)) { $1 }
+        response.merge(UpdatedIdentifier.responseFields(input: eventId, saved: event.eventIdentifier,
+                                                        seriesIdentifier: event.seriesIdentifier)) { $1 }
         // #372: only when the event is all-day after the update, and only for the fields the call
         // gave; the other end of the range is the saved event's.
         if event.isAllDay, startDate != nil || endDate != nil {

@@ -1001,7 +1001,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
-    ) async throws -> EKEvent {
+    ) async throws -> (event: EKEvent, seriesIdentifier: String?) {
         try await ensureCalendarAccess()
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
@@ -1206,7 +1206,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
             recurringKind: recurringKind, postState: { postWriteSnapshot(eventID: $0, saved: event) }))
-        return event
+        // #268 verify round 2: a save of one occurrence (span this) is known from the objects, not
+        // from the id's shape. Its series identifier is read from the resolved series after the
+        // save (refreshed: a calendar of another account moves the whole series, device note
+        // above); `savedOccurrenceSeries` falls back to the occurrence id's part before /RID=.
+        let savedIsOccurrence = event !== masterEvent
+        if savedIsOccurrence { _ = masterEvent.refresh() }
+        let seriesIdentifier = UpdatedIdentifier.savedOccurrenceSeries(
+            savedIsOccurrence: event !== masterEvent, span: span,
+            master: savedIsOccurrence ? masterEvent.eventIdentifier : nil,
+            occurrence: event.eventIdentifier)
+        return (event, seriesIdentifier)
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and

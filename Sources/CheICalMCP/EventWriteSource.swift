@@ -55,6 +55,9 @@ struct EventWriteValue: Sendable, Equatable {
     let isAllDay: Bool
     let startDate: Date
     let endDate: Date
+    /// Set only by `update_event` when the save was of one occurrence edited on its own (span
+    /// "this"): the identifier of its series after the save (#268 verify round 2).
+    var seriesIdentifier: String? = nil
 }
 
 /// Narrow seam for the event write handlers (CLAUDE.md "Test Seam Convention"): #268, so a test
@@ -78,15 +81,15 @@ struct SimilarEventValue: Sendable, Equatable {
 }
 
 extension EventWriteValue {
-    init(_ event: EKEvent) {
+    init(_ event: EKEvent, seriesIdentifier: String? = nil) {
         self.init(eventIdentifier: event.eventIdentifier, title: event.title, isAllDay: event.isAllDay,
-                  startDate: event.startDate, endDate: event.endDate)
+                  startDate: event.startDate, endDate: event.endDate, seriesIdentifier: seriesIdentifier)
     }
 }
 
 extension EventKitManager: EventWriteSource {
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
-        let event = try await updateEvent(
+        let saved = try await updateEvent(
             identifier: request.identifier, title: request.title,
             startDate: request.startDate, endDate: request.endDate,
             notes: request.notes, location: request.location, url: request.url,
@@ -96,7 +99,7 @@ extension EventKitManager: EventWriteSource {
             structuredLocation: request.structuredLocation, span: request.span,
             occurrenceDate: request.occurrenceDate, applyToAll: request.applyToAll,
             timezone: request.timezone, clearTimezone: request.clearTimezone)
-        return EventWriteValue(event)
+        return EventWriteValue(saved.event, seriesIdentifier: saved.seriesIdentifier)
     }
 
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue {

@@ -1,3 +1,4 @@
+import MCP
 import XCTest
 @testable import CheICalMCP
 
@@ -142,6 +143,34 @@ final class ManifestParityTests: XCTestCase {
             forbidden.isEmpty,
             "mcpb/manifest.json display_name (\"\(displayName)\") must not contain XML/HTML metacharacters \(Array("&<>")) — a literal `&` makes Claude Desktop 1.18286.0 silently drop the whole server from conversations (#166, confirmed root cause). Found: \(Array(forbidden))."
         )
+    }
+
+    /// PR #387 verify round 2 (#166 class): no served tool text carries an XML/HTML metacharacter.
+    /// #166's Desktop silent drop was a literal `&` in `display_name`; tool text had none of `<`
+    /// and `>` until a description quoted an id shape in brackets. Every tool description, every
+    /// string in every input schema (property descriptions, enum values) and every manifest tool
+    /// description is checked.
+    func testServedToolTextHasNoXMLMetacharacters() throws {
+        func strings(_ value: Value) -> [String] {
+            switch value {
+            case .string(let text): return [text]
+            case .array(let items): return items.flatMap(strings)
+            case .object(let fields): return fields.keys.map { $0 } + fields.values.flatMap(strings)
+            default: return []
+            }
+        }
+        var offending: [String] = []
+        for tool in CheICalMCPServer.defineTools() {
+            for text in [tool.description ?? ""] + strings(tool.inputSchema) where text.contains(where: { "&<>".contains($0) }) {
+                offending.append("\(tool.name): \(text.prefix(80))")
+            }
+        }
+        let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: try locateManifest())) as? [String: Any]
+        for entry in manifest?["tools"] as? [[String: Any]] ?? [] {
+            let text = entry["description"] as? String ?? ""
+            if text.contains(where: { "&<>".contains($0) }) { offending.append("manifest \(entry["name"] ?? ""): \(text.prefix(80))") }
+        }
+        XCTAssertEqual(offending, [], "served tool text must not contain & < > (#166)")
     }
 
     /// #231: `alarms[].minutes_before` flips EventKit's sign (EventKit: negative =
