@@ -108,11 +108,11 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
         }
     }
 
-    /// Pins today's output, not the wanted one (#252). A start that EventKit fills in
-    /// carries `nanosecond = 0`; the renderer shared with `due` prints that as `.000`,
-    /// so the same wall time reads `10:00:00.000` on `start` and `10:00:00` on `due`.
-    /// A fix for #252 has to change this test on purpose.
-    func testStartWithNanosecondZeroRendersMillisecondsWhereDueDoesNot() async throws {
+    /// #252: a start that EventKit fills in carries `nanosecond = 0` after a save and fresh read,
+    /// while the due has no `nanosecond`. An all-zero sub-second part is not rendered, so the same
+    /// wall time reads the same string on `start` and `due` (it used to read `10:00:00.000` on
+    /// `start` and `10:00:00` on `due`).
+    func testStartWithNanosecondZeroRendersTheSameStringsAsDue() async throws {
         let start = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9,
                                    hour: 10, minute: 0, second: 0, nanosecond: 0)
         let due = DateComponents(timeZone: taipei, year: 2026, month: 10, day: 9, hour: 10, minute: 0)
@@ -122,11 +122,10 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
             let value = try await item(tool, args, snapshot)
             let renderedStart = try XCTUnwrap(value["start"] as? [String: Any], tool)
             let renderedDue = try XCTUnwrap(value["due"] as? [String: Any], tool)
-            XCTAssertEqual(renderedStart["time"] as? String, "10:00:00.000", tool)
-            XCTAssertEqual(renderedStart["date_time"] as? String, "2026-10-09T02:00:00.000Z", tool)
+            XCTAssertEqual(renderedStart["time"] as? String, "10:00:00", tool)
+            XCTAssertEqual(renderedStart["date_time"] as? String, "2026-10-09T02:00:00Z", tool)
             XCTAssertEqual(renderedDue["time"] as? String, "10:00:00", tool)
             XCTAssertEqual(renderedDue["date_time"] as? String, "2026-10-09T02:00:00Z", tool)
-            // The legacy strings drop sub-seconds, so these two agree.
             XCTAssertEqual(value["start_date"] as? String, value["due_date"] as? String, tool)
         }
     }

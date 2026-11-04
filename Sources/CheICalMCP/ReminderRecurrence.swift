@@ -149,8 +149,11 @@ struct ReminderDueValue: Equatable, Sendable {
     var dictionary: [String: Any] {
         let date = String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
         // HH:MM:SS; a missing minute/second is 00, as EventKit treats it. Sub-second
-        // precision, when present, is milliseconds on both `time` and `date_time`.
-        let fraction = components.nanosecond.map { String(format: ".%03d", $0 / 1_000_000) } ?? ""
+        // precision is milliseconds on both `time` and `date_time`, printed only when it is
+        // non-zero (#252: a start EventKit fills in reads back with `nanosecond = 0` while the
+        // due has none, and the same time must render the same string on both).
+        let millis = (components.nanosecond ?? 0) / 1_000_000
+        let fraction = millis != 0 ? String(format: ".%03d", millis) : ""
         let time: String? = components.hour.map {
             String(format: "%02d:%02d:%02d", $0, components.minute ?? 0, components.second ?? 0) + fraction
         }
@@ -159,7 +162,7 @@ struct ReminderDueValue: Equatable, Sendable {
         return ["date": date, "time": nullable(time),
                 "timezone": nullable(components.timeZone?.identifier),
                 "calendar_identifier": nullable(components.calendar.map { String(describing: $0.identifier) }),
-                "date_time": nullable(instant.map { utcString($0, fractional: components.nanosecond != nil) })]
+                "date_time": nullable(instant.map { utcString($0, fractional: millis != 0) })]
     }
 }
 

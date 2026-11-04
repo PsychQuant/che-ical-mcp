@@ -157,4 +157,18 @@ final class ReminderRecurrenceTests: XCTestCase {
         XCTAssertEqual(json["time"] as? String, "12:30:05.250")
         XCTAssertEqual(json["date_time"] as? String, "2026-09-05T12:30:05.250Z")
     }
+
+    /// #252: the rendering is milliseconds, so a sub-second part below one millisecond (or zero)
+    /// prints no fraction on either field, and the two fields agree.
+    func testSubMillisecondDueRendersNoFraction() throws {
+        for nanos in [0, 500_000] {
+            var c = DateComponents()
+            c.year = 2026; c.month = 9; c.day = 5; c.hour = 12; c.minute = 30; c.second = 5
+            c.nanosecond = nanos
+            c.timeZone = TimeZone(secondsFromGMT: 0)
+            let json = try XCTUnwrap(ReminderDueValue(components: c)).dictionary
+            XCTAssertEqual(json["time"] as? String, "12:30:05", "nanosecond \(nanos)")
+            XCTAssertEqual(json["date_time"] as? String, "2026-09-05T12:30:05Z", "nanosecond \(nanos)")
+        }
+    }
 }
