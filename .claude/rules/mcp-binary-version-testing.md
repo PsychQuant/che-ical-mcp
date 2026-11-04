@@ -151,16 +151,23 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     系列 → `delete_event` span `this` 刪第一個場次 → `undo`（delete-undo：把那個場次還原成一次性事件）→ `undo`：
     要以「Cannot undo the creation of the recurring event '…': the series this undo would delete no longer reads,
     while a later occurrence of it remains …」拒絕，什麼都沒寫（`list_events` 仍是 4 個系列場次加 1 個一次性事件），
-    `undo_history` 最上面仍是「Created event」。照訊息的順序走：先 `undo` 帶該筆的 `discard_id` 移除它，再
-    `delete_event` span `all` 用系列的 bare id 刪掉剩下的場次（成功，`undo_history` 最上面變成這筆 delete）。
-    順序反過來會失敗：delete 的紀錄會蓋在 create 上面，`discard_id` 只能移除最上面那筆。
+    `undo_history` 最上面仍是「Created event」。訊息的最後一句要是「…call undo with discard_id set to its id; the series
+    can then be deleted by hand if it should still go.」，不點名任何刪除工具（刪不刪是使用者的事）。照訊息的順序走：
+    先 `undo` 帶該筆的 `discard_id` 移除它；之後測試者**自己**用 `delete_event` span `all`、系列的 bare id 刪掉剩下的
+    場次（成功，`undo_history` 最上面變成這筆 delete）。順序反過來會失敗：delete 的紀錄會蓋在 create 上面，
+    `discard_id` 只能移除最上面那筆。
     若回的是原本的「not found under its recorded identifier」，就是系列的 bare id 在該來源上已經解析不到（不是 #326
-    的形狀），探測位置要移；若回的是「although an occurrence of it can still be read」的中性訊息，就是舊物件的
-    開始時間不是原本的第一個場次；兩種都回報到 #377。
+    的形狀），探測位置要移；若回的是「although an occurrence of it can still be read」的中性訊息，就是 stand-in 的開始
+    時間沒有晚於紀錄裡的開始時間（`created.startDate`）；兩種都回報到 #377。
     **edited-before 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 的 `update_event` span `this` 改第二個
     場次的標題（兩個寫入都不進 session 的 undo stack）→ session `undo`：同樣的拒絕（stand-in 是第三個場次）→
     `discard_id` 移除 → `delete_event` span `all` 會以 edited-before 拒絕（訊息說可以怎麼逐一刪），這是預期的。
-    2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過兩個形狀（含 discard 再 delete 的順序，
-    跨 process 的 `list_events` 確認）；出版前在重啟後的 session MCP 上重做一次。
+    **edited-after 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 改第三個場次（在 stand-in 之後）的標題 →
+    session `undo`：同樣的拒絕 → `discard_id` 移除 → 測試者自己 `delete_event` span `all`：**連被單獨改過的第三個場次也
+    一起刪掉**。這是 `delete_event` 的預期行為（它不做 create-undo 的 `modified_occurrences` 檢查），不是 undo 的；也正是
+    訊息不點名刪除工具、把刪除留給使用者手動做的原因。
+    2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過這三個形狀（含 discard 再 delete 的順序，
+    跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）；出版前在重啟後
+    的 session MCP 上重做一次。
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
