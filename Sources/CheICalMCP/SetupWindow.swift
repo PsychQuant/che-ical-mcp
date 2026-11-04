@@ -66,7 +66,7 @@ final class SetupModel: ObservableObject {
 
     init(
         probe: AuthorizationStatusSource = LiveAuthorizationStatusSource(),
-        binaryPath: String = RunningBinaryPath.current()  // kernel path first (#360)
+        binaryPath: String = BinaryPathResolver.resolveArgv0(CommandLine.arguments.first ?? AppVersion.name)
     ) {
         self.probe = probe
         self.binaryPath = binaryPath
@@ -235,11 +235,11 @@ enum SetupWindow {
         exit(0)                                      // unreachable — satisfies Never
         #else
         let sema = DispatchSemaphore(value: 0)
-        var outcomes: [(label: String, outcome: SetupEntityOutcome)] = []
-        Task { @MainActor in outcomes = await SetupRunner.requestBoth(nonInteractive: false); sema.signal() }
+        var bad = false
+        Task { @MainActor in bad = await SetupRunner.requestBoth(nonInteractive: false); sema.signal() }
         sema.wait()
-        SetupRunner.printGuidanceIfNeeded(outcomes)
-        exit(outcomes.contains { $0.outcome.isBad } ? 1 : 0)
+        SetupRunner.printGuidanceIfNeeded(bad)
+        exit(bad ? 1 : 0)
         #endif
     }
 }

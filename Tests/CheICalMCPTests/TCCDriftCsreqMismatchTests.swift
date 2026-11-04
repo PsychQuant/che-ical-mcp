@@ -141,15 +141,7 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("Calendar entry pins a code requirement this binary no longer satisfies"))
         XCTAssertTrue(banner.contains("silent denial"))
         XCTAssertTrue(banner.contains("policy-blocked"), "missing-entitlement note must show when hasEntitlement=false")
-        // Round-2 policy P2(b)/P3/P4: the switch step, no --setup (the status reads granted, so
-        // it would not prompt), and no reset line for a binary that lacks the entitlement.
-        TCCRemedyAssertions.assertSwitchStep(banner)
-        TCCRemedyAssertions.assertNoBundleIDResetAndNoButton(banner)
-        XCTAssertTrue(banner.contains("not yet checked on a device"), banner)
-        XCTAssertFalse(banner.contains("' --setup"), banner)
-        XCTAssertFalse(banner.contains("re-grant"), banner)
-        XCTAssertFalse(banner.contains("tccutil"), banner)
-        XCTAssertTrue(banner.contains("upgrade CheICalMCP to v1.11.0 or later first"), banner)
+        XCTAssertTrue(banner.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
         XCTAssertTrue(banner.contains("drift detected (1 signal)"))
     }
 
@@ -165,11 +157,6 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
         XCTAssertTrue(banner.contains("no longer satisfies"))
         XCTAssertFalse(banner.contains("lacks the personal-information entitlement"),
             "the policy-blocked note must NOT show when the binary has the entitlement")
-        // Round-2 policy P2: with the entitlement, the banner (human-run) may give the bare
-        // reset as the last resort, with all three parts.
-        TCCRemedyAssertions.assertSwitchStep(banner)
-        TCCRemedyAssertions.assertHumanLastResort(banner, service: "Calendar")
-        XCTAssertFalse(banner.contains("' --setup"), banner)
     }
 
     func testBanner_csreqMismatch_unknownService_noBadCommand() {
@@ -182,11 +169,7 @@ final class TCCDriftCsreqMismatchTests: XCTestCase {
             report: report, version: "1.13.0", runningBinaryPath: runningPath,
             pid: 4242, bundleID: "com.checheng.CheICalMCP"
         )
-        // Restated on the #357 remedy: no runnable command, no pane or reset named after the
-        // unknown service.
-        XCTAssertFalse(banner.contains("' --setup"), banner)
-        XCTAssertFalse(banner.contains("Privacy & Security → kTCCService"), banner)
-        XCTAssertFalse(banner.contains("tccutil reset kTCCService"), banner)
+        XCTAssertFalse(banner.contains("tccutil reset kTCCServiceBogus"))
         XCTAssertTrue(banner.contains("manual remediation"))
     }
 }

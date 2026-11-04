@@ -45,7 +45,7 @@ Interpret the result:
 | `auth_value` | Meaning | Action |
 |---|---|---|
 | `2` | Granted | No action needed — calendar tools should work. If they don't, the v1.9.0 per-call gate (#108 Phase 2) will surface the underlying reason as an explicit `accessDenied` error in tool output rather than silently masking it. |
-| `0` | Denied | A recorded "Don't Allow" is not asked again and `--setup` prompts only while the status is `notDetermined`: switch CheICalMCP on in System Settings (see [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) below). |
+| `0` | Denied | Reset and re-grant via Step 2 + the troubleshooting `tccutil reset` snippet below. |
 | _(empty / no row)_ | Never asked | Proceed to Step 2 to trigger the dialog. |
 
 ### Step 2 — locate the installed binary
@@ -87,24 +87,21 @@ Quit and reopen Claude Desktop. Calendar tool calls should now succeed.
 
 ### Dialog doesn't appear at all
 
-`--setup` prompts only while the status is `notDetermined`; after a switch it just reports the state. Run `"$BINARY" --print-tcc-path` first and follow its "Re-prompt" section:
+TCC may have a stale `denied` record blocking the new prompt. Reset and retry:
 
-1. **`denied`** (a recorded "Don't Allow"): in **System Settings → Privacy & Security → Calendar** (then **Reminders**), switch **CheICalMCP** on. Each app there has an on/off switch and an **Options…** menu, and a Claude Code install (`~/bin`) also shows as `CheICalMCP` (observed on one Mac, macOS 27).
-2. **`writeOnly`**: CheICalMCP's **Options…** menu → Full Access.
-3. **A stale or code-requirement-mismatched entry** (the startup banner says so): switch CheICalMCP off and on in System Settings → Privacy & Security → Calendar / Reminders (or set it with its **Options…** menu); if two CheICalMCP rows are listed (the `~/bin` and the Claude Desktop installs), do one at a time and check `'<binary>' --print-tcc-path` after each. Whether the switch clears a code-requirement mismatch is not yet checked on a device (#382).
+```bash
+tccutil reset Calendar com.checheng.CheICalMCP
+tccutil reset Reminders com.checheng.CheICalMCP
+```
 
-If the startup banner reports a **path mismatch** instead, the recorded entry belongs to another install: leave it and just re-run Step 3 for this binary.
-
-**Last resort**, only on CheICalMCP v1.11.0 or later (with the personal-information entitlement), run by you in Terminal: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id. It clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. With an older binary, upgrade first; `--print-tcc-path` prints no reset line when the binary lacks the entitlement.
-
-> Do not use `tccutil reset Calendar com.checheng.CheICalMCP`: it fails with `OSStatus error -10814` for this bare binary, which has no LaunchServices registration (#357).
+Then re-run Step 3.
 
 ### Alt method — manually toggle in System Settings
 
 If `--setup` keeps failing, you can grant access manually:
 
 1. Open **System Settings → Privacy & Security → Calendar**
-2. Look for **CheICalMCP** in the list; toggle it on. If it's not listed, run `"$BINARY" --setup` (Step 3): the access request adds it, since an app appears in this pane only after it requests access.
+2. Look for **CheICalMCP** in the list; toggle it on. If it's not listed, click **+** and navigate to the path from Step 2.
 3. Repeat for **Privacy & Security → Reminders**.
 4. Restart Claude Desktop.
 
@@ -112,7 +109,7 @@ If `--setup` keeps failing, you can grant access manually:
 
 > **Corrected #114**: pre-v1.9.0 this section claimed cdhash invalidation was the cause. That hypothesis was disproved by #108 Phase 1 smoke (TCC grants survived 5 binary swaps because csreq is stable across cdhash for the same Developer-ID identity). The real silent-failure mode was the in-process `has*Access` cache anti-pattern, structurally fixed in v1.9.0 (#108 Phase 2): every Calendar/Reminders call now reads fresh TCC state instead of trusting a cached boolean.
 
-If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, refresh the stale entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and re-grant. Stale-cache silent failures cannot happen with the per-call gate.
+If you see `accessDenied` after upgrade on v1.9.0+, the underlying TCC state actually IS denied (System Settings toggle, framework-layer reset, etc.). Run the Step 1 SQL query to confirm `auth_value` — if `0`, follow the troubleshooting `tccutil reset` snippet to re-grant. Stale-cache silent failures cannot happen with the per-call gate.
 
 If you're on **v1.8.x or earlier** AND seeing this symptom, upgrading to v1.9.0+ is the structural fix; the manual Steps 1–4 remediation is a stopgap for that older release line. See [#108](https://github.com/PsychQuant/che-ical-mcp/issues/108) for the full root-cause analysis and the disproved-hypothesis audit trail.
 
@@ -125,7 +122,7 @@ You may see an extra entry in **System Settings → Privacy & Security → Calen
 
 ### Verifying the fix worked
 
-After Step 4, run the Step 1 SQL query again. You should now see two rows with `auth_value=2` and a recent `last_modified` timestamp matching today's date. If the timestamp didn't update, Step 3 didn't actually trigger the prompt — refresh the entry as in [Dialog doesn't appear at all](#dialog-doesnt-appear-at-all) and retry.
+After Step 4, run the Step 1 SQL query again. You should now see two rows with `auth_value=2` and a recent `last_modified` timestamp matching today's date. If the timestamp didn't update, Step 3 didn't actually trigger the prompt — reset via the troubleshooting snippet and retry.
 
 ## See also
 

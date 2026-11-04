@@ -85,12 +85,12 @@ if CommandLine.arguments.contains("--self-update") {
 
 if CommandLine.arguments.contains("--print-tcc-path") {
     // #109: TCC diagnostic flag — prints the runtime binary's path + bundle ID +
-    // current EventKit authorization status + ready-to-paste `--setup` / sqlite3 commands
-    // (no `tccutil reset <bundle id>`: it fails with -10814 for a bare binary, #357). Designed for the .mcpb-installed scenario where users can't easily
+    // current EventKit authorization status + ready-to-paste tccutil reset / sqlite3
+    // commands. Designed for the .mcpb-installed scenario where users can't easily
     // find the extracted binary path on their own.
 
-    // #360: the kernel's path of this binary, not argv[0] resolved against the cwd.
-    let absolute = RunningBinaryPath.current()
+    let argv0 = CommandLine.arguments[0]
+    let absolute = BinaryPathResolver.resolveArgv0(argv0)
 
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
 
@@ -120,10 +120,10 @@ if CommandLine.arguments.contains("--print-tcc-path") {
           Calendar:   \(statusString(calStatus))
           Reminders:  \(statusString(remStatus))
 
-        \(EventKitManager.printTCCPathRepromptSection(
-            binaryPath: absolute,
-            calendarStatus: calStatus, remindersStatus: remStatus,
-            hasEntitlement: LiveCodeSignatureSource().runningBinaryHasPersonalInfoEntitlement()))
+        Reset TCC + re-prompt (run from Terminal, NOT over SSH):
+          tccutil reset Calendar \(bundleID)
+          tccutil reset Reminders \(bundleID)
+          \(EventKitManager.setupCommandHint(binaryPath: absolute))
 
         Inspect TCC database directly:
           sqlite3 ~/Library/Application\\ Support/com.apple.TCC/TCC.db \\
@@ -182,9 +182,9 @@ if CommandLine.arguments.contains("--setup") {
     // SetupWindow.run() (che-apple-mail-mcp#213). The non-interactive path can't present a dialog anyway, so it
     // reports status headlessly (skip / already-granted) and exits — never entering the loop.
     if nonInteractive {
-        let outcomes = await SetupRunner.requestBoth(nonInteractive: true)
-        SetupRunner.printGuidanceIfNeeded(outcomes)
-        exit(outcomes.contains { $0.outcome.isBad } ? 1 : 0)
+        let bad = await SetupRunner.requestBoth(nonInteractive: true)
+        SetupRunner.printGuidanceIfNeeded(bad)
+        exit(bad ? 1 : 0)
     } else {
         // Top-level code is @MainActor-isolated (SE-0343), so we can drive
         // NSApplication directly on the main thread. runInteractive() never returns
@@ -226,10 +226,12 @@ func emitStartupBanner() {
         return
     }
 
-    // The kernel's path (`proc_pidpath`), canonicalized with realpath(3) like #129's argv[0]
-    // resolution, so the multi-hop symlink fixes of #121 / #128 still hold; argv[0] is only the
-    // fallback, because a bare argv[0] resolves against the current directory (#360).
-    let resolvedPath = RunningBinaryPath.current()
+    let argv0 = CommandLine.arguments.first ?? ""
+    // Resolved via `BinaryPathResolver` (#129) — same realpath(3) canonical path that
+    // `--print-tcc-path` and `--self-update` now use. Eliminates the multi-hop symlink
+    // discrepancy (#121) and the false-positive drift signal from `destinationOfSymbolicLink`'s
+    // 1-hop limitation (#128).
+    let resolvedPath = BinaryPathResolver.resolveArgv0(argv0)
 
     let mtime: Date? = {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedPath) else {
@@ -245,18 +247,18 @@ func emitStartupBanner() {
     // the explanation too (verify DA-1) — and the kernel lookup only happens on the
     // ungranted path.
     let statusSource = LiveAuthorizationStatusSource()
-    // Statuses → banner inputs in one tested pure function (#368 round 2).
-    let inputs = TCCDriftDetector.BannerStatusInputs(
-        calendar: statusSource.authorizationStatus(for: .event),
-        reminders: statusSource.authorizationStatus(for: .reminder))
+    let calendarStatus = statusSource.authorizationStatus(for: .event)
+    let remindersStatus = statusSource.authorizationStatus(for: .reminder)
+    let calendarGranted = calendarStatus == .fullAccess
+    let remindersGranted = remindersStatus == .fullAccess
 
     let detector = TCCDriftDetector(
         tcc: LiveTCCDatabaseSource(),
         processes: LiveProcessInventorySource(),
         runningBinaryPath: resolvedPath,
         diskBinaryMtime: mtime,
-        eventKitAccessGranted: inputs.eventKitAccessGranted,
-        eventKitRestricted: inputs.eventKitRestricted
+        eventKitAccessGranted: calendarGranted && remindersGranted,
+        eventKitRestricted: SelfDisclaim.hostIsRestricted(calendar: calendarStatus, reminders: remindersStatus)
     )
     let report = detector.detect()
     let bundleID = Bundle.main.bundleIdentifier ?? "com.checheng.CheICalMCP"
@@ -266,9 +268,7 @@ func emitStartupBanner() {
         runningBinaryPath: resolvedPath,
         pid: ProcessInfo.processInfo.processIdentifier,
         bundleID: bundleID,
-        calendarAccessGranted: inputs.calendarAccessGranted,
-        calendarRestricted: inputs.calendarRestricted,
-        remindersStatus: inputs.remindersStatus
+        calendarAccessGranted: calendarGranted
     )
     FileHandle.standardError.write(Data(banner.utf8))
 }

@@ -1,6 +1,6 @@
 ---
 name: troubleshoot-tcc
-description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, clearing a stale System Settings entry, and --setup re-prompt flow.
+description: Diagnose and fix macOS TCC (Calendar/Reminders) permission issues for che-ical-mcp. Use when user reports calendar tools failing silently, "permission denied" errors, missing TCC dialog after reinstall/upgrade, or asks "為什麼 calendar 不能用". Walks through both TCC layers — the CheICalMCP binary's own grant AND the host-app (responsible process) entry — plus TCC db inspection, --print-tcc-path diagnostic, tccutil reset, and --setup re-prompt flow.
 allowed-tools:
   - Bash
   - Read
@@ -88,7 +88,7 @@ Interpreting the status lines:
 |---|---|
 | `Calendar: fullAccess (granted)` | OK, this side is fine |
 | `Calendar: notDetermined` | This *context* was never asked → check the host layer (Step 3), then re-prompt (Step 5) |
-| `Calendar: denied` | Explicitly denied in this context → go to Step 4 (refresh stale TCC entries) |
+| `Calendar: denied` | Explicitly denied in this context → go to Step 4 (reset) |
 | `Calendar: writeOnly` | Partial access (macOS 14+) → user must manually upgrade in System Settings → Privacy & Security → Calendar |
 | `Calendar: restricted` | System policy (Screen Time / MDM) — outside our control |
 
@@ -115,17 +115,14 @@ Read the chain like this:
 - Contains `.../claude/versions/<version>` → **Claude Code** context (the version-number binary is the responsible process; this half is reliable — the versioned binary stays resident in the live tree).
 - **Claude Desktop** is identified by *absence*: the `Helpers/disclaimer` shim typically `exec`-replaces itself with the server binary, so it usually does **not** appear as a live ancestor. A Desktop-spawned server's chain is roughly `CheICalMCP → Claude → launchd` with **no** `claude/versions/…` segment. So: chain lacks the `claude/versions/…` segment **and** the running binary is the `.mcpb` path (from Step 1) → treat as Desktop / self-responsible.
 
-### Step 4: Refresh stale TCC entries (only if `denied` or post-upgrade silent fail)
+### Step 4: Reset stale TCC entries (only if `denied` or post-upgrade silent fail)
 
-The Calendar and Reminders panes list each app with an on/off switch and an **Options…** menu, and the `~/bin` and `.mcpb` installs both show as `CheICalMCP`, so you cannot tell them apart there (observed on one Mac, macOS 27). `--print-tcc-path`'s "Re-prompt" section lists the steps for the current status.
+```bash
+tccutil reset Calendar com.checheng.CheICalMCP
+tccutil reset Reminders com.checheng.CheICalMCP
+```
 
-- **`denied`** (a recorded "Don't Allow"): in System Settings → Privacy & Security → **Calendar** (then **Reminders**), switch `CheICalMCP` on. `--setup` will not prompt again.
-- **`writeOnly`**: CheICalMCP's **Options…** menu → Full Access.
-- **Path mismatch** (banner: `TCC.db … entry path mismatch`): the recorded entry belongs to another path, i.e. another install. Leave it — switching it does nothing for this binary and can break the other install. Go straight to Step 5 and run **this** binary's `--setup`.
-- **Code-requirement mismatch** (banner: `pins a code requirement this binary no longer satisfies`, #154): switch CheICalMCP off and on in System Settings → Privacy & Security → Calendar / Reminders (or set it with its **Options…** menu); if two CheICalMCP rows are listed (the `~/bin` and the Claude Desktop installs), do one at a time and check `'<binary>' --print-tcc-path` after each. Whether the switch clears a code-requirement mismatch is not yet checked on a device (#382).
-- **Last resort**, only on CheICalMCP v1.11.0 or later (with the personal-information entitlement), run by you in Terminal: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id. It clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. With an older binary, upgrade first; `--print-tcc-path` prints no reset line when the binary lacks the entitlement. **The agent must not run this command**: it changes every app's permission on the Mac. Ask the user, show them the command and its consequence, and let them run it themselves.
-
-> **Never `tccutil reset <service> com.checheng.CheICalMCP`** (#357): it fails with `OSStatus error -10814` for this bare (non-bundled) binary, because LaunchServices has no registration for the bundle id. See the README erratum.
+> **Caveat**: TCC stores `.mcpb` clients by **binary path** rather than bundle ID. `tccutil reset SERVICE BUNDLE_ID` may report "Successfully reset" but actually no-op when the underlying entry is path-keyed. If the issue persists after reset + Step 5, fall back to manual System Settings toggle (Step 6).
 
 ### Step 5: Trigger re-prompt via `--setup`
 
@@ -133,7 +130,7 @@ The Calendar and Reminders panes list each app with an on/off switch and an **Op
 "$BINARY" --setup
 ```
 
-Two macOS dialogs should appear (Calendar + Reminders) — user clicks **Allow** on both. `--setup` prompts only while a status is `notDetermined`; for `denied` or after a switch it just reports the state (Step 4). From v1.22.0 `--setup` re-execs as its own responsible process, so the grant lands on CheICalMCP whichever app runs it, unless `CHE_ICAL_MCP_NO_DISCLAIM` is set where it runs (then it lands on that app); from v1.23.0, restart the MCP client afterwards so a host without full access re-execs onto that grant (a host a policy restricts keeps its own attribution, #367).
+Two macOS dialogs should appear (Calendar + Reminders) — user clicks **Allow** on both. From v1.22.0 `--setup` re-execs as its own responsible process, so the grant lands on CheICalMCP whichever app runs it, unless `CHE_ICAL_MCP_NO_DISCLAIM` is set where it runs (then it lands on that app); from v1.23.0, restart the MCP client afterwards so a host without full access re-execs onto that grant (a host a policy restricts keeps its own attribution, #367).
 
 Over SSH, or anywhere without a GUI session (a launchd daemon) or launched directly by launchd, the dialogs **cannot** appear, and `--setup` skips the request for a `notDetermined` status instead of waiting — instruct the user to run this in `Terminal.app` on the Mac itself. A background Claude Code session can show them (#343, S1, see the top of this skill), but only if someone is at the screen.
 
@@ -141,7 +138,7 @@ Over SSH, or anywhere without a GUI session (a launchd daemon) or launched direc
 
 System Settings → Privacy & Security → Calendar:
 - Look for CheICalMCP, toggle on
-- If not listed, run `"$BINARY" --setup` (Step 5): the access request adds it, since an app appears in this pane only after it requests access
+- If not listed, click `+`, navigate to the binary path from Step 1
 - Also confirm the host-layer entry (Step 3) is present and ON
 
 Repeat for Reminders.

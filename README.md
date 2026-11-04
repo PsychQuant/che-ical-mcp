@@ -464,7 +464,7 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 
 **Fix**: upgrade to **v1.11.0 or later** (the binary now ships both entitlements), restart the host app (full `Cmd+Q` for Claude Desktop), and approve the permission dialog that appears on the first Calendar/Reminders access. Approving rewrites the TCC row keyed to the Developer ID requirement, so it survives all future upgrades. If you accidentally **deny** the dialog, re-enable the corresponding toggle in System Settings → Privacy & Security → Calendars or Reminders.
 
-> ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` (`kLSApplicationNotFoundErr`) because the binary has no LaunchServices registration. That covers every build CheICalMCP ships: the Developer-ID, notarized `~/bin/CheICalMCP` and the `.mcpb` `server/CheICalMCP` are both bare executables with an embedded Info.plist, which LaunchServices never registers. The -10814 was seen with the #154-era builds; on 2026-11-04 `lsregister -dump` had no record for `com.checheng.CheICalMCP` on a Mac with the Developer-ID `~/bin/CheICalMCP` installed, so the lookup the command needs fails there too (the command itself was not re-run, because a lookup that unexpectedly succeeded would reset the real grant). Since #357 no message, banner line or `--print-tcc-path` section offers it. Instead: a recorded "Don't Allow" (`denied`) → switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders; `writeOnly` → its **Options…** menu → Full Access; `notDetermined` → `--setup`, which prompts only from that status (after a switch it just reports the state). A stale or code-requirement-mismatched entry → switch CheICalMCP off and on in System Settings → Privacy & Security → Calendar / Reminders (or set it with its **Options…** menu); if two CheICalMCP rows are listed (the `~/bin` and the Claude Desktop installs), do one at a time and check `'<binary>' --print-tcc-path` after each. Whether the switch clears a code-requirement mismatch is not yet checked on a device (#382). When the banner reports a path mismatch, the entry belongs to another install: leave it and run this binary's `--setup`. **Last resort**, only on CheICalMCP v1.11.0 or later (with the personal-information entitlement), run by you in Terminal: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id. It clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. With an older binary, upgrade first; `--print-tcc-path` prints no reset line when the binary lacks the entitlement. On a pre-entitlements binary (before v1.11.0) the bare reset leaves CheICalMCP permanently unable to re-prompt. Messages returned to an MCP client never carry a reset: they ask a person at the Mac to run `--print-tcc-path`.
+> ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` because the binary has no LaunchServices registration. And do **not** run a bare `tccutil reset Calendar` (without a bundle ID): it wipes Calendar grants for *every* app on the machine and, on a pre-entitlements binary, leaves CheICalMCP permanently unable to re-prompt.
 
 ### Claude Code updates rotate the host-side grant (#170)
 
@@ -484,26 +484,19 @@ Under a Claude Code **native install**, the real executable lives at a **version
 
 ### SSH Access
 
-From v1.23.0 an SSH session is handled like any other host ([the status-aware rule, #343](#claude-code-updates-rotate-the-host-side-grant-170)). Run `CheICalMCP --print-tcc-path` over ssh first: its `TCC attribution` line names the process macOS checks, and the steps depend on it. The permission dialog cannot appear over SSH, so anything that prompts has to run on the Mac itself.
+macOS TCC (Transparency, Consent, and Control) grants privacy permissions **per-application**. SSH sessions run under `sshd`, which is a different security context — so permissions granted to Terminal or Claude Code locally do **not** carry over to SSH.
 
-**CheICalMCP is the process macOS checks** (`(this binary)`; the usual case, because an ssh context has no Calendar or Reminders access of its own, so the binary re-execs onto its own grant):
-1. On the target Mac, in Terminal.app (**not** over SSH), run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path). It prompts only while the status is `notDetermined`; after that it just reports the state.
-2. If you pressed "Don't Allow" earlier (`denied`), switch CheICalMCP on in System Settings → Privacy & Security → Calendar / Reminders instead.
-3. Restart the SSH session (and any non-interactive job started from it).
+**Workaround A — Run locally first (recommended):**
+1. Run `CheICalMCP` once on the target Mac **locally** (not over SSH)
+2. Grant Calendar and Reminders access when the TCC dialog appears
+3. SSH sessions should then inherit the grant for the `CheICalMCP` binary
 
-**Another process is checked**: the ssh process was not re-executed onto CheICalMCP's own grant, because `CHE_ICAL_MCP_NO_DISCLAIM` is set, `CHE_ICAL_MCP_DISCLAIMED` was inherited, the re-exec failed (see the start-up line on stderr), a policy restricts the process macOS checks ([#367](https://github.com/PsychQuant/che-ical-mcp/issues/367)), or it had full access when the server started and has lost it since. A local `--setup` grant applies only when the ssh process re-executes onto CheICalMCP, so:
-- **A named app** (for example a terminal app you ssh'd through): enable that app for both Calendar and Reminders in System Settings → Privacy & Security.
-- **`sshd`, or a process macOS does not name**: grant Full Disk Access to `sshd`:
-  1. Open **System Settings → Privacy & Security → Full Disk Access**
-  2. Add `/usr/sbin/sshd` to the list (in the file dialog, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd> and type the path)
-  3. Restart the SSH session
+**Workaround B — Grant Full Disk Access to sshd:**
+1. Open **System Settings → Privacy & Security → Full Disk Access**
+2. Click **+**, press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>G</kbd>, type `/usr/sbin/sshd`, and add it
+3. Restart the SSH session
 
-  > ⚠️ This grants `sshd` broad file access — only use it on a Mac you fully control.
-- **`CHE_ICAL_MCP_NO_DISCLAIM` is set** for the ssh process: removing it lets the process re-execute onto CheICalMCP's own grant, and then the first case applies.
-
-**`--print-tcc-path` shows the attribution as unavailable** (the kernel lookup failed): no re-exec happened (it needs that lookup), so macOS checks the ssh context's own grant; treat it like `sshd` above.
-
-Whether a re-exec'd CheICalMCP reads the calendar over ssh with its own grant has not been measured on a device yet ([#362](https://github.com/PsychQuant/che-ical-mcp/issues/362)). Access-denied messages over ssh follow the same cases.
+> ⚠️ Workaround B grants `sshd` broad file access — only use this on machines you fully control.
 
 ### launchd / Automation
 
@@ -521,7 +514,7 @@ CheICalMCP --setup
 >
 > **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (no `TERM` / direct launchd child) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
 >
-> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, switch CheICalMCP on in **System Settings → Privacy & Security → Calendar/Reminders**; if it is not listed, run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path) from Terminal — the access request adds it.
+> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, manually add CheICalMCP in **System Settings → Privacy & Security → Calendar/Reminders**.
 
 ---
 

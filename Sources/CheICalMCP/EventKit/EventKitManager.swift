@@ -101,8 +101,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// channel-specific (only `.mcpb` is affected; Claude Code plugin path
     /// `~/bin/CheICalMCP` is unaffected — different spawn chain).
     static let isMCPBClaudeDesktopInstall: Bool = {
-        // The kernel's path, not argv[0] against the current directory (#360).
-        RunningBinaryPath.current().contains("Claude Extensions/local.mcpb.")
+        let argv0 = CommandLine.arguments.first ?? ""
+        let resolved = BinaryPathResolver.resolveArgv0(argv0)
+        return resolved.contains("Claude Extensions/local.mcpb.")
     }()
 
     /// Pure formatter for the binary-specific `--setup` remediation hint (#163).
@@ -123,102 +124,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --setup"
     }
 
-    /// The paste-ready `--print-tcc-path` command for this binary, built like
-    /// `setupCommandHint` (single-quoted clean path; no command for a control-character path).
-    static func printTCCPathHint(binaryPath: String) -> String {
-        guard !TCCDriftDetector.pathHasControlChars(binaryPath) else {
-            return "run the binary at \(EventKitErrorSanitizer.escapeForStderr(binaryPath)) with --print-tcc-path "
-                + "(its path has control characters, so no command is printed)"
-        }
-        return "\(TCCDriftDetector.shellSingleQuote(binaryPath)) --print-tcc-path"
-    }
-
-    static func resolvedPrintTCCPathHint() -> String {
-        printTCCPathHint(binaryPath: RunningBinaryPath.current())
-    }
-
-    // MARK: - TCC remedy text (#357, verify round 2 policy)
-    //
-    // P1: text returned to the model (access-denied, unknown state) never carries a reset of
-    //     any kind; a stale grant sends a person at the Mac to `--print-tcc-path`.
-    // P2: human-run surfaces (`--print-tcc-path`, the startup banner, the docs) may give the
-    //     bare reset as the last resort, always with its consequence, its precondition and
-    //     "run it yourself"; with the entitlement known to be missing, no reset at all.
-    // P3: the switch step, the same everywhere.
-    // P4: `--setup` only for `notDetermined`.
-
-    /// P1: the MCP-facing step for a stale or code-requirement-mismatched grant.
-    static func personAtTheMacStep(printTCCPathHint: String) -> String {
-        "a person at the Mac has to fix this: run \(printTCCPathHint) in Terminal for the steps"
-    }
-
-    /// P3: the System Settings switch step. The Calendar / Reminders panes have an on/off switch
-    /// and an "Options…" menu per app, and both installs are listed as "CheICalMCP" (observed on
-    /// one Mac, macOS 27).
-    static func switchStep(pane: String, printTCCPathHint: String) -> String {
-        "switch CheICalMCP off and on in System Settings → Privacy & Security → \(pane) "
-            + "(or set it with its Options… menu); if two CheICalMCP rows are listed (the ~/bin and the "
-            + "Claude Desktop installs), do one at a time and check \(printTCCPathHint) after each"
-    }
-
-    /// P3: the caveat that goes with the switch step for a code-requirement mismatch.
-    static let switchMismatchCaveat =
-        "whether the switch clears a code-requirement mismatch is not yet checked on a device"
-
-    /// P2: the human-run last resort, on one line: consequence, precondition, run it yourself.
-    static func humanLastResort(services: [String]) -> String {
-        let commands = services.map { "`tccutil reset \($0)`" }.joined(separator: " or ")
-        return "As a last resort, only on CheICalMCP v1.11.0 or later (with the personal-information "
-            + "entitlement), run it yourself in Terminal: \(commands) without a bundle id. It clears that "
-            + "permission for every app on this Mac, and command-line tools or hosts recorded by version "
-            + "number may not ask again."
-    }
-
-    /// P2(b): the line printed instead of a reset when the binary is known to lack the entitlement.
-    static let upgradeFirstLine =
-        "This binary lacks the personal-information entitlement: upgrade CheICalMCP to v1.11.0 or later first; "
-            + "no reset helps before that."
-
-    /// The "Re-prompt" section of `--print-tcc-path`, built here (not inline in `main.swift`)
-    /// so it can be pinned without spawning the binary (#357, #368). It offers no
-    /// `tccutil reset <service> com.checheng.CheICalMCP`: for a bare binary that fails with
-    /// -10814 (no LaunchServices registration, README erratum). `--setup` appears only for a
-    /// `notDetermined` status (P4); the bare reset only as the human-run last resort (P2),
-    /// and not at all when `hasEntitlement` is `false`.
-    static func printTCCPathRepromptSection(
-        binaryPath: String,
-        calendarStatus: EKAuthorizationStatus,
-        remindersStatus: EKAuthorizationStatus,
-        hasEntitlement: Bool? = nil
-    ) -> String {
-        var lines = ["Re-prompt (run from Terminal, NOT over SSH):"]
-        if calendarStatus == .notDetermined || remindersStatus == .notDetermined {
-            lines.append("  \(setupCommandHint(binaryPath: binaryPath))")
-            lines.append("  (--setup prompts only while a status is notDetermined; after a switch it just reports the state)")
-        }
-        for (service, status) in [("Calendar", calendarStatus), ("Reminders", remindersStatus)] {
-            switch status {
-            case .denied:
-                lines.append("  \(service) is denied: switch CheICalMCP on in System Settings → Privacy & Security → \(service)")
-            case .writeOnly:
-                lines.append("  \(service) is write-only: System Settings → Privacy & Security → \(service) → CheICalMCP → Options… → Full Access")
-            default:
-                break
-            }
-        }
-        lines.append("  A stale or code-requirement-mismatched grant: "
-            + switchStep(pane: "Calendar / Reminders", printTCCPathHint: printTCCPathHint(binaryPath: binaryPath))
-            + " (\(switchMismatchCaveat)).")
-        lines.append("  " + (hasEntitlement == false ? upgradeFirstLine : humanLastResort(services: ["Calendar", "Reminders"])))
-        // #368: a `restricted` status comes from a configuration profile or Screen Time; no
-        // prompt appears for it, so nothing in this section can change it.
-        if calendarStatus == .restricted || remindersStatus == .restricted {
-            lines.append("  (a `restricted` status is set by a configuration profile or Screen Time: "
-                + "nothing here changes it; ask whoever manages this Mac)")
-        }
-        return lines.joined(separator: "\n")
-    }
-
     /// The binary path as `--print-tcc-path` shows it: as is, so it names the same file as the
     /// `--setup` command beneath it, unless it has control characters, which are escaped and
     /// said so (verify round 3b row 11: escaping a clean path doubled its backslashes).
@@ -227,14 +132,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return "\(EventKitErrorSanitizer.escapeForStderr(path))  (escaped: the path has control characters)"
     }
 
-    /// Resolve the running binary's canonical path (`RunningBinaryPath`: the kernel's path,
-    /// argv[0] only as a fallback, #360 — the same path `--print-tcc-path` / the banner use)
-    /// and format the `--setup`
+    /// Resolve the running binary's canonical path (argv[0] via `BinaryPathResolver`, the
+    /// same realpath(3) path `--print-tcc-path` / the banner use) and format the `--setup`
     /// remediation hint. The `.mcpb` install's binary lives at a buried path users can't
     /// easily locate, so denial messages surface the exact command to grant THIS binary's
     /// TCC permission — the foreground `--setup` is what makes the dialog present (#163).
     static func resolvedSetupCommandHint() -> String {
-        setupCommandHint(binaryPath: RunningBinaryPath.current())
+        let argv0 = CommandLine.arguments.first ?? AppVersion.name
+        return setupCommandHint(binaryPath: BinaryPathResolver.resolveArgv0(argv0))
     }
 
     /// Pure formatter for the `EventKitError.accessDenied` remediation message. Every
@@ -244,9 +149,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// path-derived static that a test cannot flip). `deniedByStatus` selects the #154 dead-end
     /// variant that must NOT lead with `--setup`, because a bare `--setup` cannot re-prompt a
     /// status that is already `.denied` (the status-first check only requests on `.notDetermined`). (#158)
-    /// `attribution` is the kind of process macOS checks (#343); it shapes the SSH branch
-    /// (#362, `sshMessage`) and the generic branch, and `nil` means the kernel lookup was
-    /// unavailable. `restrictedByPolicy` is a
+    /// `attribution` is the kind of process macOS checks (#343); it only shapes the generic
+    /// branch, and `nil` means the kernel lookup was unavailable. `restrictedByPolicy` is a
     /// `.restricted` status (a configuration profile or Screen Time), which no prompt, switch
     /// or `--setup` can change, so it takes precedence over every other branch. It names the
     /// process macOS checks, because a restricted host keeps its attribution (#367).
@@ -258,9 +162,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         deniedByStatus: Bool,
         setupHint: String,
         attribution: ResponsibleHostKind? = nil,
-        restrictedByPolicy: Bool = false,
-        printTCCPathHint: String = "CheICalMCP --print-tcc-path",
-        noDisclaimSet: Bool = false
+        restrictedByPolicy: Bool = false
     ) -> String {
         if restrictedByPolicy {
             let checked: String
@@ -277,14 +179,29 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             \(type) access for \(checked).
             """
         }
-        // #362: the SSH text follows the process macOS checks. Under the status-aware rule
-        // (#343) an ssh context without full access re-execs onto CheICalMCP's own grant; a
-        // host keeps its attribution only with `CHE_ICAL_MCP_NO_DISCLAIM` or a failed re-exec.
+        if isSSH && isNonInteractive {
+            return """
+            \(type) access denied (SSH + non-interactive session detected). \
+            macOS TCC does not carry privacy permissions to SSH sessions, \
+            and permission dialogs cannot appear in non-interactive environments. Workarounds:
+            1. Run 'CheICalMCP --setup' once from Terminal on the target Mac (not over SSH)
+            2. Or manually add CheICalMCP in: \
+            System Settings → Privacy & Security → \(type)
+            3. Or grant Full Disk Access to /usr/sbin/sshd: \
+            System Settings → Privacy & Security → Full Disk Access → add sshd
+            4. After any step, restart both the SSH session and the non-interactive job \
+            (launchd service, CI runner, etc.)
+            """
+        }
         if isSSH {
-            return sshMessage(
-                type: type, isNonInteractive: isNonInteractive, deniedByStatus: deniedByStatus,
-                setupHint: setupHint, attribution: attribution, printTCCPathHint: printTCCPathHint,
-                noDisclaimSet: noDisclaimSet)
+            return """
+            \(type) access denied (SSH session detected). \
+            macOS TCC does not carry privacy permissions to SSH sessions. Workarounds:
+            1. Run CheICalMCP once LOCALLY first to trigger the TCC permission dialog
+            2. Or grant Full Disk Access to /usr/sbin/sshd: \
+            System Settings → Privacy & Security → Full Disk Access → add sshd
+            3. After either step, restart the SSH session
+            """
         }
         if isNonInteractive {
             return """
@@ -292,8 +209,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             macOS TCC cannot show permission dialogs in non-interactive sessions. Workarounds:
             1. Run this binary's setup once from Terminal to trigger the TCC permission dialog: \
             \(setupHint)
-            2. Or switch CheICalMCP on in System Settings → Privacy & Security → \(type) \
-            (if it is not listed, step 1 adds it: an app appears there once it requests access)
+            2. Or manually add CheICalMCP in: \
+            System Settings → Privacy & Security → \(type)
             3. After granting permission, restart the non-interactive job (launchd service, CI runner, etc.)
             """
         }
@@ -317,8 +234,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             1. Use the Claude Code plugin install path — a different spawn chain that avoids Claude.app's \
             `disclaimer` wrapper entirely (see #132): in Claude Code, run \
             `claude plugin install che-ical-mcp@psychquant-claude-plugins`
-            2. Or have the stale/mismatched row fixed: \(personAtTheMacStep(printTCCPathHint: printTCCPathHint)) \
-            (a `--setup` prompts only while the status is notDetermined, and this one is already denied)
+            2. Or clear the stale/mismatched row so a fresh grant can be minted: \
+            `tccutil reset \(type) com.checheng.CheICalMCP`, then re-run \(setupHint) from Terminal \
+            (now first-run → the dialog can present)
             3. Or, for one-off calendar data, fall back to `.ics` import
             4. Track the upstream fix: anthropics/claude-code#63032 (and #58239)
             """
@@ -402,117 +320,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    /// The sshd Full Disk Access step, with its warning (#362 verify: every SSH text that
-    /// offers it carries the warning).
-    private static let sshdFullDiskAccessStep =
-        "Grant Full Disk Access to /usr/sbin/sshd: System Settings → Privacy & Security → Full Disk Access → add sshd "
-        + "(this gives sshd broad file access; only on a Mac you fully control)"
-
-    /// The SSH access-denied message (#362), by the process macOS checks (round-2 policy P1,
-    /// P4, P5; no reset of any kind, it is returned to the model):
-    /// - `.selfBinary`: the ssh process re-executed onto CheICalMCP's own grant. The dialog
-    ///   cannot appear over ssh, so the grant is created on the Mac itself: `--setup` for a
-    ///   not-yet-asked status, the switch for a recorded "Don't Allow". No sshd step: the
-    ///   responsible process is not sshd.
-    /// - a host: the ssh process was not re-executed (the shared cause list,
-    ///   `ResponsibleProcessFormatter.noReexecCauses`). A named app gets "grant that app"; sshd
-    ///   or an unknown host gets the sshd Full Disk Access step; removing
-    ///   `CHE_ICAL_MCP_NO_DISCLAIM` is offered only when it is set.
-    /// - `nil`: the kernel lookup was unavailable, so no re-exec happened; treated as an
-    ///   unknown host.
-    static func sshMessage(
-        type: String, isNonInteractive: Bool, deniedByStatus: Bool, setupHint: String,
-        attribution: ResponsibleHostKind?, printTCCPathHint: String = "CheICalMCP --print-tcc-path",
-        noDisclaimSet: Bool = false
-    ) -> String {
-        let context = isNonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"
-        let noDialog = isNonInteractive
-            ? "Permission dialogs cannot appear over SSH or in non-interactive environments."
-            : "The permission dialog cannot appear over SSH."
-        let restart = isNonInteractive
-            ? "restart both the SSH session and the non-interactive job (launchd service, CI runner, etc.)"
-            : "restart the SSH session"
-        let ownGrantStep = deniedByStatus
-            ? "macOS already has a \"Don't Allow\" recorded for CheICalMCP, so no prompt will appear: "
-                + "switch CheICalMCP on in System Settings → Privacy & Security → \(type) on the Mac itself"
-            : "On the Mac itself (Terminal.app, not over SSH), run this binary's setup once: \(setupHint) "
-                + "(it prompts only while the status is notDetermined; after that it just reports the state)"
-        let header = "\(type) access denied (\(context)). \(noDialog)"
-
-        if case .selfBinary? = attribution {
-            return ([
-                "\(header) \(ResponsibleProcessFormatter.advice(for: .selfBinary))",
-            ] + numbered([ownGrantStep, "Then \(restart)"])).joined(separator: "\n")
-        }
-
-        let who: String
-        var hostStep: String?
-        switch attribution {
-        case .appBundle(let name)?:
-            if let app = ResponsibleProcessFormatter.responseSafeAppName(name) {
-                who = app
-                hostStep = deniedByStatus
-                    ? "A \"Don't Allow\" is recorded for \(app), so no prompt will appear: switch \(app) on in "
-                        + "System Settings → Privacy & Security → \(type), and enable \(app) for both Calendar and Reminders"
-                    : "Grant \(app): enable \(app) for both Calendar and Reminders in System Settings → Privacy & Security"
-            } else {
-                who = "the app that launched this server"
-                hostStep = "Grant the app that launched this server (\(printTCCPathHint) shows its name) "
-                    + "for both Calendar and Reminders in System Settings → Privacy & Security"
-            }
-        case .otherExecutable(let path)? where Self.isSSHDaemon(path):
-            who = "sshd"
-            hostStep = nil
-        case .unknown?, nil:
-            who = "the process macOS checks"
-            hostStep = nil
-        case .claudeCode?, .otherExecutable?:
-            who = "the process macOS checks"
-            hostStep = "See which process that is with \(printTCCPathHint) in Terminal on the Mac"
-        case .selfBinary?:
-            preconditionFailure("handled above")
-        }
-        let usesSshd: Bool = {
-            switch attribution {
-            case .unknown?, nil: return true
-            case .otherExecutable(let path)?: return Self.isSSHDaemon(path)
-            default: return false
-            }
-        }()
-
-        let cause: String
-        if attribution == nil {
-            cause = "The kernel lookup was unavailable (it names the process macOS checks), so this ssh process was not "
-                + "re-executed onto CheICalMCP's own grant (the re-exec needs that lookup); macOS checks the ssh "
-                + "context's own grant."
-        } else {
-            cause = "macOS checks another process here (\(who)), not CheICalMCP: this ssh process was not "
-                + "re-executed onto CheICalMCP's own grant because "
-                + ResponsibleProcessFormatter.noReexecCauses(host: "the process macOS checks") + "."
-        }
-
-        var steps: [String] = []
-        if deniedByStatus && usesSshd {
-            steps.append("A \"Don't Allow\" is recorded for the process macOS checks: if it is listed in "
-                + "System Settings → Privacy & Security → \(type), switch it on")
-        }
-        if usesSshd { steps.append(sshdFullDiskAccessStep) }
-        if let hostStep { steps.append(hostStep) }
-        if noDisclaimSet {
-            steps.append("Or remove CHE_ICAL_MCP_NO_DISCLAIM from this ssh process's environment so it re-executes "
-                + "onto CheICalMCP's own grant, then: " + ownGrantStep)
-        }
-        steps.append("After any step, \(restart)")
-        return ([header + " " + cause] + numbered(steps)).joined(separator: "\n")
-    }
-
-    /// Whether `path` is the ssh daemon (`sshd`, or the per-session `sshd-session` of newer
-    /// macOS). Only the last path component is read, and nothing of the path is printed.
-    static func isSSHDaemon(_ path: String) -> Bool {
-        let name = (path as NSString).lastPathComponent
-        return name == "sshd" || name == "sshd-session"
-    }
-
     private static func numbered(_ steps: [String]) -> [String] {
         steps.enumerated().map { "\($0.offset + 1). \($0.element)" }
     }
@@ -520,13 +327,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// Whether the current status of `typeName`'s service is `.restricted` (#343 verify
     /// round 2, row 9). The gate reports `.denied` and `.restricted` alike as `deniedByStatus`;
     /// the message reads which one at message time, the same way it reads the attribution.
-    /// Whether `CHE_ICAL_MCP_NO_DISCLAIM` is set (non-empty) in this process's environment
-    /// (#362 round 2: the SSH host text offers removing it only when it is set).
-    static func noDisclaimIsSet(env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        guard let value = env[SelfDisclaim.optOutVariable] else { return false }
-        return !value.isEmpty
-    }
-
     static func currentStatusIsRestricted(typeName: String) -> Bool {
         let entity: EKEntityType = typeName == "Reminders" ? .reminder : .event
         return EKEventStore.authorizationStatus(for: entity) == .restricted
@@ -2940,9 +2740,7 @@ enum EventKitError: LocalizedError {
                 deniedByStatus: deniedByStatus,
                 setupHint: EventKitManager.resolvedSetupCommandHint(),
                 attribution: EventKitManager.currentAttribution(),
-                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type),
-                printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint(),
-                noDisclaimSet: EventKitManager.noDisclaimIsSet()
+                restrictedByPolicy: deniedByStatus && EventKitManager.currentStatusIsRestricted(typeName: type)
             )
         case .insufficientAccess(let type):
             return """
@@ -2956,7 +2754,7 @@ enum EventKitError: LocalizedError {
             return """
             \(type) access in unknown authorization state (raw value: \(statusValue)). This build doesn't recognize the EKAuthorizationStatus case macOS returned — likely a future macOS adding a new partial-access state. Workarounds:
             1. Run 'CheICalMCP --setup' from Terminal to force a fresh authorization round-trip
-            2. Or, if that does not help, \(EventKitManager.personAtTheMacStep(printTCCPathHint: EventKitManager.resolvedPrintTCCPathHint()))
+            2. Or 'tccutil reset Calendar com.checheng.CheICalMCP' (and same for Reminders) then re-grant
             3. Or update CheICalMCP to a newer release that recognizes the new state
             """
         case .unsupportedEntityType(let rawValue):

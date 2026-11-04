@@ -216,15 +216,9 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
         XCTAssertFalse(run.timedOut)
         let lines = run.stdout.components(separatedBy: "\n")
-        // #357 round 2 (P4): the --setup line appears only while a status is notDetermined; the
-        // --print-tcc-path command in the switch step is always there, single-quoted too.
-        if run.stdout.contains("--setup prompts only while") {
-            XCTAssertTrue(lines.contains { $0.hasPrefix("  '") && $0.hasSuffix("' --setup") }, run.stdout)
-        }
-        XCTAssertTrue(run.stdout.contains("' --print-tcc-path after each"), run.stdout)
+        XCTAssertTrue(lines.contains { $0.hasPrefix("  '") && $0.hasSuffix("' --setup") }, run.stdout)
         XCTAssertTrue(lines.contains { $0.hasPrefix("  codesign -dv '") && $0.hasSuffix("'") }, run.stdout)
         XCTAssertFalse(run.stdout.contains("\" --setup"), run.stdout)
-        XCTAssertFalse(run.stdout.contains("\" --print-tcc-path"), run.stdout)
     }
 
     func testAHungChildIsKilledAtTheBound_notWaitedOnForever() throws {

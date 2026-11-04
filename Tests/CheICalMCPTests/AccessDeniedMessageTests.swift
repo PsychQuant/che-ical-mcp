@@ -10,14 +10,10 @@ import XCTest
 /// TCC status was already `.denied` at the gate, a bare `--setup` cannot re-prompt (the
 /// status-first check only requests on `.notDetermined`). The message must NOT lead with
 /// `--setup` there — it must name the real blocker (anthropics/claude-code#63032) and the
-/// paths that actually work (Claude Code plugin path, switching the stale System Settings
-/// entry off and on before `--setup`, `.ics` import). `tccutil reset <service>
-/// com.checheng.CheICalMCP` was step 2 until #357: it fails with -10814 for a bare binary (no
-/// LaunchServices record); the bare `tccutil reset <service>` stays only as the last resort.
+/// paths that actually work (Claude Code plugin path, `tccutil reset`, `.ics` import).
 final class AccessDeniedMessageTests: XCTestCase {
 
     private let hint = "\"/buried/path/CheICalMCP\" --setup"
-    private let diagnose = "'/buried/path/CheICalMCP' --print-tcc-path"
 
     // MARK: - #154 dead-end signature (deniedByStatus + .mcpb) — the fix
 
@@ -48,58 +44,22 @@ final class AccessDeniedMessageTests: XCTestCase {
     func testMCPBDeniedByStatus_pointsAtWorkingAlternatives() {
         let msg = EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
+            isMCPB: true, deniedByStatus: true, setupHint: hint)
 
         XCTAssertTrue(msg.contains("claude plugin install che-ical-mcp@psychquant-claude-plugins"),
             "must point at the working Claude Code plugin install path")
-        // #357 (deliberate change to the #158 pin) and round-2 policy P1/P4: text returned to
-        // the model carries no reset; a person at the Mac runs --print-tcc-path for the steps,
-        // and --setup is not offered for an already-denied status.
-        TCCRemedyAssertions.assertMCPFacingStaleGrant(msg)
-        XCTAssertTrue(msg.contains(diagnose), "the diagnose command for this binary: \(msg)")
-        XCTAssertFalse(msg.contains(hint), "--setup prompts only from notDetermined: \(msg)")
+        XCTAssertTrue(msg.contains("tccutil reset Calendar com.checheng.CheICalMCP"),
+            "must offer the reset-then-regrant heal, type-correct for Calendar")
         XCTAssertTrue(msg.contains(".ics"), "must mention the `.ics` import fallback")
     }
 
-    func testMCPBDeniedByStatus_settingsPaneTracksType() {
-        // The System Settings pane must follow the entity type, not hardcode Calendar.
+    func testMCPBDeniedByStatus_tccutilServiceTracksType() {
+        // The tccutil service name must follow the entity type, not hardcode Calendar.
         let reminders = EventKitManager.accessDeniedMessage(
             type: "Reminders", isSSH: false, isNonInteractive: false,
-            isMCPB: true, deniedByStatus: true, setupHint: hint, printTCCPathHint: diagnose)
-        XCTAssertTrue(reminders.contains("Reminders access denied"), reminders)
-        XCTAssertFalse(reminders.contains("Calendar access"), reminders)
-        TCCRemedyAssertions.assertMCPFacingStaleGrant(reminders)
-    }
-
-    // MARK: - #357: no surface offers `tccutil reset` with the bundle id
-
-    /// `tccutil reset <service> com.checheng.CheICalMCP` fails with -10814 for a bare binary;
-    /// a bare `tccutil reset <service>` clears every app's grant, so it may appear only as the
-    /// last resort with that consequence stated; and the pane has no − button.
-    func testNoAccessDeniedBranchOffersABundleIDResetOrAMinusButton() {
-        let attributions: [ResponsibleHostKind?] = [
-            nil, .selfBinary, .claudeCode(version: "2.1.309"), .appBundle(name: "Visual Studio Code"),
-            .otherExecutable(path: "/sbin/launchd"), .unknown]
-        for type in ["Calendar", "Reminders"] {
-            for ssh in [false, true] { for nonInteractive in [false, true] {
-                for mcpb in [false, true] { for denied in [false, true] { for restricted in [false, true] {
-                    for attribution in attributions {
-                        let msg = EventKitManager.accessDeniedMessage(
-                            type: type, isSSH: ssh, isNonInteractive: nonInteractive, isMCPB: mcpb,
-                            deniedByStatus: denied, setupHint: hint, attribution: attribution,
-                            restrictedByPolicy: restricted)
-                        TCCRemedyAssertions.assertNoBundleIDResetAndNoButton(msg)
-                    }
-                } } }
-            } }
-        }
-    }
-
-    func testUnknownAuthStateMessage_sendsAPersonAtTheMacToPrintTCCPath() {
-        // Round-2 policy P1: no reset in text returned to the model.
-        let msg = EventKitError.unknownAuthState(type: "Calendar", statusValue: 99).errorDescription ?? ""
-        TCCRemedyAssertions.assertMCPFacingStaleGrant(msg)
-        XCTAssertTrue(msg.contains("' --print-tcc-path"), "names this binary's command: \(msg)")
+            isMCPB: true, deniedByStatus: true, setupHint: hint)
+        XCTAssertTrue(reminders.contains("tccutil reset Reminders com.checheng.CheICalMCP"),
+            "Reminders denial must reset the Reminders service, not Calendar")
     }
 
     // MARK: - First-run .mcpb (notDetermined path) — --setup still IS the fix
@@ -128,7 +88,6 @@ final class AccessDeniedMessageTests: XCTestCase {
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("SSH session detected"))
         XCTAssertTrue(msg.contains("Full Disk Access"))
-        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "verify LOW (#362): warning on every sshd step")
     }
 
     func testSSHNonInteractiveBranch_unchanged() {
@@ -136,7 +95,6 @@ final class AccessDeniedMessageTests: XCTestCase {
             type: "Calendar", isSSH: true, isNonInteractive: true,
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("SSH + non-interactive session detected"))
-        XCTAssertTrue(msg.contains("only on a Mac you fully control"), "verify LOW (#362): warning on every sshd step")
     }
 
     func testNonInteractiveBranch_usesInjectedHint() {
@@ -145,9 +103,6 @@ final class AccessDeniedMessageTests: XCTestCase {
             isMCPB: false, deniedByStatus: false, setupHint: hint)
         XCTAssertTrue(msg.contains("non-interactive session detected"))
         XCTAssertTrue(msg.contains(hint), "non-interactive message uses the injected setup hint")
-        // #357 verify: the pane has no + button; an app is listed once it requests access.
-        XCTAssertFalse(msg.contains("manually add"), msg)
-        XCTAssertTrue(msg.contains("if it is not listed, step 1 adds it"), msg)
     }
 
     func testGenericBranch_unchanged() {
@@ -281,145 +236,11 @@ final class AccessDeniedMessageTests: XCTestCase {
         XCTAssertFalse(msg.contains("tccutil reset Calendar com.checheng.CheICalMCP"))
     }
 
-    /// #362: the attribution decides the SSH text, and the SSH context is still named. A
-    /// self-attributed ssh denial no longer gets the pre-#343 SSH text.
-    func testSSHText_followsTheAttribution_andStillNamesTheSSHContext() {
-        let selfMsg = EventKitManager.accessDeniedMessage(
+    func testAttribution_doesNotOverrideTheSSHBranch() {
+        let msg = EventKitManager.accessDeniedMessage(
             type: "Calendar", isSSH: true, isNonInteractive: false,
             isMCPB: false, deniedByStatus: false, setupHint: hint, attribution: .selfBinary)
-        XCTAssertTrue(selfMsg.contains("SSH session detected"), selfMsg)
-        XCTAssertTrue(selfMsg.contains("CheICalMCP's own grant"), selfMsg)
-        XCTAssertFalse(selfMsg.contains("does not carry privacy permissions to SSH sessions"), selfMsg)
-        let hostMsg = EventKitManager.accessDeniedMessage(
-            type: "Calendar", isSSH: true, isNonInteractive: false, isMCPB: false,
-            deniedByStatus: false, setupHint: hint, attribution: .appBundle(name: "Visual Studio Code"))
-        XCTAssertNotEqual(selfMsg, hostMsg)
-    }
-
-    // MARK: - #362: the SSH text follows the attribution (round-2 policy P1, P4, P5)
-
-    private func ssh(_ attribution: ResponsibleHostKind?, nonInteractive: Bool = false,
-                     denied: Bool = false, noDisclaimSet: Bool = false) -> String {
-        EventKitManager.accessDeniedMessage(
-            type: "Calendar", isSSH: true, isNonInteractive: nonInteractive,
-            isMCPB: false, deniedByStatus: denied, setupHint: hint, attribution: attribution,
-            printTCCPathHint: diagnose, noDisclaimSet: noDisclaimSet)
-    }
-
-    private func steps(_ msg: String) -> [String] {
-        msg.components(separatedBy: "\n").filter { $0.first?.isNumber == true }
-    }
-
-    private let fullDiskAccess = "Grant Full Disk Access to /usr/sbin/sshd"
-    private let sshdHost = ResponsibleHostKind.otherExecutable(path: "/usr/sbin/sshd")
-
-    /// Self-attributed: CheICalMCP's own grant, the local `--setup` only for a not-yet-asked
-    /// status (P4), and no sshd step: the responsible host is not sshd (P5).
-    func testSSH_selfAttribution_ownGrantLocalSetup_noSshdStep() {
-        for nonInteractive in [false, true] {
-            let msg = ssh(.selfBinary, nonInteractive: nonInteractive)
-            XCTAssertTrue(msg.contains("CheICalMCP's own grant"), msg)
-            XCTAssertTrue(msg.contains(hint), msg)
-            XCTAssertTrue(msg.contains("prompts only while the status is notDetermined"), msg)
-            XCTAssertTrue(msg.contains("not over SSH"), msg)
-            XCTAssertFalse(msg.contains("Full Disk Access"), msg)
-            XCTAssertFalse(msg.contains("does not carry privacy permissions to SSH sessions"), msg)
-        }
-        XCTAssertTrue(ssh(.selfBinary, nonInteractive: true).contains("non-interactive job"))
-    }
-
-    func testSSH_selfAttributionAlreadyDenied_offersTheSwitch() {
-        let msg = ssh(.selfBinary, denied: true)
-        XCTAssertTrue(msg.contains("Don't Allow"), msg)
-        XCTAssertTrue(msg.contains("switch CheICalMCP on"), msg)
-        XCTAssertFalse(msg.contains(hint), msg)
-    }
-
-    /// P5: the host branch's cause list is the one ResponsibleProcessFormatter uses.
-    func testSSH_hostAttribution_causesComeFromTheSharedSource() {
-        let causes = ResponsibleProcessFormatter.noReexecCauses(host: "the process macOS checks")
-        for marker in ["CHE_ICAL_MCP_NO_DISCLAIM is set", "CHE_ICAL_MCP_DISCLAIMED was inherited",
-                       "the re-exec failed", "a policy restricts", "lost it since"] {
-            XCTAssertTrue(causes.contains(marker), marker)
-        }
-        for host in [ResponsibleHostKind.appBundle(name: "Visual Studio Code"), sshdHost, .unknown] {
-            XCTAssertTrue(ssh(host).contains(causes), ssh(host))
-        }
-        XCTAssertTrue(ResponsibleProcessFormatter.advice(for: .claudeCode(version: "2.1.309"))
-            .contains(ResponsibleProcessFormatter.noReexecCauses(host: "Claude Code 2.1.309")))
-    }
-
-    /// P5: removing CHE_ICAL_MCP_NO_DISCLAIM is offered only when it is set.
-    func testSSH_hostAttribution_noDisclaimStepOnlyWhenSet() {
-        let host = ResponsibleHostKind.appBundle(name: "Visual Studio Code")
-        XCTAssertFalse(ssh(host).contains("remove CHE_ICAL_MCP_NO_DISCLAIM"), ssh(host))
-        let set = ssh(host, noDisclaimSet: true)
-        XCTAssertTrue(set.contains("remove CHE_ICAL_MCP_NO_DISCLAIM"), set)
-        XCTAssertTrue(set.contains(hint), "re-exec route: the local --setup: \(set)")
-        XCTAssertTrue(set.contains("prompts only while the status is notDetermined"), set)
-        let deniedSet = ssh(host, denied: true, noDisclaimSet: true)
-        XCTAssertFalse(deniedSet.contains(hint), "denied: the switch, not --setup: \(deniedSet)")
-    }
-
-    /// P5: a named app host gets "grant that app", as the non-SSH host remedy does; no sshd step.
-    func testSSH_appHost_grantsTheApp_noSshdStep() {
-        let msg = ssh(.appBundle(name: "Visual Studio Code"))
-        XCTAssertTrue(msg.contains("enable Visual Studio Code for both Calendar and Reminders"), msg)
-        XCTAssertFalse(msg.contains("Full Disk Access"), msg)
-    }
-
-    /// P5: the sshd step only when the responsible host is sshd or unknown, with its warning.
-    func testSSH_sshdOrUnknownHost_leadsWithSshdFullDiskAccess() {
-        for host in [sshdHost, .unknown, .otherExecutable(path: "/usr/libexec/sshd-session")] {
-            for nonInteractive in [false, true] {
-                let msg = ssh(host, nonInteractive: nonInteractive)
-                XCTAssertTrue(msg.contains(nonInteractive ? "SSH + non-interactive session detected" : "SSH session detected"), msg)
-                XCTAssertTrue(steps(msg).first?.contains(fullDiskAccess) == true, msg)
-                XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
-                XCTAssertFalse(msg.contains("Run CheICalMCP once LOCALLY first"), msg)
-            }
-        }
-    }
-
-    /// P5: another named executable gets no sshd step, and its path is not echoed.
-    func testSSH_otherExecutableHost_noSshdStep_pathNotEchoed() {
-        let msg = ssh(.otherExecutable(path: "/opt/x/hostbin"))
-        XCTAssertFalse(msg.contains("Full Disk Access"), msg)
-        XCTAssertFalse(msg.contains("/opt/x/hostbin"), msg)
-        XCTAssertFalse(msg.contains("hostbin"), msg)
-        XCTAssertTrue(msg.contains("--print-tcc-path"), msg)
-    }
-
-    /// P4: denied with a host → lead with the switch.
-    func testSSH_deniedHost_leadsWithTheSwitch() {
-        for host: ResponsibleHostKind? in [sshdHost, .unknown, nil] {
-            let msg = ssh(host, denied: true)
-            XCTAssertTrue(steps(msg).first?.contains("switch it on") == true, msg)
-        }
-        let app = ssh(.appBundle(name: "Visual Studio Code"), denied: true)
-        XCTAssertTrue(steps(app).first?.contains("switch Visual Studio Code on") == true, app)
-    }
-
-    /// P5: nil attribution = the kernel lookup was unavailable, so no re-exec happened.
-    func testSSH_unknownAttribution_saysNoReexecHappened() {
-        for nonInteractive in [false, true] {
-            let msg = ssh(nil, nonInteractive: nonInteractive)
-            XCTAssertTrue(msg.contains("lookup was unavailable"), msg)
-            XCTAssertTrue(msg.contains("was not re-executed"), msg)
-            XCTAssertFalse(msg.contains("default"), msg)
-            XCTAssertTrue(msg.contains(fullDiskAccess), msg)
-            XCTAssertTrue(msg.contains("only on a Mac you fully control"), msg)
-        }
-    }
-
-    /// P1: no SSH text carries a reset.
-    func testSSH_noBranchCarriesAReset() {
-        for host: ResponsibleHostKind? in [nil, .selfBinary, .claudeCode(version: "2.1.309"),
-                                           .appBundle(name: "Visual Studio Code"), sshdHost, .unknown] {
-            for denied in [false, true] { for set in [false, true] {
-                XCTAssertFalse(ssh(host, denied: denied, noDisclaimSet: set).contains("tccutil"))
-            } }
-        }
+        XCTAssertTrue(msg.contains("SSH session detected"))
     }
 
     // SSH takes precedence over deniedByStatus (an SSH denial is not the #154 signature).
