@@ -292,7 +292,7 @@ class CheICalMCPServer {
                                 ]),
                                 "interval": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Repeat every N units (default 1). E.g., interval=2 with frequency=weekly means every other week.")
+                                    "description": .string("Repeat every N units (default 1; an integer from 1 to 1000). E.g., interval=2 with frequency=weekly means every other week.")
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
@@ -300,7 +300,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -363,7 +363,7 @@ class CheICalMCPServer {
                                 ]),
                                 "interval": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Repeat every N units (default 1)")
+                                    "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
@@ -371,7 +371,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -534,7 +534,7 @@ class CheICalMCPServer {
                                 ]),
                                 "interval": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Repeat every N units (default 1)")
+                                    "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
@@ -542,7 +542,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -590,7 +590,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule without moving the due date, and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) or the rule (recurrence, clear_recurrence) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -632,7 +632,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it and after it is completed the reminder repeats on the rule's days (device, iCloud), and the response adds recurrence_note; pass due_date in the same call to move it. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder. Cannot be combined with clear_recurrence. Undo restores the previous rule."),
+                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -641,7 +641,7 @@ class CheICalMCPServer {
                                 ]),
                                 "interval": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Repeat every N units (default 1)")
+                                    "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
@@ -649,7 +649,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -863,9 +863,9 @@ class CheICalMCPServer {
                                         "description": .string("Recurrence rule"),
                                         "properties": .object([
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
-                                            "interval": .object(["type": .string("integer")]),
+                                            "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer")]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
@@ -1909,7 +1909,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
         }
         if recurrenceRule != nil && clearDueDate {
-            throw ToolError.invalidParameter(ReminderRecurrenceWrite.noDueMessage)
+            throw ToolError.invalidParameter(ReminderRecurrenceWrite.clearDueWithRuleMessage)
         }
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
         if due != nil || clearDueDate {
@@ -1966,12 +1966,18 @@ class CheICalMCPServer {
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
         if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
-        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }
+        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }   // PR #415 verify round 1
         // #354: the rule and the due read back off the saved reminder; a note when the due is off the rule's days.
         if let recurrence = update.recurrence {
-            response.merge(reminderMetadata(hasRecurrence: recurrence.hasRecurrence, rules: recurrence.rules, due: recurrence.due)) { $1 }
-            if let note = recurrence.offRuleNote { response["recurrence_note"] = note }
-        }   // PR #415 verify round 1
+            if recurrence.confirmed {
+                response.merge(reminderMetadata(hasRecurrence: recurrence.hasRecurrence, rules: recurrence.rules, due: recurrence.due)) { $1 }
+                if let note = recurrence.offRuleNote { response["recurrence_note"] = note }
+            } else {
+                // PR #420 verify round 1: not re-read after the save, so nothing is reported as stored.
+                response["recurrence_read_back"] = false
+                response["recurrence_note"] = ReminderRecurrenceWrite.unconfirmedNote
+            }
+        }
         // #268: the identifier after the save (a move to another account's list may change it).
         response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
@@ -3352,6 +3358,12 @@ class CheICalMCPServer {
         }
 
         let interval = try InputValidation.requireIntIfPresent(recurrenceDict, key: "interval", default: 1)
+        // PR #420 verify round 1: EventKit raises an Objective-C exception, which Swift cannot
+        // catch and which ends the server, for an interval of 0 or less and for 2^31 to 2^32
+        // (measured), so the value is bounded before any rule is built.
+        guard (1...RecurrenceRuleInput.maxInterval).contains(interval) else {
+            throw ToolError.invalidParameter("recurrence.interval must be an integer from 1 to \(RecurrenceRuleInput.maxInterval), got \(interval)")
+        }
         // #182 verify fixes (findings #4, #9) — present-but-wrong-type must throw, not
         // silently drop (#101 F2): a JSON-number end_date used to vanish, taking the
         // only implemented pre-save window bound with it; a stringly-typed
@@ -3368,9 +3380,20 @@ class CheICalMCPServer {
             guard let n = countValue.intValue else {
                 throw ToolError.invalidParameter("recurrence.occurrence_count must be an integer, got a non-integer value")
             }
+            // PR #420 verify round 1: 0 raises the same uncatchable exception; a negative count is
+            // stored as given and means nothing.
+            guard (1...RecurrenceRuleInput.maxOccurrenceCount).contains(n) else {
+                throw ToolError.invalidParameter("recurrence.occurrence_count must be an integer from 1 to \(RecurrenceRuleInput.maxOccurrenceCount), got \(n)")
+            }
             occurrenceCount = n
         }
 
+        // PR #420 verify round 1: a day list that is not an array is refused, not dropped.
+        for key in ["days_of_week", "days_of_month"] {
+            if let value = recurrenceDict[key], value != .null, value.arrayValue == nil {
+                throw ToolError.invalidParameter("recurrence.\(key) must be an array of integers")
+            }
+        }
         var daysOfWeek: [Int]?
         if let days = recurrenceDict["days_of_week"]?.arrayValue {
             daysOfWeek = try days.enumerated().map { idx, v in

@@ -64,7 +64,7 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
             (ReminderUpdateRequest(identifier: "r", title: "New", clearDueDate: true),
              repeatingReminder(), ReminderRecurrenceWrite.clearDueMessage),
             (ReminderUpdateRequest(identifier: "r", title: "New", clearDueDate: true, recurrenceRule: weekly([6])),
-             repeatingReminder(), ReminderRecurrenceWrite.noDueMessage),
+             repeatingReminder(), ReminderRecurrenceWrite.clearDueWithRuleMessage),
             ({ ReminderUpdateRequest(identifier: "r", title: "New", recurrenceRule: weekly([6])) }(),
              { let r = EKReminder(eventStore: SharedTestStore.store); r.title = "weekly"; return r }(), ReminderRecurrenceWrite.noDueMessage),
             (ReminderUpdateRequest(identifier: "r", title: "New", recurrenceRule: weekly([6])),
@@ -78,7 +78,9 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
             XCTAssertFalse(saved)
             XCTAssertEqual(reminder.title, "weekly", "nothing was written")
         }
-        for message in [ReminderRecurrenceWrite.bothMessage, ReminderRecurrenceWrite.noDueMessage,
+        XCTAssertTrue(ReminderRecurrenceWrite.clearDueWithRuleMessage.contains("Drop clear_due_date"))
+        XCTAssertFalse(ReminderRecurrenceWrite.clearDueWithRuleMessage.hasSuffix("Pass due_date. Nothing was written."))
+        for message in [ReminderRecurrenceWrite.bothMessage, ReminderRecurrenceWrite.noDueMessage, ReminderRecurrenceWrite.clearDueWithRuleMessage,
                         ReminderRecurrenceWrite.clearDueMessage, ReminderRecurrenceWrite.completedMessage] {
             XCTAssertFalse(message.isEmpty)
             XCTAssertTrue(message.contains("Nothing was written") || message.contains("Cannot specify both"), message)
@@ -120,27 +122,27 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
         // A date-only due is judged by its day too.
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(DateComponents(year: 2026, month: 12, day: 10), rule: friday))
 
-        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [thursday]))
-        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: nil, rules: [friday]))
-        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: []))
-        let note = try? XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [friday]))
+        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [thursday], dueGiven: false))
+        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: nil, rules: [friday], dueGiven: false))
+        XCTAssertNil(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [], dueGiven: false))
+        let note = try? XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [friday], dueGiven: false))
         XCTAssertTrue(note?.contains("2026-12-10") ?? false, note ?? "")
         XCTAssertTrue(note?.contains("was not moved") ?? false, note ?? "")
-        XCTAssertTrue(note?.contains("due_date") ?? false, note ?? "")
+        XCTAssertTrue(note?.contains("pass due_date to update_reminder") ?? false, note ?? "")
     }
 
     /// Read back off the saved reminder: the stored rule, the due, and the note.
     func testTheReadBackComesFromTheSavedReminder() {
         let reminder = repeatingReminder(days: [6])
-        let readBack = ReminderRecurrenceWrite.readBack(reminder)
+        let readBack = ReminderRecurrenceWrite.readBack(reminder, request: ReminderUpdateRequest(identifier: "r", recurrenceRule: weekly([6])))
         XCTAssertTrue(readBack.hasRecurrence)
         XCTAssertEqual(readBack.rules?.first?.weekdays?.map(\.day), [6])
         XCTAssertEqual(readBack.due?.components.day, 10)
         XCTAssertNotNil(readBack.offRuleNote)
         let oneOff = EKReminder(eventStore: SharedTestStore.store)
         oneOff.dueDateComponents = thursdayDue
-        XCTAssertFalse(ReminderRecurrenceWrite.readBack(oneOff).hasRecurrence)
-        XCTAssertNil(ReminderRecurrenceWrite.readBack(oneOff).offRuleNote)
+        XCTAssertFalse(ReminderRecurrenceWrite.readBack(oneOff, request: ReminderUpdateRequest(identifier: "r", clearRecurrence: true)).hasRecurrence)
+        XCTAssertNil(ReminderRecurrenceWrite.readBack(oneOff, request: ReminderUpdateRequest(identifier: "r", clearRecurrence: true)).offRuleNote)
     }
 
     /// Undo: the recorded snapshot restores the old rule (`ReminderSnapshot.apply`), and the #236
@@ -177,5 +179,108 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
                                        to: reminder, saved: &saved))
         XCTAssertFalse(saved)
         XCTAssertEqual(reminder.recurrenceRules?.first?.daysOfTheWeek?.map(\.dayOfTheWeek.rawValue), [5])
+    }
+
+    // MARK: - PR #420 verify round 1
+
+    /// The read-back is taken after a reload of the saved reminder, not off the object written.
+    func testTheReadBackIsTakenAfterTheReload() {
+        let reminder = repeatingReminder(days: [6])
+        let request = ReminderUpdateRequest(identifier: "r", recurrenceRule: weekly([6]))
+        var reloaded = false
+        let readBack = ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: {
+            reloaded = true
+            // What the store holds differs from what was written (a sync, another app).
+            reminder.recurrenceRules = [EventKitManager.makeRecurrenceRule(from: self.weekly([2]))]
+            return true
+        })
+        XCTAssertTrue(reloaded)
+        XCTAssertTrue(readBack.confirmed)
+        XCTAssertEqual(readBack.rules?.first?.weekdays?.map(\.day), [2])
+    }
+
+    /// A reminder that cannot be re-read after the save reports nothing as stored.
+    func testAFailedReloadIsNotConfirmed() {
+        let readBack = ReminderRecurrenceWrite.readBackAfterSave(repeatingReminder(days: [6]),
+                                                                 request: ReminderUpdateRequest(identifier: "r", recurrenceRule: weekly([6])),
+                                                                 reload: { false })
+        XCTAssertFalse(readBack.confirmed)
+        XCTAssertNil(readBack.rules)
+        XCTAssertNil(readBack.offRuleNote)
+        XCTAssertTrue(ReminderRecurrenceWrite.unconfirmedNote.contains("could not be re-read"))
+    }
+
+    /// The note says whether the due came from this call, and the second sentence is stated as
+    /// measured only for the measured shape (a weekly rule naming weekdays).
+    func testTheNoteWording() throws {
+        let friday = ReminderRecurrenceRuleValue(from: EventKitManager.makeRecurrenceRule(from: weekly([6])))
+        let monthly15 = ReminderRecurrenceRuleValue(from: EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
+            frequency: .monthly, interval: 1, endDate: nil, occurrenceCount: nil, daysOfWeek: nil, daysOfMonth: [15], excludedOccurrenceDates: nil)))
+        let kept = try XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [friday], dueGiven: false))
+        XCTAssertTrue(kept.contains("was not moved"), kept)
+        XCTAssertTrue(kept.contains("pass due_date to update_reminder"), kept)
+        XCTAssertTrue(kept.contains("measured"), kept)
+        XCTAssertFalse(kept.contains("not measured"), kept)
+        let given = try XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [friday], dueGiven: true))
+        XCTAssertFalse(given.contains("was not moved"), given)
+        XCTAssertTrue(given.contains("given in this call"), given)
+        let monthly = try XCTUnwrap(ReminderRecurrenceWrite.offRuleNote(due: thursdayDue, rules: [monthly15], dueGiven: false))
+        XCTAssertTrue(monthly.contains("not measured"), monthly)
+    }
+
+    /// Weekdays count for every frequency but daily; days of the month only for monthly.
+    func testDayListsCountOnlyForTheFrequenciesThatUseThem() {
+        func rule(_ frequency: RecurrenceRuleInput.Frequency, days: [Int]? = nil, dom: [Int]? = nil) -> ReminderRecurrenceRuleValue {
+            ReminderRecurrenceRuleValue(from: EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
+                frequency: frequency, interval: 1, endDate: nil, occurrenceCount: nil, daysOfWeek: days, daysOfMonth: dom, excludedOccurrenceDates: nil)))
+        }
+        XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, days: [6])), "daily ignores weekdays")
+        XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.weekly, dom: [15])), "weekly ignores days of the month")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.monthly, days: [6])), "monthly by weekday")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.monthly, dom: [15])))
+    }
+
+    /// A rule change keeps the reminder's alarms and location trigger.
+    func testARuleChangeKeepsAlarmsAndTheLocationTrigger() throws {
+        let reminder = repeatingReminder()
+        reminder.addAlarm(EKAlarm(relativeOffset: -900))
+        reminder.addAlarm(EKAlarm(absoluteDate: Date(timeIntervalSince1970: 1_800_000_000)))
+        let location = EKAlarm()
+        location.structuredLocation = EKStructuredLocation(title: "Somewhere")
+        reminder.addAlarm(location)
+        var saved = false
+        try apply(ReminderUpdateRequest(identifier: "r", recurrenceRule: weekly([6])), to: reminder, saved: &saved)
+        try apply(ReminderUpdateRequest(identifier: "r", clearRecurrence: true), to: reminder, saved: &saved)
+        XCTAssertEqual(reminder.alarms?.count, 3)
+        XCTAssertEqual(reminder.alarms?.filter { $0.structuredLocation != nil }.count, 1)
+        XCTAssertEqual(reminder.alarms?.compactMap(\.absoluteDate).count, 1)
+        XCTAssertEqual(ReminderRelativeAlarms.storedMinutesBefore(reminder), [15])
+    }
+
+    /// The post-state guard compares a rule's end by day for a date-only reminder, as for an
+    /// all-day event (CalDAV can store the end as a date), and to the second for a timed one.
+    func testTheGuardComparesARulesEndByDayForADateOnlyReminder() {
+        func reminder(due: DateComponents, end: Date) -> EKReminder {
+            let r = EKReminder(eventStore: SharedTestStore.store)
+            r.dueDateComponents = due
+            r.recurrenceRules = [EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
+                frequency: .weekly, interval: 1, endDate: end, occurrenceCount: nil, daysOfWeek: [5], daysOfMonth: nil, excludedOccurrenceDates: nil))]
+            return r
+        }
+        let end = Date(timeIntervalSince1970: 1_800_000_000)
+        let dateOnly = DateComponents(year: 2026, month: 12, day: 10)
+        let post = ReminderSnapshot(from: reminder(due: dateOnly, end: end))
+        XCTAssertEqual(post.changedFields(in: ReminderSnapshot(from: reminder(due: dateOnly, end: end.addingTimeInterval(60))), restoring: nil), [])
+        let timedPost = ReminderSnapshot(from: reminder(due: thursdayDue, end: end))
+        XCTAssertEqual(timedPost.changedFields(in: ReminderSnapshot(from: reminder(due: thursdayDue, end: end.addingTimeInterval(60))), restoring: nil),
+                       ["recurrence"])
+    }
+
+    /// The store path reads the rule back through `readBackAfterSave` with a reload.
+    func testUpdateReminderReadsTheRuleBackAfterAReload() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        XCTAssertEqual(code.components(separatedBy: "ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() })").count - 1, 1)
+        XCTAssertFalse(code.filter { !$0.isWhitespace }.contains("ReminderRecurrenceWrite.readBack(reminder"))
     }
 }

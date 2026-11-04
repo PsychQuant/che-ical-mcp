@@ -13,7 +13,9 @@ private actor RecurrenceUpdateWriteFake: ReminderWriteSource {
         var readBack: ReminderRecurrenceWrite.ReadBack?
         if request.recurrenceRule != nil || request.clearRecurrence {
             let reminder = EKReminderBox.make(days: request.recurrenceRule?.daysOfWeek)
-            readBack = ReminderRecurrenceWrite.readBack(reminder)
+            readBack = request.identifier == "unreadable"
+                ? ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { false })
+                : ReminderRecurrenceWrite.readBack(reminder, request: request)
         }
         return ReminderUpdateResult(reminder: ReminderWriteSnapshot(id: request.identifier, title: "Saved", notes: nil),
                                     dateSync: nil, recurrence: readBack)
@@ -112,5 +114,73 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
         XCTAssertTrue(rule.contains("does not move the due date"), rule)
         XCTAssertTrue(rule.contains("recurrence_note"), rule)
         XCTAssertTrue((tool.description ?? "").contains("clear_recurrence"), tool.description ?? "")
+    }
+
+    // MARK: - PR #420 verify round 1
+
+    func testAReminderThatCannotBeReReadReportsNoRule() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceUpdateWriteFake())
+        let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("unreadable"), "recurrence": fridays]))
+        XCTAssertEqual(result["recurrence_read_back"] as? Bool, false)
+        XCTAssertEqual(result["recurrence_note"] as? String, ReminderRecurrenceWrite.unconfirmedNote)
+        XCTAssertNil(result["reminder_recurrence_rules"])
+    }
+
+    func testARuleWithClearDueDateGetsItsOwnMessage() async throws {
+        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceUpdateWriteFake())
+        do {
+            _ = try await server.executeToolCall(name: "update_reminder", arguments: [
+                "reminder_id": .string("r"), "recurrence": fridays, "clear_due_date": .bool(true)])
+            XCTFail("accepted")
+        } catch {
+            XCTAssertTrue("\(error)".contains(ReminderRecurrenceWrite.clearDueWithRuleMessage), "\(error)")
+        }
+    }
+
+    /// `interval` and `occurrence_count` out of range made EventKit raise an Objective-C exception
+    /// that crashed the server (measured: interval 0, -1 and 2^31…2^32; occurrence_count 0). The
+    /// shared parser refuses them on every tool that takes `recurrence`, and a day list that is
+    /// not an array is refused instead of dropped.
+    func testOutOfRangeRulesAreRefusedOnEveryTool() async throws {
+        let fake = RecurrenceUpdateWriteFake()
+        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let bad: [(Value, String)] = [
+            (.object(["frequency": .string("weekly"), "interval": .int(0)]), "interval"),
+            (.object(["frequency": .string("weekly"), "interval": .int(-1)]), "interval"),
+            (.object(["frequency": .string("weekly"), "interval": .int(2_147_483_648)]), "interval"),
+            (.object(["frequency": .string("weekly"), "occurrence_count": .int(0)]), "occurrence_count"),
+            (.object(["frequency": .string("weekly"), "occurrence_count": .int(-1)]), "occurrence_count"),
+            (.object(["frequency": .string("weekly"), "days_of_week": .int(5)]), "days_of_week"),
+            (.object(["frequency": .string("monthly"), "days_of_month": .string("15")]), "days_of_month"),
+        ]
+        let tools: [(String, [String: Value])] = [
+            ("update_reminder", ["reminder_id": .string("r")]),
+            ("create_reminder", ["title": .string("t"), "due_date": .string("2026-12-10T09:00:00"), "calendar_name": .string("none")]),
+            ("create_event", ["title": .string("t"), "start_time": .string("2026-12-10T09:00:00"),
+                              "end_time": .string("2026-12-10T10:00:00"), "calendar_name": .string("none")]),
+        ]
+        for (rule, field) in bad {
+            for (tool, base) in tools {
+                var arguments = base
+                arguments["recurrence"] = rule
+                do {
+                    _ = try await server.executeToolCall(name: tool, arguments: arguments)
+                    XCTFail("\(tool) accepted \(rule)")
+                } catch {
+                    XCTAssertTrue("\(error)".contains("recurrence.\(field)"), "\(tool): \(error)")
+                }
+            }
+        }
+        let updated = await fake.updated
+        XCTAssertTrue(updated.isEmpty)
+    }
+
+    func testTheRuleBoundsAreStatedInTheSchemas() {
+        for name in ["create_event", "update_event", "create_reminder", "update_reminder"] {
+            let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("1 to 1000"), "\(name): interval bound")
+            XCTAssertTrue(schema.contains("1 to 10000"), "\(name): occurrence_count bound")
+        }
     }
 }

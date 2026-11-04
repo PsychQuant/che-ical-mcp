@@ -76,7 +76,10 @@ extension ReminderSnapshot {
         check("due_date") { Self.sameDateComponents($0.dueDateComponents, $1.dueDateComponents) }
         check("start_date") { Self.sameDateComponents($0.startDateComponents, $1.startDateComponents) }
         check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
-        check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules, allDay: false) }
+        // PR #420 verify round 1: a date-only reminder's rule end compares by day, as an all-day
+        // event's does (CalDAV can store it as a date); a timed one's to the second.
+        check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules,
+                                                              allDay: $0.dueDateComponents != nil && $0.dueDateComponents?.hour == nil) }
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
         return changed
     }

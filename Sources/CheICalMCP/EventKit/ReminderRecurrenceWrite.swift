@@ -20,10 +20,14 @@ enum ReminderRecurrenceWrite {
         let rules: [ReminderRecurrenceRuleValue]?
         let due: ReminderDueValue?
         let offRuleNote: String?
+        /// False when the saved reminder could not be re-read: nothing is reported as stored.
+        var confirmed = true
     }
 
     static let bothMessage = "Cannot specify both recurrence and clear_recurrence"
     static let noDueMessage = "recurrence needs a due date: the reminder will have none after this call, and a repeating reminder must have one. Pass due_date. Nothing was written."
+    static let clearDueWithRuleMessage = "recurrence cannot be combined with clear_due_date: a repeating reminder must have a due date. Drop clear_due_date (and pass due_date if the reminder has none). Nothing was written."
+    static let unconfirmedNote = "The reminder could not be re-read after the save, so its stored rule and due date are not reported; check it in Reminders."
     static let clearDueMessage = "clear_due_date is refused: the reminder repeats, and a repeating reminder must have a due date. To make it a one-off reminder without a due date, pass clear_recurrence: true with clear_due_date. Nothing was written."
     static let completedMessage = "recurrence cannot be set on a completed reminder: how a completed reminder rolls over with a new rule has not been measured. Mark it incomplete first (complete_reminder with completed: false). Nothing was written."
 
@@ -35,6 +39,7 @@ enum ReminderRecurrenceWrite {
         }
         let dueAfter = ReminderRelativeAlarms.dueState(requested: request.due, clearDue: request.clearDueDate, existing: existingDue)
         if request.recurrenceRule != nil {
+            if request.clearDueDate { throw ToolError.invalidParameter(clearDueWithRuleMessage) }
             if dueAfter == .none { throw ToolError.invalidParameter(noDueMessage) }
             if isCompleted { throw ToolError.invalidParameter(completedMessage) }
         } else if request.clearDueDate, repeats, !request.clearRecurrence {
@@ -52,34 +57,57 @@ enum ReminderRecurrenceWrite {
         }
     }
 
-    /// Whether `due`'s day is one the rule names: a weekday in `days_of_week`, a day in
-    /// `days_of_month`. A rule that names neither repeats from the due itself, so it matches. The
-    /// weekday is the label's (year, month, day), whatever the zone.
+    /// Whether `due`'s day is one the rule names: a weekday in `days_of_week` (for every frequency
+    /// but daily, which does not use it) and a day in `days_of_month` (for monthly only; PR #420
+    /// verify round 1: EventKit stores the list on other frequencies too, and they do not use it). A
+    /// rule that names neither repeats from the due itself, so it matches. The weekday is the
+    /// label's (year, month, day), whatever the zone.
     static func dueMatches(_ due: DateComponents, rule: ReminderRecurrenceRuleValue) -> Bool {
-        if let weekdays = rule.weekdays, !weekdays.isEmpty {
+        if rule.frequency != "daily", let weekdays = rule.weekdays, !weekdays.isEmpty {
             guard let weekday = weekday(of: due) else { return true }
             if !weekdays.contains(where: { $0.day == weekday }) { return false }
         }
-        if let days = rule.daysOfMonth, !days.isEmpty, let day = due.day {
+        if rule.frequency == "monthly", let days = rule.daysOfMonth, !days.isEmpty, let day = due.day {
             if !days.contains(day) { return false }
         }
         return true
     }
 
-    /// The note when the due is not on the rule's days: it was not moved, the pending occurrence
-    /// stays on it, and how to move it. Nil without a due or a rule, or when it matches.
-    static func offRuleNote(due: DateComponents?, rules: [ReminderRecurrenceRuleValue]) -> String? {
+    /// The note when the due is not on the rule's days. It says whether the due came from this
+    /// call or was kept, and what happens after it is completed: measured (iCloud, 2026-11-05) for
+    /// a weekly rule naming weekdays, expected but not measured for other rules (PR #420 verify
+    /// round 1). Nil without a due or a rule, or when it matches.
+    static func offRuleNote(due: DateComponents?, rules: [ReminderRecurrenceRuleValue], dueGiven: Bool) -> String? {
         guard let due, let rule = rules.first, !dueMatches(due, rule: rule),
               let year = due.year, let month = due.month, let day = due.day else { return nil }
         let label = String(format: "%04d-%02d-%02d", year, month, day)
-        return "The due date (\(label)) is not on the new rule's days and was not moved: this pending occurrence stays on it, and after it is completed the reminder repeats on the rule's days. To move it, pass due_date in the same call."
+        let first = dueGiven
+            ? "The due date (\(label)), as given in this call, is not on the rule's days: this pending occurrence is on it."
+            : "The due date (\(label)) is not on the new rule's days and was not moved: this pending occurrence stays on it."
+        let measured = rule.frequency == "weekly" && !(rule.weekdays ?? []).isEmpty
+        let after = measured
+            ? " After it is completed, the reminder repeats on the rule's days (measured for a weekly rule)."
+            : " After it is completed, the reminder is expected to repeat on the rule's days (not measured for this kind of rule)."
+        let remedy = dueGiven ? "" : " To move it, pass due_date to update_reminder."
+        return first + after + remedy
     }
 
-    static func readBack(_ reminder: EKReminder) -> ReadBack {
+    /// The read-back of the reminder as it is in memory now; `readBackAfterSave` reloads first.
+    static func readBack(_ reminder: EKReminder, request: ReminderUpdateRequest) -> ReadBack {
         let rules = reminder.recurrenceRules?.map(ReminderRecurrenceRuleValue.init(from:))
         return ReadBack(hasRecurrence: reminder.hasRecurrenceRules, rules: rules,
                         due: ReminderDueValue(components: reminder.dueDateComponents),
-                        offRuleNote: reminder.hasRecurrenceRules ? offRuleNote(due: reminder.dueDateComponents, rules: rules ?? []) : nil)
+                        offRuleNote: reminder.hasRecurrenceRules
+                            ? offRuleNote(due: reminder.dueDateComponents, rules: rules ?? [], dueGiven: request.due != nil) : nil)
+    }
+
+    /// PR #420 verify round 1: the rule and due are read after `reload` (`EKObject.refresh()`), so
+    /// the response reports what the store holds, not the object written. An update that touches
+    /// only the rule is otherwise never re-read (`confirmSaved` reloads only when a due was
+    /// written). A reload that fails reports nothing as stored (`confirmed` false).
+    static func readBackAfterSave(_ reminder: EKReminder, request: ReminderUpdateRequest, reload: () -> Bool) -> ReadBack {
+        guard reload() else { return ReadBack(hasRecurrence: false, rules: nil, due: nil, offRuleNote: nil, confirmed: false) }
+        return readBack(reminder, request: request)
     }
 
     private static func weekday(of components: DateComponents) -> Int? {

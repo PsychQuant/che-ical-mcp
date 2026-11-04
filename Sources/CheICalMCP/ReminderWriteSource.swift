@@ -28,7 +28,8 @@ struct ReminderUpdateRequest: Sendable {
     /// #235: put the start date and absolute alarms onto the (new or current) due date.
     var realignToDue = false
     /// #333: replaces (or with `[]` clears) the relative alarms only; absolute and location alarms stay.
-    var alarmOffsets: [Int]? = nil    /// #354: replaces the reminder's recurrence rule (`recurrence`), or removes it (`clear_recurrence`).
+    var alarmOffsets: [Int]? = nil
+    /// #354: replaces the reminder's recurrence rule (`recurrence`), or removes it (`clear_recurrence`).
     var recurrenceRule: RecurrenceRuleInput? = nil
     var clearRecurrence = false
 }

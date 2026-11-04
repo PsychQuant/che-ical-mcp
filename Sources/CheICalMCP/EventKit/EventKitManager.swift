@@ -2279,8 +2279,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
             leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
-            // #354: read off the saved reminder, when the call touched the rule.
-            recurrence: (recurrenceRule != nil || clearRecurrence) ? ReminderRecurrenceWrite.readBack(reminder) : nil)
+            // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
+            // call touched the rule.
+            recurrence: (recurrenceRule != nil || clearRecurrence)
+                ? ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() }) : nil)
         // Same reason as update_event (#246): the identifier the reminder has after the save.
         let savedID = reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
@@ -2842,6 +2844,11 @@ struct RecurrenceRuleInput: Sendable {
     enum Frequency: Sendable {
         case daily, weekly, monthly, yearly
     }
+
+    /// PR #420 verify round 1: bounds the parser enforces. EventKit raises an uncatchable
+    /// Objective-C exception for an interval below 1 or from 2^31 to 2^32, and for a count of 0.
+    static let maxInterval = 1000
+    static let maxOccurrenceCount = 10_000
 
     let frequency: Frequency
     let interval: Int

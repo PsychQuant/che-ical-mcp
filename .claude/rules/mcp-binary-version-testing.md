@@ -271,18 +271,23 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
 之後），只用名稱含 `#354` 的拋棄式清單：
 
-1. 建每週四、到期在週四的提醒 → `update_reminder` 帶 `recurrence`（每週五）→ 回應 `reminder_recurrence_rules` 是
-   `[6]`、`due` 仍是週四、有 `recurrence_note`、`id_changed: false` → `undo` → `list_reminders` 讀回每週四；
+1. 建每週四、到期在週四的提醒 → `update_reminder` 帶 `recurrence`（每週五，`days_of_week: [6]`）→ 回應的
+   `reminder_recurrence_rules` 是一個規則物件的陣列，`reminder_recurrence_rules[0].days_of_week` 是 `[6]`，`due` 仍是
+   週四、有 `recurrence_note`、`id_changed: false` → `undo` → `list_reminders` 讀回每週四；
 2. 同樣的提醒 `clear_recurrence: true` → 讀回 `has_recurrence: false`、到期日不變 → `undo` → 讀回每週四；
 3. 單次提醒加上規則 → `undo` → 讀回單次；
 4. 重複提醒 `clear_due_date: true` → 拒絕、什麼都沒寫；再同時帶 `clear_recurrence: true` → 變成沒有到期日的單次提醒
    → `undo` → 讀回每週四、到期日回來；
 5. 改成每週五後等至少 60 秒、什麼都不改 → `undo` 要成功（post-state guard 比對規則；以 `recurrence` 拒絕就是同步
-   後規則的讀回變了，要回報）。
+   後規則的讀回變了，要回報）。再做一次子步驟：**純日期**到期日的提醒，`recurrence` 帶 `end_date` → 等至少 60 秒 →
+   `undo` 要成功（純日期提醒的規則結束日現在按日比對；若仍以 `recurrence` 拒絕，記下讀回的 `end_date`）。
+6. 其他形狀，各做一次並 `complete_reminder`，用 `list_reminders`（`filter: all`）找同標題、未完成的下一筆，記下它的
+   到期日（「完成後照規則重複」只在每週帶 `days_of_week` 量過）：(a) 每週但不帶 `days_of_week`；(b) 每月帶
+   `days_of_month`（到期日不在那天）；(c) 單次提醒加上每週規則（到期日不在規則的星期）。
 
 **需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 
-6. 打開 Reminders.app 看第 1 步改成每週五、到期仍在週四的提醒（undo 之前）：記錄它顯示的日期與重複設定。
+7. 打開 Reminders.app 看第 1 步改成每週五、到期仍在週四的提醒（undo 之前）：記錄它顯示的日期與重複設定。
 
 結果記在 #354。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 
