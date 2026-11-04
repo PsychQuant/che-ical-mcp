@@ -4,6 +4,8 @@ struct EventCopyValue: Sendable {
     let title: String?
     /// Set when copy_event moved the event (`delete_original`), #226.
     var move: EventMoveResult? = nil
+    /// A plain copy's fields the saved copy did not keep (#272); a move reports them in `move`.
+    var notCarriedOver: [String] = []
 }
 /// #226: one move's outcome plus the event title for the response.
 struct EventMoveValue: Sendable {
@@ -14,8 +16,9 @@ protocol EventCopySource: Sendable {
     func copyEventValue(identifier: String, toCalendarName: String, toCalendarSource: String?, deleteOriginal: Bool) async throws -> EventCopyValue
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
                         toCalendarName: String, toCalendarSource: String?) async throws -> EventMoveValue
-    /// The event's own time zone, for parsing occurrence dates the way `delete_event` does.
-    func eventTimeZone(identifier: String) async -> TimeZone?
+    /// The event's own time zone, for parsing occurrence dates the way `delete_event` does. Throws
+    /// when calendar access fails (#270 verify), rather than returning a host-zone fallback.
+    func eventTimeZone(identifier: String) async throws -> TimeZone?
 }
 extension EventKitManager: EventCopySource {
     func copyEventValue(identifier: String, toCalendarName: String, toCalendarSource: String?, deleteOriginal: Bool) async throws -> EventCopyValue {
@@ -24,16 +27,15 @@ extension EventKitManager: EventCopySource {
                                                        toCalendarSource: toCalendarSource)
             return EventCopyValue(eventIdentifier: moved.result.eventIdentifier, title: moved.title, move: moved.result)
         }
-        let event = try await copyEvent(identifier: identifier, toCalendarName: toCalendarName,
-                                        toCalendarSource: toCalendarSource)
-        return EventCopyValue(eventIdentifier: event.eventIdentifier, title: event.title)
+        let copied = try await copyEvent(identifier: identifier, toCalendarName: toCalendarName,
+                                         toCalendarSource: toCalendarSource)
+        return EventCopyValue(eventIdentifier: copied.event.eventIdentifier, title: copied.event.title,
+                              notCarriedOver: copied.notCarriedOver)
     }
-    func eventTimeZone(identifier: String) async -> TimeZone? {
-        // Ensure access first: before access was ever granted the lookup finds nothing and the
-        // date would be read in the server zone (verify round 2 #2). A denial surfaces from the
-        // move itself, so it is not reported here.
-        try? await ensureCalendarAccess()
-        return getEventTimezone(identifier: identifier)
+    func eventTimeZone(identifier: String) async throws -> TimeZone? {
+        // The same lookup as delete_event (#270): access ensured first (verify round 2 #2), then
+        // the refreshed event (#271).
+        try await occurrenceDateTimeZone(identifier: identifier)
     }
     func moveEventValue(identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span,
                         toCalendarName: String, toCalendarSource: String?) async throws -> EventMoveValue {

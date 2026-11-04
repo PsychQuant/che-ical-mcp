@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 
 /// Detects TCC + process state drift relative to the binary currently starting up and
@@ -184,6 +185,26 @@ struct TCCDriftDetector {
 
     // MARK: - Format banner
 
+    /// The startup banner's status inputs, from the two EventKit statuses (#368 round 2:
+    /// extracted from `main.swift` so the wiring is tested).
+    struct BannerStatusInputs: Equatable {
+        let calendarAccessGranted: Bool
+        let calendarRestricted: Bool
+        let remindersStatus: EKAuthorizationStatus
+        /// Both services have full access (gates the host-attribution check, #343).
+        let eventKitAccessGranted: Bool
+        /// Either service is restricted by a policy (#367).
+        let eventKitRestricted: Bool
+
+        init(calendar: EKAuthorizationStatus, reminders: EKAuthorizationStatus) {
+            calendarAccessGranted = calendar == .fullAccess
+            calendarRestricted = calendar == .restricted
+            remindersStatus = reminders
+            eventKitAccessGranted = calendar == .fullAccess && reminders == .fullAccess
+            eventKitRestricted = SelfDisclaim.hostIsRestricted(calendar: calendar, reminders: reminders)
+        }
+    }
+
     /// Render the banner that the caller writes to stderr. Pure — no IO.
     ///
     /// Shape:
@@ -202,7 +223,9 @@ struct TCCDriftDetector {
         runningBinaryPath: String,
         pid: Int32,
         bundleID: String,
-        calendarAccessGranted: Bool = true
+        calendarAccessGranted: Bool = true,
+        calendarRestricted: Bool = false,
+        remindersStatus: EKAuthorizationStatus = .fullAccess
     ) -> String {
         // CWE-117 / stderr-injection defense (verify finding B1, three-reviewer
         // consensus): every interpolated value reaching stderr passes through
@@ -213,7 +236,7 @@ struct TCCDriftDetector {
         // would not normally carry control chars, but we escape consistently to
         // make the "all stderr writes go through the sanitizer" rule mechanical.
         let safePath = EventKitErrorSanitizer.escapeForStderr(runningBinaryPath)
-        let safeBundle = EventKitErrorSanitizer.escapeForStderr(bundleID)
+        // `bundleID` is no longer printed: it only fed the `tccutil reset` lines #357 removed.
         let safeVersion = EventKitErrorSanitizer.escapeForStderr(version)
 
         var lines: [String] = []
@@ -245,7 +268,30 @@ struct TCCDriftDetector {
             default: return false
             }
         }
-        if !calendarAccessGranted, !hostSignalPresent {
+        if !calendarAccessGranted, !hostSignalPresent, calendarRestricted {
+            // #368: a `restricted` Calendar status is a policy (configuration profile or Screen
+            // Time). `--setup` shows no prompt for it, so no command is printed. The banner does
+            // not know the attribution (it may be unavailable), so the line names "the process
+            // macOS checks", not CheICalMCP (round-3 LOW 13).
+            lines.append("[banner] Calendar access is restricted by a policy (configuration profile or Screen Time); --setup cannot change it — ask whoever manages this Mac to allow Calendar access for the process macOS checks")
+            // #368 verify (DA): the policy covers Calendar only, so the Reminders line follows
+            // the Reminders status. `--setup` prompts only from `notDetermined`; the status may
+            // be a host's, so the other lines name "that entry", not CheICalMCP (round 3).
+            switch remindersStatus {
+            case .notDetermined:
+                if pathHasControlChars(runningBinaryPath) {
+                    lines.append("[banner] Reminders access not granted — binary path has control chars; run the binary at \(safePath) with --setup (it prompts only while the status is notDetermined)")
+                } else {
+                    lines.append("[banner] Reminders access not granted — grant via: \(shellSingleQuote(runningBinaryPath)) --setup (it prompts only while the status is notDetermined)")
+                }
+            case .denied:
+                lines.append("[banner] Reminders access denied — --setup will not prompt from this status: switch that entry on, or off and on, in System Settings → Privacy & Security → Reminders")
+            case .writeOnly:
+                lines.append("[banner] Reminders access is write-only — System Settings → Privacy & Security → Reminders → that entry's Options… → Full Access")
+            default:
+                break  // restricted (a policy) or granted: nothing --setup or a switch can add
+            }
+        } else if !calendarAccessGranted, !hostSignalPresent {
             if pathHasControlChars(runningBinaryPath) {
                 lines.append("[banner] Calendar access not granted — binary path has control chars; grant via System Settings → Privacy & Security → Calendar for binary at \(safePath)")
             } else {
@@ -266,7 +312,7 @@ struct TCCDriftDetector {
                 lines.append("[drift] TCC.db \(safeLabel) entry path mismatch:")
                 lines.append("[drift]   this binary: \(safePath)")
                 lines.append("[drift]   TCC entry:   \(safeRecorded)")
-                if let tccutilName = tccutilShortName(forService: service) {
+                if settingsPaneName(forService: service) != nil {
                     // Whitelist hit. Two cases:
                     //   (a) path has no control chars → emit a copy-paste-ready POSIX
                     //       command via `shellSingleQuote` (B3). The result is safe on
@@ -277,14 +323,16 @@ struct TCCDriftDetector {
                     //       shell quoting (`\` inside `'\''` would double — round-2 R1).
                     //       Surface the path safely via `safePath` (already escaped) and
                     //       a manual-remediation hint instead.
+                    // #357: the `tccutil reset <service> <bundle id>` part is gone (-10814 for a bare
+                    // binary). The recorded row belongs to another path, i.e. another install, so
+                    // the remedy is this binary's own `--setup`; that row is left alone.
                     if pathHasControlChars(runningPath) {
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation required: tccutil reset \(tccutilName) \(safeBundle) for binary at \(safePath))")
+                        lines.append("[drift]   → (binary path contains control chars; manual remediation required: run the binary at \(safePath) with --setup)")
                     } else {
-                        lines.append("[drift]   → tccutil reset \(tccutilName) \(safeBundle) && \(shellSingleQuote(runningPath)) --setup")
+                        lines.append("[drift]   → \(shellSingleQuote(runningPath)) --setup")
                     }
                 } else {
-                    // Unknown service: don't emit a copy-pasteable command (avoid
-                    // `tccutil: bad service name` for the operator and avoid being a
+                    // Unknown service: don't emit a copy-pasteable command (avoid being a
                     // social-engineering vector via TCC.db `service`-column poisoning,
                     // per verify findings B3 / DA F3).
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation required: System Settings → Privacy & Security)")
@@ -297,7 +345,7 @@ struct TCCDriftDetector {
                 lines.append("[drift] \(count) stale CheICalMCP process\(count == 1 ? "" : "es") running")
                 lines.append("[drift]   oldest started: \(mtimeStr)")
                 lines.append("[drift]   sample PIDs: \(pidList)\(suffix)")
-                // Same branching as tccutil case above: emit copy-paste command only
+                // Same branching as the path-mismatch case above: emit copy-paste command only
                 // when path has no control chars; otherwise emit safe-display hint.
                 if pathHasControlChars(runningBinaryPath) {
                     lines.append("[drift]   → (binary path contains control chars; manual remediation: pkill the stale processes for binary at \(safePath), then fully restart your Claude Code / Desktop host)")
@@ -314,12 +362,11 @@ struct TCCDriftDetector {
                 }
                 // Same control-char / whitelist gating as the tccPathMismatch case: emit a
                 // copy-paste command only for a recognized service and a clean path.
-                if let tccutilName = tccutilShortName(forService: service) {
-                    if pathHasControlChars(runningBinaryPath) {
-                        lines.append("[drift]   → (binary path contains control chars; manual remediation: tccutil reset \(tccutilName) \(safeBundle), then re-grant from a Developer-ID / notarized build)")
-                    } else {
-                        lines.append("[drift]   → tccutil reset \(tccutilName) \(safeBundle) && \(shellSingleQuote(runningBinaryPath)) --setup   (re-grant from a Developer-ID / notarized build, #154)")
-                    }
+                // #357: the agnostic remedy stands where the bundle-id reset stood; no reset.
+                if let pane = settingsPaneName(forService: service) {
+                    // #357 round 4 (R1): main's switch sentence; it names no path, so the
+                    // control-char and clean variants are the same line.
+                    lines.append("[drift]   → \(EventKitManager.switchOnStep(pane: pane))")
                 } else {
                     let safeService = EventKitErrorSanitizer.escapeForStderr(service)
                     lines.append("[drift]   → (unrecognized TCC service '\(safeService)' — manual remediation: System Settings → Privacy & Security)")
@@ -366,8 +413,8 @@ struct TCCDriftDetector {
 
     /// Display label for a service (used in banner text). Falls back to the raw service
     /// code when unknown so the operator still sees what TCC.db actually recorded —
-    /// but for copy-pasteable `tccutil` commands we use `tccutilShortName` which returns
-    /// nil for unknown services so we don't emit a bad command.
+    /// but for the actionable remedy we use `settingsPaneName` which returns nil for
+    /// unknown services so we don't emit a pane that does not exist.
     private static func humanReadableService(_ raw: String) -> String {
         switch raw {
         case "kTCCServiceCalendar":  return "Calendar"
@@ -376,12 +423,11 @@ struct TCCDriftDetector {
         }
     }
 
-    /// Strict whitelist for `tccutil reset` — returns the short service name only when
-    /// it is one of the names `tccutil` actually accepts. Unknown services return nil
-    /// so the caller drops the actionable command line. Prevents both the
-    /// `tccutil: bad service name` UX bug (DA F3) and the TCC.db `service`-column
-    /// poisoning vector (security M2 / DA C2).
-    private static func tccutilShortName(forService raw: String) -> String? {
+    /// Strict whitelist for the actionable remedy — returns the System Settings pane name
+    /// only for a known service. Unknown services return nil so the caller drops the
+    /// actionable line. Prevents the TCC.db `service`-column poisoning vector (security M2 /
+    /// DA C2); it gated `tccutil reset` commands until #357 removed them.
+    private static func settingsPaneName(forService raw: String) -> String? {
         switch raw {
         case "kTCCServiceCalendar":  return "Calendar"
         case "kTCCServiceReminders": return "Reminders"

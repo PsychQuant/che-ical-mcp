@@ -466,7 +466,13 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 
 **Fix**: upgrade to **v1.11.0 or later** (the binary now ships both entitlements), restart the host app (full `Cmd+Q` for Claude Desktop), and approve the permission dialog that appears on the first Calendar/Reminders access. Approving rewrites the TCC row keyed to the Developer ID requirement, so it survives all future upgrades. If you accidentally **deny** the dialog, re-enable the corresponding toggle in System Settings → Privacy & Security → Calendars or Reminders.
 
-> ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` because the binary has no LaunchServices registration. And do **not** run a bare `tccutil reset Calendar` (without a bundle ID): it wipes Calendar grants for *every* app on the machine and, on a pre-entitlements binary, leaves CheICalMCP permanently unable to re-prompt.
+> ⚠️ **Erratum for the #108-era workaround**: `tccutil reset Calendar com.checheng.CheICalMCP` (or `Reminders`) does **not** work for a bare (non-bundled) binary — it fails with `OSStatus error -10814` (`kLSApplicationNotFoundErr`) because the binary has no LaunchServices registration.
+>
+> That covers both shipped builds: the Developer-ID `~/bin/CheICalMCP` and the `.mcpb` `server/CheICalMCP` are bare executables with an embedded Info.plist. The -10814 was seen with the #154-era builds; on 2026-11-04 `lsregister -dump` had no record for `com.checheng.CheICalMCP` on a Mac with the Developer-ID `~/bin/CheICalMCP` installed (the command itself was not re-run there, because a lookup that unexpectedly succeeded would reset the real grant). Since #357 no message, banner line or `--print-tcc-path` section prints it.
+>
+> Instead: Switch CheICalMCP on, or off and on, in System Settings → Privacy & Security → Calendar / Reminders ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)).
+>
+> **Last resort**, only on CheICalMCP v1.11.0 or later: `tccutil reset Calendar` (or `tccutil reset Reminders`) without a bundle id clears that permission for **every app** on the Mac, and command-line tools or hosts recorded by version number may not ask again. The user decides and runs it; an agent must not. On a pre-entitlements binary (before v1.11.0) it leaves CheICalMCP permanently unable to re-prompt.
 
 ### Claude Code updates rotate the host-side grant (#170)
 
@@ -516,7 +522,7 @@ CheICalMCP --setup
 >
 > **`--setup` in non-interactive sessions** (#143): if you run `--setup` itself from a non-interactive session (no `TERM` / direct launchd child) and permission is still undetermined, `--setup` now **skips the request and exits non-zero** instead of hanging — a TCC dialog can't appear there, so it prints manual-grant instructions rather than blocking. Run `--setup` from a real Terminal to trigger the dialog. (An already-granted binary still reports success even when re-run non-interactively.)
 >
-> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, manually add CheICalMCP in **System Settings → Privacy & Security → Calendar/Reminders**.
+> **Note**: If `--setup` grants permission but the MCP still fails under launchd, TCC may have associated the permission with the parent process. In that case, switch CheICalMCP on in **System Settings → Privacy & Security → Calendar/Reminders**; if it is not listed, run `~/bin/CheICalMCP --setup` (or the `.mcpb` binary's path) from Terminal — the access request adds it.
 
 ---
 

@@ -42,6 +42,43 @@ final class EventMoveFieldsTests: XCTestCase {
                        ["structured_location", "availability"])
     }
 
+    /// #272 verify (MEDIUM 2): a source with no availability (`.notSupported`: subscribed,
+    /// holiday or local calendars) had nothing to lose, so a copy that reads the target's default
+    /// is not reported. This also changes the move fallback and split, which listed it before.
+    func testNoAvailabilityOnTheSourceIsNotReportedAsLost() {
+        XCTAssertEqual(EventKitManager.lostFields(hasCoordinates: false,
+                                                  sourceAvailability: .notSupported, copyAvailability: .busy), [])
+        XCTAssertEqual(EventKitManager.lostFields(hasCoordinates: true,
+                                                  sourceAvailability: .notSupported, copyAvailability: .free),
+                       ["structured_location"])
+    }
+
+    /// #272: `makeCopy` writes availability with `availabilityForCopy`, after the calendar is set
+    /// (support depends on the calendar), and the value it returns is what is written. An
+    /// in-memory event ignores `availability`, so the wiring is pinned in the source (the decision
+    /// is tested on values in `EventAvailabilityTests`); the write was checked on device.
+    func testMakeCopyWritesAvailabilityAfterTheCalendarWithTheSupportRule() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let body = try XCTUnwrap(SourcePins.body(of: "static func makeCopy(of source: EKEvent,", in: source))
+        let calendar = try XCTUnwrap(SourcePins.ranges(ofPattern: #"copy\.calendar\s*=\s*calendar\b"#, in: body).first)
+        let guarded = try XCTUnwrap(SourcePins.ranges(ofPattern: #"if\s+let\s+value\s*=\s*EventSnapshot\.availabilityForCopy\(source:\s*source\.availability,\s*supported:\s*calendar\.supportedEventAvailabilities\)\s*\{\s*copy\.availability\s*=\s*value\s*\}"#, in: body).first,
+                                    "the decided value is written, inside the guard")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"copy\.availability\s*=(?!=)"#, in: body).count, 1, "written in one place")
+        XCTAssertLessThan(calendar.lowerBound, guarded.lowerBound, "decided after the calendar is set")
+    }
+
+    /// #272: a plain `copy_event` reports what the saved copy did not keep, with the same rule as
+    /// the move paths (`fieldsNotCarriedOver`), read after the save.
+    func testPlainCopyReportsTheFieldsTheCopyDidNotKeep() throws {
+        let source = try SourcePins.source("EventKit/EventKitManager.swift")
+        let body = try XCTUnwrap(SourcePins.body(of: "func copyEvent(", in: source))
+        let save = try XCTUnwrap(body.range(of: "try eventStore.save(newEvent, span: .thisEvent)"))
+        let report = try XCTUnwrap(body.range(of: "Self.fieldsNotCarriedOver(from: sourceEvent, to: newEvent)"))
+        XCTAssertLessThan(save.lowerBound, report.lowerBound)
+        let wiring = try XCTUnwrap(SourcePins.body(of: "func copyEventValue(", in: try SourcePins.source("EventCopySource.swift")))
+        XCTAssertTrue(wiring.contains("notCarriedOver: copied.notCarriedOver"))
+    }
+
     /// #230: `copy_event` and the fallback copy of `move_events_batch` used to rebuild every
     /// alarm from its offset, so an absolute or location alarm landed at the event start and
     /// an email alarm became a display alarm.
