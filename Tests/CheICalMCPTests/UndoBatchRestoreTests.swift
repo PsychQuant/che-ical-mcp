@@ -423,6 +423,17 @@ final class UndoBatchRestoreTests: XCTestCase {
                 XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
             }
         }
+        // #269: an event's recorded calendar not found (`undoCalendarMissing`) comes before any
+        // write too, with and without a recorded identifier.
+        for hasIdentifier in [true, false] {
+            let error = EventKitError.undoCalendarMissing(event: "E", hasIdentifier: hasIdentifier, kind: .recreateDeleted)
+            for members in [[deleted("E")], [deleted("A"), deleted("E")]] {
+                let lookup = try partial(members, error)
+                XCTAssertTrue(lookup.message.contains("'E' failed before anything of it was written"), "\(error): \(lookup.message)")
+                XCTAssertFalse(lookup.message.contains("second copy") || lookup.message.contains("check first"), "\(error): \(lookup.message)")
+            }
+        }
+
         // A nested batch's remainder has no one title: the sentence stays general.
         let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 0, memberError: "eventkit_error_1")
         let nested = try partial([.batch([deleted("Y")])], inner)

@@ -375,13 +375,14 @@ extension UndoOperation {
     }
 
     /// PR #390 round 1: the errors a member's restore raises before it writes anything, so its
-    /// failure cannot have left a copy: its calendar (`calendarNotFound`, `calendarNotFoundWithSource`)
-    /// or its reminder list (`undoListMissing`) was not found. A closed list: any other error may
-    /// come after the save began, and the text then asks to check first.
+    /// failure cannot have left a copy: its calendar (`calendarNotFound`, `calendarNotFoundWithSource`,
+    /// and #269's `undoCalendarMissing`) or its reminder list (`undoListMissing`) was not found. A
+    /// closed list: any other error may come after the save began, and the text then asks to check
+    /// first.
     static func failsBeforeAnyWrite(_ error: Error) -> Bool {
         guard let error = error as? EventKitError else { return false }
         switch error {
-        case .calendarNotFound, .calendarNotFoundWithSource, .undoListMissing: return true
+        case .calendarNotFound, .calendarNotFoundWithSource, .undoCalendarMissing, .undoListMissing: return true
         default: return false
         }
     }
