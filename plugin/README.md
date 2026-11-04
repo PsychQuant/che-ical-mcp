@@ -141,6 +141,9 @@ Plugin version: 1.23.0 (matches MCP server version)
 
 ### Changelog
 
+**Unreleased**
+- **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server reads a date-only all-day end the same way on `create_event` and `update_event`. `create_event` `skipped` now means a same-titled event of the same kind (timed, or all-day starting on the same day). Needs the binary that ships #364.
+
 **1.23.0** (2026-11-01)
 - **The skill, `/check-tcc` and the plugin docs describe the status-aware self-disclaim rule (#343)**: the server keeps the host's grant only when it has full access to both Calendar and Reminders, or when a policy restricts the host (#367); any other host, Claude Code included, re-execs onto CheICalMCP's own grant, which `--setup` creates. After upgrading, run `~/bin/CheICalMCP --setup` once in the foreground if CheICalMCP is not granted yet, then restart the client.
 
