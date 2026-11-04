@@ -73,11 +73,11 @@
     },
     {
       "name": "create_reminder",
-      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy)"
+      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, relative alarms (alarms_minutes_offsets, minutes before a due date with a time) and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy)"
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values)"
+      "description": "Update an existing reminder (including tags, clear_due_date, alarms_minutes_offsets, which replaces only the relative alarms; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "complete_reminder",
@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags support; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy)"
+      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy)"
     },
     {
       "name": "delete_reminders_batch",

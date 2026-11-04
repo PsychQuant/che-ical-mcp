@@ -10,6 +10,8 @@ struct ReminderCreateRequest: Sendable {
     var calendarSource: String? = nil
     var recurrenceRule: RecurrenceRuleInput? = nil
     var locationTrigger: LocationTriggerInput? = nil
+    /// #333: relative alarms, minutes before the due date (`alarms_minutes_offsets`).
+    var alarmOffsets: [Int]? = nil
 }
 struct ReminderUpdateRequest: Sendable {
     let identifier: String
@@ -25,12 +27,17 @@ struct ReminderUpdateRequest: Sendable {
     var clearDueDate = false
     /// #235: put the start date and absolute alarms onto the (new or current) due date.
     var realignToDue = false
+    /// #333: replaces (or with `[]` clears) the relative alarms only; absolute and location alarms stay.
+    var alarmOffsets: [Int]? = nil
 }
 /// #227: `update_reminder` reports how the start date and absolute alarms followed the due date.
 struct ReminderUpdateResult: Sendable {
     let reminder: ReminderWriteSnapshot
     /// `nil` when the update did not touch the due date.
     let dateSync: ReminderDateSync.Report?
+    /// #333: the relative alarms read off the saved reminder (minutes before), when the request
+    /// carried `alarmOffsets`; nil otherwise.
+    var storedRelativeAlarms: [Double]? = nil
 }
 protocol ReminderWriteSource: Sendable {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult
@@ -41,14 +48,15 @@ extension EventKitManager: ReminderWriteSource {
     func createReminder(_ request: ReminderCreateRequest) async throws -> CreateReminderResult {
         try await createReminder(title: request.title, notes: request.notes, due: request.due,
                                  priority: request.priority, calendarName: request.calendarName,
-                                 calendarSource: request.calendarSource, recurrenceRule: request.recurrenceRule,
-                                 locationTrigger: request.locationTrigger)
+                                 calendarSource: request.calendarSource, alarmOffsets: request.alarmOffsets,
+                                 recurrenceRule: request.recurrenceRule, locationTrigger: request.locationTrigger)
     }
     func updateReminder(_ request: ReminderUpdateRequest) async throws -> ReminderUpdateResult {
         try await updateReminder(identifier: request.identifier, title: request.title, notes: request.notes,
                                  due: request.due, priority: request.priority,
                                  calendarName: request.calendarName, calendarSource: request.calendarSource,
                                  locationTrigger: request.locationTrigger, clearLocationTrigger: request.clearLocationTrigger,
-                                 clearDueDate: request.clearDueDate, realignToDue: request.realignToDue)
+                                 clearDueDate: request.clearDueDate, realignToDue: request.realignToDue,
+                                 alarmOffsets: request.alarmOffsets)
     }
 }

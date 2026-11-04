@@ -230,6 +230,21 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 
 結果記在 #373 與 #274。結束後刪掉拋棄式日曆。
 
+## Release gate：提醒事項的相對鬧鐘與它的 undo（#333）
+
+#333 的 `alarms_minutes_offsets` 只有純函式與 handler 的單元測試；寫進 EventKit 後的讀回只在 `--cli`
+上看過，update-undo 是 stateful，`--cli` 走不到（見上表）。**出 #333 的那個版本打 tag 之前**，在重啟後的
+session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#333` 的拋棄式清單：
+
+1. `create_reminder` 帶時間的到期日、`location_trigger` 與 `alarms_minutes_offsets: [15]` → `list_reminders`
+   讀回 `minutes_before: 15` 與 `location_trigger`；
+2. `update_reminder` 只帶 `alarms_minutes_offsets: [60]` → 讀回只有 60，`location_trigger` 還在 →
+   `undo` → 讀回 15，`location_trigger` 還在；
+3. `update_reminder` 帶 `alarms_minutes_offsets: []` → 相對鬧鐘清空，`location_trigger` 還在；
+4. 純日期提醒帶 `alarms_minutes_offsets: [240]` → 拒絕、什麼都沒寫。
+
+結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
+
 ## Release gate：create_reminder fallback 第二次存檔失敗後的 rollback（#308）
 
 #308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due

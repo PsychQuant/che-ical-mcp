@@ -146,6 +146,22 @@ enum InputValidation {
     // pattern conflates the two and silently turns malformed input into the
     // default, which an LLM cannot learn from.
 
+    /// `alarms_minutes_offsets` (#333, shared by the event and reminder tools): absent or JSON
+    /// null is nil; an array of integers is the list; anything else, including a present value that
+    /// is not an array, is refused rather than ignored.
+    static func parseAlarmOffsets(_ arguments: [String: Value]) throws -> [Int]? {
+        guard let raw = arguments["alarms_minutes_offsets"], raw != .null else { return nil }
+        guard let array = raw.arrayValue else {
+            throw ToolError.invalidParameter("alarms_minutes_offsets must be an array of integers")
+        }
+        return try array.enumerated().map { idx, v in
+            guard let n = v.intValue else {
+                throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
+            }
+            return n
+        }
+    }
+
     static func requireIntIfPresent(_ arguments: [String: Value], key: String, default def: Int) throws -> Int {
         guard let raw = arguments[key] else { return def }
         if let n = raw.intValue { return n }

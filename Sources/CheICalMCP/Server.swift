@@ -558,6 +558,11 @@ class CheICalMCPServer {
                             "items": .object(["type": .string("string")]),
                             "description": .string("Tags for the reminder (stored as #hashtag text in notes, searchable via MCP). Example: [\"grocery\", \"urgent\"]")
                         ]),
+                        "alarms_minutes_offsets": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("integer")]),
+                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder the alarm moves with each occurrence. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false.")
+                        ]),
                         "location_trigger": .object([
                             "type": .string("object"),
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
@@ -600,6 +605,11 @@ class CheICalMCPServer {
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
+                        "alarms_minutes_offsets": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("integer")]),
+                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets.")
+                        ]),
                         "location_trigger": .object([
                             "type": .string("object"),
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
@@ -1002,6 +1012,11 @@ class CheICalMCPServer {
                                         "type": .string("array"),
                                         "items": .object(["type": .string("string")]),
                                         "description": .string("Tags (stored as #hashtags)")
+                                    ]),
+                                    "alarms_minutes_offsets": .object([
+                                        "type": .string("array"),
+                                        "items": .object(["type": .string("integer")]),
+                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date, only the relative alarms, refused without a timed due date (date-only included) for that row.")
                                     ])
                                 ]),
                                 "required": .array([.string("title"), .string("calendar_name")])
@@ -1360,15 +1375,7 @@ class CheICalMCPServer {
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day") ?? false
         try rejectAllDayTimezoneConflict(allDay: isAllDay, timezone: timezone)   // #190
 
-        var alarmOffsets: [Int]?
-        if let alarmsArray = arguments["alarms_minutes_offsets"]?.arrayValue {
-            alarmOffsets = try alarmsArray.enumerated().map { idx, v in
-                guard let n = v.intValue else {
-                    throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
-                }
-                return n
-            }
-        }
+        let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
         let structuredLocation = parseStructuredLocation(from: arguments)
@@ -1443,15 +1450,7 @@ class CheICalMCPServer {
         default: span = .thisEvent
         }
 
-        var alarmOffsets: [Int]?
-        if let alarmsArray = arguments["alarms_minutes_offsets"]?.arrayValue {
-            alarmOffsets = try alarmsArray.enumerated().map { idx, v in
-                guard let n = v.intValue else {
-                    throw ToolError.invalidParameter("alarms_minutes_offsets[\(idx)] must be an integer")
-                }
-                return n
-            }
-        }
+        let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
         let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
@@ -1785,6 +1784,9 @@ class CheICalMCPServer {
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments)
         let locationTrigger = try parseLocationTrigger(from: arguments)
+        // #333: refused before the store is called when the alarm could not fire as asked.
+        let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
+        try ReminderRelativeAlarms.check(alarmOffsets, due: ReminderRelativeAlarms.dueState(requested: due, clearDue: false, existing: nil))
 
         let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
             title: title,
@@ -1794,12 +1796,14 @@ class CheICalMCPServer {
             calendarName: calendarName,
             calendarSource: calendarSource,
             recurrenceRule: recurrenceRule,
-            locationTrigger: locationTrigger
+            locationTrigger: locationTrigger,
+            alarmOffsets: alarmOffsets
         ))
 
         if result.isDuplicate {
             var skipped: [String: Any] = ["action": "skipped", "reason": "duplicate", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
             if let note = Self.dateOnlyDuplicateNote(due: due, result: result) { skipped["note"] = note }
+            skipped.merge(Self.alarmResponseFields(requested: alarmOffsets, result: result)) { $1 }
             return try actionResult(skipped)
         }
         var fields: [String: Any] = ["action": "created", "title": result.reminder.title ?? title, "id": result.reminder.calendarItemIdentifier]
@@ -1810,7 +1814,30 @@ class CheICalMCPServer {
         // back as asked.
         if let dateSync = result.dateSync { fields["date_sync"] = dateSync.dictionary }
         fields.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
+        fields.merge(Self.alarmResponseFields(requested: alarmOffsets, result: result)) { $1 }
         return try actionResult(fields)
+    }
+
+    /// #333: a skipped duplicate writes no alarm, and says so.
+    static let duplicateAlarmsNote = "alarms_minutes_offsets was not applied: a reminder with this title and due date already exists and was left as it is. To set its alarms, call update_reminder with its id."
+
+    /// #333: the relative alarms read back after a create (`alarms_minutes_offsets`, minutes
+    /// before), with `alarms_differ` and a note when they are not the ones asked for; for a skipped
+    /// duplicate, `alarms_applied` false and the note. Empty when the call asked for none.
+    static func alarmResponseFields(requested: [Int]?, result: EventKitManager.CreateReminderResult) -> [String: Any] {
+        guard let requested else { return [:] }
+        if result.isDuplicate { return ["alarms_applied": false, "alarms_note": duplicateAlarmsNote] }
+        return storedAlarmFields(requested: requested, stored: result.storedRelativeAlarms)
+    }
+
+    static func storedAlarmFields(requested: [Int], stored: [Double]?) -> [String: Any] {
+        guard let stored else { return [:] }
+        var fields: [String: Any] = ["alarms_minutes_offsets": stored]
+        if ReminderRelativeAlarms.differs(requested: requested, stored: stored) {
+            fields["alarms_differ"] = true
+            fields["alarms_note"] = "The reminder holds different relative alarms than requested; check it in Reminders."
+        }
+        return fields
     }
 
     private func handleUpdateReminder(arguments: [String: Value]) async throws -> String {
@@ -1839,6 +1866,12 @@ class CheICalMCPServer {
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
         let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
+        // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
+        // with alarms); the stored due is checked by the store before any write.
+        let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
+        if due != nil || clearDueDate {
+            try ReminderRelativeAlarms.check(alarmOffsets, due: ReminderRelativeAlarms.dueState(requested: due, clearDue: clearDueDate, existing: nil))
+        }
 
         // Determine final notes:
         // If user provides notes, use their notes as the base (replacing existing notes content)
@@ -1882,10 +1915,12 @@ class CheICalMCPServer {
             locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger,
             clearDueDate: clearDueDate,
-            realignToDue: realignToDue
+            realignToDue: realignToDue,
+            alarmOffsets: alarmOffsets
         ))
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
+        if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
         // #268: the identifier after the save (a move to another account's list may change it).
         response.merge(UpdatedIdentifier.responseFields(input: reminderId, saved: update.reminder.calendarItemIdentifier)) { $1 }
         // #227: what moved with the due date (start date, absolute-date alarms); #235: whether
@@ -2050,13 +2085,17 @@ class CheICalMCPServer {
                 let batchDue = try reminderDict["due_date"]?.stringValue.map { try parseReminderDue($0) }
                 let batchTags = reminderDict["tags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
                 let batchNotes = buildNotesWithTags(notes: batchUserNotes, tags: batchTags)
+                // #333: per row, refused for that row only.
+                let batchAlarms = try InputValidation.parseAlarmOffsets(reminderDict)
+                try ReminderRelativeAlarms.check(batchAlarms, due: ReminderRelativeAlarms.dueState(requested: batchDue, clearDue: false, existing: nil))
                 let result = try await reminderWriteSource.createReminder(ReminderCreateRequest(
                     title: title,
                     notes: batchNotes,
                     due: batchDue,
                     priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
                     calendarName: reminderDict["calendar_name"]?.stringValue,
-                    calendarSource: reminderDict["calendar_source"]?.stringValue
+                    calendarSource: reminderDict["calendar_source"]?.stringValue,
+                    alarmOffsets: batchAlarms
                 ))
                 var entry: [String: Any] = [
                     "index": index,
@@ -2071,6 +2110,7 @@ class CheICalMCPServer {
                     entry["date_sync"] = dateSync.dictionary   // #301 / #308: a dated create
                 }
                 entry.merge(NewObjectSave.responseFields(result.storeDiffers)) { $1 }
+                entry.merge(Self.alarmResponseFields(requested: batchAlarms, result: result)) { $1 }
                 results.append(entry)
             } catch {
                 results.append([
