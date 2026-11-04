@@ -14,8 +14,10 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
 /// #331: the narrow seam `delete_events_batch` goes through (CLAUDE.md "Test Seam Convention"):
 /// the date-range listing and the two batch deletes, so a handler test reads the response
 /// (`searched_from` / `searched_to`, the deletion ceiling, `deletions`, `preview_truncated`,
-/// `already_removed`) instead of the handler's source. Production passes nothing and gets
-/// `EventKitManager.shared`; access checks and undo recording stay inside the manager.
+/// `already_removed`) instead of the handler's source. The two deletes also carry the `event_ids`
+/// mode's real deletion, which shares `deleteEventsWithSpan`; the `event_ids` dry run still reads
+/// each event with `EventKitManager.getEvent`, outside the seam. Production passes nothing and
+/// gets `EventKitManager.shared`; access checks and undo recording stay inside the manager.
 protocol EventBatchDeletionSource: Sendable {
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent]

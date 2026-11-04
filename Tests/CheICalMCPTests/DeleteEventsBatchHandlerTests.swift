@@ -170,6 +170,19 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertEqual(real["already_removed"] as? Int, 2, "the batch result's coveredCount")
     }
 
+    /// Case 4 in the Diagnosis's shape (PR #411 verify round 1): the same open-ended daily series of
+    /// 2001 occurrences as case 2, one-sided, with span "future": one deletion, so the size check
+    /// passes where span "this" is refused.
+    func testSpanFutureOverTheOneSidedSeriesPassesTheSizeCheckWithOneDeletion() async throws {
+        let series = dailySeries("S", count: 2001, from: base)
+        let fake = BatchDeletionFake(listed: series)
+        let dry = try await call(fake, args(after: base, span: "future", dryRun: true))
+        XCTAssertEqual(dry["deletions"] as? Int, 1)
+        XCTAssertEqual(dry["total"] as? Int, 2001)
+        let deleted = await fake.anyDelete
+        XCTAssertFalse(deleted, "a dry run deletes nothing")
+    }
+
     // MARK: - Case 5: wide range, one-off events, at and over the ceiling
 
     func testAWideRangeAllowsExactlyTheCeilingAndRefusesOneMore() async throws {
@@ -221,6 +234,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertNil(r["already_removed"], "only reported when an earlier removal covered items")
         let failures = try XCTUnwrap(r["failures"] as? [[String: Any]])
         XCTAssertEqual(failures.first?["event_id"] as? String, "one-1")
+        XCTAssertEqual(failures.first?["error"] as? String, "Event not found", "the failure's error is passed through")
         let calls = await fake.deleteCalls
         XCTAssertEqual(calls.first?.span, .thisEvent)
         XCTAssertEqual(calls.first?.identifiers, ["one-0", "one-1", "one-2"])
