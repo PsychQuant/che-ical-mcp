@@ -84,6 +84,23 @@ final class HostLoadTests: XCTestCase {
         XCTAssertEqual(overloaded.failures(), [], "a skip records no failure")
     }
 
+    /// The `Duration` overload converts whole seconds and the fraction (PR #422 verify round 2: a
+    /// conversion that kept only the attoseconds made every 5 s bound unreachable).
+    func testTheDurationOverloadConvertsWholeSecondsAndTheFraction() {
+        XCTAssertEqual(HostLoad.seconds(.seconds(6)), 6)
+        XCTAssertEqual(HostLoad.seconds(.milliseconds(1500)), 1.5)
+        XCTAssertEqual(HostLoad.seconds(.milliseconds(200)), 0.2, accuracy: 1e-12)
+        for (elapsed, failures) in [(Duration.seconds(6), 1), (.milliseconds(5000), 1), (.milliseconds(4900), 0),
+                                    (.milliseconds(5100), 1)] {
+            let quiet = recording(1, cores: 18)
+            XCTAssertNoThrow(try quiet.load.checkWithinBound(elapsed, bound: .seconds(5), "drain"))
+            XCTAssertEqual(quiet.failures().count, failures, "\(elapsed) against 5 s")
+        }
+        let sub = recording(1, cores: 18)
+        XCTAssertNoThrow(try sub.load.checkWithinBound(.milliseconds(250), bound: .milliseconds(200), "median"))
+        XCTAssertEqual(sub.failures().count, 1, "250 ms against the 200 ms target")
+    }
+
     /// Exactly at the bound is over it, as with the `XCTAssertLessThan(arrival, 5.0)` it replaced.
     func testCheckWithinBoundFailsExactlyAtTheBound() {
         let quiet = recording(1, cores: 18)
@@ -143,8 +160,9 @@ final class HostLoadTests: XCTestCase {
     func testTheTimingTestsUseTheHelperAndKeepTheirBounds() throws {
         let tests = try SourceScan.sourcesDirectory().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Tests/CheICalMCPTests")
-        let banner = try String(contentsOf: tests.appendingPathComponent("TCCDriftDetectorBannerTests.swift"), encoding: .utf8)
-        let disclaim = try String(contentsOf: tests.appendingPathComponent("SelfDisclaimBinaryTests.swift"), encoding: .utf8)
+        // Comments stripped, so a commented-out call does not satisfy a pin (PR #422 verify round 1).
+        let banner = SourceScan.strippingComments(try String(contentsOf: tests.appendingPathComponent("TCCDriftDetectorBannerTests.swift"), encoding: .utf8))
+        let disclaim = SourceScan.strippingComments(try String(contentsOf: tests.appendingPathComponent("SelfDisclaimBinaryTests.swift"), encoding: .utf8))
         let bannerTest = try XCTUnwrap(SourceScan.body(of: "func testBannerAppearsInDefaultMCPServerMode() throws {", in: banner))
         XCTAssertTrue(bannerTest.contains("try HostLoad.live.checkWithinBound(\n            arrival, bound: 5.0,"), bannerTest)
         XCTAssertEqual(bannerTest.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
@@ -163,10 +181,16 @@ final class HostLoadTests: XCTestCase {
         XCTAssertLessThan(warmUpCheck.lowerBound, warmUpStatus.lowerBound,
                           "the warm-up's timeout check must come before its exit-status assertion")
         XCTAssertFalse(bannerTest.contains("maxWait:"), "the banner spawns use the default cap")
-        XCTAssertTrue(banner.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
+        // The spawn helper's own default, not any text in the file that looks like it (PR #422 verify round 1).
+        let spawnParameters = try XCTUnwrap(SourceScan.arguments(of: "func spawnAndCaptureStderr(", in: banner))
+        XCTAssertTrue(spawnParameters.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
         XCTAssertFalse(disclaim.contains("XCTAssertFalse(run.timedOut") || disclaim.contains("XCTAssertFalse(host.timedOut"))
-        XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 7)
-        XCTAssertTrue(disclaim.contains("timeout: TimeInterval = 15) throws -> Run {"), "the 15 s bound is unchanged")
+        // #417: the seven call sites go through `checkRunBounds` (its two `checkNotTimedOut` calls:
+        // the 15 s bound and the drain); `HostLoadWiringTests` pins the call sites and their order.
+        XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
+        XCTAssertEqual(disclaim.components(separatedBy: "try checkRunBounds(").count - 1, 7)
+        XCTAssertTrue(disclaim.contains("static let printTCCPathTimeout: TimeInterval = 15"), "the 15 s bound is unchanged")
+        XCTAssertTrue(disclaim.contains("timeout: TimeInterval = printTCCPathTimeout) throws -> Run {"), "the default is that bound")
         // Every `timeout:` in the file is one of the seven known ones (runBounded's parameter and its
         // three waits, runPrintTCCPath's 15 s default and its forward, the hang test's 1 s), so no
         // call site overrides the 15 s bound, whatever its arguments look like.
