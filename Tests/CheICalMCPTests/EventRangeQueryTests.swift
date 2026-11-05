@@ -208,10 +208,29 @@ final class EventRangeQueryTests: XCTestCase {
 
         // Only different calendars are compared: one calendar would answer a false duplicate_count of 0.
         let duplicates = try text(.duplicates)
-        for phrase in common + ["Nothing was returned.", "name fewer calendars in calendar_names, at least two", "different calendars"] {
+        for phrase in common + ["Nothing was returned.", "Narrow the range.", "at least two", "different calendars",
+                                "exact names from list_calendars", "matches nothing is not reported"] {
             XCTAssertTrue(duplicates.contains(phrase), "\(phrase): \(duplicates)")
         }
         XCTAssertFalse(duplicates.contains("read one"), duplicates)
+
+        // check_conflicts has no limit, and one calendar answers for that calendar only.
+        let conflicts = try text(.conflicts)
+        for phrase in common + ["Nothing was returned.", "Narrow the range", "calendar_name", "other calendars are then not checked"] {
+            XCTAssertTrue(conflicts.contains(phrase), "\(phrase): \(conflicts)")
+        }
+        XCTAssertFalse(conflicts.contains("limit"), conflicts)
+    }
+
+    /// The two handlers with no seam word the refusal for themselves: dropping either catch would
+    /// bring back the listing's advice, which tells find_duplicate_events to read one calendar and
+    /// check_conflicts about a limit it does not have.
+    func testTheConflictAndDuplicateHandlersWordTheRefusal() throws {
+        let server = try SourcePins.source("Server.swift")
+        for (handler, path) in [("private func handleCheckConflicts(", ".conflicts"), ("private func handleFindDuplicateEvents(", ".duplicates")] {
+            let body = try XCTUnwrap(SourcePins.body(of: handler, in: server), handler)
+            XCTAssertEqual(SourcePins.ranges(of: "throw EventRangeQuery.worded(error, for: \(path))", in: body).count, 1, handler)
+        }
     }
 
     /// Any other error is left as it is.
@@ -317,13 +336,20 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(EventRangeQuery.maxEventsRead, 200_000)
     }
 
-    /// search_events has no sort: the default keeps the rows closest to today, in start order, ties
-    /// by read order, so an answer on a wide history is not all from its oldest years.
+    private struct Row: Equatable {
+        let name: String
+        let start: Date
+    }
+
+    /// search_events has no sort, and its read order is not date order: any cut keeps the rows
+    /// closest to today, in start order.
     func testTheNearestCutKeepsTheRowsClosestToNow() {
         let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(9000 * day))
         let now = start.addingTimeInterval(3000 * day)
-        // Oldest first, as a read gives them: one row a day around `now`, plus two at the same distance.
-        let starts = (0..<(EventRangeQuery.defaultWideOutput + 300)).map { now.addingTimeInterval(Double($0 - 400) * day) }
+        // One row a day around `now`, in a scrambled read order.
+        let starts = (0..<(EventRangeQuery.defaultWideOutput + 300))
+            .map { now.addingTimeInterval(Double($0 - 400) * day) }
+            .enumerated().sorted { ($0.offset * 7919) % 1009 < ($1.offset * 7919) % 1009 }.map(\.element)
         let cut = EventRangeQuery.boundedNearNow(starts, requested: nil, searched: wide, now: now, start: { $0 })
         XCTAssertEqual(cut.defaultLimit, EventRangeQuery.defaultWideOutput)
         XCTAssertEqual(cut.rows.count, EventRangeQuery.defaultWideOutput)
@@ -333,10 +359,36 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertLessThanOrEqual(farthestKept, left.map { abs($0.timeIntervalSince(now)) }.min()!)
         XCTAssertTrue(cut.rows.contains(now))
 
-        // Not cut, or the caller's limit: unchanged, in read order.
+        // A caller's limit is the same cut, on a narrow range too, without `defaultLimit`.
+        let narrow = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(day))
+        for range in [wide, narrow] {
+            let limited = EventRangeQuery.boundedNearNow(starts, requested: 3, searched: range, now: now, start: { $0 })
+            XCTAssertEqual(limited.rows, [now.addingTimeInterval(-day), now, now.addingTimeInterval(day)])
+            XCTAssertNil(limited.defaultLimit)
+        }
+
+        // Nothing cut: as read.
         let few = [now, start, now.addingTimeInterval(day)]
         XCTAssertEqual(EventRangeQuery.boundedNearNow(few, requested: nil, searched: wide, now: now, start: { $0 }).rows, few)
-        XCTAssertEqual(EventRangeQuery.boundedNearNow(starts, requested: 2, searched: wide, now: now, start: { $0 }).rows, Array(starts.prefix(2)))
+        XCTAssertEqual(EventRangeQuery.boundedNearNow(few, requested: 3, searched: narrow, now: now, start: { $0 }).rows, few)
+    }
+
+    /// Ties go by read order, twice: which row of two at the same distance is kept, and the order of
+    /// two kept rows with the same start.
+    func testTheNearestCutBreaksTiesByReadOrder() {
+        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(9000 * day))
+        let now = start.addingTimeInterval(3000 * day)
+        let before = Row(name: "before", start: now.addingTimeInterval(-day))
+        let after = Row(name: "after", start: now.addingTimeInterval(day))
+        func keep(_ rows: [Row], _ count: Int) -> [Row] {
+            EventRangeQuery.boundedNearNow(rows, requested: count, searched: wide, now: now, start: \.start).rows
+        }
+        XCTAssertEqual(keep([before, after], 1), [before])
+        XCTAssertEqual(keep([after, before], 1), [after])
+
+        let first = Row(name: "first", start: now), second = Row(name: "second", start: now)
+        XCTAssertEqual(keep([first, second, after], 2), [first, second])
+        XCTAssertEqual(keep([second, first, after], 2), [second, first])
     }
 
     // MARK: delete_events_batch by date range
@@ -370,9 +422,9 @@ final class EventRangeQueryTests: XCTestCase {
     }
 
     private let wide = 3000.0   // days: wider than EventKit's old 1461-day cut
-    private let narrow = 1461.0 // days: what EventKit already returned in full before #325
+    private let narrow = 1462.0 // days: `wideRangeDays`, the longest range these limits leave alone
 
-    /// Ranges of at most 1461 days were complete before #325 and are not limited now: the
+    /// Ranges of at most 1462 days are not limited: the
     /// ceiling applies only where #325 widened what a call reaches (verify round 2).
     func testNarrowRangeIsNotLimitedWhateverItsSize() {
         let range = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(narrow * day))

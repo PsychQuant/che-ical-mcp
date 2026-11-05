@@ -268,7 +268,7 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(declared(name).contains("1462 days"), "defineTools() \(name)")
             XCTAssertFalse(declared(name).contains("1461 days"), "defineTools() \(name)")
             XCTAssertTrue(declared(name).contains("about 200,000 event occurrences (about 2,000 a year over 100 years"), "defineTools() \(name): \(declared(name))")
-            XCTAssertTrue(summary(name).contains("about 200,000 occurrences"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertTrue(summary(name).contains("about 200,000 occurrences (about 2,000 a year over 100 years)"), "mcpb/manifest.json \(name): \(summary(name))")
             XCTAssertTrue(summary(name).contains("1462 days"), "mcpb/manifest.json \(name): \(summary(name))")
             XCTAssertFalse(summary(name).contains("1461 days"), "mcpb/manifest.json \(name): \(summary(name))")
             XCTAssertFalse(declared(name).contains("20,000 "), name)
@@ -276,6 +276,7 @@ final class ManifestParityTests: XCTestCase {
         for name in ["list_events", "search_events"] {
             XCTAssertTrue(declared(name).contains("limit does not lift it"), "defineTools() \(name)")
             XCTAssertTrue(declared(name).contains("truncated: true whenever fewer events are returned than event_count, a limit's cut included; event_count is still the total"), "defineTools() \(name): \(declared(name))")
+            XCTAssertFalse(declared(name).contains("replaces the 500"), name)
             XCTAssertTrue(summary(name).contains("without limit at most 500 events are returned"), "mcpb/manifest.json \(name): \(summary(name))")
             XCTAssertTrue(summary(name).contains("truncated: true when fewer events are returned than event_count"), "mcpb/manifest.json \(name): \(summary(name))")
             let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
@@ -283,11 +284,14 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(schema.contains("A limit does not lift the read bound"), "limit of \(name)")
         }
         XCTAssertTrue(declared("list_events").contains("the first in the requested sort, with metadata.default_limit"), declared("list_events"))
-        XCTAssertTrue(declared("search_events").contains("those closest to today, sorted by start, with default_limit and truncation_note"), declared("search_events"))
+        XCTAssertTrue(declared("search_events").contains("Any such cut, on any range, keeps the events closest to today, sorted by start, and says so in truncation_note"), declared("search_events"))
+        let searchSchema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == "search_events" }?.inputSchema))"
+        XCTAssertTrue(searchSchema.contains("Maximum number of events to return, at most 10000: those closest to today, sorted by start"), searchSchema)
         XCTAssertTrue(declared("search_events").contains("With only start_date or only end_date the other side stays two years from today, so such a range can be longer than 1462 days"), declared("search_events"))
         XCTAssertTrue(summary("search_events").contains("those closest to today"), summary("search_events"))
         // Only different calendars are compared, so one calendar is not a way out.
-        XCTAssertTrue(declared("find_duplicate_events").contains("name fewer calendars in calendar_names, at least two"), declared("find_duplicate_events"))
+        XCTAssertTrue(declared("find_duplicate_events").contains("naming fewer calendars in calendar_names, at least two"), declared("find_duplicate_events"))
+        XCTAssertTrue(declared("find_duplicate_events").contains("the exact names from list_calendars"), declared("find_duplicate_events"))
         XCTAssertTrue(declared("delete_events_batch").contains("give both after_date and before_date, at most 1460 days apart"), declared("delete_events_batch"))
     }
 

@@ -36,7 +36,7 @@ enum EventRangeQuery {
     static let wideRangeDays = previousCutDays + 1
 
     /// The most deletions one `delete_events_batch` by date range may make over a range wider than
-    /// `wideRangeDays` (verify rounds 1-2). Only those ranges reach more than they did before #325:
+    /// `wideRangeDays` (verify rounds 1-2). Those ranges reach more than they did before #325:
     /// a one-sided range now reaches 100 years, and an open-ended daily series alone is about 36,500
     /// occurrences there, all in one `.batch` undo entry that restores each as a one-off event. A
     /// narrower range is not limited by it. A one-sided range is always
@@ -65,7 +65,7 @@ enum EventRangeQuery {
 
     /// #332: the rows `list_events` / `search_events` return over a range wider than
     /// `wideRangeDays` when the caller gives no `limit`. A default the maintainer may change.
-    /// Formatting, not reading, is most of a wide answer's cost (measured with `maxEventsRead`:
+    /// Formatting, not reading, is most of a wide answer's cost (measured before the read bound:
     /// 17.4 s and 48.5 MB of JSON for all 72,983 rows).
     static let defaultWideOutput = 500
 
@@ -75,8 +75,11 @@ enum EventRangeQuery {
         /// `delete_events_batch` by date range always names a calendar and has no `limit`.
         case deletion
         /// `find_duplicate_events` only compares different calendars, so one calendar is no way out:
-        /// it would answer a false `duplicate_count` of 0 (PR #430 verify).
+        /// it would answer a false `duplicate_count` of 0 (PR #430 verify). A name in
+        /// `calendar_names` that matches nothing is not reported, so naming fewer is not simply safe.
         case duplicates
+        /// `check_conflicts` has no `limit`, and one calendar answers for that calendar only.
+        case conflicts
     }
 
     enum RangeError: LocalizedError, Equatable {
@@ -102,7 +105,9 @@ enum EventRangeQuery {
                 case .deletion:
                     return "\(stopped) Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
                 case .duplicates:
-                    return "\(stopped) Nothing was returned. Narrow the range, or name fewer calendars in calendar_names, at least two: only events in different calendars are compared."
+                    return "\(stopped) Nothing was returned. Narrow the range. Naming fewer calendars in calendar_names also reads less: keep at least two, since only events in different calendars are compared, and use the exact names from list_calendars, since a name that matches nothing is not reported."
+                case .conflicts:
+                    return "\(stopped) Nothing was returned. Narrow the range, or, if no calendar was named, give calendar_name; other calendars are then not checked."
                 }
             case .tooManyComparisons(let limit):
                 return "Stopped: finding duplicates over a range wider than \(EventRangeQuery.wideRangeDays) days took more than \(Self.grouped(limit)) comparisons. Nothing was returned. Narrow the range or lower tolerance_minutes."
@@ -145,7 +150,7 @@ enum EventRangeQuery {
                               key: (Item) -> String) throws -> [Item] {
         var seen = Set<String>()
         var found: [Item] = []
-        // #332: only a range wider than EventKit's old cut is bounded (nothing changes below it).
+        // #332: only a wide range is bounded (`wideRangeDays`; nothing changes below it).
         let bound = widensPreviousCut(Span(start: start, end: end)) ? maxEventsRead : nil
         for span in try spans(from: start, to: end) {
             let from = span.start > start ? max(start, span.start.addingTimeInterval(-1)) : span.start
@@ -174,28 +179,32 @@ enum EventRangeQuery {
         return (Array(items.prefix(defaultWideOutput)), defaultWideOutput)
     }
 
-    /// #332: `bounded` for `search_events`, which has no sort: a default cut keeps the rows closest
-    /// to `now` and returns them in start order, ties in read order. The first rows read are the
-    /// oldest, so a plain cut would drop today from a search of a long history (PR #430 verify).
+    /// #332: the rows `search_events` returns. It has no sort, and its read order holds spans in
+    /// order but is not date order (PR #430 verify round 2: 40 of the first 500 rows were among the
+    /// oldest 500), so a prefix would be an arbitrary set. One rule for any cut, a caller's `limit`
+    /// or the default, on any range: the rows closest to `now`, then in start order, ties in read
+    /// order both times. Nothing cut: as read. `defaultLimit` as in `bounded`.
     static func boundedNearNow<Item>(_ items: [Item], requested: Int?, searched: Span, now: Date,
                                      start: (Item) -> Date) -> (rows: [Item], defaultLimit: Int?) {
-        let plain = bounded(items, requested: requested, searched: searched)
-        guard let defaultLimit = plain.defaultLimit else { return plain }
+        guard let keep = requested ?? (widensPreviousCut(searched) ? defaultWideOutput : nil), items.count > keep else {
+            return (items, nil)
+        }
         let timed = items.enumerated().map { (offset: $0.offset, element: $0.element, start: start($0.element)) }
         let nearest = timed.sorted {
             (abs($0.start.timeIntervalSince(now)), $0.offset) < (abs($1.start.timeIntervalSince(now)), $1.offset)
-        }.prefix(defaultLimit)
-        return (nearest.sorted { ($0.start, $0.offset) < ($1.start, $1.offset) }.map(\.element), defaultLimit)
+        }.prefix(keep)
+        return (nearest.sorted { ($0.start, $0.offset) < ($1.start, $1.offset) }.map(\.element),
+                requested == nil ? keep : nil)
     }
 
-    /// #332: what a `search_events` answer says about a default cut.
+    /// #332: what a `search_events` answer says about any cut.
     static func nearestNote(kept: Int, total: Int) -> String {
-        "These are the \(kept) of \(total) matches closest to today, sorted by start. For the others give a narrower range, or limit (at most \(InputValidation.maxLimit), taken from the start of the range)."
+        "These are the \(kept) of \(total) matches closest to today, sorted by start. For the others give a narrower range, or a larger limit (at most \(InputValidation.maxLimit))."
     }
 
     /// #332: what `search_events` and `findSimilarEvents` search when not told: two Gregorian years
     /// either side of `now`, in `zone`. Gregorian whatever the host chose in region settings: a
-    /// Hebrew or Chinese year is not one, which made this up to 18 days over the wide line. Across a
+    /// Hebrew or Chinese year is not one, which made this up to 17 days over the wide line. Across a
     /// clock change it is 1461 days and an hour, so it stays narrow (`wideRangeDays`).
     static func defaultSearchRange(now: Date, zone: TimeZone = .current) -> Span {
         let gregorian = Calendar.gregorian(in: zone)
@@ -274,8 +283,7 @@ enum EventRangeQuery {
         throw RangeError.tooManyToDelete(count: operations, from: searched.start, to: searched.end)
     }
 
-    /// The most duplicate comparisons over `searched`: limited only where the range is wider than
-    /// the old cut.
+    /// The most duplicate comparisons over `searched`: limited only over a wide range.
     static func comparisonLimit(searched: Span) -> Int? {
         widensPreviousCut(searched) ? maxDuplicateComparisons : nil
     }
@@ -287,8 +295,7 @@ enum EventRangeQuery {
         DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone.current).string(from: date)
     }
 
-    /// The most dry-run preview rows over `searched`: bounded only where the range is wider than
-    /// the old cut (a span "all" call within the deletion ceiling can still list many occurrences).
+    /// The most dry-run preview rows over `searched`: bounded only over a wide range (a span "all" call within the deletion ceiling can still list many occurrences).
     static func previewLimit(searched: Span) -> Int? {
         widensPreviousCut(searched) ? maxDeletionOccurrences : nil
     }

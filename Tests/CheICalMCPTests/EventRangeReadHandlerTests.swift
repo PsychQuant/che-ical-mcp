@@ -3,13 +3,15 @@ import MCP
 import XCTest
 @testable import CheICalMCP
 
-/// Answers with the events it was given, or the error.
+/// Answers with the events it was given, or the error. Scrambled, as EventKit's read order is:
+/// it holds spans in order but is not date order (PR #430 verify round 2 measured 40 of the first
+/// 500 rows among the oldest 500), so a test cannot pass by assuming it is.
 private final class EventRangeReadFake: EventRangeReadSource, @unchecked Sendable {
     let events: [EKEvent]
     let readError: Error?
 
     init(events: [EKEvent], readError: Error? = nil) {
-        self.events = events
+        self.events = events.enumerated().sorted { ($0.offset * 7919) % 1009 < ($1.offset * 7919) % 1009 }.map(\.element)
         self.readError = readError
     }
 
@@ -126,33 +128,65 @@ final class EventRangeReadHandlerTests: XCTestCase {
 
     /// The tool's own Tip sends a search for old events here: only start_date, so the end defaults
     /// to two years from today and the range is wide. The rows kept are the ones closest to today,
-    /// in start order, and the answer says so (PR #430 verify).
+    /// not to the end of the range, in start order, and the answer says so (PR #430 verify).
     func testAOneSidedSearchKeepsTheRowsClosestToToday() async throws {
         let now = Date()
         let old = events(600)   // from 2001
         let recent = events(100, from: now.addingTimeInterval(-50 * 3600))   // around today
-        let response = try await call(.search, events: old + recent, days: 0, oneSided: true)
+        // Just inside the end of the range: a cut measured from there would keep these instead.
+        let late = events(600, from: now.addingTimeInterval(700 * day))
+        let response = try await call(.search, events: old + recent + late, days: 0, oneSided: true)
         let searched = try XCTUnwrap(response["searched_range"] as? [String: Any])
         XCTAssertEqual(searched["is_default_range"] as? Bool, true)
-        XCTAssertEqual(response["event_count"] as? Int, 700)
+        XCTAssertEqual(response["event_count"] as? Int, 1300)
         XCTAssertEqual(response["truncated"] as? Bool, true)
         XCTAssertEqual(response["default_limit"] as? Int, 500)
-        let titles = try rows(response).map { try XCTUnwrap($0["title"] as? String) }
-        XCTAssertEqual(titles.count, 500)
-        // The 100 around today and the 400 latest of the old ones, oldest first.
-        XCTAssertEqual(titles.first, "#332 200")
-        XCTAssertEqual(titles.last, "#332 99")
-        let starts = try rows(response).map { try XCTUnwrap($0["start_date"] as? String) }
+        let kept = try rows(response)
+        XCTAssertEqual(kept.count, 500)
+        let starts = try kept.map { try XCTUnwrap($0["start_date"] as? String) }
         XCTAssertEqual(starts, starts.sorted())
+        // All 100 around today, then the 400 nearest of the late ones, none of the old ones.
+        let iso = ISO8601DateFormatter()
+        let first = try XCTUnwrap(iso.date(from: starts[0]))
+        XCTAssertLessThan(abs(first.timeIntervalSince(now)), 60 * 3600, "the rows around today are kept")
+        XCTAssertEqual(try kept.map { try XCTUnwrap($0["title"] as? String) }.last, "#332 399", "the 400 nearest of the late ones")
         let note = try XCTUnwrap(response["truncation_note"] as? String)
-        for phrase in ["500 of 700", "closest to today", "limit", "narrower range"] {
+        for phrase in ["500 of 1300", "closest to today", "sorted by start", "limit", "narrower range"] {
             XCTAssertTrue(note.contains(phrase), "\(phrase): \(note)")
         }
     }
 
-    /// With a `limit` the note about today does not apply.
-    func testACallersLimitOnASearchHasNoNote() async throws {
-        let response = try await call(.search, events: events(501), days: 1463, extra: ["limit": .int(3)])
+    /// One rule for any cut on search_events: a caller's `limit`, on a wide or a narrow range, keeps
+    /// the rows closest to today too, sorted by start, and says so; only `default_limit` differs.
+    func testACallersLimitOnASearchKeepsTheRowsClosestToToday() async throws {
+        let now = Date()
+        let around = events(9, from: now.addingTimeInterval(-4 * 3600))   // now - 4 h to now + 4 h
+        let far = events(30)
+        for days in [1463.0, 40.0] {
+            let response = try await call(.search, events: far + around, days: days, extra: ["limit": .int(3)])
+            let titles = try rows(response).map { try XCTUnwrap($0["title"] as? String) }
+            XCTAssertEqual(titles, ["#332 3", "#332 4", "#332 5"], "\(days): the three closest to today, in start order")
+            XCTAssertEqual(response["event_count"] as? Int, 39)
+            XCTAssertEqual(response["truncated"] as? Bool, true)
+            XCTAssertEqual(response["limit"] as? Int, 3)
+            XCTAssertNil(response["default_limit"], "\(days)")
+            let note = try XCTUnwrap(response["truncation_note"] as? String, "\(days)")
+            XCTAssertTrue(note.contains("3 of 39"), note)
+            XCTAssertTrue(note.contains("closest to today"), note)
+        }
+    }
+
+    /// Nothing cut: no note, and the rows stay as they were read.
+    func testAnUncutSearchHasNoNote() async throws {
+        let response = try await call(.search, events: events(20), days: 40, extra: ["limit": .int(20)])
+        XCTAssertNil(response["truncated"])
+        XCTAssertNil(response["truncation_note"])
+    }
+
+    /// list_events has a sort: its `limit` keeps the first in that sort, closest to today or not.
+    func testAListEventsLimitKeepsTheFirstInItsSort() async throws {
+        let response = try await call(.list, events: events(20), days: 40, extra: ["limit": .int(2)])
+        XCTAssertEqual(try rows(response).map { $0["title"] as? String }, ["#332 0", "#332 1"])
         XCTAssertNil(response["truncation_note"])
     }
 

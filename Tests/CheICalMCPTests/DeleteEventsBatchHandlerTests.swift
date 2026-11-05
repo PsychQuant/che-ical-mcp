@@ -105,7 +105,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         }
     }
 
-    // MARK: - Case 1: a two-bound range of at most 1461 days is not limited
+    // MARK: - Case 1: a two-bound range of at most 1462 days is not limited
 
     func testANarrowRangeIsNotLimitedAndPreviewsEveryRow() async throws {
         let before = base.addingTimeInterval(1000 * day)
