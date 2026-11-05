@@ -7,11 +7,12 @@ import Foundation
 /// Measured on iCloud (2026-11-05, `--cli`): completing a repeating reminder that has a location
 /// trigger leaves one plain relative alarm at 0 minutes (no location, no proximity) on the next
 /// occurrence and on the completed copy; without a location trigger, without recurrence, or
-/// without a completion nothing is added, and a second completion does not add another. The
-/// server writes no alarm on this path (it sets only `isCompleted` and `completionDate`), so the
-/// store adds it at the rollover save. This only reports it; nothing is written. Whether the alarm
-/// fires and whether Reminders.app shows it were not checked (release gate). The completed copy
-/// gets a new identifier and is not read here.
+/// without a completion nothing is added, and a later completion does not add another (with that
+/// alarm still there, or after it was removed). This path sets only `isCompleted` and
+/// `completionDate`, so EventKit or the store adds the alarm when that save rolls the reminder
+/// over; which of the two was not told apart. This only reports it; nothing is written. Whether
+/// the alarm fires and whether Reminders.app shows it were not checked (release gate). The
+/// completed copy gets a new identifier and is not read here.
 ///
 /// A read-back cannot tell who wrote an alarm: the actor rules out this server's other calls, not
 /// another process (Reminders.app, a sync, a second server process). So `note` says the alarm
@@ -25,13 +26,13 @@ struct ReminderRolloverAlarms: Equatable, Sendable {
     /// The relative alarms in `minutesBefore` that were not on the reminder before the call.
     let added: [Double]
 
-    static let unreadNote = "The next occurrence could not be re-read after the save, or it had changed by then, so its alarms are not reported; check it in Reminders."
+    static let unreadNote = "The next occurrence could not be re-read after the save, or it had changed by then, so its alarms are not reported; read it with list_reminders."
 
     static func note(added: [Double]) -> String {
         let values = added.map { "minutes_before: \(Self.format($0))" }.joined(separator: ", ")
         let what = added.count == 1 ? "A relative alarm" : "\(added.count) relative alarms"
         let was = added.count == 1 ? "was" : "were"
-        return "\(what) (\(values)) appeared on the next occurrence when it was read back, and \(was) not there before this completion; this call wrote no alarm. On iCloud, the rollover of a repeating reminder with a location trigger adds a 0-minute relative alarm; one written by another app or a sync would look the same here. Whether it fires and whether Reminders.app shows it are not checked. To keep only the relative alarms you want, call update_reminder with alarms_minutes_offsets."
+        return "\(what) (\(values)) appeared on the next occurrence when it was read back, and \(was) not there before this completion. This call sets only the completion fields, yet on iCloud the save that rolls over a repeating reminder with a location trigger leaves a 0-minute relative alarm; one written by another app or a sync would look the same here. Whether it fires and whether Reminders.app shows it are not checked. update_reminder with alarms_minutes_offsets replaces the relative alarms."
     }
 
     /// What `after` holds beyond `before`, as multisets.
@@ -71,7 +72,9 @@ struct ReminderRolloverAlarms: Equatable, Sendable {
         return added.isEmpty ? [:] : ["alarms_note": Self.note(added: added)]
     }
 
+    /// The value comes from a re-read, so any other writer can have set it: not bounded by the
+    /// range `alarms_minutes_offsets` accepts, and `Int(_:)` traps out of `Int`'s range.
     private static func format(_ value: Double) -> String {
-        value == value.rounded() ? String(Int(value)) : String(value)
+        Int(exactly: value).map(String.init) ?? String(value)
     }
 }

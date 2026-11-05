@@ -274,10 +274,20 @@ build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
 1. 建每週重複、帶位置提醒與 `[15]` 的提醒 → `complete_reminder` → 回應的 `next_occurrence.alarms_minutes_offsets` 是
    `[15, 0]`、有 `alarms_note`；`list_reminders` 讀回下一個場次一致；
 2. 同樣但不帶位置提醒 → 回應 `[15]`、沒有 `alarms_note`。
+3. 其他形狀，每個都帶位置提醒（2026-11-05 量過，記錄有沒有變）：`end_date`、date-only、daily、monthly、yearly 都是
+   `confirmed`、沒有 `alarms_read_back: false`、有 `alarms_note`；每週加 `occurrence_count: 3` 是 `unknown`
+   （`recurrence_unverified`），沒有鬧鐘欄位。出現 `alarms_read_back: false` 就是重讀比對擋掉了正常 rollover，要回報。
+4. 移除再完成：第 1 步之後用 `update_reminder` 把清單改成 `[15]`（只帶位置時用 `[]`）→ 再 `complete_reminder` →
+   回應沒有 `alarms_note`、`list_reminders` 讀回的下一個場次沒有 0 分鐘鬧鐘（2026-11-05 量過三筆，之後一到兩次完成都沒有加回來）。
+5. **長駐 process**（`--cli` 每次都是新 store，證明不了這一步）：在重啟後的 session MCP 上，先用行為探測確認是新
+   binary，同一個 session 先讀寫幾次，再完成帶位置提醒與 `[15]` 的每週提醒 → 回應是 `[15, 0]`、有 `alarms_note`、
+   沒有 `alarms_read_back: false` → 用另一個 `--cli` process 讀回比對。回應是 `[15]` 或 `false` 而 `--cli` 讀到
+   `[15, 0]`，就是 reload 沒有讀到 rollover 的結果。2026-11-05 用長駐 stdio server 量過八筆（完成之前分別是剛建立、
+   列表、更新、等 3 秒、完成另一筆），都正確；這個 reload 不跑 `refreshSourcesIfNecessary()`。
 
 **需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 
-3. 建一個每週重複、帶位置提醒、到期在幾分鐘後的提醒，**位置要選離測試者很遠的地方**，否則位置提醒自己也可能
+6. 建一個每週重複、帶位置提醒、到期在幾分鐘後的提醒，**位置要選離測試者很遠的地方**，否則位置提醒自己也可能
    跳通知，分不出是哪一個鬧鐘 → `complete_reminder`（下一個場次會在一週後；為了看這個鬧鐘，把下一個場次用
    `update_reminder` 的 `due_date` 改到幾分鐘後）→ 用 `list_reminders` 讀回，確認改期之後 0 分鐘鬧鐘還在；不在就
    記錄下來，這一步的通知結果不算數 → 打開 Reminders.app 看下一個場次：記錄是否顯示這個 0 分鐘鬧鐘；等到到期時間，

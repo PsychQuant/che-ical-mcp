@@ -6,7 +6,7 @@ import XCTest
 /// #423: completing a repeating reminder that has a location trigger leaves a plain 0-minute
 /// relative alarm on the next occurrence and on the completed copy (measured on iCloud,
 /// 2026-11-05); the server writes no alarm on that path. `complete_reminder` reads the next
-/// occurrence's relative alarms back after a reload and names any the store added. In-memory
+/// occurrence's relative alarms back after a reload and names any that appeared. In-memory
 /// EventKit objects only.
 final class ReminderRolloverAlarmsTests: XCTestCase {
     private func reminder() -> EKReminder { EKReminder(eventStore: SharedTestStore.store) }
@@ -117,16 +117,17 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
         XCTAssertTrue(none.topLevelFields.isEmpty)
     }
 
-    /// The note states what was observed and what was measured; a read-back cannot tell who wrote
-    /// the alarm, so it does not say the store added this one (PR #425 verify).
+    /// The note states what was observed and what was verified. A read-back cannot tell who wrote
+    /// the alarm, and the save that rolled the reminder over is this call's, so it neither says the
+    /// store added this one nor that this call wrote none (PR #425 verify rounds 1 and 2).
     func testTheNoteWording() {
         let note = ReminderRolloverAlarms.note(added: [0])
-        XCTAssertTrue(note.contains("minutes_before: 0"), note)
+        XCTAssertTrue(note.contains("(minutes_before: 0)"), note)
         XCTAssertTrue(note.contains("appeared"), note)
         XCTAssertTrue(note.contains("not there before this completion"), note)
-        XCTAssertTrue(note.contains("this call wrote no alarm"), note)
+        XCTAssertTrue(note.contains("This call sets only the completion fields"), note)
         XCTAssertFalse(note.contains("The store added"), note)
-        XCTAssertFalse(note.contains("the server wrote no alarm"), note)
+        XCTAssertFalse(note.contains("wrote no alarm"), note)
         XCTAssertTrue(note.contains("another app or a sync"), note)
         XCTAssertTrue(note.contains("location trigger"), note)
         XCTAssertTrue(note.contains("not checked"), note)
@@ -136,6 +137,19 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
         XCTAssertTrue(two.contains("were not there before this completion"), two)
         XCTAssertTrue(ReminderRolloverAlarms.unreadNote.contains("could not be re-read"))
         XCTAssertTrue(ReminderRolloverAlarms.unreadNote.contains("changed"), ReminderRolloverAlarms.unreadNote)
+        XCTAssertTrue(ReminderRolloverAlarms.unreadNote.contains("list_reminders"), ReminderRolloverAlarms.unreadNote)
+    }
+
+    /// The offsets come from a re-read, so another app or a sync can have written any value; the
+    /// write side's range says nothing about them (PR #425 verify round 2: `Int(value)` trapped).
+    func testTheNoteFormatsAnyOffset() {
+        XCTAssertTrue(ReminderRolloverAlarms.note(added: [1.5]).contains("(minutes_before: 1.5)"))
+        XCTAssertTrue(ReminderRolloverAlarms.note(added: [-5]).contains("(minutes_before: -5)"))
+        XCTAssertTrue(ReminderRolloverAlarms.note(added: [-0.0]).contains("(minutes_before: 0)"))
+        XCTAssertTrue(ReminderRolloverAlarms.note(added: [1e300]).contains("(minutes_before: \(1e300))"))
+        for value in [Double(Int.max), -Double(Int.max) * 2, Double.greatestFiniteMagnitude, .infinity, -.infinity, .nan] {
+            XCTAssertTrue(ReminderRolloverAlarms.note(added: [value]).contains("minutes_before: "), "\(value)")
+        }
     }
 
     /// The response carries them: next_occurrence.alarms_minutes_offsets and a top-level alarms_note.
@@ -181,13 +195,25 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
         XCTAssertLessThan(observe.lowerBound, record.lowerBound)
     }
 
-    /// Option (1) of the #423 diagnosis: this path reports and never writes. The observation itself
-    /// holds no alarm write and no save either.
+    /// Option (1) of the #423 diagnosis: this path reports and never writes. The observation holds
+    /// no alarm write and no save either, and the write it follows sets only the completion fields.
     func testTheObservationWritesNothing() throws {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/ReminderRolloverAlarms.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
         Self.assertNoAlarmWrite(code, "ReminderRolloverAlarms.swift")
         XCTAssertFalse(code.contains("save("), code)
+    }
+
+    /// PR #425 verify round 2: "this call sets only the completion fields" is a claim about the
+    /// function that does the write, so the guard has to reach it.
+    func testTheCompletionWriteSetsOnlyTheCompletionFields() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("ReminderCompletion.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        let write = try XCTUnwrap(SourceScan.body(of: "struct ReminderCompletionWrite: Equatable, Sendable {", in: code))
+        Self.assertNoAlarmWrite(write, "ReminderCompletionWrite")
+        let apply = try XCTUnwrap(SourceScan.body(of: "func apply(to reminder: EKReminder) {", in: write))
+        let assigned = apply.matches(of: try Regex(#"reminder\.(\w+) ="#)).compactMap { $0[1].substring.map(String.init) }
+        XCTAssertEqual(Set(assigned), ["isCompleted", "completionDate"], apply)
     }
 
     private static func managerCode() throws -> String {
@@ -200,7 +226,9 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
     }
 
     private static func assertNoAlarmWrite(_ code: String, _ place: String) {
-        XCTAssertFalse(code.contains("addAlarm") || code.contains("removeAlarm"), place)
+        for form in ["addAlarm", "removeAlarm", "ReminderRelativeAlarms.replace", ".alarms?."] {
+            XCTAssertFalse(code.contains(form), "\(place): \(form)")
+        }
         XCTAssertNil(code.range(of: #"\.alarms\s*=[^=]"#, options: .regularExpression), place)
     }
 }
