@@ -51,6 +51,7 @@ class CheICalMCPServer {
     private let calendarDeletionSource: any CalendarDeletionSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
+    private let eventRangeReadSource: any EventRangeReadSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -85,6 +86,7 @@ class CheICalMCPServer {
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
+         eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -100,6 +102,7 @@ class CheICalMCPServer {
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
+        self.eventRangeReadSource = eventRangeReadSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -216,7 +219,7 @@ class CheICalMCPServer {
             // Event Tools
             Tool(
                 name: "list_events",
-                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
+                description: "List calendar events in a date range with optional filtering, sorting, and limiting. Supports flexible date formats: ISO8601 (2026-01-30T00:00:00+08:00), datetime (2026-01-30T00:00:00), date only (2026-01-30), or time only (14:00). Any date range is searched in full, in queries of at most four years each (EventKit returns only the first four years of one longer query); a range longer than 146,000 days (about 400 years) is refused with an error. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole; limit does not lift it) stops with an error and returns nothing: narrow the range or give calendar_name. Over such a range, without limit at most 500 events are returned, the first in the requested sort, with metadata.default_limit. truncated: true whenever fewer events are returned than event_count, a limit's cut included; event_count is still the total. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -248,7 +251,7 @@ class CheICalMCPServer {
                         ]),
                         "limit": .object([
                             "type": .string("integer"),
-                            "description": .string("Maximum number of events to return")
+                            "description": .string("Maximum number of events to return, at most 10000. When omitted, all of them, except over a range longer than 1462 days: at most 500. A limit does not lift the read bound.")
                         ]),
                         "detail_level": .object([
                             "type": .string("string"),
@@ -754,7 +757,7 @@ class CheICalMCPServer {
             // Feature 2: Search Events (enhanced with multi-keyword support)
             Tool(
                 name: "search_events",
-                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
+                description: "Search events by keyword(s) in title, notes, or location. Supports single keyword or multiple keywords with AND/OR matching. Without date range, defaults to ±2 years from today. Tip: To find past events beyond 2 years, always specify start_date. The response includes searched_range so you can verify coverage. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. With only start_date or only end_date the other side stays two years from today, so such a range can be longer than 1462 days. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole, before keywords are matched; limit does not lift it) stops with an error and returns nothing: narrow the range or give calendar_name. Over such a range, without limit at most 500 events are returned, with default_limit. truncated: true whenever fewer events are returned than event_count, a limit's cut included; event_count is still the total. Any such cut, on any range, keeps the events closest to today, sorted by start, and says so in truncation_note. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating; the *_local strings are in display_timezone when given, otherwise in timezone. Outside detail_level summary each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -775,7 +778,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "limit": .object([
                             "type": .string("integer"),
-                            "description": .string("Maximum number of events to return")
+                            "description": .string("Maximum number of events to return, at most 10000: those closest to today, sorted by start. When omitted, all of them, except over a range longer than 1462 days: at most 500. A limit does not lift the read bound.")
                         ]),
                         "detail_level": .object([
                             "type": .string("string"),
@@ -905,7 +908,7 @@ class CheICalMCPServer {
             // Feature 5: Conflict Check
             Tool(
                 name: "check_conflicts",
-                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating, the zone of the *_local strings. Each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
+                description: "Check for overlapping events in a time range. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole) stops with an error and returns nothing: narrow the range, or give calendar_name, and other calendars are then not checked. Each event reports item_timezone (the event's own time zone; null when floating, all-day events included); timezone is the event's time zone, or the host time zone when the event is floating, the zone of the *_local strings. Each event lists its time-based alarms as alarms, the shape list_reminders uses (relative minutes_before, measured from the start: positive = before the start, negative = after; or absolute absolute_date, with absolute_date_local in the zone of the other *_local strings; [] when none; location alarms are not listed). An occurrence reports the series' alarms unless it was edited on its own.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -970,7 +973,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1461 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to; with span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to; with span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1012,7 +1015,7 @@ class CheICalMCPServer {
             // Feature 9: Find Duplicate Events
             Tool(
                 name: "find_duplicate_events",
-                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range wider than 1461 days the search stops with an error, returning nothing, once it passes 2,000,000 comparisons (a large tolerance_minutes over two calendars of one repeating event); narrow the range or the tolerance.",
+                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole) stops with an error and returns nothing: narrow the range; naming fewer calendars in calendar_names, at least two, also reads less (only different calendars are compared, and a name that matches nothing is not reported, so use the exact names from list_calendars). Over such a range the search also stops with an error, returning nothing, once it passes 2,000,000 comparisons (a large tolerance_minutes over two calendars of one repeating event); narrow the range or the tolerance.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1354,7 +1357,7 @@ class CheICalMCPServer {
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)
 
-        var events = try await eventKitManager.listEvents(
+        var events = try await eventRangeReadSource.listEvents(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
@@ -1385,12 +1388,12 @@ class CheICalMCPServer {
             events.sort { $0.startDate < $1.startDate }
         }
 
-        // Apply limit
-        if let limit = limit, events.count > limit {
-            events = Array(events.prefix(limit))
-        }
+        // Apply limit. #332: over a wide range (`wideRangeDays`), no caller limit means at most
+        // `EventRangeQuery.defaultWideOutput` rows. `truncated` says rows were left out, whoever
+        // cut them; `default_limit` that the default did.
+        let (rows, defaultLimit) = EventRangeQuery.bounded(events, requested: limit, searched: .init(start: startDate, end: endDate))
 
-        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
+        let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
         var metadata: [String: Any] = [
             "total_in_range": totalInRange,
@@ -1399,6 +1402,7 @@ class CheICalMCPServer {
             "sort": sortMode
         ]
         if let limit = limit { metadata["limit"] = limit }
+        if let defaultLimit { metadata["default_limit"] = defaultLimit }
 
         // #107: unified top-level <entity>_count semantic — pre-limit total
         // (taken from totalAfterFilter, before any prefix truncation).
@@ -1409,6 +1413,7 @@ class CheICalMCPServer {
             "events": result,
             "metadata": metadata
         ]
+        if rows.count < totalAfterFilter { response["truncated"] = true }
         // F3 (#101): echo the raw user input ("UTC" stays "UTC") rather than
         // displayTimezone.identifier (Foundation normalizes UTC to GMT).
         if displayTimezone != nil,
@@ -2468,10 +2473,11 @@ class CheICalMCPServer {
 
         // Compute effective search range (same defaults as EventKitManager)
         let now = Date()
-        let effectiveStart = userStartDate ?? Calendar.current.date(byAdding: .year, value: -2, to: now)!
-        let effectiveEnd = userEndDate ?? Calendar.current.date(byAdding: .year, value: 2, to: now)!
+        let defaults = EventRangeQuery.defaultSearchRange(now: now)
+        let effectiveStart = userStartDate ?? defaults.start
+        let effectiveEnd = userEndDate ?? defaults.end
 
-        var events = try await eventKitManager.searchEvents(
+        let events = try await eventRangeReadSource.searchEvents(
             keywords: keywords,
             matchMode: matchMode,
             startDate: effectiveStart,
@@ -2480,13 +2486,13 @@ class CheICalMCPServer {
             calendarSource: calendarSource
         )
 
-        // Apply limit
+        // Apply limit. #332: this tool has no sort, so any cut, a caller's limit or the default,
+        // keeps the rows closest to today and the answer says so.
         let totalCount = events.count
-        if let limit = limit, events.count > limit {
-            events = Array(events.prefix(limit))
-        }
+        let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(events, requested: limit, searched: .init(start: effectiveStart, end: effectiveEnd),
+                                                                  now: now, start: { $0.startDate })
 
-        let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
+        let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
         var response: [String: Any] = [
             "keywords": keywords,
@@ -2502,6 +2508,11 @@ class CheICalMCPServer {
             "events": result
         ]
         if let limit = limit { response["limit"] = limit }
+        if rows.count < totalCount {
+            response["truncated"] = true
+            response["truncation_note"] = EventRangeQuery.nearestNote(kept: rows.count, total: totalCount)
+        }
+        if let defaultLimit { response["default_limit"] = defaultLimit }
         // F3 (#101): echo the raw user input ("UTC" stays "UTC") rather than
         // displayTimezone.identifier (Foundation normalizes UTC to GMT).
         if displayTimezone != nil,
@@ -2790,13 +2801,18 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let excludeEventId = arguments["exclude_event_id"]?.stringValue
 
-        let conflicts = try await eventKitManager.checkConflicts(
-            startDate: startDate,
-            endDate: endDate,
-            calendarName: calendarName,
-            calendarSource: calendarSource,
-            excludeEventId: excludeEventId
-        )
+        let conflicts: [EKEvent]
+        do {
+            conflicts = try await eventKitManager.checkConflicts(
+                startDate: startDate,
+                endDate: endDate,
+                calendarName: calendarName,
+                calendarSource: calendarSource,
+                excludeEventId: excludeEventId
+            )
+        } catch {
+            throw EventRangeQuery.worded(error, for: .conflicts)
+        }
 
         let result = conflicts.map { formatEventDict($0) }
 
@@ -3073,12 +3089,17 @@ class CheICalMCPServer {
                 "searched_to": EventRangeQuery.localText(searched.end)
             ]
 
-            let events = try await eventBatchDeletionSource.listEventsForDeletion(
-                startDate: searched.start,
-                endDate: searched.end,
-                calendarName: calendarName,
-                calendarSource: calendarSource
-            )
+            let events: [BatchDeletionListedEvent]
+            do {
+                events = try await eventBatchDeletionSource.listEventsForDeletion(
+                    startDate: searched.start,
+                    endDate: searched.end,
+                    calendarName: calendarName,
+                    calendarSource: calendarSource
+                )
+            } catch {
+                throw EventRangeQuery.worded(error, for: .deletion)
+            }
             // Items with per-occurrence dates (supports multiple occurrences of same series); with
             // span "future", in slot order (verify rounds 3-5).
             let deletionItems = EventRangeQuery.deletionItems(
@@ -3153,12 +3174,17 @@ class CheICalMCPServer {
 
         let toleranceMinutes = try InputValidation.requireIntIfPresent(arguments, key: "tolerance_minutes", default: 5)
 
-        let duplicates = try await eventKitManager.findDuplicateEvents(
-            calendarNames: calendarNames,
-            startDate: startDate,
-            endDate: endDate,
-            toleranceMinutes: toleranceMinutes
-        )
+        let duplicates: [DuplicatePair]
+        do {
+            duplicates = try await eventKitManager.findDuplicateEvents(
+                calendarNames: calendarNames,
+                startDate: startDate,
+                endDate: endDate,
+                toleranceMinutes: toleranceMinutes
+            )
+        } catch {
+            throw EventRangeQuery.worded(error, for: .duplicates)
+        }
 
         let result = duplicates.map { pair -> [String: Any] in
             [
