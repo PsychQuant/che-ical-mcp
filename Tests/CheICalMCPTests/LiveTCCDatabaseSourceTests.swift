@@ -18,6 +18,10 @@ final class LiveTCCDatabaseSourceTests: XCTestCase {
     /// `LiveProcessInventorySourceTests` (#257 class: a test about parsing must not fail on the
     /// 500 ms production timeout of a loaded host). The timeout path stays covered by
     /// `testReadsWithTinyTimeout_surfacesAsFailure`.
+    ///
+    /// A deliberate exception (#417) to routing wall-clock bounds through `HostLoad`: this is a
+    /// budget handed to the production source, not a test's own bound, and a `sqlite3` that overruns it
+    /// says so in `failureReason` ("sqlite3 timed out after 10000ms").
     static let generousTimeoutMilliseconds = 10_000
 
     // MARK: - Missing binaries / files
