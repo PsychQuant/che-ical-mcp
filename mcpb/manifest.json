@@ -81,7 +81,7 @@
     },
     {
       "name": "complete_reminder",
-      "description": "Complete or reopen a reminder with an explicit operation result and observed next occurrence (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
+      "description": "Complete or reopen a reminder with an explicit operation result and observed next occurrence, including its relative alarms (alarms_minutes_offsets) and alarms_note when one appeared at the rollover (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
     },
     {
       "name": "delete_reminder",

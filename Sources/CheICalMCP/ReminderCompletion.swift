@@ -165,7 +165,7 @@ struct ReminderCompletionResult: Sendable {
             message = "This reminder was completed successfully."
         }
         var nextOccurrenceDict = nextOccurrence.dictionary
-        // #423: the next occurrence's relative alarms, and the note when the store added any.
+        // #423: the next occurrence's relative alarms, and the note when any appeared.
         if let rolloverAlarms { nextOccurrenceDict.merge(rolloverAlarms.nextOccurrenceFields) { $1 } }
         var dict: [String: Any] = [
             // Retain legacy semantics. operation is authoritative for the write outcome.

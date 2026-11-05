@@ -267,7 +267,8 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 
 ## Release gate：完成重複提醒後 store 加上的 0 分鐘鬧鐘（#423）
 
-#423 的回報只有純函式、記憶體內與 handler 的測試，另外在 `--cli` 上看過。**出 #423 的那個版本打 tag 之前**，用剛
+#423 的回報只有純函式、記憶體內與 handler 的測試，另外在 `--cli` 上看過。重讀時發現場次已經變了（`alarms_read_back:
+false`）這條路只有單元測試，`--cli` 造不出來。**出 #423 的那個版本打 tag 之前**，用剛
 build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
 
 1. 建每週重複、帶位置提醒與 `[15]` 的提醒 → `complete_reminder` → 回應的 `next_occurrence.alarms_minutes_offsets` 是
@@ -276,9 +277,11 @@ build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
 
 **需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 
-3. 建一個每週重複、帶位置提醒、到期在幾分鐘後的提醒 → `complete_reminder`（下一個場次會在一週後；為了看這個
-   鬧鐘，把下一個場次用 `update_reminder` 的 `due_date` 改到幾分鐘後）→ 打開 Reminders.app 看下一個場次：記錄是否
-   顯示這個 0 分鐘鬧鐘；等到到期時間，記錄是否跳出通知。
+3. 建一個每週重複、帶位置提醒、到期在幾分鐘後的提醒，**位置要選離測試者很遠的地方**，否則位置提醒自己也可能
+   跳通知，分不出是哪一個鬧鐘 → `complete_reminder`（下一個場次會在一週後；為了看這個鬧鐘，把下一個場次用
+   `update_reminder` 的 `due_date` 改到幾分鐘後）→ 用 `list_reminders` 讀回，確認改期之後 0 分鐘鬧鐘還在；不在就
+   記錄下來，這一步的通知結果不算數 → 打開 Reminders.app 看下一個場次：記錄是否顯示這個 0 分鐘鬧鐘；等到到期時間，
+   記錄是否跳出通知。
 
 結果記在 #423。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 

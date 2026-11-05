@@ -12,20 +12,26 @@ import Foundation
 /// store adds it at the rollover save. This only reports it; nothing is written. Whether the alarm
 /// fires and whether Reminders.app shows it were not checked (release gate). The completed copy
 /// gets a new identifier and is not read here.
+///
+/// A read-back cannot tell who wrote an alarm: the actor rules out this server's other calls, not
+/// another process (Reminders.app, a sync, a second server process). So `note` says the alarm
+/// appeared, and only the measured shape is attributed to the rollover (PR #425 verify).
 struct ReminderRolloverAlarms: Equatable, Sendable {
-    /// False when the reminder could not be re-read: nothing is reported as stored.
+    /// False when the reminder could not be re-read, or was no longer the occurrence the rollover
+    /// was confirmed on: nothing is reported as stored.
     let readBack: Bool
     /// Relative alarms on the next occurrence, minutes before its due date, earliest first.
     let minutesBefore: [Double]
     /// The relative alarms in `minutesBefore` that were not on the reminder before the call.
     let added: [Double]
 
-    static let unreadNote = "The next occurrence could not be re-read after the save, so its alarms are not reported; check it in Reminders."
+    static let unreadNote = "The next occurrence could not be re-read after the save, or it had changed by then, so its alarms are not reported; check it in Reminders."
 
     static func note(added: [Double]) -> String {
         let values = added.map { "minutes_before: \(Self.format($0))" }.joined(separator: ", ")
-        let what = added.count == 1 ? "a relative alarm" : "\(added.count) relative alarms"
-        return "The store added \(what) (\(values)) to the next occurrence when it rolled this repeating reminder over; the server wrote no alarm. This was seen on iCloud for a repeating reminder with a location trigger. Whether it fires and whether Reminders.app shows it are not checked. To keep only the relative alarms you want, call update_reminder with alarms_minutes_offsets."
+        let what = added.count == 1 ? "A relative alarm" : "\(added.count) relative alarms"
+        let was = added.count == 1 ? "was" : "were"
+        return "\(what) (\(values)) appeared on the next occurrence when it was read back, and \(was) not there before this completion; this call wrote no alarm. On iCloud, the rollover of a repeating reminder with a location trigger adds a 0-minute relative alarm; one written by another app or a sync would look the same here. Whether it fires and whether Reminders.app shows it are not checked. To keep only the relative alarms you want, call update_reminder with alarms_minutes_offsets."
     }
 
     /// What `after` holds beyond `before`, as multisets.
@@ -38,9 +44,18 @@ struct ReminderRolloverAlarms: Equatable, Sendable {
         return extra
     }
 
-    /// After `reload` (`EKObject.refresh()`), the relative alarms on `item` compared with `before`.
-    static func observe(before: [Double], item: EKReminder, reload: () -> Bool) -> Self {
-        guard reload() else { return Self(readBack: false, minutesBefore: [], added: []) }
+    /// After `reload` (`EKObject.refresh()`, then a snapshot of the object; nil when it fails), the
+    /// relative alarms on `item` compared with `before`. Nil unless `next` is a confirmed rollover,
+    /// and `reload` does not run then: the identifier only names the next occurrence after one.
+    /// What `reload` found must still be that occurrence, in the same completion state; otherwise
+    /// its alarms belong to something `next_occurrence` does not describe and nothing is claimed.
+    static func observe(before: [Double], next: ReminderNextOccurrence, item: EKReminder,
+                        reload: () -> ReminderCompletionSnapshot?) -> Self? {
+        guard next.status == .confirmed, let confirmed = next.reminder else { return nil }
+        guard let reloaded = reload(), confirmed.matchesOccurrence(reloaded),
+              confirmed.isCompleted == reloaded.isCompleted else {
+            return Self(readBack: false, minutesBefore: [], added: [])
+        }
         let after = ReminderRelativeAlarms.storedMinutesBefore(item)
         return Self(readBack: true, minutesBefore: after, added: added(before: before, after: after))
     }

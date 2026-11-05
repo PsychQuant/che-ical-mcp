@@ -13,7 +13,7 @@ extension EventKitManager {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
-        // #423: the relative alarms before the save, to name the ones the store adds at the rollover.
+        // #423: the relative alarms before the save, to name the ones that appear at the rollover.
         let beforeRelativeAlarms = ReminderRelativeAlarms.storedMinutesBefore(reminder)
         ReminderCompletionWrite.applyRequest(to: reminder, completed: completed, now: Date())
         let writtenCompletionDate = reminder.completionDate
@@ -22,20 +22,23 @@ extension EventKitManager {
         // iCloud (on-device probe, PR #195) save advances a recurring reminder in
         // place, so this read already reflects the successor; a store that surfaces
         // the successor later or under another identifier yields `unknown`, never a
-        // guess. No polling and no refresh here: a later read of the cached store
-        // cannot be attributed to this save rather than to another writer.
+        // guess. No polling: a read of the cached store after a suspension point cannot
+        // be attributed to this save rather than to another writer.
         let afterSave = ReminderCompletionSnapshot(from: reminder)
         let next = ReminderNextOccurrence.evaluate(before: before, observed: afterSave,
                                                    requestedCompleted: completed)
+        // #423: the one reload, in the same synchronous stretch as `beforeRelativeAlarms` and the
+        // save, so no other call of this server can write to the reminder between them. Awaiting
+        // the undo manager below would let this actor be re-entered. Another process still can
+        // write here, so the response says the alarms appeared, not who wrote them. Reads only;
+        // the undo record uses values captured above, so it does not see the reload.
+        let rolloverAlarms = ReminderRolloverAlarms.observe(before: beforeRelativeAlarms, next: next, item: reminder,
+                                                            reload: { reminder.refresh() ? ReminderCompletionSnapshot(from: reminder) : nil })
         markNeedsRefresh()
         // Identity-guarded record for identifiable recurring items (undo refuses and
         // is discarded once the identifier resolves to a later occurrence — see
         // executeUndo); legacy identifier-keyed record for everything else.
         await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: afterSave.title, savedCompletionDate: completed ? (afterSave.completionDate ?? writtenCompletionDate) : nil))
-        // #423: only for an observed rollover (the identifier now names the next occurrence), and
-        // after the observation above and the undo record, so neither sees the reload. Reads only.
-        let rolloverAlarms = next.status == .confirmed
-            ? ReminderRolloverAlarms.observe(before: beforeRelativeAlarms, item: reminder, reload: { reminder.refresh() }) : nil
         return ReminderCompletionResult(before: before, afterSave: afterSave,
                                         requestedCompleted: completed, nextOccurrence: next, rolloverAlarms: rolloverAlarms)
     }

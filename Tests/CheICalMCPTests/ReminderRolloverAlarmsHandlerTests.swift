@@ -57,6 +57,8 @@ final class ReminderRolloverAlarmsHandlerTests: XCTestCase {
         let description = CheICalMCPServer.defineTools().first { $0.name == "complete_reminder" }?.description ?? ""
         XCTAssertTrue(description.contains("next_occurrence.alarms_minutes_offsets"), description)
         XCTAssertTrue(description.contains("alarms_note"), description)
+        XCTAssertTrue(description.contains("this call writes no alarm"), description)
+        XCTAssertFalse(description.contains("the server writes no alarm"), description)
         XCTAssertTrue(description.contains("location trigger"), description)
         XCTAssertTrue(description.contains("not checked"), description)
     }
