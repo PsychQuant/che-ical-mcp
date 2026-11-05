@@ -191,7 +191,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     // MARK: - Case 5: wide range, one-off events, at and over the ceiling
 
     func testAWideRangeAllowsExactlyTheCeilingAndRefusesOneMore() async throws {
-        let before = base.addingTimeInterval(1462 * day)
+        let before = base.addingTimeInterval(1463 * day)
         let atCeiling = try await call(BatchDeletionFake(listed: oneOffs(2000, from: base)),
                                        args(after: base, before: before, dryRun: true))
         XCTAssertEqual(atCeiling["deletions"] as? Int, 2000)
@@ -255,7 +255,10 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
             _ = try await server.executeToolCall(name: "delete_events_batch", arguments: args(after: base, dryRun: false))
             XCTFail("expected the read bound")
         } catch let error as EventRangeQuery.RangeError {
-            XCTAssertTrue(error.localizedDescription.contains("Nothing was returned or deleted"), error.localizedDescription)
+            let text = error.localizedDescription
+            XCTAssertTrue(text.contains("Nothing was deleted."), text)
+            XCTAssertTrue(text.contains("Give both after_date and before_date, at most 1460 days apart."), text)
+            XCTAssertFalse(text.contains("calendar_name"), "this mode always has one: \(text)")
         }
         let deleted = await fake.anyDelete
         XCTAssertFalse(deleted)

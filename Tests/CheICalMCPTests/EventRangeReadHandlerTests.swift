@@ -26,8 +26,8 @@ private final class EventRangeReadFake: EventRangeReadSource, @unchecked Sendabl
 }
 
 /// #332: what `list_events` and `search_events` answer over a range wider than EventKit's old cut.
-/// `event_count` stays the total (#107), so `event_count` minus the rows is what was left out, and
-/// `truncated` is set exactly when the default output bound, not the caller's `limit`, left some out.
+/// `event_count` stays the total (#107), `truncated` is set exactly when fewer rows came back than
+/// `event_count`, whoever cut them, and `default_limit` only when the default output bound did.
 final class EventRangeReadHandlerTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let base = ISO8601DateFormatter().date(from: "2001-01-01T00:00:00Z")!
@@ -57,12 +57,10 @@ final class EventRangeReadHandlerTests: XCTestCase {
         }
     }
 
-    private func call(_ tool: Tool, events: [EKEvent], days: Double, extra: [String: Value] = [:]) async throws -> [String: Any] {
+    private func call(_ tool: Tool, events: [EKEvent], days: Double, extra: [String: Value] = [:], oneSided: Bool = false) async throws -> [String: Any] {
         let server = try await CheICalMCPServer(eventRangeReadSource: EventRangeReadFake(events: events))
-        var arguments: [String: Value] = [
-            "start_date": .string(iso.string(from: base)),
-            "end_date": .string(iso.string(from: base.addingTimeInterval(days * day)))
-        ]
+        var arguments: [String: Value] = ["start_date": .string(iso.string(from: base))]
+        if !oneSided { arguments["end_date"] = .string(iso.string(from: base.addingTimeInterval(days * day))) }
         if tool == .search { arguments["keyword"] = .string("#332") }
         let raw = try await server.executeToolCall(name: tool.name, arguments: arguments.merging(extra) { $1 })
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
@@ -74,7 +72,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
 
     func testAWideRangeWithoutALimitReturnsTheDefaultAndSaysSo() async throws {
         for tool in Tool.allCases {
-            let response = try await call(tool, events: events(501), days: 1462)
+            let response = try await call(tool, events: events(501), days: 1463)
             XCTAssertEqual(try rows(response).count, 500, tool.name)
             XCTAssertEqual(response["event_count"] as? Int, 501, tool.name)
             XCTAssertEqual(response["truncated"] as? Bool, true, tool.name)
@@ -84,7 +82,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
 
     func testAWideRangeAtTheDefaultIsNotTruncated() async throws {
         for tool in Tool.allCases {
-            let response = try await call(tool, events: events(500), days: 1462)
+            let response = try await call(tool, events: events(500), days: 1463)
             XCTAssertEqual(try rows(response).count, 500, tool.name)
             XCTAssertEqual(response["event_count"] as? Int, 500, tool.name)
             XCTAssertNil(response["truncated"], tool.name)
@@ -92,27 +90,70 @@ final class EventRangeReadHandlerTests: XCTestCase {
         }
     }
 
+    /// The caller's `limit` replaces the default. `truncated` follows the rows, not who cut them: a
+    /// retry with a larger limit that still leaves rows out must not read as complete (PR #430 verify).
     func testTheCallersLimitWinsOverAWideRange() async throws {
         for tool in Tool.allCases {
-            for limit in [3, 2000] {
-                let response = try await call(tool, events: events(501), days: 1462, extra: ["limit": .int(limit)])
-                XCTAssertEqual(try rows(response).count, min(limit, 501), tool.name)
-                XCTAssertEqual(response["event_count"] as? Int, 501, tool.name)
-                XCTAssertNil(response["truncated"], tool.name)
-                XCTAssertEqual(tool.holder(response)?["limit"] as? Int, limit, tool.name)
-                XCTAssertNil(tool.holder(response)?["default_limit"], tool.name)
-            }
+            let cut = try await call(tool, events: events(501), days: 1463, extra: ["limit": .int(3)])
+            XCTAssertEqual(try rows(cut).count, 3, tool.name)
+            XCTAssertEqual(cut["event_count"] as? Int, 501, tool.name)
+            XCTAssertEqual(cut["truncated"] as? Bool, true, tool.name)
+            XCTAssertEqual(tool.holder(cut)?["limit"] as? Int, 3, tool.name)
+            XCTAssertNil(tool.holder(cut)?["default_limit"], tool.name)
+
+            let whole = try await call(tool, events: events(501), days: 1463, extra: ["limit": .int(2000)])
+            XCTAssertEqual(try rows(whole).count, 501, tool.name)
+            XCTAssertEqual(whole["event_count"] as? Int, 501, tool.name)
+            XCTAssertNil(whole["truncated"], tool.name)
+            XCTAssertNil(tool.holder(whole)?["default_limit"], tool.name)
         }
     }
 
-    func testARangeOfAtMost1461DaysIsUnchanged() async throws {
+    /// No default below the wide line, and `truncated` still follows the rows there.
+    func testARangeOfAtMost1462DaysHasNoDefault() async throws {
         for tool in Tool.allCases {
-            let response = try await call(tool, events: events(501), days: 1461)
+            let response = try await call(tool, events: events(501), days: 1462)
             XCTAssertEqual(try rows(response).count, 501, tool.name)
             XCTAssertEqual(response["event_count"] as? Int, 501, tool.name)
             XCTAssertNil(response["truncated"], tool.name)
             XCTAssertNil(tool.holder(response)?["default_limit"], tool.name)
+
+            let limited = try await call(tool, events: events(501), days: 1462, extra: ["limit": .int(3)])
+            XCTAssertEqual(limited["truncated"] as? Bool, true, tool.name)
+            XCTAssertNil(tool.holder(limited)?["default_limit"], tool.name)
         }
+    }
+
+    /// The tool's own Tip sends a search for old events here: only start_date, so the end defaults
+    /// to two years from today and the range is wide. The rows kept are the ones closest to today,
+    /// in start order, and the answer says so (PR #430 verify).
+    func testAOneSidedSearchKeepsTheRowsClosestToToday() async throws {
+        let now = Date()
+        let old = events(600)   // from 2001
+        let recent = events(100, from: now.addingTimeInterval(-50 * 3600))   // around today
+        let response = try await call(.search, events: old + recent, days: 0, oneSided: true)
+        let searched = try XCTUnwrap(response["searched_range"] as? [String: Any])
+        XCTAssertEqual(searched["is_default_range"] as? Bool, true)
+        XCTAssertEqual(response["event_count"] as? Int, 700)
+        XCTAssertEqual(response["truncated"] as? Bool, true)
+        XCTAssertEqual(response["default_limit"] as? Int, 500)
+        let titles = try rows(response).map { try XCTUnwrap($0["title"] as? String) }
+        XCTAssertEqual(titles.count, 500)
+        // The 100 around today and the 400 latest of the old ones, oldest first.
+        XCTAssertEqual(titles.first, "#332 200")
+        XCTAssertEqual(titles.last, "#332 99")
+        let starts = try rows(response).map { try XCTUnwrap($0["start_date"] as? String) }
+        XCTAssertEqual(starts, starts.sorted())
+        let note = try XCTUnwrap(response["truncation_note"] as? String)
+        for phrase in ["500 of 700", "closest to today", "limit", "narrower range"] {
+            XCTAssertTrue(note.contains(phrase), "\(phrase): \(note)")
+        }
+    }
+
+    /// With a `limit` the note about today does not apply.
+    func testACallersLimitOnASearchHasNoNote() async throws {
+        let response = try await call(.search, events: events(501), days: 1463, extra: ["limit": .int(3)])
+        XCTAssertNil(response["truncation_note"])
     }
 
     /// list_events cuts after filtering and sorting: `event_count` counts what the filter kept, and
@@ -126,7 +167,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
         XCTAssertEqual(try rows(filtered).count, 500)
         XCTAssertEqual(filtered["truncated"] as? Bool, true)
 
-        let descending = try await call(.list, events: past, days: 1462, extra: ["sort": .string("desc")])
+        let descending = try await call(.list, events: past, days: 1463, extra: ["sort": .string("desc")])
         XCTAssertEqual(try rows(descending).first?["title"] as? String, "#332 500")
     }
 
@@ -145,8 +186,9 @@ final class EventRangeReadHandlerTests: XCTestCase {
             let result = await server.handleToolCallForTesting(name: tool.name, arguments: arguments)
             XCTAssertEqual(result.isError, true, tool.name)
             guard case .text(let text, _, _)? = result.content.first else { return XCTFail(tool.name) }
-            XCTAssertTrue(text.contains("more than 20,000"), text)
+            XCTAssertTrue(text.contains("more than 200,000"), text)
             XCTAssertTrue(text.contains("Narrow the range"), text)
+            XCTAssertTrue(text.contains("A limit does not lift"), text)
         }
     }
 }

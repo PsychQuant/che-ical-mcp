@@ -126,8 +126,6 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(found, [first, later], "occurrences share the series identifier; the start keeps them apart")
     }
 
-    // MARK: delete_events_batch by date range
-
     // MARK: #332: the read bound
 
     /// `count` distinct occurrences per span, each starting inside its span.
@@ -138,7 +136,7 @@ final class EventRangeQueryTests: XCTestCase {
         }
     }
 
-    /// Over a range wider than `previousCutDays`, the read passes one below and exactly at
+    /// Over a range wider than `wideRangeDays`, the read passes one below and exactly at
     /// `maxEventsRead` and stops at one over.
     func testTheReadBoundBoundaryOverAWideRange() throws {
         // Three spans: the first holds the count, the others nothing, so "after the span" is exact.
@@ -153,7 +151,7 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(try read(EventRangeQuery.maxEventsRead - 1).count, EventRangeQuery.maxEventsRead - 1)
         XCTAssertEqual(try read(EventRangeQuery.maxEventsRead).count, EventRangeQuery.maxEventsRead)
         XCTAssertThrowsError(try read(EventRangeQuery.maxEventsRead + 1)) { error in
-            guard case .tooManyEvents(let limit, let from, let to, let readThrough)? = error as? EventRangeQuery.RangeError else {
+            guard case .tooManyEvents(let limit, let from, let to, let readThrough, _)? = error as? EventRangeQuery.RangeError else {
                 return XCTFail("expected tooManyEvents, got \(error)")
             }
             XCTAssertEqual(limit, EventRangeQuery.maxEventsRead)
@@ -181,40 +179,120 @@ final class EventRangeQueryTests: XCTestCase {
                        EventRangeQuery.maxEventsRead)
     }
 
-    /// The refusal is a trusted message that states the range, the bound, that it is approximate,
-    /// that nothing was returned or deleted, and both ways out, on the tool that spells it differently too.
-    func testTheReadBoundMessage() {
+    /// The refusal is a trusted message that states the range and the bound, says the count can
+    /// pass it by a part's size, and gives the way out each path really has.
+    func testTheReadBoundMessage() throws {
         let end = start.addingTimeInterval(36_500 * day)
         let through = start.addingTimeInterval(1460 * day)
-        let error = EventRangeQuery.RangeError.tooManyEvents(limit: 20_000, from: start, to: end, readThrough: through)
+        let error = EventRangeQuery.RangeError.tooManyEvents(limit: 200_000, from: start, to: end, readThrough: through)
         XCTAssertTrue((error as Error) is TrustedErrorMessage)
-        let text = error.localizedDescription
-        for phrase in ["more than 20,000", "at most about", "Nothing was returned or deleted", "Narrow the range",
-                       "calendar_name", "calendar_names on find_duplicate_events",
-                       EventRangeQuery.localText(start), EventRangeQuery.localText(end), EventRangeQuery.localText(through)] {
-            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        let common = ["more than 200,000", "which is read whole", "by that part's size",
+                      EventRangeQuery.localText(start), EventRangeQuery.localText(end), EventRangeQuery.localText(through)]
+        func text(_ path: EventRangeQuery.ReadPath) throws -> String {
+            let worded = EventRangeQuery.worded(error, for: path) as? EventRangeQuery.RangeError
+            return try XCTUnwrap(worded?.localizedDescription)
         }
+
+        let listing = error.localizedDescription
+        for phrase in common + ["Nothing was returned.", "Narrow the range", "read one with calendar_name", "A limit does not lift"] {
+            XCTAssertTrue(listing.contains(phrase), "\(phrase): \(listing)")
+        }
+        XCTAssertFalse(listing.contains("at most about"), listing)
+
+        let deletion = try text(.deletion)
+        for phrase in common + ["Nothing was deleted.", "Give both after_date and before_date, at most 1460 days apart."] {
+            XCTAssertTrue(deletion.contains(phrase), "\(phrase): \(deletion)")
+        }
+        // By-range delete always has calendar_name, and it has no limit.
+        for phrase in ["calendar_name", "limit"] { XCTAssertFalse(deletion.contains(phrase), deletion) }
+
+        // Only different calendars are compared: one calendar would answer a false duplicate_count of 0.
+        let duplicates = try text(.duplicates)
+        for phrase in common + ["Nothing was returned.", "name fewer calendars in calendar_names, at least two", "different calendars"] {
+            XCTAssertTrue(duplicates.contains(phrase), "\(phrase): \(duplicates)")
+        }
+        XCTAssertFalse(duplicates.contains("read one"), duplicates)
     }
 
-    /// A range of at most `previousCutDays` is not bounded, whatever it holds (as before #325).
+    /// Any other error is left as it is.
+    func testWordingLeavesOtherErrorsAlone() {
+        let other = EventRangeQuery.RangeError.tooWide(days: 9)
+        XCTAssertEqual(EventRangeQuery.worded(other, for: .deletion) as? EventRangeQuery.RangeError, other)
+    }
+
+    /// A range of at most `wideRangeDays` is not bounded, whatever it holds.
     func testANarrowRangeIsNotBoundedOnTheRead() throws {
-        // 1461 days: two spans, each returning more than the bound on its own.
-        let end = start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day)
+        // Two spans, each returning more than the bound on its own.
+        let end = start.addingTimeInterval(Double(EventRangeQuery.wideRangeDays) * day)
         let found = try EventRangeQuery.collect(from: start, to: end, query: perSpan(EventRangeQuery.maxEventsRead + 5), key: key)
         XCTAssertEqual(found.count, 2 * (EventRangeQuery.maxEventsRead + 5))
     }
 
-    /// One second past `previousCutDays` is the first range the bound applies to.
-    func testTheReadBoundStartsJustPastThePreviousCut() {
-        let end = start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day + 1)
+    /// One second past `wideRangeDays` is the first range the bound applies to.
+    func testTheReadBoundStartsJustPastTheWideLine() {
+        let end = start.addingTimeInterval(Double(EventRangeQuery.wideRangeDays) * day + 1)
         XCTAssertThrowsError(try EventRangeQuery.collect(from: start, to: end, query: perSpan(EventRangeQuery.maxEventsRead + 1), key: key))
+    }
+
+    func testTheWideLineLeavesADayOfSlackOverThePreviousCut() {
+        XCTAssertEqual(EventRangeQuery.previousCutDays, 1461)
+        XCTAssertEqual(EventRangeQuery.wideRangeDays, 1462)
+        let cut = TimeInterval(EventRangeQuery.previousCutDays) * day
+        XCTAssertFalse(EventRangeQuery.widensPreviousCut(.init(start: start, end: start.addingTimeInterval(cut + 3600))))
+        XCTAssertFalse(EventRangeQuery.widensPreviousCut(.init(start: start, end: start.addingTimeInterval(cut + day))))
+        XCTAssertTrue(EventRangeQuery.widensPreviousCut(.init(start: start, end: start.addingTimeInterval(cut + day + 1))))
+    }
+
+    // MARK: #332: the default ±2 years
+
+    private func instant(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+
+    /// The default search range is never wide, whatever the zone: across a clock change ±2 years is
+    /// 1461 days and an hour, and Casablanca moves its clocks for most of a year (PR #430 verify).
+    func testTheDefaultSearchRangeIsNeverWide() throws {
+        let zones = ["Asia/Taipei", "UTC", "America/New_York", "America/Los_Angeles", "Europe/London",
+                     "Europe/Berlin", "Australia/Sydney", "Africa/Casablanca"]
+        for name in zones {
+            let zone = try XCTUnwrap(TimeZone(identifier: name), name)
+            var now = instant("2026-01-01T12:00:00Z")
+            for _ in 0..<(365 * 5) {
+                XCTAssertFalse(EventRangeQuery.widensPreviousCut(EventRangeQuery.defaultSearchRange(now: now, zone: zone)),
+                               "\(name) \(now)")
+                now.addTimeInterval(day)
+            }
+        }
+    }
+
+    /// The case verify computed: on a US host, 1461 days and an hour.
+    func testTheDefaultSearchRangeAcrossAClockChange() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let range = EventRangeQuery.defaultSearchRange(now: instant("2027-03-10T17:00:00Z"), zone: zone)
+        XCTAssertEqual(range.start, instant("2025-03-10T16:00:00Z"))
+        XCTAssertEqual(range.end, instant("2029-03-10T17:00:00Z"))
+        XCTAssertEqual(range.end.timeIntervalSince(range.start), 1461 * day + 3600)
+        XCTAssertFalse(EventRangeQuery.widensPreviousCut(range))
+    }
+
+    /// Gregorian years whatever calendar the host chose in region settings (a Hebrew or Chinese year
+    /// is not one, which made ±2 years up to 18 days too long), in all three places that default it.
+    func testEveryDefaultRangeGoesThroughTheOneHelper() throws {
+        let server = try SourcePins.source("Server.swift")
+        let handler = try XCTUnwrap(SourcePins.body(of: "private func handleSearchEvents(", in: server))
+        XCTAssertEqual(SourcePins.ranges(of: "EventRangeQuery.defaultSearchRange(now:", in: handler).count, 1)
+        XCTAssertTrue(SourcePins.ranges(of: "byAdding: .year", in: handler).isEmpty)
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        for declaration in ["func findSimilarEvents(", "func searchEvents(\n        keywords: [String],"] {
+            let body = try XCTUnwrap(SourcePins.body(of: declaration, in: manager), declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "EventRangeQuery.defaultSearchRange(now:", in: body).count, 1, declaration)
+            XCTAssertTrue(SourcePins.ranges(of: "byAdding: .year", in: body).isEmpty, declaration)
+        }
     }
 
     // MARK: #332: the output bound of list_events / search_events
 
     func testTheOutputBoundAppliesOnlyToAWideRangeWithoutACallerLimit() {
-        let narrow = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day))
-        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.previousCutDays + 1) * day))
+        let narrow = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.wideRangeDays) * day))
+        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.wideRangeDays + 1) * day))
         let over = Array(0...EventRangeQuery.defaultWideOutput)   // one more than the default
         let exact = Array(over.dropLast())
 
@@ -236,8 +314,32 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertNil(small.defaultLimit)
 
         XCTAssertEqual(EventRangeQuery.defaultWideOutput, 500)
-        XCTAssertEqual(EventRangeQuery.maxEventsRead, 20_000)
+        XCTAssertEqual(EventRangeQuery.maxEventsRead, 200_000)
     }
+
+    /// search_events has no sort: the default keeps the rows closest to today, in start order, ties
+    /// by read order, so an answer on a wide history is not all from its oldest years.
+    func testTheNearestCutKeepsTheRowsClosestToNow() {
+        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(9000 * day))
+        let now = start.addingTimeInterval(3000 * day)
+        // Oldest first, as a read gives them: one row a day around `now`, plus two at the same distance.
+        let starts = (0..<(EventRangeQuery.defaultWideOutput + 300)).map { now.addingTimeInterval(Double($0 - 400) * day) }
+        let cut = EventRangeQuery.boundedNearNow(starts, requested: nil, searched: wide, now: now, start: { $0 })
+        XCTAssertEqual(cut.defaultLimit, EventRangeQuery.defaultWideOutput)
+        XCTAssertEqual(cut.rows.count, EventRangeQuery.defaultWideOutput)
+        XCTAssertEqual(cut.rows, cut.rows.sorted(), "start order")
+        let farthestKept = cut.rows.map { abs($0.timeIntervalSince(now)) }.max()!
+        let left = starts.filter { !cut.rows.contains($0) }
+        XCTAssertLessThanOrEqual(farthestKept, left.map { abs($0.timeIntervalSince(now)) }.min()!)
+        XCTAssertTrue(cut.rows.contains(now))
+
+        // Not cut, or the caller's limit: unchanged, in read order.
+        let few = [now, start, now.addingTimeInterval(day)]
+        XCTAssertEqual(EventRangeQuery.boundedNearNow(few, requested: nil, searched: wide, now: now, start: { $0 }).rows, few)
+        XCTAssertEqual(EventRangeQuery.boundedNearNow(starts, requested: 2, searched: wide, now: now, start: { $0 }).rows, Array(starts.prefix(2)))
+    }
+
+    // MARK: delete_events_batch by date range
 
     /// One bound given: the other side reaches 100 years out, not `distantPast` / `distantFuture`
     /// (about a thousand spans, refused by the ceiling), and the range fits the chunked query.

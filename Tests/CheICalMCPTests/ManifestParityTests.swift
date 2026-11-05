@@ -252,33 +252,43 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
-    /// #332: the five range reads state the read bound and when it applies, in defineTools() and in
-    /// the manifest; the two with an output default state that too; the numbers are the constants.
+    /// #332: the five range reads state the read bound, when it applies and its rate, in
+    /// defineTools() and in the manifest; the two with an output default state that too, each with
+    /// its own rows and where `default_limit` sits; the numbers are the constants.
     func testRangeReadToolsStateTheReadBound() throws {
         let data = try Data(contentsOf: try locateManifest())
         let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let entries = manifest?["tools"] as? [[String: Any]] ?? []
-        XCTAssertEqual(EventRangeQuery.maxEventsRead, 20_000)
+        func declared(_ name: String) -> String { CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? "" }
+        func summary(_ name: String) -> String { entries.first { $0["name"] as? String == name }?["description"] as? String ?? "" }
+        XCTAssertEqual(EventRangeQuery.maxEventsRead, 200_000)
         XCTAssertEqual(EventRangeQuery.defaultWideOutput, 500)
-        XCTAssertEqual(EventRangeQuery.previousCutDays, 1461)
+        XCTAssertEqual(EventRangeQuery.wideRangeDays, 1462)
         for name in ["list_events", "search_events", "check_conflicts", "find_duplicate_events", "delete_events_batch"] {
-            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
-            XCTAssertTrue(declared.contains("1461 days"), "defineTools() \(name)")
-            XCTAssertTrue(declared.contains("more than about 20,000"), "defineTools() \(name): \(declared)")
-            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
-            XCTAssertTrue(summary.contains("about 20,000 occurrences"), "mcpb/manifest.json \(name): \(summary)")
-            XCTAssertTrue(summary.contains("1461 days"), "mcpb/manifest.json \(name): \(summary)")
+            XCTAssertTrue(declared(name).contains("1462 days"), "defineTools() \(name)")
+            XCTAssertFalse(declared(name).contains("1461 days"), "defineTools() \(name)")
+            XCTAssertTrue(declared(name).contains("about 200,000 event occurrences (about 2,000 a year over 100 years"), "defineTools() \(name): \(declared(name))")
+            XCTAssertTrue(summary(name).contains("about 200,000 occurrences"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertTrue(summary(name).contains("1462 days"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertFalse(summary(name).contains("1461 days"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertFalse(declared(name).contains("20,000 "), name)
         }
         for name in ["list_events", "search_events"] {
-            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
-            XCTAssertTrue(declared.contains("without limit at most 500 events are returned, with truncated: true and default_limit; event_count is still the total"), "defineTools() \(name): \(declared)")
-            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
-            XCTAssertTrue(summary.contains("without limit at most 500 events are returned with truncated: true"), "mcpb/manifest.json \(name): \(summary)")
+            XCTAssertTrue(declared(name).contains("limit does not lift it"), "defineTools() \(name)")
+            XCTAssertTrue(declared(name).contains("truncated: true whenever fewer events are returned than event_count, a limit's cut included; event_count is still the total"), "defineTools() \(name): \(declared(name))")
+            XCTAssertTrue(summary(name).contains("without limit at most 500 events are returned"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertTrue(summary(name).contains("truncated: true when fewer events are returned than event_count"), "mcpb/manifest.json \(name): \(summary(name))")
             let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
-            XCTAssertTrue(schema.contains("except over a range longer than 1461 days: at most 500, with truncated: true"), "limit of \(name)")
+            XCTAssertTrue(schema.contains("except over a range longer than 1462 days: at most 500"), "limit of \(name)")
+            XCTAssertTrue(schema.contains("A limit does not lift the read bound"), "limit of \(name)")
         }
-        let duplicates = CheICalMCPServer.defineTools().first { $0.name == "find_duplicate_events" }?.description ?? ""
-        XCTAssertTrue(duplicates.contains("calendar_names"), "its parameter is calendar_names: \(duplicates)")
+        XCTAssertTrue(declared("list_events").contains("the first in the requested sort, with metadata.default_limit"), declared("list_events"))
+        XCTAssertTrue(declared("search_events").contains("those closest to today, sorted by start, with default_limit and truncation_note"), declared("search_events"))
+        XCTAssertTrue(declared("search_events").contains("With only start_date or only end_date the other side stays two years from today, so such a range can be longer than 1462 days"), declared("search_events"))
+        XCTAssertTrue(summary("search_events").contains("those closest to today"), summary("search_events"))
+        // Only different calendars are compared, so one calendar is not a way out.
+        XCTAssertTrue(declared("find_duplicate_events").contains("name fewer calendars in calendar_names, at least two"), declared("find_duplicate_events"))
+        XCTAssertTrue(declared("delete_events_batch").contains("give both after_date and before_date, at most 1460 days apart"), declared("delete_events_batch"))
     }
 
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
