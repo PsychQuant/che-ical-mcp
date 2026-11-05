@@ -14,19 +14,24 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
 
     private let listed: [BatchDeletionListedEvent]
     private let result: BatchDeleteResult
+    /// #332: what the listing throws (the read bound), if anything.
+    private let listError: Error?
     private(set) var listCalls: [ListCall] = []
     private(set) var deleteCalls: [DeleteCall] = []
     private(set) var seriesCalls: [[String]] = []
 
     init(listed: [BatchDeletionListedEvent],
-         result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: [])) {
+         result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: []),
+         listError: Error? = nil) {
         self.listed = listed
         self.result = result
+        self.listError = listError
     }
 
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent] {
         listCalls.append(ListCall(start: startDate, end: endDate, calendarName: calendarName, calendarSource: calendarSource))
+        if let listError { throw listError }
         return listed
     }
 
@@ -238,6 +243,22 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         let calls = await fake.deleteCalls
         XCTAssertEqual(calls.first?.span, .thisEvent)
         XCTAssertEqual(calls.first?.identifiers, ["one-0", "one-1", "one-2"])
+    }
+
+    // MARK: - #332: the read bound stops a by-date-range delete before anything is deleted
+
+    func testTheReadBoundStopsTheDeleteWithNothingDeleted() async throws {
+        let fake = BatchDeletionFake(listed: [], listError: EventRangeQuery.RangeError.tooManyEvents(
+            limit: EventRangeQuery.maxEventsRead, from: base, to: base.addingTimeInterval(36_500 * day), readThrough: base.addingTimeInterval(1460 * day)))
+        let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
+        do {
+            _ = try await server.executeToolCall(name: "delete_events_batch", arguments: args(after: base, dryRun: false))
+            XCTFail("expected the read bound")
+        } catch let error as EventRangeQuery.RangeError {
+            XCTAssertTrue(error.localizedDescription.contains("Nothing was returned or deleted"), error.localizedDescription)
+        }
+        let deleted = await fake.anyDelete
+        XCTAssertFalse(deleted)
     }
 
     // MARK: - Case 9: events without an identifier are neither sent nor counted

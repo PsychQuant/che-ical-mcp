@@ -252,6 +252,35 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #332: the five range reads state the read bound and when it applies, in defineTools() and in
+    /// the manifest; the two with an output default state that too; the numbers are the constants.
+    func testRangeReadToolsStateTheReadBound() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        XCTAssertEqual(EventRangeQuery.maxEventsRead, 20_000)
+        XCTAssertEqual(EventRangeQuery.defaultWideOutput, 500)
+        XCTAssertEqual(EventRangeQuery.previousCutDays, 1461)
+        for name in ["list_events", "search_events", "check_conflicts", "find_duplicate_events", "delete_events_batch"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains("1461 days"), "defineTools() \(name)")
+            XCTAssertTrue(declared.contains("more than about 20,000"), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("about 20,000 occurrences"), "mcpb/manifest.json \(name): \(summary)")
+            XCTAssertTrue(summary.contains("1461 days"), "mcpb/manifest.json \(name): \(summary)")
+        }
+        for name in ["list_events", "search_events"] {
+            let declared = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(declared.contains("without limit at most 500 events are returned, with truncated: true and default_limit; event_count is still the total"), "defineTools() \(name): \(declared)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("without limit at most 500 events are returned with truncated: true"), "mcpb/manifest.json \(name): \(summary)")
+            let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("except over a range longer than 1461 days: at most 500, with truncated: true"), "limit of \(name)")
+        }
+        let duplicates = CheICalMCPServer.defineTools().first { $0.name == "find_duplicate_events" }?.description ?? ""
+        XCTAssertTrue(duplicates.contains("calendar_names"), "its parameter is calendar_names: \(duplicates)")
+    }
+
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
     /// manifest, as the reminder read tools do (#231).
     func testEventReadToolsDescribeAlarms() throws {

@@ -374,6 +374,8 @@ Calendar names are now matched **case-insensitively**. If not found, the error m
 - **`list_reminders`**: `filter` (all/incomplete/completed/overdue), `sort` (due_date/creation_date/priority/title), `limit`
 - **`delete_events_batch`**: date range mode (`before_date`/`after_date`) + `dry_run` preview
 
+**Reads over a wide range (#332):** a range of at most 1461 days is read in full, whatever it holds. Over a longer range, `list_events`, `search_events`, `check_conflicts`, `find_duplicate_events` and `delete_events_batch` by date range stop with an error, returning nothing and deleting nothing, once the read has gathered more than about 20,000 occurrences; one open-ended daily series reaches that in about 55 years. It is "about" because the count is checked after each 1460-day part, which EventKit reads in one call, so a read can pass it by up to one part's worth. Narrow the range, or name one calendar. A one-sided `delete_events_batch` always searches 100 years, so on a calendar holding such a series it needs both `after_date` and `before_date`. Over a range longer than 1461 days, `list_events` and `search_events` without `limit` return at most 500 events, with `truncated: true` and `default_limit`; `event_count` is still the total, and a `limit` you give replaces the 500.
+
 > **Breaking Change**: `list_events` and `list_reminders` now return `{events/reminders: [...], metadata: {...}}` instead of a plain array.
 
 ---

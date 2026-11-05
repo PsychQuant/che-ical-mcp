@@ -128,6 +128,117 @@ final class EventRangeQueryTests: XCTestCase {
 
     // MARK: delete_events_batch by date range
 
+    // MARK: #332: the read bound
+
+    /// `count` distinct occurrences per span, each starting inside its span.
+    private func perSpan(_ count: Int) -> (Date, Date) -> [StubEvent] {
+        { from, to in
+            (0..<count).map { StubEvent(id: "\(from.timeIntervalSince1970)-\($0)", start: from.addingTimeInterval(Double($0) + 2),
+                                        end: from.addingTimeInterval(Double($0) + 3)) }
+        }
+    }
+
+    /// Over a range wider than `previousCutDays`, the read passes one below and exactly at
+    /// `maxEventsRead` and stops at one over.
+    func testTheReadBoundBoundaryOverAWideRange() throws {
+        // Three spans: the first holds the count, the others nothing, so "after the span" is exact.
+        let end = start.addingTimeInterval(Double(EventRangeQuery.maxSpanDays * 3) * day)
+        func read(_ count: Int) throws -> [StubEvent] {
+            var calls = 0
+            return try EventRangeQuery.collect(from: start, to: end, query: { from, to in
+                calls += 1
+                return calls == 1 ? self.perSpan(count)(from, to) : []
+            }, key: key)
+        }
+        XCTAssertEqual(try read(EventRangeQuery.maxEventsRead - 1).count, EventRangeQuery.maxEventsRead - 1)
+        XCTAssertEqual(try read(EventRangeQuery.maxEventsRead).count, EventRangeQuery.maxEventsRead)
+        XCTAssertThrowsError(try read(EventRangeQuery.maxEventsRead + 1)) { error in
+            guard case .tooManyEvents(let limit, let from, let to, let readThrough)? = error as? EventRangeQuery.RangeError else {
+                return XCTFail("expected tooManyEvents, got \(error)")
+            }
+            XCTAssertEqual(limit, EventRangeQuery.maxEventsRead)
+            XCTAssertEqual(from, self.start)
+            XCTAssertEqual(to, end)
+            XCTAssertEqual(readThrough, self.start.addingTimeInterval(Double(EventRangeQuery.maxSpanDays) * self.day))
+        }
+    }
+
+    /// The read stops after the span that passed the bound, not at the end of the range, and a span
+    /// is read whole: the count can pass the bound by up to one span's worth.
+    func testTheReadStopsAfterTheSpanThatPassesTheBound() throws {
+        let end = start.addingTimeInterval(Double(EventRangeQuery.maxSpanDays * 50) * day)
+        let perSpanCount = EventRangeQuery.maxEventsRead / 4
+        var queried = 0
+        XCTAssertThrowsError(try EventRangeQuery.collect(from: start, to: end, query: { queried += 1; return self.perSpan(perSpanCount)($0, $1) }, key: key))
+        XCTAssertEqual(queried, 5, "4 × \(perSpanCount) is the bound, not over it; the fifth span passes it")
+    }
+
+    /// An occurrence two spans both return counts once toward the bound.
+    func testTheReadBoundCountsEachOccurrenceOnce() throws {
+        let end = start.addingTimeInterval(Double(EventRangeQuery.maxSpanDays * 2) * day)
+        let same = perSpan(EventRangeQuery.maxEventsRead)(start, end)
+        XCTAssertEqual(try EventRangeQuery.collect(from: start, to: end, query: { _, _ in same }, key: key).count,
+                       EventRangeQuery.maxEventsRead)
+    }
+
+    /// The refusal is a trusted message that states the range, the bound, that it is approximate,
+    /// that nothing was returned or deleted, and both ways out, on the tool that spells it differently too.
+    func testTheReadBoundMessage() {
+        let end = start.addingTimeInterval(36_500 * day)
+        let through = start.addingTimeInterval(1460 * day)
+        let error = EventRangeQuery.RangeError.tooManyEvents(limit: 20_000, from: start, to: end, readThrough: through)
+        XCTAssertTrue((error as Error) is TrustedErrorMessage)
+        let text = error.localizedDescription
+        for phrase in ["more than 20,000", "at most about", "Nothing was returned or deleted", "Narrow the range",
+                       "calendar_name", "calendar_names on find_duplicate_events",
+                       EventRangeQuery.localText(start), EventRangeQuery.localText(end), EventRangeQuery.localText(through)] {
+            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        }
+    }
+
+    /// A range of at most `previousCutDays` is not bounded, whatever it holds (as before #325).
+    func testANarrowRangeIsNotBoundedOnTheRead() throws {
+        // 1461 days: two spans, each returning more than the bound on its own.
+        let end = start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day)
+        let found = try EventRangeQuery.collect(from: start, to: end, query: perSpan(EventRangeQuery.maxEventsRead + 5), key: key)
+        XCTAssertEqual(found.count, 2 * (EventRangeQuery.maxEventsRead + 5))
+    }
+
+    /// One second past `previousCutDays` is the first range the bound applies to.
+    func testTheReadBoundStartsJustPastThePreviousCut() {
+        let end = start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day + 1)
+        XCTAssertThrowsError(try EventRangeQuery.collect(from: start, to: end, query: perSpan(EventRangeQuery.maxEventsRead + 1), key: key))
+    }
+
+    // MARK: #332: the output bound of list_events / search_events
+
+    func testTheOutputBoundAppliesOnlyToAWideRangeWithoutACallerLimit() {
+        let narrow = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.previousCutDays) * day))
+        let wide = EventRangeQuery.Span(start: start, end: start.addingTimeInterval(Double(EventRangeQuery.previousCutDays + 1) * day))
+        let over = Array(0...EventRangeQuery.defaultWideOutput)   // one more than the default
+        let exact = Array(over.dropLast())
+
+        XCTAssertEqual(EventRangeQuery.bounded(over, requested: nil, searched: narrow).rows.count, over.count)
+        XCTAssertNil(EventRangeQuery.bounded(over, requested: nil, searched: narrow).defaultLimit)
+
+        let cut = EventRangeQuery.bounded(over, requested: nil, searched: wide)
+        XCTAssertEqual(cut.rows, exact)
+        XCTAssertEqual(cut.defaultLimit, EventRangeQuery.defaultWideOutput)
+
+        XCTAssertEqual(EventRangeQuery.bounded(exact, requested: nil, searched: wide).rows, exact)
+        XCTAssertNil(EventRangeQuery.bounded(exact, requested: nil, searched: wide).defaultLimit, "nothing was left out")
+
+        let large = EventRangeQuery.bounded(over, requested: 2000, searched: wide)
+        XCTAssertEqual(large.rows, over, "the caller's limit wins")
+        XCTAssertNil(large.defaultLimit)
+        let small = EventRangeQuery.bounded(over, requested: 3, searched: narrow)
+        XCTAssertEqual(small.rows, [0, 1, 2])
+        XCTAssertNil(small.defaultLimit)
+
+        XCTAssertEqual(EventRangeQuery.defaultWideOutput, 500)
+        XCTAssertEqual(EventRangeQuery.maxEventsRead, 20_000)
+    }
+
     /// One bound given: the other side reaches 100 years out, not `distantPast` / `distantFuture`
     /// (about a thousand spans, refused by the ceiling), and the range fits the chunked query.
     func testDeletionRangeWithOnlyAfterDateReaches100YearsAhead() throws {

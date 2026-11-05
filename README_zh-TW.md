@@ -378,6 +378,8 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 - **`list_reminders`**：`filter`（all/incomplete/completed/overdue）、`sort`（due_date/creation_date/priority/title）、`limit`
 - **`delete_events_batch`**：日期範圍模式（`before_date`/`after_date`）+ `dry_run` 預覽
 
+**大範圍讀取的上限（#332）：** 1461 天以內的範圍不論有多少事件都完整讀取。超過 1461 天時，`list_events`、`search_events`、`check_conflicts`、`find_duplicate_events` 與依日期範圍的 `delete_events_batch` 一旦讀到超過約 20,000 個場次就會停下並回錯誤，不回傳任何結果，也不刪除任何東西；一個沒有結束日的每日系列大約 55 年就會到這個數字。之所以說「約」，是因為每讀完一段 1460 天才檢查一次，而 EventKit 一次讀完一段，所以實際讀入量最多可能超過上限一段的量。請縮小範圍或指定一個行事曆。單邊的 `delete_events_batch` 一律搜尋 100 年，所以行事曆裡有這種系列時，要同時給 `after_date` 與 `before_date`。範圍超過 1461 天時，`list_events` 與 `search_events` 沒給 `limit` 最多回傳 500 筆，並帶 `truncated: true` 與 `default_limit`；`event_count` 仍是總數，你給的 `limit` 會取代這個 500。
+
 > **重大變更**：`list_events` 和 `list_reminders` 現在回傳 `{events/reminders: [...], metadata: {...}}` 而非純陣列。
 
 ---
