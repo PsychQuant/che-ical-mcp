@@ -631,4 +631,16 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(text.contains("recurrence_note"), "\(place): \(text)")
         }
     }
+
+    /// PR #425 verify (#423): complete_reminder says what it reports after a rollover, in both places.
+    func testCompleteReminderDescribesTheRolloverAlarms() throws {
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "complete_reminder" }?.description ?? ""
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "complete_reminder" }?["description"] as? String ?? ""
+        for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+            XCTAssertTrue(text.contains("alarms_minutes_offsets"), "\(place): \(text)")
+            XCTAssertTrue(text.contains("alarms_note"), "\(place): \(text)")
+        }
+    }
 }
