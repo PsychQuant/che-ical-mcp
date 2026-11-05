@@ -15,7 +15,16 @@ import Foundation
 /// reminder will have no due date (it would never fire) or a date-only one: on a date-only
 /// reminder EventKit stores it and reads it back, but when Reminders fires it, and from which
 /// instant, was not measured (#333 step 0, 2026-11-05). `[]` is always allowed.
+///
+/// #433: a relative alarm earlier than the due time changes what the Reminders.app list shows. The
+/// row shows the earliest time-based alarm, so 15:30 with `[15]` reads 15:15 while the stored due
+/// date stays 15:30; no stored shape written through EventKit showed the due time and alerted
+/// early (14 shapes, 2026-11-05). An Early Reminder set in the app reads back as one absolute alarm
+/// at the due time, so EventKit does not expose it. The offsets stay; `earlyAlarmNote` says this.
 enum ReminderRelativeAlarms {
+    /// In `alarms_note` and in each tool's `alarms_minutes_offsets` description.
+    static let earlyAlarmNote = "The due date is unchanged and the notification comes early, but the Reminders.app list shows the earliest alarm time (due minus the offset) instead of the due time. An Early Reminder set in Reminders.app is different: EventKit does not expose it, so this server can neither write nor read it."
+
     enum DueState: Equatable { case none, dateOnly, timed }
 
     static let noDueMessage = "alarms_minutes_offsets needs a due date with a time: the reminder will have no due date, and a relative alarm without one never fires. Pass due_date with a time. Nothing was written."

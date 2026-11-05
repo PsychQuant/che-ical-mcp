@@ -599,6 +599,18 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("alarms_note"), summary)
     }
 
+    /// #433: the manifest says what Reminders.app's list shows for each tool that writes the offsets.
+    func testTheManifestDescribesTheAlarmDisplay() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let tools = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["create_reminder", "update_reminder", "create_reminders_batch"] {
+            let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("earliest alarm time"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("alarms_note"), "\(name): \(summary)")
+        }
+    }
+
     /// PR #420 verify round 1: update_reminder names recurrence and clear_recurrence, and that a
     /// rule change does not move the due date, in its description and its manifest summary.
     func testUpdateReminderDescribesTheRecurrenceChange() throws {

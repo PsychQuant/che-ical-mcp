@@ -573,7 +573,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false.")
+                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false. When a stored offset is positive, alarms_note says: \(ReminderRelativeAlarms.earlyAlarmNote)")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -620,7 +620,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for. When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them.")
+                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for. When a stored offset is positive, alarms_note says: \(ReminderRelativeAlarms.earlyAlarmNote) When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them.")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -1066,7 +1066,7 @@ class CheICalMCPServer {
                                     "alarms_minutes_offsets": .object([
                                         "type": .string("array"),
                                         "items": .object(["type": .string("integer")]),
-                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row.")
+                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row. When a stored offset is positive, the row's alarms_note says: \(ReminderRelativeAlarms.earlyAlarmNote)")
                                     ])
                                 ]),
                                 "required": .array([.string("title"), .string("calendar_name")])
@@ -1894,10 +1894,13 @@ class CheICalMCPServer {
     static func storedAlarmFields(requested: [Int], stored: [Double]?) -> [String: Any] {
         guard let stored else { return [:] }
         var fields: [String: Any] = ["alarms_minutes_offsets": stored]
+        var notes: [String] = []
         if ReminderRelativeAlarms.differs(requested: requested, stored: stored) {
             fields["alarms_differ"] = true
-            fields["alarms_note"] = "The reminder holds different relative alarms than requested; check it in Reminders."
+            notes.append("The reminder holds different relative alarms than requested; check it in Reminders.")
         }
+        if stored.contains(where: { $0 > 0 }) { notes.append(ReminderRelativeAlarms.earlyAlarmNote) }   // #433
+        if !notes.isEmpty { fields["alarms_note"] = notes.joined(separator: " ") }
         return fields
     }
 
