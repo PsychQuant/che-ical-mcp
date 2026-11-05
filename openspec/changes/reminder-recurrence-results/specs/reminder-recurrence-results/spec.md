@@ -22,7 +22,7 @@ A successful save SHALL return operation.status succeeded even when the returned
 
 ### Requirement: Report only observed successors
 
-The completion result SHALL contain next_occurrence with confirmed, unknown or not_applicable status. confirmed SHALL require an observed, same-identity incomplete reminder with a valid later due date and matching recurrence/calendar. The observation SHALL be taken once, synchronously, from the saved object before any suspension point; the handler SHALL NOT poll or force a refresh. Missing, ambiguous or unchanged observations SHALL be unknown. A failed observation SHALL NOT repeat the write or report the successful write as failed.
+The completion result SHALL contain next_occurrence with confirmed, unknown or not_applicable status. confirmed SHALL require an observed, same-identity incomplete reminder with a valid later due date and matching recurrence/calendar; a rule whose occurrence_count is exactly one lower with every other field equal SHALL count as matching, since a rollover lowers it on iCloud (#429). The observation that decides the status SHALL be taken once, synchronously, from the saved object before any suspension point; the handler SHALL NOT poll or force a refresh for it. A confirmed result MAY add one re-read in that same synchronous stretch, for the next occurrence's relative alarms only (#423). Missing, ambiguous or unchanged observations SHALL be unknown. A failed observation SHALL NOT repeat the write or report the successful write as failed.
 
 #### Scenario: No successor can be identified
 - WHEN completion saves successfully but the known ID cannot identify a successor

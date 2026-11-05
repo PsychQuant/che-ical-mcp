@@ -276,8 +276,10 @@ build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
    `[15, 0]`、有 `alarms_note`；`list_reminders` 讀回下一個場次一致；
 2. 同樣但不帶位置提醒 → 回應 `[15]`、沒有 `alarms_note`。
 3. 其他形狀，每個都帶位置提醒（2026-11-05 量過，記錄有沒有變）：`end_date`、date-only、daily、monthly、yearly 都是
-   `confirmed`、沒有 `alarms_read_back: false`、有 `alarms_note`；每週加 `occurrence_count: 3` 是 `unknown`
-   （`recurrence_unverified`），沒有鬧鐘欄位。出現 `alarms_read_back: false` 就是重讀比對擋掉了正常 rollover，要回報。
+   `confirmed`、沒有 `alarms_read_back: false`、有 `alarms_note`；每週加 `occurrence_count: 3` 也是 `confirmed`
+   （#429），`next_occurrence` 的 rollover 把 count 減一，最後一個場次原地完成，是 `unknown`（`successor_not_observed`）。
+   出現 `alarms_read_back: false` 就是重讀比對擋掉了正常 rollover，要回報；`occurrence_count` 的提醒出現
+   `recurrence_unverified`，就是 rollover 改了 count 減一以外的東西（只在 iCloud 量過），也要回報。
 4. 移除再完成：第 1 步之後用 `update_reminder` 把清單改成 `[15]`（只帶位置時用 `[]`）→ 再 `complete_reminder` →
    回應沒有 `alarms_note`、`list_reminders` 讀回的下一個場次沒有 0 分鐘鬧鐘（2026-11-05 量過三筆，之後一到兩次完成都沒有加回來）。
 5. **長駐 process**（`--cli` 每次都是新 store，證明不了這一步）：在重啟後的 session MCP 上，先用行為探測確認是新
@@ -285,6 +287,10 @@ build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
    沒有 `alarms_read_back: false` → 用另一個 `--cli` process 讀回比對。回應是 `[15]` 或 `false` 而 `--cli` 讀到
    `[15, 0]`，就是 reload 沒有讀到 rollover 的結果。2026-11-05 用長駐 stdio server 量過八筆（完成之前分別是剛建立、
    列表、更新、等 3 秒、完成另一筆），都正確；這個 reload 不跑 `refreshSourcesIfNecessary()`。
+   再加 count 系列（#429）：同一個 session 建每週、`occurrence_count: 3`、帶位置提醒與 `[15]` 的提醒，連續完成兩次 →
+   兩次都是 `confirmed`、`[15, 0]`，第一次有 `alarms_note`、第二次沒有，都沒有 `alarms_read_back: false` → 第三次原地
+   完成，`unknown`（`successor_not_observed`）→ 用 `--cli` 讀回，最後一筆的 `occurrence_count` 是 1。2026-11-05 用長駐
+   stdio server 量過兩筆（有無位置提醒各一），都正確。
 
 **需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 
