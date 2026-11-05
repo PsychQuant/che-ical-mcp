@@ -148,8 +148,9 @@ final class StdioEOFDrainTests: XCTestCase {
     func testWithNoRequestEOFStillEndsTheServer() throws {
         let run = try run("")
         try checkRunBounds(run, "no request")   // #417
-        try HostLoad.live.checkWithinBound(run.seconds, bound: 10, "EOF with no request (it must not wait for the drain timeout)")
+        // The run is complete once its bounds pass, so these come before the duration check.
         XCTAssertEqual(run.terminationStatus, 0)
         XCTAssertTrue(run.stdoutLines.isEmpty, "stdout: \(run.stdoutLines)")
+        try HostLoad.live.checkWithinBound(run.seconds, bound: 10, "EOF with no request (it must not wait for the drain timeout)")
     }
 }

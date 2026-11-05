@@ -84,6 +84,23 @@ final class HostLoadTests: XCTestCase {
         XCTAssertEqual(overloaded.failures(), [], "a skip records no failure")
     }
 
+    /// The `Duration` overload converts whole seconds and the fraction (PR #422 verify round 2: a
+    /// conversion that kept only the attoseconds made every 5 s bound unreachable).
+    func testTheDurationOverloadConvertsWholeSecondsAndTheFraction() {
+        XCTAssertEqual(HostLoad.seconds(.seconds(6)), 6)
+        XCTAssertEqual(HostLoad.seconds(.milliseconds(1500)), 1.5)
+        XCTAssertEqual(HostLoad.seconds(.milliseconds(200)), 0.2, accuracy: 1e-12)
+        for (elapsed, failures) in [(Duration.seconds(6), 1), (.milliseconds(5000), 1), (.milliseconds(4900), 0),
+                                    (.milliseconds(5100), 1)] {
+            let quiet = recording(1, cores: 18)
+            XCTAssertNoThrow(try quiet.load.checkWithinBound(elapsed, bound: .seconds(5), "drain"))
+            XCTAssertEqual(quiet.failures().count, failures, "\(elapsed) against 5 s")
+        }
+        let sub = recording(1, cores: 18)
+        XCTAssertNoThrow(try sub.load.checkWithinBound(.milliseconds(250), bound: .milliseconds(200), "median"))
+        XCTAssertEqual(sub.failures().count, 1, "250 ms against the 200 ms target")
+    }
+
     /// Exactly at the bound is over it, as with the `XCTAssertLessThan(arrival, 5.0)` it replaced.
     func testCheckWithinBoundFailsExactlyAtTheBound() {
         let quiet = recording(1, cores: 18)

@@ -115,12 +115,7 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
     func testBannerBuildMedianIsUnderTheTarget() throws {
         let detector = worstCaseDetector()
         let median = BannerLatency.median(runs: 15) { _ = buildBanner(detector) }
-        try HostLoad.live.checkWithinBound(Self.seconds(median), bound: Self.seconds(latencyTarget),
-                                           "Median banner build (the #127 target)")
-    }
-
-    private static func seconds(_ duration: Duration) -> TimeInterval {
-        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+        try HostLoad.live.checkWithinBound(median, bound: latencyTarget, "Median banner build (the #127 target)")
     }
 
     /// The measurement can see a slow source: one that sleeps past the target per call makes the

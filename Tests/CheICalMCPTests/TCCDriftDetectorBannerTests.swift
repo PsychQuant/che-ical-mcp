@@ -294,13 +294,15 @@ final class TCCDriftDetectorBannerTests: XCTestCase {
         )
         let elapsed = Date().timeIntervalSince(start)
 
-        // #417: judged before the output is read.
+        // #417: the cap and the drain are judged before the output is read. Once they pass, the
+        // output is complete, so it is asserted on before the duration check, which a skip would
+        // otherwise keep from running.
         try checkSpawnBounds(run, "The `until` spawn (`until` matched, so the cap should not end the wait)")
-        try HostLoad.live.checkWithinBound(elapsed, bound: 5.0,
-            "The helper's return once `until` matches (not the 10 s cap)")
         XCTAssertTrue(run.stderr.contains("[ready] up"), "Got stderr: \(run.stderr)")
         let matchedAfter = try XCTUnwrap(run.untilMatchedAfter, "The predicate matched, so the arrival time must be reported")
         XCTAssertLessThanOrEqual(matchedAfter, elapsed)
+        try HostLoad.live.checkWithinBound(elapsed, bound: 5.0,
+            "The helper's return once `until` matches (not the 10 s cap)")
     }
 
     /// A child that ignores stdin EOF is stopped at the `maxWait` cap and reported as

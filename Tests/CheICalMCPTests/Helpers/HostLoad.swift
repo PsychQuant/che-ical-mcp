@@ -82,6 +82,17 @@ struct HostLoad {
         try report(Self.verdict(exceeded: !(elapsed < bound), what: measured, snapshot: read()), file: file, line: line)
     }
 
+    /// `checkWithinBound` for a `Duration` (in-process clocks), converted here so the conversion is
+    /// tested once, with injected values, instead of in each test file (PR #422 verify round 2).
+    func checkWithinBound(_ elapsed: Duration, bound: Duration, _ what: String,
+                          file: StaticString = #filePath, line: UInt = #line) throws {
+        try checkWithinBound(Self.seconds(elapsed), bound: Self.seconds(bound), what, file: file, line: line)
+    }
+
+    static func seconds(_ duration: Duration) -> TimeInterval {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+    }
+
     func checkNotTimedOut(_ timedOut: Bool, bound: TimeInterval, _ what: String,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         let measured = String(format: "%@ timed out, bound %.1f s", what, bound)
