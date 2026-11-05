@@ -55,8 +55,8 @@ enum EventRangeQuery {
     /// #332: the most event occurrences one range read may gather over a range wider than
     /// `wideRangeDays`; past it the read stops with `RangeError.tooManyEvents`. A safety valve against
     /// an abnormal calendar, not an everyday limit, and a default the maintainer may change: reading
-    /// is cheap (measured 2026-11-05 on throwaway calendars, no user calendar: 72,983 occurrences in
-    /// 1.7 s and 105 MB), and 20,000 refused ordinary calls, such as a one-sided span all delete on a
+    /// is cheap (measured 2026-11-05 on throwaway calendars, no user calendar: 218,949 occurrences in
+    /// about 4.1 s of CPU and 276 MB), and 20,000 refused ordinary calls, such as a one-sided span all delete on a
     /// calendar with four weekly series (PR #430 verify). It is about 2,000 occurrences a year over
     /// 100 years, 500 a year over the 400-year ceiling. A narrower range is not limited. Checked after
     /// each span, and a span is one EventKit call that is read whole, so a read can pass this by
