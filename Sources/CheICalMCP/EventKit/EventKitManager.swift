@@ -1045,11 +1045,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
-    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future'."
+    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future' (which cannot be undone)."
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
     /// by `event_ids`) reports it. That tool by `event_ids` cannot take an `occurrence_date`, so the
     /// text names the ways a batch caller has to a single occurrence instead.
-    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'. The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future'."
+    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'. The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future' (which cannot be undone)."
 
     /// #335 item 6: a reason as a batch row reports it: the edited-before hint becomes
     /// `standInEditedBeforeBatchReason`; every other reason (the all-edited hint, whose `/RID=` ids
@@ -1209,7 +1209,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if DetachedOccurrenceSpan.refusesSeriesProperty(
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span,
             changesAccount: crossesAccounts, clearsRecurrence: clearRecurrence) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesPropertyReason)
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesPropertyReason(wholeSeries: applyToAll))
         }
         // #268 verify round 4: an occurrence edit that would move the series to another account.
         // An occurrence addressed by its own detached id resolves as masterEvent itself; it is an
@@ -1247,10 +1247,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Read from the values the event will have after this update: the planned start, in the
         // zone WeekdayCheck.zone picks (the host zone for an all-day result).
         let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
-        // #416 round 2: the detached object has no rules of its own; a write over the series still
-        // has to fit the series' rule.
+        // #416 round 2: the detached object has no rules of its own; a new start over the series
+        // still has to fit the series' rule. Without a new start there is nothing to check: the
+        // occurrence may already show another weekday (it does not spread, round 3).
         let rulesForWeekday = masterEvent.isDetached && (applyToAll || span != .thisEvent)
-            ? seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules
+            ? (startDate == nil ? nil : seriesObject(ofOccurrence: identifier)?.recurrenceRules) : event.recurrenceRules
         let existingWeeklyDays: [Int]? = {
             guard !clearRecurrence, // skip if clearing recurrence
                   recurrenceRule == nil, // only check existing rules if not replacing

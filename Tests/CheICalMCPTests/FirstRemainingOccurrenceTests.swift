@@ -111,9 +111,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
                                                                     occurrenceStart: standIn, standInStart: standIn))
     }
 
-    /// An occurrence's own id is not a way round the refusal: updating the whole series from an
-    /// occurrence edited on its own splits it too (device, iCloud, 2026-10-20, on a series that
-    /// had lost no occurrence), so the message does not recommend it.
+    /// An occurrence's own id is not a way round this refusal, which is about an unedited first
+    /// occurrence left: updating from a later edited occurrence splits the series too (device,
+    /// iCloud, 2026-10-20 and #416), so the message does not recommend it.
     func testTheRefusalDoesNotRecommendAnOccurrencesOwnId() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")

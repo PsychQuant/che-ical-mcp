@@ -18,11 +18,16 @@ import EventKit
 ///
 /// Also refused (PR #431 round 2): through such an identifier with span `all` or `future`,
 /// `clear_recurrence` (it answered updated and changed nothing, measured) and a calendar of another
-/// account (not measured, and only shown safe within one account), and with any span an
-/// `occurrence_date` that is not this occurrence (it was ignored, and the write started at the
+/// account (not measured, and only shown safe within one account), and with span `this` or `future`
+/// an `occurrence_date` that is not this occurrence (it was ignored, and the write started at the
 /// occurrence the id names, measured). A new `recurrence` is not refused: with span `all` from the
 /// first occurrence and from the first left, and with span `future` from a middle one, it did what
 /// it says (measured).
+///
+/// An update that is let through does not spread what the occurrence holds. PR #431 round 3 edited
+/// an occurrence's title and notes, its time (+2h) or its weekday, then wrote only `location` through
+/// its id: span `all` from the first occurrence, from the first left, and with the fourth edited too,
+/// span `future` from a middle one. Every occurrence kept its title, start, end and notes.
 ///
 /// Not refused:
 /// - `update_event` span `future`: it does what the span says, from this occurrence on, and a split
@@ -37,7 +42,8 @@ import EventKit
 /// Sources: `/RID=` and `isDetached` were measured reliable on Google (#320), and these refusals ran
 /// on iCloud only. On a source with no `/RID=`, which Exchange may be (not measured), the rest of the
 /// series cannot be listed, so span `all` is refused with `unknownReason`, also for a one-off that
-/// such a source reports as detached.
+/// such a source reports as detached. On iCloud the same text answers for an occurrence past the
+/// scan: an open-ended series started more than about five years ago, edited lately.
 ///
 /// The reasons are fixed strings: no EventKit text, no user input.
 enum DetachedOccurrenceSpan {
@@ -59,22 +65,27 @@ enum DetachedOccurrenceSpan {
         let occurrenceCount: Int
         let frequency: EKRecurrenceFrequency
         let interval: Int
-        /// A pattern within the period (the 5th Friday, the 31st): a period can hold no occurrence.
-        let hasPattern: Bool
+        /// A filter that can leave a period with no occurrence: the 31st, January only, the 5th
+        /// occurrence of a weekday in a month.
+        let hasFilter: Bool
+        /// Days of the week: a filter on a daily, monthly or yearly rule, but not on a weekly one,
+        /// where every week holds them.
+        let hasDaysOfTheWeek: Bool
 
         init(_ rule: EKRecurrenceRule) {
             endDate = rule.recurrenceEnd?.endDate
             occurrenceCount = rule.recurrenceEnd?.occurrenceCount ?? 0
             frequency = rule.frequency
             interval = rule.interval
-            hasPattern = rule.daysOfTheWeek != nil || rule.daysOfTheMonth != nil || rule.daysOfTheYear != nil
-                || rule.weeksOfTheYear != nil || rule.monthsOfTheYear != nil || rule.setPositions != nil
+            hasFilter = rule.daysOfTheMonth != nil || rule.daysOfTheYear != nil || rule.weeksOfTheYear != nil
+                || rule.monthsOfTheYear != nil || rule.setPositions != nil
+            hasDaysOfTheWeek = rule.daysOfTheWeek != nil
         }
     }
 
     /// The identifier names one occurrence: the object is detached, or the identifier carries a
-    /// `/RID=` slot. Other sources may give an edited occurrence no `/RID=` (#320, not checked), so
-    /// the object's `isDetached` is read too.
+    /// `/RID=` slot. `/RID=` was measured reliable on Google (#320); Exchange was not measured and
+    /// may give none, so the object's `isDetached` is read too.
     static func addressesOneOccurrence(identifier: String, isDetached: Bool) -> Bool {
         isDetached || identifier.contains(slotMarker)
     }
@@ -87,19 +98,21 @@ enum DetachedOccurrenceSpan {
     }
 
     /// The latest a rule can reach, or nil when that cannot be shown. With a count, each period
-    /// holds at least one occurrence for a daily or weekly rule. A monthly or yearly one can skip
-    /// periods when it has a pattern or starts after the 28th, so its count says nothing.
+    /// holds at least one occurrence only without a filter, and a monthly or yearly rule also needs
+    /// to start by the 28th, as later days skip short months. The day is read in `calendar`, so an
+    /// occurrence near midnight in another zone can read a day off; a count near 60 would be needed
+    /// for that to matter.
     static func lastPossibleSlot(of rule: RuleExtent, firstStart: Date, calendar: Calendar) -> Date? {
         if let end = rule.endDate { return end }
-        guard rule.occurrenceCount > 0 else { return nil }
+        guard rule.occurrenceCount > 0, !rule.hasFilter else { return nil }
         let periods = rule.occurrenceCount * rule.interval
         switch rule.frequency {
         case .daily:
-            return calendar.date(byAdding: .day, value: periods, to: firstStart)
+            return rule.hasDaysOfTheWeek ? nil : calendar.date(byAdding: .day, value: periods, to: firstStart)
         case .weekly:
             return calendar.date(byAdding: .day, value: 7 * periods, to: firstStart)
         case .monthly, .yearly:
-            guard !rule.hasPattern, calendar.component(.day, from: firstStart) <= 28 else { return nil }
+            guard !rule.hasDaysOfTheWeek, calendar.component(.day, from: firstStart) <= 28 else { return nil }
             return calendar.date(byAdding: rule.frequency == .monthly ? .month : .year, value: periods, to: firstStart)
         @unknown default:
             return nil
@@ -185,13 +198,39 @@ enum DetachedOccurrenceSpan {
     /// `seriesDeleteReason` as a `delete_events_batch` row: the other rows may have been deleted.
     static let seriesDeleteBatchReason = "This identifier names one occurrence of a recurring series, edited on its own, and span 'all' through it would delete only this occurrence, not the series. \(seriesDeleteRoute) This row deleted nothing."
 
-    /// With no way to list the series nothing is known about what span `all` would do, and the routes
-    /// of the other reasons would loop: on such a source the first occurrence's id looks the same.
+    /// With no way to list the series, or an occurrence past the scan, nothing is known about what
+    /// span `all` would do, and on a source with no `/RID=` the routes of the other reasons would
+    /// loop: the first occurrence's id looks the same.
     static func unknownReason(suffix: String) -> String {
         "This identifier is reported as one occurrence edited on its own, and the rest of its series cannot be listed from it, so span 'all' cannot be shown to do what it says. Use span 'this' on this occurrence, which also does what span 'all' would if this is a single event reported wrongly. \(suffix)"
     }
 
-    static let seriesPropertyReason = "event_id names one occurrence of a recurring series, edited on its own, and span 'all' or 'future' through it cannot take clear_recurrence or a calendar of another account: clear_recurrence through it would answer updated and change nothing, and a move to another account was not shown safe from an occurrence. To make either change, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'; if that is refused too, the change is not supported on this series. Nothing was written."
+    /// No route for span `future`: span `all` would reach earlier occurrences the caller did not ask
+    /// for, and it cannot be undone.
+    static func seriesPropertyReason(wholeSeries: Bool) -> String {
+        let span = wholeSeries ? "'all'" : "'future'"
+        let opening = "event_id names one occurrence of a recurring series, edited on its own, and span \(span) through it cannot take clear_recurrence or a calendar of another account: clear_recurrence through it would answer updated and change nothing, and a move to another account was not shown safe from an occurrence."
+        let way = wholeSeries
+            ? "To make either change, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'; if that is refused too, the change is not supported on this series."
+            : "Neither is supported from an occurrence edited on its own."
+        return "\(opening) \(way) Nothing was written."
+    }
 
-    static let occurrenceDateReason = "event_id names one occurrence, edited on its own, and occurrence_date is another day. To act on that other occurrence, use that occurrence's own id from list_events; to act on this one, leave occurrence_date out. Nothing was changed."
+    /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
+    /// slot first, then the rest in the caller's order. A row's check counts the others in the call
+    /// as deleted, so the result must not depend on the order: with the series' row first and the
+    /// first occurrence edited, that row was refused and the occurrence's row then deleted it alone
+    /// (measured, with a `Set`'s order).
+    static func occurrenceRowsFirst(_ identifiers: [String]) -> [String] {
+        var seen = Set<String>()
+        let unique = identifiers.filter { seen.insert($0).inserted }
+        func slot(_ identifier: String) -> Int? {
+            identifier.range(of: slotMarker).map { Int(identifier[$0.upperBound...]) ?? .max }
+        }
+        let occurrences = unique.enumerated().compactMap { index, id in slot(id).map { (index, id, $0) } }
+            .sorted { ($0.2, $0.0) < ($1.2, $1.0) }.map(\.1)
+        return occurrences + unique.filter { slot($0) == nil }
+    }
+
+    static let occurrenceDateReason = "event_id names one occurrence, edited on its own, and occurrence_date is another day. To act on that other occurrence, use the id list_events shows for that occurrence, with its occurrence_date; to act on this one, leave occurrence_date out. Nothing was changed."
 }

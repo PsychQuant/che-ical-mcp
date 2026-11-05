@@ -387,10 +387,13 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
    就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
 2. 每週 5 次的系列，單獨改第 3 場 → 用該場次的 id 帶 span `all` 的 `update_event` 與 `delete_event`：要被拒絕，
    系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報；
-3. 同一個系列，單獨改第 1 場 → 用第 1 場的 id：`update_event` span `all` 在 iCloud 上會更新全部場次，`delete_event`
-   span `future` 會刪掉整個系列，span `all` 會被拒絕。該來源的 id 沒有 `/RID=` 時前者會被拒絕（列不出系列），
-   這是已知限制，記下來，不算 bug；
-4. 第一場被刪、第二場與第四場單獨改過 → 用第二場的 id 帶 span `all` 的 `update_event`：iCloud 上全部場次更新、新 id
+3. 新建一個系列，單獨改第 1 場的標題與備註、再把時間 +2h → 記下每一場的 title、start、end、notes → 用第 1 場的 id：
+   先 `delete_event` span `all`，要被拒絕；再 `update_event` span `all` 只改 `location`：iCloud 上全部場次都有
+   `location`，**逐欄比對**，每一場的 title、start、end、notes 都不變（改過的內容沒有擴散）；最後 `delete_event`
+   span `future`，整個系列刪除。該來源的 id 沒有 `/RID=` 時 span `all` 的 update 會被拒絕（列不出系列），這是已知限制，
+   記下來，不算 bug；
+4. 新建一個系列，第一場刪掉、第二場與第四場單獨改過（第二場改時間、第四場改標題與備註）→ 記下每一場 → 用第二場的 id
+   帶 span `all` 的 `update_event` 只改 `location`：iCloud 上全部場次更新、新 id，**逐欄比對**同第 3 步
    （2026-11-05）。
 
 結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
