@@ -50,7 +50,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         XCTAssertEqual(result["action"] as? String, "created")
         XCTAssertEqual(result["alarms_minutes_offsets"] as? [Double], [60, 15])
         XCTAssertNil(result["alarms_differ"])
-        XCTAssertEqual(result["alarms_note"] as? String, ReminderRelativeAlarms.earlyAlarmNote, "#433")
+        XCTAssertEqual(result["alarms_note"] as? String, ReminderRelativeAlarms.alarmDisplayNote, "#433")
         let requests = await fake.created
         XCTAssertEqual(requests.first?.alarmOffsets, [15, 60])
     }
@@ -70,18 +70,22 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         XCTAssertEqual(result["alarms_differ"] as? Bool, true)
         let note = try XCTUnwrap(result["alarms_note"] as? String)
         XCTAssertTrue(note.contains("different relative alarms"), note)
-        XCTAssertTrue(note.contains(ReminderRelativeAlarms.earlyAlarmNote), "#433: the stored one is still early: \(note)")
+        XCTAssertTrue(note.contains(ReminderRelativeAlarms.alarmDisplayNote), "#433: the stored one still sets the list's time: \(note)")
     }
 
-    /// #433: `alarms_note` carries the display difference when a stored relative alarm is earlier
-    /// than the due time, next to the mismatch note and not instead of it.
+    /// #433: `alarms_note` carries the display difference when the earliest stored relative alarm
+    /// is not at the due time, next to the mismatch note and not instead of it. `[0, -15]` was not
+    /// measured: by the fit to the measured rows the list shows the due time, so no note.
     func testTheNoteFollowsTheStoredAlarms() {
-        let early = ReminderRelativeAlarms.earlyAlarmNote
+        let display = ReminderRelativeAlarms.alarmDisplayNote
         let cases: [(String, [Int], [Double], String?)] = [
-            ("early", [15], [15], early),
-            ("early and at the due time", [15, 0], [15, 0], early),
+            ("early", [15], [15], display),
+            ("early and at the due time", [15, 0], [15, 0], display),
+            ("early and late", [15, -15], [15, -15], display),
+            ("only late", [-15], [-15], display),
+            ("all late", [-15, -60], [-15, -60], display),
             ("at the due time", [0], [0], nil),
-            ("after the due time", [-15], [-15], nil),
+            ("at the due time and late", [0, -15], [0, -15], nil),
             ("none", [], [], nil)
         ]
         for (name, requested, stored, expected) in cases {
@@ -91,36 +95,40 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         }
         let mismatch = CheICalMCPServer.storedAlarmFields(requested: [15], stored: [])
         XCTAssertEqual(mismatch["alarms_differ"] as? Bool, true)
-        XCTAssertFalse((mismatch["alarms_note"] as? String ?? "").contains(early), "nothing early was stored")
+        XCTAssertFalse((mismatch["alarms_note"] as? String ?? "").contains(display), "no alarm was stored")
         XCTAssertTrue(CheICalMCPServer.storedAlarmFields(requested: [15], stored: nil).isEmpty, "not read back, nothing claimed")
     }
 
-    func testTheEarlyAlarmNoteStatesWhatWasMeasured() {
-        let note = ReminderRelativeAlarms.earlyAlarmNote
-        for part in ["due date is unchanged", "notification comes early", "Reminders.app list", "earliest alarm time",
-                     "due minus the offset", "Early Reminder"] {
+    /// Both directions: the list shows the earliest alarm, which is not always an earlier time.
+    func testTheDisplayNoteStatesWhatWasMeasured() {
+        let note = ReminderRelativeAlarms.alarmDisplayNote
+        for part in ["due date is unchanged", "Reminders.app list", "earliest alarm", "instead of the due time",
+                     "due minus the largest offset", "later than the due time", "positive offset notifies early", "Early Reminder"] {
             XCTAssertTrue(note.contains(part), "\(part): \(note)")
         }
     }
 
-    func testAnUpdateWritingAnEarlyAlarmCarriesTheNote() async throws {
+    func testAnUpdateThatMovesTheListTimeCarriesTheNote() async throws {
         let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
         let early = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "alarms_minutes_offsets": .array([.int(15)])]))
-        XCTAssertEqual(early["alarms_note"] as? String, ReminderRelativeAlarms.earlyAlarmNote)
+        XCTAssertEqual(early["alarms_note"] as? String, ReminderRelativeAlarms.alarmDisplayNote)
+        let late = try object(await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "alarms_minutes_offsets": .array([.int(-15)])]))
+        XCTAssertEqual(late["alarms_note"] as? String, ReminderRelativeAlarms.alarmDisplayNote)
         let cleared = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "alarms_minutes_offsets": .array([])]))
         XCTAssertNil(cleared["alarms_note"])
     }
 
-    func testABatchRowWritingAnEarlyAlarmCarriesTheNote() async throws {
+    func testABatchRowThatMovesTheListTimeCarriesTheNote() async throws {
         let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
         let raw = try await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array([
             .object(["title": .string("a"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(15)])]),
             .object(["title": .string("b"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(0)])]),
             .object(["title": .string("c"), "due_date": .string("2026-12-10T09:00:00")])])])
         let rows = try XCTUnwrap(try object(raw)["results"] as? [[String: Any]])
-        XCTAssertEqual(rows.map { $0["alarms_note"] as? String }, [ReminderRelativeAlarms.earlyAlarmNote, nil, nil])
+        XCTAssertEqual(rows.map { $0["alarms_note"] as? String }, [ReminderRelativeAlarms.alarmDisplayNote, nil, nil])
     }
 
     /// #433: every tool that writes the offsets says what the list then shows.
@@ -129,13 +137,13 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         for name in ["create_reminder", "update_reminder"] {
             let tool = try XCTUnwrap(tools.first { $0.name == name })
             let parameter = tool.inputSchema.objectValue?["properties"]?.objectValue?["alarms_minutes_offsets"]?.objectValue?["description"]?.stringValue ?? ""
-            XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.earlyAlarmNote), "\(name): \(parameter)")
+            XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.alarmDisplayNote), "\(name): \(parameter)")
             XCTAssertTrue(parameter.contains("alarms_note"), "\(name): \(parameter)")
         }
         let batch = try XCTUnwrap(tools.first { $0.name == "create_reminders_batch" })
         let rows = batch.inputSchema.objectValue?["properties"]?.objectValue?["reminders"]?.objectValue?["items"]?.objectValue?["properties"]
         let parameter = rows?.objectValue?["alarms_minutes_offsets"]?.objectValue?["description"]?.stringValue ?? ""
-        XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.earlyAlarmNote), parameter)
+        XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.alarmDisplayNote), parameter)
     }
 
     func testASkippedDuplicateSaysTheAlarmsWereNotApplied() async throws {

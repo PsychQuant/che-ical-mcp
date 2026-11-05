@@ -16,14 +16,14 @@ import Foundation
 /// reminder EventKit stores it and reads it back, but when Reminders fires it, and from which
 /// instant, was not measured (#333 step 0, 2026-11-05). `[]` is always allowed.
 ///
-/// #433: a relative alarm earlier than the due time changes what the Reminders.app list shows. The
-/// row shows the earliest time-based alarm, so 15:30 with `[15]` reads 15:15 while the stored due
-/// date stays 15:30; no stored shape written through EventKit showed the due time and alerted
+/// #433: a relative alarm can change what the Reminders.app list shows. The row shows the earliest
+/// time-based alarm, so 15:30 with `[15]` reads 15:15 and with `[-15]` reads 15:45, while the stored
+/// due date stays 15:30; no stored shape written through EventKit showed the due time and alerted
 /// early (14 shapes, 2026-11-05). An Early Reminder set in the app reads back as one absolute alarm
-/// at the due time, so EventKit does not expose it. The offsets stay; `earlyAlarmNote` says this.
+/// at the due time, so EventKit does not expose it. The offsets stay; `alarmDisplayNote` says this.
 enum ReminderRelativeAlarms {
     /// In `alarms_note` and in each tool's `alarms_minutes_offsets` description.
-    static let earlyAlarmNote = "The due date is unchanged and the notification comes early, but the Reminders.app list shows the earliest alarm time (due minus the offset) instead of the due time. An Early Reminder set in Reminders.app is different: EventKit does not expose it, so this server can neither write nor read it."
+    static let alarmDisplayNote = "The due date is unchanged, but the Reminders.app list shows the earliest alarm time (due minus the largest offset, so later than the due time when every offset is negative) instead of the due time. A positive offset notifies early. An Early Reminder set in Reminders.app is different: EventKit does not expose it, so this server can neither write nor read it."
 
     enum DueState: Equatable { case none, dateOnly, timed }
 
@@ -78,6 +78,13 @@ enum ReminderRelativeAlarms {
     static func storedMinutesBefore(_ item: EKCalendarItem) -> [Double] {
         (item.alarms ?? []).filter(isRelative).map(\.relativeOffset).filter(\.isFinite)
             .sorted().map { -$0 / 60 + 0 }
+    }
+
+    /// #433: whether the earliest stored relative alarm is off the due time, so the list shows that
+    /// alarm's time. `[0, -15]` is false by the fit to the measured rows; that shape was not measured.
+    static func movesListTime(stored: [Double]) -> Bool {
+        guard let earliest = stored.max() else { return false }
+        return earliest != 0
     }
 
     static func differs(requested: [Int], stored: [Double]) -> Bool {
