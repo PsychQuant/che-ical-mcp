@@ -295,6 +295,19 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(declared("delete_events_batch").contains("give both after_date and before_date, at most 1460 days apart"), declared("delete_events_batch"))
     }
 
+    /// #434: the five tools that take `recurrence` say that any other key is refused.
+    func testRecurrenceToolsStateThatUnknownKeysAreRefused() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["create_event", "create_events_batch", "update_event", "create_reminder", "update_reminder"] {
+            let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("so a misspelled bound cannot leave the series open-ended"), "defineTools() \(name)")
+            let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("unknown recurrence keys"), "mcpb/manifest.json \(name): \(summary)")
+        }
+    }
+
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
     /// manifest, as the reminder read tools do (#231).
     func testEventReadToolsDescribeAlarms() throws {

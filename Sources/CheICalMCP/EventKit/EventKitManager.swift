@@ -2916,6 +2916,13 @@ struct RecurrenceRuleInput: Sendable {
     static let maxInterval = 1000
     static let maxOccurrenceCount = 10_000
 
+    /// #434: the keys a `recurrence` object may have; `parseRecurrenceRule` refuses any other. The
+    /// tools that do not take `excluded_occurrence_dates` refuse it with their own message.
+    static func inputKeys(allowsExclusions: Bool) -> [String] {
+        ["frequency", "interval", "end_date", "occurrence_count", "days_of_week", "days_of_month"]
+            + (allowsExclusions ? ["excluded_occurrence_dates"] : [])
+    }
+
     let frequency: Frequency
     let interval: Int
     let endDate: Date?

@@ -294,7 +294,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. Any other key is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -365,7 +365,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
+                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. Any other key is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -536,7 +536,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"daily\"} for daily reminder."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"daily\"} for daily reminder. Any other key is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -643,7 +643,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false, with recurrence_read_back_note, when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule."),
+                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false, with recurrence_read_back_note, when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule. Any other key is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -871,7 +871,7 @@ class CheICalMCPServer {
                                     "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
-                                        "description": .string("Recurrence rule"),
+                                        "description": .string("Recurrence rule. Any other key than these fails this item, so a misspelled bound cannot leave the series open-ended."),
                                         "properties": .object([
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
@@ -3395,6 +3395,13 @@ class CheICalMCPServer {
         guard let recurrenceValue = arguments["recurrence"] else { return nil }
         guard let recurrenceDict = recurrenceValue.objectValue else {
             throw ToolError.invalidParameter("recurrence must be an object (e.g. {\"frequency\": \"daily\"}), got a non-object value")
+        }
+        // #434: a key that is not read is dropped, and a misspelled bound leaves a rule with no end,
+        // so the series never ends. Checked first, so a misspelled frequency is named as a key. The
+        // key is not echoed (#37), as delete_calendar does (#328).
+        guard Set(recurrenceDict.keys).isSubset(of: RecurrenceRuleInput.inputKeys(allowsExclusions: true)) else {
+            let accepted = RecurrenceRuleInput.inputKeys(allowsExclusions: allowsExclusions)
+            throw ToolError.invalidParameter("recurrence accepts only \(accepted.dropLast().joined(separator: ", ")) and \(accepted[accepted.count - 1]); another key was given (check its spelling). Nothing was written for this item.")
         }
 
         guard let freqStr = recurrenceDict["frequency"]?.stringValue else {
