@@ -29,6 +29,9 @@ struct ReminderUpdateRequest: Sendable {
     var realignToDue = false
     /// #333: replaces (or with `[]` clears) the relative alarms only; absolute and location alarms stay.
     var alarmOffsets: [Int]? = nil
+    /// #354: replaces the reminder's recurrence rule (`recurrence`), or removes it (`clear_recurrence`).
+    var recurrenceRule: RecurrenceRuleInput? = nil
+    var clearRecurrence = false
 }
 /// #227: `update_reminder` reports how the start date and absolute alarms followed the due date.
 struct ReminderUpdateResult: Sendable {
@@ -41,6 +44,8 @@ struct ReminderUpdateResult: Sendable {
     /// PR #415 verify round 1: set when the update left relative alarms on a reminder without a
     /// timed due (`ReminderRelativeAlarms.leftoverNote`).
     var leftoverAlarmsNote: String? = nil
+    /// #354: the rule and due read off the saved reminder, when the request touched the rule.
+    var recurrence: ReminderRecurrenceWrite.ReadBack? = nil
 }
 protocol ReminderWriteSource: Sendable {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult
@@ -60,6 +65,7 @@ extension EventKitManager: ReminderWriteSource {
                                  calendarName: request.calendarName, calendarSource: request.calendarSource,
                                  locationTrigger: request.locationTrigger, clearLocationTrigger: request.clearLocationTrigger,
                                  clearDueDate: request.clearDueDate, realignToDue: request.realignToDue,
-                                 alarmOffsets: request.alarmOffsets)
+                                 alarmOffsets: request.alarmOffsets,
+                                 recurrenceRule: request.recurrenceRule, clearRecurrence: request.clearRecurrence)
     }
 }

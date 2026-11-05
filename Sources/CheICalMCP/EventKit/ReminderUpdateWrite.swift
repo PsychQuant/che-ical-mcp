@@ -57,6 +57,8 @@ enum ReminderUpdateWrite {
         // rely on that.
         try checkRealign(request, existingDue: reminder.dueDateComponents)
         try checkAlarms(request, existingDue: reminder.dueDateComponents)
+        try ReminderRecurrenceWrite.check(request, existingDue: reminder.dueDateComponents,
+                                          repeats: reminder.hasRecurrenceRules, isCompleted: reminder.isCompleted)   // #354
         if let title = request.title { reminder.title = title }
         if let notes = request.notes { reminder.notes = notes }
         if let priority = request.priority { reminder.priority = priority }
@@ -91,6 +93,9 @@ enum ReminderUpdateWrite {
             alarm.proximity = trigger.proximity
             reminder.addAlarm(alarm)
         }
+
+        // #354: after the due date is written, in the same save (EKErrorDomain 18).
+        ReminderRecurrenceWrite.write(request, to: reminder)
 
         // #333: after the due date is set, so a date-only due no longer has these to keep (#267);
         // only relative alarms are replaced, the location and absolute-date alarms stay.

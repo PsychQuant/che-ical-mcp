@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
+| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
@@ -91,7 +91,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_reminders` | 列出提醒事項，支援篩選/排序/限制、標籤解析（v1.0.0） |
-| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣）。存檔回報錯誤、但提醒其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261） |
+| `create_reminder` | 建立提醒事項，支援到期日、標籤（v1.3.0）；到期日只給 `YYYY-MM-DD` 時建立純日期提醒（#267）；有到期日時（純日期或有時間）回應會帶 `date_sync`，`aligned` 依存好的提醒判斷（#301、#308；有時間的到期日存檔後掉了時區時，會重寫並再存一次，和 `update_reminder` 一樣）。存檔回報錯誤、但提醒其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；save 失敗又無法確認是否已存時，提醒事項會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `update_reminder` | 更新提醒事項（含標籤、`clear_due_date`）（v1.3.0） |
 | `complete_reminder` | 標記為已完成/未完成 |
 | `delete_reminder` | 刪除提醒事項 |
@@ -103,6 +103,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 **重複提醒（#194）：** list/search 新增 `has_recurrence`、完整公開 `recurrence_rules` 與保留日期精度的 `due`。完成回傳新增 `operation`（寫入結果）與 `next_occurrence`（confirmed/unknown/not_applicable）。請用 `operation.status` 判斷成功；舊 `is_completed` 可能反映下一筆仍未完成。查不到下一筆時不得再次完成。不同 ID 或無法確認的後繼項目回傳 unknown，並非宣稱系列結束。重複提醒完成的撤銷帶身分 guard（#204）：identifier 不再指向原 occurrence 時明確拒絕並移除該筆歷史，不會卡住 undo stack。**破壞性變更（#205）：** `completed` 在 `complete_reminder` / `list_reminders` / `search_reminders` 必須是 JSON boolean，字串或數字會被拒絕；省略或 `null` 維持原意。**破壞性變更（#207，未發布）：** 同一契約現在適用於所有 boolean 工具參數（`all_day`、`clear_*`、`include_completed`、`dry_run`、`delete_original`）。詳見[回傳契約與限制](docs/REMINDER_RECURRENCE.md)。
 
 **提醒事項改期（#227/#235/#237）：** Reminders.app 顯示的是最早一個絕對時間鬧鐘的日期，所以 `update_reminder` 用有時間的 `due_date` 改期時，start date 與每個絕對時間鬧鐘會跟著到期日一起移動（只給日期則改成純日期提醒，見下段；舊到期日沒有時間時按日曆天數移動，否則按精確的時間差）。`clear_due_date` 也會清掉 start date 並移除絕對時間鬧鐘。移動會保留原本就存在的差距，所以鬧鐘已經和到期日對不上的提醒事項，要傳 `realign_to_due: true` 來修正（搭配 `due_date`，或單獨使用以對齊目前的到期日）：最早的絕對時間鬧鐘落在到期日上，較晚的鬧鐘維持與它的間隔；start date 設為到期日，除非它已經和到期日一致（純日期的到期日：當天任何時間；有時間的到期日：同一時刻，或當天午夜、或沒有時間）。回應的 `date_sync` 說明移動了什麼，`date_sync.aligned` 說明儲存後的提醒事項，start date 與最早的絕對時間鬧鐘是否和到期日一致（刻意設在別天的鬧鐘也會是 `false`）。浮動時區的提醒事項（例如在 Reminders.app 建立的純日期提醒）寫入有時間的到期日後，會保留明確的時區。undo 會還原 start date 與鬧鐘，位置鬧鐘也包括在內（#228）。
+
+**改提醒事項的重複規則（#354）：** `update_reminder` 接受 `recurrence`（與 `create_reminder` 相同的物件，但不含 `excluded_occurrence_dates`），用來取代提醒事項的規則；`clear_recurrence: true` 則移除規則。識別碼、完成紀錄與鬧鐘都保留。改規則**不會**移動到期日（這是預設，之後可以改）：在 iCloud 實測，每週四的提醒改成週五後，待完成的這一次仍在週四，完成之後下一次才是週五（量過的是只有一個星期幾的每週規則；其他規則是預期如此，沒有量過）。到期日不在新規則的日子上時，回應附上 `recurrence_note`；要移動就對 `update_reminder` 帶 `due_date`。回應在重新讀取存好的提醒後回報 `has_recurrence`、`reminder_recurrence_rules` 與 `due`（讀不回來時 `recurrence_read_back: false`，並附 `recurrence_read_back_note`）。所有接受 `recurrence` 的工具，`interval` 都必須是 1 到 1000、`occurrence_count` 1 到 10000：`interval` 小於 1 或介於 2^31 到 2^32，以及 `occurrence_count` 為 0 時，以前會讓 server 當掉（實測）；範圍內其餘被拒絕的值則是不合理才拒絕。以下情況在寫入前就拒絕：`recurrence` 與 `clear_recurrence` 或 `clear_due_date` 同時給；呼叫後沒有到期日卻設規則；對已完成的提醒設規則；對仍會重複的提醒 `clear_due_date`（重複的提醒必須有到期日；同時帶 `clear_recurrence` 就能變成沒有到期日的單次提醒）。復原會還原原本的規則（記憶體內已測；session MCP 上待 release gate 確認）。Reminders.app 如何顯示不在規則上的那一次，沒有驗。
 
 **提醒事項的相對鬧鐘（#333）：** `create_reminder`、`create_reminders_batch` 的每一列與 `update_reminder` 接受 `alarms_minutes_offsets`，單位是到期前幾分鐘（正數是到期前、負數是到期後；只收 -525600 到 525600 的整數，即一年；事件工具也套用同一個範圍），所以截止時間可以留在真正的時間，通知提早來。只寫相對鬧鐘：`update_reminder` 用這份清單取代提醒事項的相對鬧鐘，`[]` 會把它們移除；絕對時間鬧鐘（Reminders.app 顯示的日期，#227）與位置提醒（#229）不變。這和 `update_event` 不同，`update_event` 的清單會取代所有鬧鐘。相對鬧鐘需要帶時間的到期日：提醒事項沒有到期日（鬧鐘永遠不會響），或是純日期提醒時，會拒絕並且什麼都不寫，因為 Reminders 在沒有時間的日子什麼時候觸發相對鬧鐘還沒在實機量過（EventKit 存得進去也讀得回來；#333 step 0）。循環提醒的鬧鐘預期會由 EventKit 跟著每一次重複移動，這一點還沒在實機確認；Reminders.app 如何顯示帶相對鬧鐘的提醒、什麼時候響，也還沒確認（列在 release gate）。回應以 `alarms_minutes_offsets`（到期前幾分鐘）列出讀回的相對鬧鐘；和要求的不同時附上 `alarms_differ` 與 `alarms_note`。`update_reminder` 沒帶 `alarms_minutes_offsets`、但動到到期日（`due_date` 或 `clear_due_date`），而存好的提醒事項變成只有日期或沒有到期日時，相對鬧鐘會留著，回應附上 `alarms_note`：說明留下幾個、沒有到期日就永遠不會響或只有日期時何時觸發尚未量測，以及用 `alarms_minutes_offsets: []` 移除（`clear_due_date` 之後的數目取自存檔後的物件，沒有重新讀取）；略過的重複建立會得到 `alarms_applied: false`。復原這次更新會還原原本的鬧鐘，位置鬧鐘也包含在內。記憶體內測過的是：還原本身，以及 #236 的檢查依值比對鬧鐘（別處改過時會點名 `alarms`）；同步後實際 store 讀回的樣子待 release gate 確認。
 
@@ -125,7 +127,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `move_events_batch` | 原地把事件搬到另一個日曆，保留循環規則與與會者；循環事件用 `span` / `occurrence_dates`（#226） |
 | `delete_events_batch` | 依 ID 或日期範圍刪除事件，支援預覽模式（v1.0.0） |
 | `find_duplicate_events` | 跨日曆查找重複事件（v0.5.0） |
-| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261） |
+| `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261）；save 失敗又無法確認的列會保留，其錯誤說明再建之前要怎麼確認（#289） |
 | `delete_reminders_batch` | 批次刪除多個提醒事項（v0.9.0）；一次 `undo` 會重建這次刪除的提醒事項（#243） |
 
 **搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。

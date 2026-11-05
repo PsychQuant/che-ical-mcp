@@ -20,6 +20,7 @@ final class NewObjectSaveTests: XCTestCase {
         case .committedThenThrew: return "committedThenThrew"
         case .committedButDiffers: return "committedButDiffers"
         case .unchecked: return "unchecked"
+        case .uncheckedKept: return "uncheckedKept"
         case .nothingPending: return "nothingPending"
         case .discardFailed: return "discardFailed"
         }
@@ -32,6 +33,7 @@ final class NewObjectSaveTests: XCTestCase {
 
     /// Runs the helper with closures that record each call; `report` records the outcome by name.
     private func run(save: @escaping () throws -> Void = { throw Failure.commit }, committed: NewObjectSave.Found?,
+                     onNoAnswer: NewObjectSave.NoAnswer = .keep,
                      discard: @escaping () throws -> Void = {},
                      verified: @escaping () throws -> Void = {}) -> (calls: [String], error: Error?, differing: [String]) {
         var calls: [String] = []
@@ -39,6 +41,7 @@ final class NewObjectSaveTests: XCTestCase {
             let differing = try NewObjectSave.run(save: { calls.append("save"); try save() },
                                                   verified: { calls.append("verified"); try verified() },
                                                   committed: { calls.append("committed"); return committed },
+                                                  onNoAnswer: onNoAnswer,
                                                   discard: { calls.append("discard"); try discard() },
                                                   report: { calls.append("report \(self.name($0))") })
             return (calls, nil, differing)
@@ -121,7 +124,7 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(result.calls, ["save", "committed", "report committedThenThrew"])
         XCTAssertEqual(result.differing, [], "nothing to note")
         var reported: [NewObjectSave.Outcome] = []
-        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .saved }, discard: { XCTFail("discarded") },
+        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .saved }, onNoAnswer: .keep, discard: { XCTFail("discarded") },
                                   report: { reported.append($0) })
         guard case .committedThenThrew(let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
         XCTAssertEqual(save as? Failure, .commit)
@@ -138,7 +141,7 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(result.calls, ["save", "committed", "report committedButDiffers"])
         XCTAssertEqual(result.differing, ["due", "title"])
         var reported: [NewObjectSave.Outcome] = []
-        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .differs(["list"]) },
+        _ = try NewObjectSave.run(save: { throw Failure.commit }, committed: { .differs(["list"]) }, onNoAnswer: .keep,
                                   discard: { XCTFail("discarded") }, report: { reported.append($0) })
         guard case .committedButDiffers(let fields, let save) = try XCTUnwrap(reported.first) else { return XCTFail("\(reported)") }
         XCTAssertEqual(fields, ["list"])
@@ -268,31 +271,75 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(NewObjectSave.Fields(list: list), .init(["title": "l", "account": ""]))
     }
 
-    /// No answer (the new store had no sources) is no evidence, so the object is discarded, and
-    /// `unchecked` is reported only once the removal has run without an error.
-    func testAFailedSaveThatCouldNotBeCheckedIsDiscardedThenReported() {
-        let result = run(committed: nil)
-        XCTAssertEqual(result.error as? Failure, .commit)
-        XCTAssertEqual(result.calls, ["save", "committed", "discard", "report unchecked"])
+    /// #289: on a create (`onNoAnswer: .keep`), no answer (the new store had no sources) is no
+    /// evidence either way, so the object is kept, not removed: a removal of a save that did commit
+    /// would delete it at the next write by any tool, with no undo record. `uncheckedKept` is
+    /// reported, and the caller gets `saveUnchecked`, which says what was kept and when a check
+    /// can tell (`testTheUncheckedErrorSaysWhatWasKeptAndHowToCheck`).
+    func testAFailedSaveThatCouldNotBeCheckedIsKeptAndReported() {
+        let result = run(committed: nil, onNoAnswer: .keep, discard: { XCTFail("not removed without evidence") })
+        XCTAssertEqual(result.calls, ["save", "committed", "report uncheckedKept"])
+        guard case .saveUnchecked(let code)? = result.error as? EventKitError else {
+            return XCTFail("expected saveUnchecked, got \(String(describing: result.error))")
+        }
+        XCTAssertEqual(code, "error_unknown", "a Swift error has no domain to name")
     }
 
-    /// When the check gave no answer and the removal failed, the failure is the one report: no
-    /// line claims a removal that did not happen.
-    func testAnUncheckedSaveWhoseRemovalFailsReportsOnlyTheFailure() {
-        let result = run(committed: nil, discard: { throw Failure.discard })
-        XCTAssertEqual(result.error as? Failure, .commit)
-        XCTAssertEqual(result.calls, ["save", "committed", "discard", "report discardFailed"])
+    /// The create caller's text (PR #421 round 1): the save's sanitized code; what was kept; that a
+    /// check right away may not see an item still pending and that a retry's own save would write
+    /// it too, so not to create it again until another save or a restart has settled it; that it
+    /// has no undo entry. No `discard_id` (a create records no entry). Trusted text: no title (#37).
+    func testTheUncheckedErrorSaysWhatWasKeptAndHowToCheck() {
+        let save = NSError(domain: EKErrorDomain, code: 1, userInfo: [NSLocalizedDescriptionKey: "The list 'Private' refused it"])
+        let result = run(save: { throw save }, committed: nil, onNoAnswer: .keep)
+        let text = (result.error as? LocalizedError)?.errorDescription ?? ""
+        XCTAssertTrue(result.error is TrustedErrorMessage, "\(String(describing: result.error))")
+        for phrase in ["(eventkit_error_1)", "could not be read to check", "was not removed", "may already be saved",
+                       "stays pending", "leave two", "may fail until it restarts", "dropped if the server restarts",
+                       "proves nothing", "may be reported as existing", "Do not create it again",
+                       "delete it by hand"] {
+            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        }
+        XCTAssertEqual(text.components(separatedBy: "(not tried)").count - 1, 3,
+                       "the fail-until-restart cost, the drop on restart and what this server lists are marked not tried: \(text)")
+        XCTAssertFalse(text.contains("Private"), text)
+        XCTAssertFalse(text.contains("discard_id"), "a create records no undo entry: \(text)")
+    }
+
+    /// PR #421 round 2: in `create_reminders_batch` the other rows of the same call do record undo
+    /// entries, so the text speaks of this item, says a later row's save writes it, and says that
+    /// undo removes the newest recorded operation (which may be a later row), not this item.
+    func testTheUncheckedErrorIsRightInsideABatch() {
+        let text = (run(committed: nil, onNoAnswer: .keep).error as? LocalizedError)?.errorDescription ?? ""
+        for phrase in ["a later row of the same batch", "This item has no undo entry",
+                       "undo removes the newest recorded operation, not this item"] {
+            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        }
+        XCTAssertFalse(text.contains("this call recorded none") || text.contains("undo would undo the operation before it"), text)
+    }
+
+    /// PR #421 round 1: on the restore path (delete-undo, single and batch member) the undo record
+    /// is kept on failure, so a retry restores the reminder; there a no-answer is still a discard,
+    /// as before #289, and the save's error is rethrown.
+    func testOnTheRestorePathNoAnswerIsStillADiscard() {
+        let removed = run(committed: nil, onNoAnswer: .discard)
+        XCTAssertEqual(removed.error as? Failure, .commit)
+        XCTAssertEqual(removed.calls, ["save", "committed", "discard", "report unchecked"])
+        let failed = run(committed: nil, onNoAnswer: .discard, discard: { throw Failure.discard })
+        XCTAssertEqual(failed.error as? Failure, .commit)
+        XCTAssertEqual(failed.calls, ["save", "committed", "discard", "report discardFailed"])
+        let refused = run(save: { throw self.refusedNoList }, committed: nil, onNoAnswer: .discard, discard: { throw self.removalReadOnly })
+        XCTAssertEqual(refused.calls, ["save", "committed", "discard", "report nothingPending"])
     }
 
     /// The probed pair: a reminder refused for having no list (save EKErrorDomain 1), whose
     /// removal throws EKErrorDomain 6, left nothing pending. Reported once, as nothing pending,
     /// with or without an answer from the new store.
     func testTheProbedRefusalWithItsRemovalErrorIsReportedAsNothingPending() {
-        for committed in [.absent, nil] as [NewObjectSave.Found?] {
-            let result = run(save: { throw self.refusedNoList }, committed: committed, discard: { throw self.removalReadOnly })
-            XCTAssertEqual((result.error as NSError?)?.code, EKError.Code.noCalendar.rawValue)
-            XCTAssertEqual(result.calls, ["save", "committed", "discard", "report nothingPending"], "\(String(describing: committed))")
-        }
+        // Only with an answer: with none (#289) nothing is removed, so the removal's error is not read.
+        let result = run(save: { throw self.refusedNoList }, committed: .absent, discard: { throw self.removalReadOnly })
+        XCTAssertEqual((result.error as NSError?)?.code, EKError.Code.noCalendar.rawValue)
+        XCTAssertEqual(result.calls, ["save", "committed", "discard", "report nothingPending"])
     }
 
     /// EKErrorDomain 6 from the removal after any other save error is a failed discard, reported
@@ -305,7 +352,7 @@ final class NewObjectSaveTests: XCTestCase {
                               NSError(domain: "EKCADErrorDomain", code: 1010)]
         for saveError in saves {
             var reported: [NewObjectSave.Outcome] = []
-            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent },
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent }, onNoAnswer: .keep,
                                                        discard: { throw self.removalReadOnly },
                                                        report: { reported.append($0) }))
             XCTAssertEqual(reported.count, 1, "\(saveError)")
@@ -320,7 +367,7 @@ final class NewObjectSaveTests: XCTestCase {
     func testAnyOtherRemovalErrorIsAFailedDiscardAndTheSaveErrorStillSurfaces() {
         for saveError in [refusedNoList, Failure.commit] as [Error] {
             var reported: [String] = []
-            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent },
+            XCTAssertThrowsError(try NewObjectSave.run(save: { throw saveError }, committed: { .absent }, onNoAnswer: .keep,
                                                        discard: { throw Failure.discard },
                                                        report: {
                                                            guard case .discardFailed(_, let discard) = $0 else { return XCTFail("\($0)") }
@@ -354,8 +401,10 @@ final class NewObjectSaveTests: XCTestCase {
                        "h(id): the save threw EKCADErrorDomain 1010, but a new store finds the item as it was saved, so it was saved; it is kept and the call succeeds")
         XCTAssertEqual(NewObjectSave.note(for: .committedButDiffers(fields: ["due", "title"], save: commitFailure), handler: "h", identifier: "id"),
                        "h(id): the save threw EKCADErrorDomain 1010, and a new store finds the item, but its due, title differ from what was written (a partial write or an edit made elsewhere); it is kept and the call succeeds with a note naming them")
-        XCTAssertEqual(NewObjectSave.note(for: .unchecked, handler: "h", identifier: "id"),
-                       "h(id): the save threw and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing")
+        XCTAssertEqual(NewObjectSave.note(for: .unchecked(save: commitFailure), handler: "h", identifier: "id"),
+                       "h(id): the save threw EKCADErrorDomain 1010 and a new store could not be read, so whether it was saved is unknown; it was removed from the store without committing (the undo record is kept for a retry)")
+        XCTAssertEqual(NewObjectSave.note(for: .uncheckedKept(save: commitFailure), handler: "h", identifier: "id"),
+                       "h(id): the save threw EKCADErrorDomain 1010 and a new store could not be read, so whether it was saved is unknown; it was kept (not removed), since removing a save that committed would delete it at the next write (#289)")
         XCTAssertEqual(NewObjectSave.note(for: .nothingPending, handler: "h", identifier: "id"),
                        "h(id): the save was refused before the store took the item in; nothing to remove")
         XCTAssertEqual(NewObjectSave.note(for: .discardFailed(save: NSError(domain: "EKCADErrorDomain", code: 1010), discard: removalReadOnly),
@@ -535,6 +584,8 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"^\{ ?let listID = reminder\.calendar\?\.calendarIdentifier ?return try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?"#
                                    + #"verified: ?\{ ?try NewObjectSave\.confirmWritten\( ?listGone: ?listID\.map ?\{ ?\w+\.calendar\( ?withIdentifier: ?\$0 ?\) ?== ?nil ?\} ?\?\? ?false ?, ?itemResolves: ?\w+\.calendarItem\( ?withIdentifier: ?reminder\.calendarItemIdentifier ?\) ?!= ?nil ?, ?restoring: ?restoring ?\) ?\} ?, ?"#
                                    + freshCheck("reminderCheck", "reminder")
+                                   // PR #421 round 1: a create keeps an unanswered item; a restore discards it.
+                                   + #" ?, ?onNoAnswer: ?restoring ?\? ?\.discard ?: ?\.keep"#
                                    + #" ?, ?discard: ?\{ ?try \w+\.remove\( ?reminder ?, ?commit: ?false ?\) ?\} ?, ?"#
                                    + report(#"handler"#, #"reminder\.calendarItemIdentifier"#) + #" ?\) ?\}$"#,
                                    in: try body(of: "func saveNewReminder(", in: code)).count, 1, wrapper)
@@ -603,6 +654,7 @@ final class NewObjectSaveTests: XCTestCase {
             XCTAssertEqual(try matches(#"saveCalendar\( ?\#(name) ?,"#, in: body).count, 2, body)
             XCTAssertEqual(try matches(#"var storeDiffers: ?\[String\] ?= ?\[ ?\] ?if NewObjectSave\.keepsFailedInsert\( ?\#(type) ?\) ?\{ ?storeDiffers = try NewObjectSave\.run\( ?save: ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?, ?"#
                                        + freshCheck("listCheck", name)
+                                       + #" ?, ?onNoAnswer: ?\.keep"#
                                        + #" ?, ?discard: ?\{ ?try \w+\.removeCalendar\( ?\#(name) ?, ?commit: ?false ?\) ?\} ?, ?"#
                                        + report(#""""#, #"\#(name)\.calendarIdentifier"#)
                                        + #" ?\) ?\} ?else ?\{ ?try \w+\.saveCalendar\( ?\#(name) ?, ?commit: ?true ?\) ?\} ?markNeedsRefresh\( ?\) ?return CreateCalendarResult\( ?calendar: ?\#(name) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?\) ?\}"#,

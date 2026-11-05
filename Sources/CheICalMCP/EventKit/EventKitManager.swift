@@ -588,13 +588,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // #261: a reminder list whose save failed may stay pending and be written by the next
-        // save, so it is discarded unless a new store finds it; then it was saved, and it is
-        // returned as created. An event calendar is saved as before: in the failure classes
-        // tried, a failed one was not written by a later save (see NewObjectSave).
+        // save, so it is discarded when a new store does not find it; when it finds it, it was
+        // saved, and it is returned as created. When that store cannot answer, the list is kept and
+        // the call fails with `saveUnchecked` (#289: a create has no undo record). An event
+        // calendar is saved as before: in the failure classes tried, a failed one was not written
+        // by a later save (see NewObjectSave).
         var storeDiffers: [String] = []
         if NewObjectSave.keepsFailedInsert(entityType) {
             storeDiffers = try NewObjectSave.run(save: { try eventStore.saveCalendar(calendar, commit: true) },
                                   committed: { NewObjectSave.freshStoreFinds(NewObjectSave.listCheck(calendar)) },
+                                  onNoAnswer: .keep,
                                   discard: { try eventStore.removeCalendar(calendar, commit: false) },
                                   report: { Self.logNewObjectOutcome(handler: "createCalendar", identifier: calendar.calendarIdentifier, $0) })
         } else {
@@ -2253,6 +2256,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// #261: saves a reminder that has never been written (`create_reminder`, delete-undo). If
     /// the save fails and a new store does not find the reminder, it is removed from the store
     /// without committing, so the next save by any tool does not write it (`NewObjectSave`). If
+    /// that store cannot answer, a create keeps the reminder and fails with `saveUnchecked` (#289:
+    /// it has no undo record), and a restore (`restoring`) removes it as before, its undo record
+    /// being kept for a retry (PR #421 round 1). If
     /// that store finds it, it counts as saved, whether or not its compared fields agree, and this
     /// returns as after a save: the caller's success path runs (the create's result and undo
     /// entry, the delete-undo's restore). Returns the compared fields the store holds differently
@@ -2276,6 +2282,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                       restoring: restoring)
                               },
                               committed: { NewObjectSave.freshStoreFinds(NewObjectSave.reminderCheck(reminder)) },
+                              onNoAnswer: restoring ? .discard : .keep,
                               discard: { try eventStore.remove(reminder, commit: false) },
                               report: { Self.logNewObjectOutcome(handler: handler, identifier: reminder.calendarItemIdentifier, $0) })
     }
@@ -2301,7 +2308,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false,
         realignToDue: Bool = false,
-        alarmOffsets: [Int]? = nil
+        alarmOffsets: [Int]? = nil,
+        recurrenceRule: RecurrenceRuleInput? = nil,
+        clearRecurrence: Bool = false
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
@@ -2316,12 +2325,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             identifier: identifier, title: title, notes: notes, due: due, priority: priority,
             calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue,
-            alarmOffsets: alarmOffsets)
+            alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence)
         // PR #256 verify round 1: everything that can refuse the call runs before the first write,
         // so a refused call leaves the cached reminder untouched (#235 no-due check, #333 alarm
         // check, list lookup).
         try ReminderUpdateWrite.checkRealign(request, existingDue: reminder.dueDateComponents)
         try ReminderUpdateWrite.checkAlarms(request, existingDue: reminder.dueDateComponents)
+        // #354: the rule checks, on the re-read reminder, before the first write.
+        try ReminderRecurrenceWrite.check(request, existingDue: reminder.dueDateComponents,
+                                          repeats: reminder.hasRecurrenceRules, isCompleted: reminder.isCompleted)
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
@@ -2335,7 +2347,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
             storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request))
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
+            // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
+            // call touched the rule.
+            recurrence: (recurrenceRule != nil || clearRecurrence)
+                ? ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() }) : nil)
         // Same reason as update_event (#246): the identifier the reminder has after the save.
         let savedID = reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
@@ -2536,7 +2552,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     // MARK: - Helpers
 
-    private func createRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
+    /// #354: static so `update_reminder`'s write (`ReminderRecurrenceWrite`) builds the same rule.
+    static func makeRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
         let frequency: EKRecurrenceFrequency
         switch input.frequency {
         case .daily: frequency = .daily
@@ -2568,6 +2585,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             setPositions: nil,
             end: end
         )
+    }
+
+    private func createRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
+        Self.makeRecurrenceRule(from: input)
     }
 
     private func parseColor(_ hex: String) -> CGColor {
@@ -2893,6 +2914,11 @@ struct RecurrenceRuleInput: Sendable {
         case daily, weekly, monthly, yearly
     }
 
+    /// PR #420 verify round 1: bounds the parser enforces. EventKit raises an uncatchable
+    /// Objective-C exception for an interval below 1 or from 2^31 to 2^32, and for a count of 0.
+    static let maxInterval = 1000
+    static let maxOccurrenceCount = 10_000
+
     let frequency: Frequency
     let interval: Int
     let endDate: Date?
@@ -2987,6 +3013,10 @@ enum EventKitError: LocalizedError {
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
     case seriesExceptionsRestoreFailed(reason: String)
+    /// #289: a new reminder or list whose save threw, and whose check could not be answered (a new
+    /// store with no sources), was kept: it may already be saved or be written by the next save.
+    /// `code` is the save's sanitized code.
+    case saveUnchecked(code: String)
     /// #328: `delete_calendar` with `require_empty` found the calendar not empty; nothing deleted.
     case calendarNotEmpty(reason: String)
     /// #253 verify round 2 (D1): saving a copy failed while it carried alarms some calendars
@@ -3106,6 +3136,8 @@ enum EventKitError: LocalizedError {
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
+        case .saveUnchecked(let code):
+            return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed. It may already be saved. If it was not, it stays pending in this server's store, and the next save by this server writes it: a later row of the same batch, or a retry, which would then leave two. If it can never be written, later saves by this server may fail until it restarts (not tried), and it is dropped if the server restarts first (not tried). A check made right away proves nothing: a new store did not see such an item on device, while through this server a pending item may be listed, and a pending reminder list may be reported as existing by create_calendar, without being saved (not tried). Do not create it again until another save by this server has written it or the server has restarted. This item has no undo entry: undo removes the newest recorded operation, not this item; delete it by hand if it is not wanted."
         case .calendarNotEmpty(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):
