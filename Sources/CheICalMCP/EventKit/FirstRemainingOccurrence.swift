@@ -18,8 +18,8 @@ import Foundation
 /// stand-in. A write from the stand-in with `.futureEvents` covers its slot onward, so that
 /// occurrence would stay behind while the call reported success. The series then stays not found,
 /// and single occurrences can still be deleted or updated with span `this`. (The edited
-/// occurrence's own id is not a way to the whole series: updating a whole series from it splits
-/// it too, #335.)
+/// occurrence's own id is not a way to the whole series: a whole-series update from it would
+/// split it too, and is refused, #416.)
 enum FirstRemainingOccurrence {
     struct Candidate: Equatable {
         let eventIdentifier: String?

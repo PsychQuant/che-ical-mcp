@@ -17,6 +17,8 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
     private(set) var listCalls: [ListCall] = []
     private(set) var deleteCalls: [DeleteCall] = []
     private(set) var seriesCalls: [[String]] = []
+    /// `refusingOccurrenceIdentifiers` of each series call (#416).
+    private(set) var seriesRefusals: [Bool] = []
 
     init(listed: [BatchDeletionListedEvent],
          result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: [])) {
@@ -37,8 +39,9 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
         return result
     }
 
-    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
         seriesCalls.append(identifiers)
+        seriesRefusals.append(refusingOccurrenceIdentifiers)
         return result
     }
 
@@ -256,5 +259,23 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         _ = try await call(fake, args(after: base, before: before, dryRun: false))
         let calls = await fake.deleteCalls
         XCTAssertEqual(calls.first?.identifiers, ["one-0", "one-1"])
+    }
+
+    // MARK: - #416: span all through an occurrence's own id
+
+    /// With `event_ids` the caller names what to delete, so an id of one occurrence edited on its
+    /// own is refused for span all (it would delete that occurrence only). By date range the
+    /// listing, not the caller, put that id in the set: no refusal there.
+    func testEventIdsSpanAllRefusesOccurrenceIdentifiersAndTheRangeDoesNot() async throws {
+        let byIds = BatchDeletionFake(listed: [])
+        _ = try await call(byIds, ["event_ids": .array([.string("S"), .string("S/RID=1")]), "span": .string("all"),
+                                   "dry_run": .bool(false)])
+        let byIdsRefusals = await byIds.seriesRefusals
+        XCTAssertEqual(byIdsRefusals, [true])
+
+        let range = BatchDeletionFake(listed: dailySeries("S", count: 3, from: base))
+        _ = try await call(range, args(after: base, before: base.addingTimeInterval(10 * day), span: "all", dryRun: false))
+        let rangeRefusals = await range.seriesRefusals
+        XCTAssertEqual(rangeRefusals, [false])
     }
 }

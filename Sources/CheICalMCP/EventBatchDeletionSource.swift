@@ -23,7 +23,10 @@ protocol EventBatchDeletionSource: Sendable {
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent]
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult
-    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult
+    /// `refusingOccurrenceIdentifiers` (#416): refuse, as a failed row, an identifier of one
+    /// occurrence edited on its own. True for the `event_ids` mode, where the caller named the id;
+    /// false by date range, where the listing put it in the set.
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult
 }
 
 extension EventKitManager: EventBatchDeletionSource {

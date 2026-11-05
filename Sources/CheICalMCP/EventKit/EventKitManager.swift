@@ -1124,6 +1124,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
+        // #416: span 'all' or 'future' through an occurrence edited on its own splits the series
+        // (device, iCloud); refused before anything is read into the update or written.
+        if DetachedOccurrenceSpan.refusesUpdate(
+            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.updateReason(wholeSeries: applyToAll))
+        }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
         // occurrence, and saving the whole series from it splits it into a new series with a new
         // identifier (device, iCloud). Refused rather than done silently; the other writes
@@ -1438,6 +1444,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let event = freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
+        // #416: through an occurrence edited on its own this removed that occurrence only (device,
+        // iCloud: it has no recurrence rules of its own), while the answer said the series.
+        if DetachedOccurrenceSpan.refusesSeriesDelete(identifier: identifier, isDetached: event.isDetached) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesDeleteReason)
+        }
 
         // If the event has recurrence rules, it is (or belongs to) a recurring series.
         // eventStore.event(withIdentifier:) returns the master event for recurring series,
@@ -1460,7 +1471,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// with deleteEventsBatch. One undo restores every series actually removed
     /// (partial failure: only the successes). Lives in the manager so undo
     /// bookkeeping never leaks into the server layer.
-    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
         var successCount = 0
@@ -1473,6 +1484,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = freshEvent(id: id) else {
                     failures.append((id, notFoundReason(id: id)))
+                    continue
+                }
+                // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
+                // others go on.
+                if refusingOccurrenceIdentifiers, DetachedOccurrenceSpan.refusesSeriesDelete(identifier: id, isDetached: event.isDetached) {
+                    failures.append((id, DetachedOccurrenceSpan.seriesDeleteBatchReason))
                     continue
                 }
                 let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
@@ -3009,6 +3026,9 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
+    /// #416: a whole-series write addressed through the identifier of one occurrence that was
+    /// edited on its own (`DetachedOccurrenceSpan`). `reason` is one of its fixed strings.
+    case occurrenceAddressRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3133,6 +3153,8 @@ enum EventKitError: LocalizedError {
         case .moveRefused(let reason):
             return reason
         case .standInRefused(let reason):
+            return reason
+        case .occurrenceAddressRefused(let reason):
             return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
