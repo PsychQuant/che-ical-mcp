@@ -226,15 +226,18 @@ enum InputValidation {
         return bool
     }
 
+    /// The largest `limit` a listing tool accepts.
+    static let maxLimit = 10000
+
     /// `limit`-flavored wrapper around `requireOptionalInt` that adds bounds
     /// validation. Rejects `limit ≤ 0` (zero events back is never a useful
     /// caller intent — most likely an off-by-one bug) and caps the upper
     /// bound at 10000 (defense-in-depth against accidentally-massive
-    /// responses). Absence still returns nil = no limit.
-    static func requireOptionalLimit(_ arguments: [String: Value], cap: Int = 10000) throws -> Int? {
+    /// responses). Absence returns nil: the caller applies the tool's default.
+    static func requireOptionalLimit(_ arguments: [String: Value], cap: Int = maxLimit) throws -> Int? {
         guard let n = try requireOptionalInt(arguments, key: "limit") else { return nil }
         if n <= 0 {
-            throw ToolError.invalidParameter("limit must be > 0 (omit the parameter for no limit)")
+            throw ToolError.invalidParameter("limit must be > 0 (omit the parameter for the default)")
         }
         if n > cap {
             throw ToolError.invalidParameter("limit must be ≤ \(cap)")
