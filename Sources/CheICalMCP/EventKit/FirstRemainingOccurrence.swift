@@ -18,8 +18,7 @@ import Foundation
 /// stand-in. A write from the stand-in with `.futureEvents` covers its slot onward, so that
 /// occurrence would stay behind while the call reported success. The series then stays not found,
 /// and single occurrences can still be deleted or updated with span `this`. (The edited
-/// occurrence's own id is not a way to the whole series: a whole-series update from it would
-/// split it too, and is refused, #416.)
+/// occurrence's own id is a way to the whole series only when it is the earliest one left, #416.)
 enum FirstRemainingOccurrence {
     struct Candidate: Equatable {
         let eventIdentifier: String?
@@ -190,6 +189,32 @@ extension EventKitManager {
         guard let (_, candidates) = seriesOccurrences(of: stale, id: id) else { return (false, false) }
         return (FirstRemainingOccurrence.hasStandInCandidate(candidates, identifier: id),
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
+    }
+
+    /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and
+    /// addressed by its own `id`. nil when the series cannot be listed: without a `/RID=` part
+    /// nothing says what its identifier is (#320), and without rules there is nothing to list.
+    /// `seriesOccurrences` reads the series object with care, so one that fails to refresh (#326)
+    /// is fine here.
+    func occurrenceNeighbours(of occurrence: EKEvent, id: String) -> DetachedOccurrenceSpan.Neighbours? {
+        guard let seriesID = DetachedOccurrenceSpan.seriesIdentifier(of: id),
+              let series = storedEvent(id: seriesID),
+              let (_, candidates) = seriesOccurrences(of: series, id: seriesID),
+              let slot = UndoPostState.originalSlot(eventIdentifier: id,
+                                                    externalIdentifier: occurrence.calendarItemExternalIdentifier,
+                                                    occurrenceDate: occurrence.occurrenceDate) else { return nil }
+        return DetachedOccurrenceSpan.neighbours(of: id, slot: slot, among: candidates)
+    }
+
+    /// #416: whether a span `all` delete of `event`, resolved from `id`, is refused.
+    func refusesSeriesDelete(_ event: EKEvent, id: String) -> Bool {
+        DetachedOccurrenceSpan.refusesSeriesDelete(identifier: id, isDetached: event.isDetached,
+                                                   neighbours: occurrenceNeighbours(of: event, id: id))
+    }
+
+    /// The same for the `delete_events_batch` dry run, which holds no event.
+    func refusesSeriesDelete(identifier: String) -> Bool {
+        freshEvent(id: identifier).map { refusesSeriesDelete($0, id: identifier) } ?? false
     }
 
     /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`

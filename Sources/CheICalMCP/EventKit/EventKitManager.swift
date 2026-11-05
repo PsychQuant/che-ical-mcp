@@ -1124,11 +1124,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
-        // #416: span 'all' or 'future' through an occurrence edited on its own splits the series
-        // (device, iCloud); refused before anything is read into the update or written.
+        // #416: span 'all' through an occurrence edited on its own, with an earlier one left, splits
+        // the series (device, iCloud); refused before anything is read into the update or written.
         if DetachedOccurrenceSpan.refusesUpdate(
-            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.updateReason(wholeSeries: applyToAll))
+            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
+            neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.updateReason)
         }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
         // occurrence, and saving the whole series from it splits it into a new series with a new
@@ -1444,9 +1445,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let event = freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
-        // #416: through an occurrence edited on its own this removed that occurrence only (device,
-        // iCloud: it has no recurrence rules of its own), while the answer said the series.
-        if DetachedOccurrenceSpan.refusesSeriesDelete(identifier: identifier, isDetached: event.isDetached) {
+        // #416: through an occurrence edited on its own this removes that occurrence only (device,
+        // iCloud: it has no recurrence rules of its own), while the answer says the series.
+        if refusesSeriesDelete(event, id: identifier) {
             throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesDeleteReason)
         }
 
@@ -1488,7 +1489,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 }
                 // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
                 // others go on.
-                if refusingOccurrenceIdentifiers, DetachedOccurrenceSpan.refusesSeriesDelete(identifier: id, isDetached: event.isDetached) {
+                if refusingOccurrenceIdentifiers, refusesSeriesDelete(event, id: id) {
                     failures.append((id, DetachedOccurrenceSpan.seriesDeleteBatchReason))
                     continue
                 }
