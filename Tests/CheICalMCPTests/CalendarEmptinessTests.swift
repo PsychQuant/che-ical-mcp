@@ -40,6 +40,29 @@ final class CalendarEmptinessTests: XCTestCase {
         XCTAssertEqual(queried.last?.1, window.end)
     }
 
+    /// #332: each probe reaches `EventRangeQuery.collect` through `events(from:to:calendars:)` with a
+    /// range narrower than `wideRangeDays`, so the read bound never applies: a probe that finds more
+    /// than the bound still reports its count and stops the search there, as before.
+    func testTheReadBoundDoesNotApplyToAProbe() throws {
+        let window = CalendarEmptiness.window(now: now)
+        let many = EventRangeQuery.maxEventsRead + 5
+        var probes = 0
+        let found = try CalendarEmptiness.firstEvents(in: window, count: { from, to in
+            probes += 1
+            XCTAssertFalse(EventRangeQuery.widensPreviousCut(.init(start: from, end: to)))
+            return try EventRangeQuery.collect(from: from, to: to, query: { lower, _ in (0..<many).map { "\(lower)-\($0)" } }, key: { $0 }).count
+        })
+        XCTAssertEqual(found?.atLeast, many)
+        XCTAssertEqual(probes, 1, "stopped at the first span that holds events")
+        // Every probe of the window, overlap second included, is narrower than the cut.
+        var previous: EventRangeQuery.Span?
+        for span in CalendarEmptiness.probeSpans(of: window) {
+            let from = previous == nil ? span.start : span.start.addingTimeInterval(-1)
+            XCTAssertFalse(EventRangeQuery.widensPreviousCut(.init(start: from, end: span.end)))
+            previous = span
+        }
+    }
+
     /// PR #413 verify r1: a calendar that allows neither events nor reminders is not claimed empty.
     func testACalendarThatHoldsNeitherKindIsRefused() {
         XCTAssertThrowsError(try CalendarEmptiness.checkKinds(holdsEvents: false, holdsReminders: false)) { error in

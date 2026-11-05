@@ -29,8 +29,14 @@ enum EventRangeQuery {
     /// returned in full before #325, so nothing changes for it.
     static let previousCutDays = 1461
 
+    /// #332 (PR #430 verify): the longest range that still counts as narrow, a day past the cut. A
+    /// range is measured in elapsed time and given in wall-clock dates, so four calendar years
+    /// across a clock change are 1461 days and an hour: the default search (`defaultSearchRange`)
+    /// and a caller's four-year range must not fall under the wide rules for that hour.
+    static let wideRangeDays = previousCutDays + 1
+
     /// The most deletions one `delete_events_batch` by date range may make over a range wider than
-    /// `previousCutDays` (verify rounds 1-2). Only those ranges reach more than they did before #325:
+    /// `wideRangeDays` (verify rounds 1-2). Those ranges reach more than they did before #325:
     /// a one-sided range now reaches 100 years, and an open-ended daily series alone is about 36,500
     /// occurrences there, all in one `.batch` undo entry that restores each as a one-off event. A
     /// narrower range is not limited by it. A one-sided range is always
@@ -40,16 +46,49 @@ enum EventRangeQuery {
     static let maxDeletionOccurrences = 2000
 
     /// The most candidate comparisons one `find_duplicate_events` may make over a range wider than
-    /// `previousCutDays` (verify round 3). Two calendars holding the same daily series, with a
+    /// `wideRangeDays` (verify round 3). Two calendars holding the same daily series, with a
     /// tolerance covering the range, pair every occurrence with every other: 1461² ≈ 2.1 million
     /// over the old four-year cut, about 1.3 billion over 100 years, held in memory and sorted on
     /// the manager's actor. This limit is about the old worst case; a narrower range is not limited.
     static let maxDuplicateComparisons = 2_000_000
 
+    /// #332: the most event occurrences one range read may gather over a range wider than
+    /// `wideRangeDays`; past it the read stops with `RangeError.tooManyEvents`. A safety valve against
+    /// an abnormal calendar, not an everyday limit, and a default the maintainer may change: reading
+    /// is cheap (measured 2026-11-05 on throwaway calendars, no user calendar: 218,949 occurrences in
+    /// about 4.1 s of CPU and 276 MB), and 20,000 refused ordinary calls, such as a one-sided span all delete on a
+    /// calendar with four weekly series (PR #430 verify). It is about 2,000 occurrences a year over
+    /// 100 years, 500 a year over the 400-year ceiling. A narrower range is not limited. Checked after
+    /// each span, and a span is one EventKit call that is read whole, so a read can pass this by
+    /// that span's size, which has no fixed limit.
+    static let maxEventsRead = 200_000
+
+    /// #332: the rows `list_events` / `search_events` return over a range wider than
+    /// `wideRangeDays` when the caller gives no `limit`. A default the maintainer may change.
+    /// Formatting, not reading, is most of a wide answer's cost (measured before the read bound:
+    /// 17.4 s and 48.5 MB of JSON for all 72,983 rows).
+    static let defaultWideOutput = 500
+
+    /// #332: which tool a read-bound refusal speaks to: each has a different way out.
+    enum ReadPath: Equatable {
+        case listing
+        /// `delete_events_batch` by date range always names a calendar and has no `limit`.
+        case deletion
+        /// `find_duplicate_events` only compares different calendars, so one calendar is no way out:
+        /// it would answer a false `duplicate_count` of 0 (PR #430 verify). A name in
+        /// `calendar_names` that matches nothing is not reported, so naming fewer is not simply safe.
+        case duplicates
+        /// `check_conflicts` has no `limit`, and one calendar answers for that calendar only.
+        case conflicts
+    }
+
     enum RangeError: LocalizedError, Equatable {
         case tooWide(days: Int)
         case tooManyToDelete(count: Int, from: Date, to: Date)
         case tooManyComparisons(limit: Int)
+        /// #332: the read passed `maxEventsRead` over a wide range; `readThrough` is the end of the
+        /// last span read. `collect` does not know its tool: see `worded(_:for:)`.
+        case tooManyEvents(limit: Int, from: Date, to: Date, readThrough: Date, path: ReadPath = .listing)
 
         var errorDescription: String? {
             switch self {
@@ -57,9 +96,21 @@ enum EventRangeQuery {
                 let ceiling = Self.grouped(EventRangeQuery.maxSpans * EventRangeQuery.maxSpanDays)
                 return "Date range too wide: \(days) days. At most \(ceiling) days (about 400 years; \(EventRangeQuery.maxSpans) queries of \(EventRangeQuery.maxSpanDays) days) can be searched in one call; narrow the range."
             case .tooManyToDelete(let count, let from, let to):
-                return "Refusing to delete: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.previousCutDays) days. Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
+                return "Refusing to delete: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) this call would make \(count) deletions, more than the \(EventRangeQuery.maxDeletionOccurrences) allowed for a range wider than \(EventRangeQuery.wideRangeDays) days. Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
+            case .tooManyEvents(let limit, let from, let to, let readThrough, let path):
+                let stopped = "Stopped: from \(EventRangeQuery.localText(from)) to \(EventRangeQuery.localText(to)) holds more than \(Self.grouped(limit)) event occurrences, the most a range wider than \(EventRangeQuery.wideRangeDays) days reads (read through \(EventRangeQuery.localText(readThrough)); the count is checked after each \(EventRangeQuery.maxSpanDays)-day part, which is read whole, so a read can pass it by that part's size)."
+                switch path {
+                case .listing:
+                    return "\(stopped) Nothing was returned. Narrow the range, or, if no calendar was named, read one with calendar_name. A limit does not lift this bound."
+                case .deletion:
+                    return "\(stopped) Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
+                case .duplicates:
+                    return "\(stopped) Nothing was returned. Narrow the range. Naming fewer calendars in calendar_names also reads less: keep at least two, since only events in different calendars are compared, and use the exact names from list_calendars, since a name that matches nothing is not reported."
+                case .conflicts:
+                    return "\(stopped) Nothing was returned. Narrow the range, or, if no calendar was named, give calendar_name; other calendars are then not checked."
+                }
             case .tooManyComparisons(let limit):
-                return "Stopped: finding duplicates over a range wider than \(EventRangeQuery.previousCutDays) days took more than \(Self.grouped(limit)) comparisons. Nothing was returned. Narrow the range or lower tolerance_minutes."
+                return "Stopped: finding duplicates over a range wider than \(EventRangeQuery.wideRangeDays) days took more than \(Self.grouped(limit)) comparisons. Nothing was returned. Narrow the range or lower tolerance_minutes."
             }
         }
 
@@ -99,13 +150,66 @@ enum EventRangeQuery {
                               key: (Item) -> String) throws -> [Item] {
         var seen = Set<String>()
         var found: [Item] = []
+        // #332: only a wide range is bounded (`wideRangeDays`; nothing changes below it).
+        let bound = widensPreviousCut(Span(start: start, end: end)) ? maxEventsRead : nil
         for span in try spans(from: start, to: end) {
             let from = span.start > start ? max(start, span.start.addingTimeInterval(-1)) : span.start
             for item in query(from, span.end) where seen.insert(key(item)).inserted {
                 found.append(item)
             }
+            if let bound, found.count > bound {
+                throw RangeError.tooManyEvents(limit: bound, from: start, to: end, readThrough: span.end)
+            }
         }
         return found
+    }
+
+    /// #332: a read-bound refusal worded for the tool that made the read; any other error as it is.
+    static func worded(_ error: Error, for path: ReadPath) -> Error {
+        guard case .tooManyEvents(let limit, let from, let to, let readThrough, _)? = error as? RangeError else { return error }
+        return RangeError.tooManyEvents(limit: limit, from: from, to: to, readThrough: readThrough, path: path)
+    }
+
+    /// #332: the rows `list_events` returns: the first `requested` when the caller gave a `limit`;
+    /// otherwise the first `defaultWideOutput` over a range wider than `wideRangeDays`, and all of
+    /// them below. `defaultLimit` is set only when the default left some out.
+    static func bounded<Item>(_ items: [Item], requested: Int?, searched: Span) -> (rows: [Item], defaultLimit: Int?) {
+        if let requested { return (Array(items.prefix(requested)), nil) }
+        guard widensPreviousCut(searched), items.count > defaultWideOutput else { return (items, nil) }
+        return (Array(items.prefix(defaultWideOutput)), defaultWideOutput)
+    }
+
+    /// #332: the rows `search_events` returns. It has no sort, and its read order holds spans in
+    /// order but is not date order (PR #430 verify round 2: 40 of the first 500 rows were among the
+    /// oldest 500), so a prefix would be an arbitrary set. One rule for any cut, a caller's `limit`
+    /// or the default, on any range: the rows closest to `now`, then in start order, ties in read
+    /// order both times. Nothing cut: as read. `defaultLimit` as in `bounded`.
+    static func boundedNearNow<Item>(_ items: [Item], requested: Int?, searched: Span, now: Date,
+                                     start: (Item) -> Date) -> (rows: [Item], defaultLimit: Int?) {
+        guard let keep = requested ?? (widensPreviousCut(searched) ? defaultWideOutput : nil), items.count > keep else {
+            return (items, nil)
+        }
+        let timed = items.enumerated().map { (offset: $0.offset, element: $0.element, start: start($0.element)) }
+        let nearest = timed.sorted {
+            (abs($0.start.timeIntervalSince(now)), $0.offset) < (abs($1.start.timeIntervalSince(now)), $1.offset)
+        }.prefix(keep)
+        return (nearest.sorted { ($0.start, $0.offset) < ($1.start, $1.offset) }.map(\.element),
+                requested == nil ? keep : nil)
+    }
+
+    /// #332: what a `search_events` answer says about any cut.
+    static func nearestNote(kept: Int, total: Int) -> String {
+        "These are the \(kept) of \(total) matches closest to today, sorted by start. For the others give a narrower range, or a larger limit (at most \(InputValidation.maxLimit))."
+    }
+
+    /// #332: what `search_events` and `findSimilarEvents` search when not told: two Gregorian years
+    /// either side of `now`, in `zone`. Gregorian whatever the host chose in region settings: a
+    /// Hebrew or Chinese year is not one, which made this up to 17 days over the wide line. Across a
+    /// clock change it is 1461 days and an hour, so it stays narrow (`wideRangeDays`).
+    static func defaultSearchRange(now: Date, zone: TimeZone = .current) -> Span {
+        let gregorian = Calendar.gregorian(in: zone)
+        return Span(start: gregorian.date(byAdding: .year, value: -2, to: now) ?? now,
+                    end: gregorian.date(byAdding: .year, value: 2, to: now) ?? now)
     }
 
     /// How far `delete_events_batch` by date range searches past the one bound it was given.
@@ -131,9 +235,10 @@ enum EventRangeQuery {
         }
     }
 
-    /// Whether `range` is wider than EventKit's old cut, i.e. one #325 widened.
+    /// Whether `range` is wider than EventKit's old cut, i.e. one #325 widened, by more than the
+    /// day of slack in `wideRangeDays`.
     static func widensPreviousCut(_ range: Span) -> Bool {
-        range.end.timeIntervalSince(range.start) > TimeInterval(previousCutDays) * 86_400
+        range.end.timeIntervalSince(range.start) > TimeInterval(wideRangeDays) * 86_400
     }
 
     struct DeletionItem: Equatable {
@@ -171,15 +276,14 @@ enum EventRangeQuery {
         span == "all" || span == "future" ? Set(identifiers).count : identifiers.count
     }
 
-    /// Refuses, dry run included, a call over a range wider than `previousCutDays` that would make
+    /// Refuses, dry run included, a call over a range wider than `wideRangeDays` that would make
     /// more than `maxDeletionOccurrences` deletions, before anything is deleted.
     static func checkDeletionSize(operations: Int, searched: Span) throws {
         guard widensPreviousCut(searched), operations > maxDeletionOccurrences else { return }
         throw RangeError.tooManyToDelete(count: operations, from: searched.start, to: searched.end)
     }
 
-    /// The most duplicate comparisons over `searched`: limited only where the range is wider than
-    /// the old cut.
+    /// The most duplicate comparisons over `searched`: limited only over a wide range.
     static func comparisonLimit(searched: Span) -> Int? {
         widensPreviousCut(searched) ? maxDuplicateComparisons : nil
     }
@@ -191,8 +295,7 @@ enum EventRangeQuery {
         DateFormatter.machineReadable("yyyy-MM-dd'T'HH:mm:ss", zone: TimeZone.current).string(from: date)
     }
 
-    /// The most dry-run preview rows over `searched`: bounded only where the range is wider than
-    /// the old cut (a span "all" call within the deletion ceiling can still list many occurrences).
+    /// The most dry-run preview rows over `searched`: bounded only over a wide range (a span "all" call within the deletion ceiling can still list many occurrences).
     static func previewLimit(searched: Span) -> Int? {
         widensPreviousCut(searched) ? maxDeletionOccurrences : nil
     }

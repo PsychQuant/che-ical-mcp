@@ -252,6 +252,49 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #332: the five range reads state the read bound, when it applies and its rate, in
+    /// defineTools() and in the manifest; the two with an output default state that too, each with
+    /// its own rows and where `default_limit` sits; the numbers are the constants.
+    func testRangeReadToolsStateTheReadBound() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        func declared(_ name: String) -> String { CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? "" }
+        func summary(_ name: String) -> String { entries.first { $0["name"] as? String == name }?["description"] as? String ?? "" }
+        XCTAssertEqual(EventRangeQuery.maxEventsRead, 200_000)
+        XCTAssertEqual(EventRangeQuery.defaultWideOutput, 500)
+        XCTAssertEqual(EventRangeQuery.wideRangeDays, 1462)
+        for name in ["list_events", "search_events", "check_conflicts", "find_duplicate_events", "delete_events_batch"] {
+            XCTAssertTrue(declared(name).contains("1462 days"), "defineTools() \(name)")
+            XCTAssertFalse(declared(name).contains("1461 days"), "defineTools() \(name)")
+            XCTAssertTrue(declared(name).contains("about 200,000 event occurrences (about 2,000 a year over 100 years"), "defineTools() \(name): \(declared(name))")
+            XCTAssertTrue(summary(name).contains("about 200,000 occurrences (about 2,000 a year over 100 years)"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertTrue(summary(name).contains("1462 days"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertFalse(summary(name).contains("1461 days"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertFalse(declared(name).contains("20,000 "), name)
+        }
+        for name in ["list_events", "search_events"] {
+            XCTAssertTrue(declared(name).contains("limit does not lift it"), "defineTools() \(name)")
+            XCTAssertTrue(declared(name).contains("truncated: true whenever fewer events are returned than event_count, a limit's cut included; event_count is still the total"), "defineTools() \(name): \(declared(name))")
+            XCTAssertFalse(declared(name).contains("replaces the 500"), name)
+            XCTAssertTrue(summary(name).contains("without limit at most 500 events are returned"), "mcpb/manifest.json \(name): \(summary(name))")
+            XCTAssertTrue(summary(name).contains("truncated: true when fewer events are returned than event_count"), "mcpb/manifest.json \(name): \(summary(name))")
+            let schema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("except over a range longer than 1462 days: at most 500"), "limit of \(name)")
+            XCTAssertTrue(schema.contains("A limit does not lift the read bound"), "limit of \(name)")
+        }
+        XCTAssertTrue(declared("list_events").contains("the first in the requested sort, with metadata.default_limit"), declared("list_events"))
+        XCTAssertTrue(declared("search_events").contains("Any such cut, on any range, keeps the events closest to today, sorted by start, and says so in truncation_note"), declared("search_events"))
+        let searchSchema = "\(String(describing: CheICalMCPServer.defineTools().first { $0.name == "search_events" }?.inputSchema))"
+        XCTAssertTrue(searchSchema.contains("Maximum number of events to return, at most 10000: those closest to today, sorted by start"), searchSchema)
+        XCTAssertTrue(declared("search_events").contains("With only start_date or only end_date the other side stays two years from today, so such a range can be longer than 1462 days"), declared("search_events"))
+        XCTAssertTrue(summary("search_events").contains("those closest to today"), summary("search_events"))
+        // Only different calendars are compared, so one calendar is not a way out.
+        XCTAssertTrue(declared("find_duplicate_events").contains("naming fewer calendars in calendar_names, at least two"), declared("find_duplicate_events"))
+        XCTAssertTrue(declared("find_duplicate_events").contains("the exact names from list_calendars"), declared("find_duplicate_events"))
+        XCTAssertTrue(declared("delete_events_batch").contains("give both after_date and before_date, at most 1460 days apart"), declared("delete_events_batch"))
+    }
+
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
     /// manifest, as the reminder read tools do (#231).
     func testEventReadToolsDescribeAlarms() throws {

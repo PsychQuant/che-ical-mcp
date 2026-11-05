@@ -1585,9 +1585,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Default to ±2 years from now. EventKit's predicateForEvents can return
         // incomplete results with extremely wide ranges (distantPast/distantFuture).
-        let now = Date()
-        let searchStart = startDate ?? Calendar.current.date(byAdding: .year, value: -2, to: now)!
-        let searchEnd = endDate ?? Calendar.current.date(byAdding: .year, value: 2, to: now)!
+        let defaults = EventRangeQuery.defaultSearchRange(now: Date())
+        let searchStart = startDate ?? defaults.start
+        let searchEnd = endDate ?? defaults.end
 
         var calendars: [EKCalendar]?
         if let name = calendarName {
@@ -1645,11 +1645,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
-        let now = Date()
-        let searchStart = Calendar.current.date(byAdding: .year, value: -2, to: now)!
-        let searchEnd = Calendar.current.date(byAdding: .year, value: 2, to: now)!
-
-        let allEvents = try events(from: searchStart, to: searchEnd, calendars: nil)
+        let searched = EventRangeQuery.defaultSearchRange(now: Date())
+        let allEvents = try events(from: searched.start, to: searched.end, calendars: nil)
 
         let lowercasedTitle = title.lowercased()
         // Split title into words for flexible matching
