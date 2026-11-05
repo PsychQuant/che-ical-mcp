@@ -69,7 +69,22 @@ The example is illustrative. `has_recurrence` and `operation.target` capture the
 | `unknown` | The ID changed/disappeared, rules/due cannot be compared, or the record has not advanced. `reminder` is null and `reason` explains why. |
 | `not_applicable` | Non-recurring item, reopening, or an already-completed target. `reminder` is null. |
 
-The resolver observes the saved object exactly once, synchronously, before the handler suspends: EventKit advances a recurring reminder in place during `save`, so that read already reflects the successor. It does not poll, force cloud sync, call `reset`, or use title/external-ID guesses — a later read of the cached store could only reflect what another writer did, so it would misattribute a concurrent edit as this call's successor. The observation is local to this process's cached store; an edit made concurrently by Reminders.app or another device is not visible to it. It deliberately does not emit `none`: absence alone cannot prove a recurring series ended. Different-ID successors and sources without reliable observable identity remain `unknown`. A confirmed result is a best-effort local observation, not a cross-device transactional guarantee. A next occurrence can still be overdue.
+The resolver decides `status` from the saved object exactly once, synchronously, before the handler suspends: EventKit advances a recurring reminder in place during `save`, so that read already reflects the successor. It does not poll, force cloud sync, call `reset`, or use title/external-ID guesses — a read of the cached store after the handler suspends could reflect what another writer did, so it would misattribute a concurrent edit as this call's successor. The `status` decision is local to this process's cached store; an edit made concurrently by Reminders.app or another device is not visible to it. It deliberately does not emit `none`: absence alone cannot prove a recurring series ended. Different-ID successors and sources without reliable observable identity remain `unknown`. A confirmed result is a best-effort local observation, not a cross-device transactional guarantee. A next occurrence can still be overdue.
+
+### Relative alarms of the next occurrence (#423)
+
+After a `confirmed` result, and only then, the manager re-reads the reminder once (`EKObject.refresh()`, without `refreshSourcesIfNecessary()`). This second read happens right after the `status` decision, in the same synchronous stretch as the save, before the handler suspends, so no other call of this server can write in between. Another process (Reminders.app, a sync, a second server process) still can, so the read says what is there, not who wrote it. It changes neither `status` nor `reminder`, and it writes nothing.
+
+| Field | Where | Meaning |
+| --- | --- | --- |
+| `alarms_minutes_offsets` | `next_occurrence` | The next occurrence's relative alarms on that read, minutes before its due date, earliest first. |
+| `alarms_read_back` | `next_occurrence` | Present only as `false`: the read failed, or what it found is no longer the `confirmed` occurrence (identifier, list, source, recurrence, due date or completion state differ). No alarms are reported then. |
+| `alarms_note` | top level | Relative alarms on that read that were not on the reminder before the completion, as multisets. Absent when there are none. |
+| `alarms_read_back_note` | top level | Goes with `alarms_read_back: false`. |
+
+With `unknown` or `not_applicable` none of these fields appears.
+
+Measured on iCloud (2026-11-05, `--cli` and a long-lived stdio server): completing a repeating reminder with a location trigger leaves a plain 0-minute relative alarm on the next occurrence and on the completed copy, and the response reports it. This path sets only the completion fields; EventKit or the store adds the alarm when the save rolls the reminder over, and which of the two was not told apart. A series bounded by `occurrence_count` reads as `unknown` (`recurrence_unverified`), so the alarm goes unreported there. Whether the alarm fires and whether Reminders.app shows it are not checked.
 
 **An unknown next occurrence is not a failed completion. Do not repeat the write.** Only save failures use the MCP error path. Existing ID-only writes do not guarantee exactly-once behavior on client/transport retries; an ID may already refer to a later occurrence.
 
