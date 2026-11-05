@@ -2308,7 +2308,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         clearLocationTrigger: Bool = false,
         clearDueDate: Bool = false,
         realignToDue: Bool = false,
-        alarmOffsets: [Int]? = nil
+        alarmOffsets: [Int]? = nil,
+        recurrenceRule: RecurrenceRuleInput? = nil,
+        clearRecurrence: Bool = false
     ) async throws -> ReminderUpdateResult {
         try await ensureReminderAccess()
 
@@ -2323,12 +2325,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             identifier: identifier, title: title, notes: notes, due: due, priority: priority,
             calendarName: calendarName, calendarSource: calendarSource, locationTrigger: locationTrigger,
             clearLocationTrigger: clearLocationTrigger, clearDueDate: clearDueDate, realignToDue: realignToDue,
-            alarmOffsets: alarmOffsets)
+            alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence)
         // PR #256 verify round 1: everything that can refuse the call runs before the first write,
         // so a refused call leaves the cached reminder untouched (#235 no-due check, #333 alarm
         // check, list lookup).
         try ReminderUpdateWrite.checkRealign(request, existingDue: reminder.dueDateComponents)
         try ReminderUpdateWrite.checkAlarms(request, existingDue: reminder.dueDateComponents)
+        // #354: the rule checks, on the re-read reminder, before the first write.
+        try ReminderRecurrenceWrite.check(request, existingDue: reminder.dueDateComponents,
+                                          repeats: reminder.hasRecurrenceRules, isCompleted: reminder.isCompleted)
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
@@ -2342,7 +2347,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
             storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request))
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
+            // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
+            // call touched the rule.
+            recurrence: (recurrenceRule != nil || clearRecurrence)
+                ? ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() }) : nil)
         // Same reason as update_event (#246): the identifier the reminder has after the save.
         let savedID = reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
@@ -2543,7 +2552,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     // MARK: - Helpers
 
-    private func createRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
+    /// #354: static so `update_reminder`'s write (`ReminderRecurrenceWrite`) builds the same rule.
+    static func makeRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
         let frequency: EKRecurrenceFrequency
         switch input.frequency {
         case .daily: frequency = .daily
@@ -2575,6 +2585,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             setPositions: nil,
             end: end
         )
+    }
+
+    private func createRecurrenceRule(from input: RecurrenceRuleInput) -> EKRecurrenceRule {
+        Self.makeRecurrenceRule(from: input)
     }
 
     private func parseColor(_ hex: String) -> CGColor {
@@ -2899,6 +2913,11 @@ struct RecurrenceRuleInput: Sendable {
     enum Frequency: Sendable {
         case daily, weekly, monthly, yearly
     }
+
+    /// PR #420 verify round 1: bounds the parser enforces. EventKit raises an uncatchable
+    /// Objective-C exception for an interval below 1 or from 2^31 to 2^32, and for a count of 0.
+    static let maxInterval = 1000
+    static let maxOccurrenceCount = 10_000
 
     let frequency: Frequency
     let interval: Int

@@ -76,10 +76,18 @@ extension ReminderSnapshot {
         check("due_date") { Self.sameDateComponents($0.dueDateComponents, $1.dueDateComponents) }
         check("start_date") { Self.sameDateComponents($0.startDateComponents, $1.startDateComponents) }
         check("alarms") { UndoPostState.sameAlarms($0.alarms, $1.alarms) }
-        check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules, allDay: false) }
+        // PR #420 verify rounds 1-2: a rule end compares by day only when both reminders compared
+        // are date-only (CalDAV can store it as a date, as for an all-day event); otherwise to the
+        // second. Both sides decide, so the "already restored" comparison against a date-only
+        // target cannot pass a timed reminder whose end moved within the day.
+        check("recurrence") { RecurrenceRuleSnapshot.sameRules($0.recurrenceRules, $1.recurrenceRules,
+                                                              allDay: $0.isDateOnly && $1.isDateOnly) }
         check("url") { $0.url?.absoluteString == $1.url?.absoluteString }
         return changed
     }
+
+    /// A due date without a time (#267).
+    var isDateOnly: Bool { dueDateComponents != nil && dueDateComponents?.hour == nil }
 
     var completion: UndoPostState.CompletionState {
         UndoPostState.CompletionState(isCompleted: isCompleted, completionDate: completionDate)
