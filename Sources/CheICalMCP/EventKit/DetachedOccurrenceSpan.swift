@@ -12,6 +12,8 @@ import EventKit
 /// maintainer has not chosen between refusing and resolving the series. Not refused, because they
 /// measured correct: span `this`, `move_events_batch` with span `all` (the whole series moved, its
 /// identifier kept) and `delete_event` with span `future` (that occurrence and the later ones).
+/// `delete_events_batch` by date range is not refused either, because the listing named the
+/// identifier, not the caller; a range holding only that occurrence deletes it alone (#427).
 ///
 /// The reasons are fixed strings: no EventKit text, no user input.
 enum DetachedOccurrenceSpan {
