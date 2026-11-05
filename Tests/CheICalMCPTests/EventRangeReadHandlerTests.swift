@@ -3,7 +3,7 @@ import MCP
 import XCTest
 @testable import CheICalMCP
 
-/// The events the fake answers with; the store is only there to build `EKEvent`s, no access needed.
+/// Answers with the events it was given, or the error.
 private final class EventRangeReadFake: EventRangeReadSource, @unchecked Sendable {
     let events: [EKEvent]
     let readError: Error?
@@ -32,7 +32,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let base = ISO8601DateFormatter().date(from: "2001-01-01T00:00:00Z")!
     private let iso = ISO8601DateFormatter()
-    private let store = EKEventStore()
+    private var store: EKEventStore { SharedTestStore.store }
 
     private func events(_ count: Int, from: Date? = nil) -> [EKEvent] {
         let calendar = EKCalendar(for: .event, eventStore: store)
