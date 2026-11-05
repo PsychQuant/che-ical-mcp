@@ -373,16 +373,19 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 
 ## Release gate：場次自己的 id 上的 span all（#416）
 
-#416 的拒絕只在 iCloud 量過，判斷靠 `isDetached` 或 id 裡的 `/RID=`，以及從 `/RID=` 前面那段 id 列出系列。
-有 Google 或 Exchange 帳號時，**出 #416 的版本打 tag 之前**，用剛 build 的 binary 的 `--cli`，只在該來源名稱含
-`#416` 的拋棄式日曆上：
+#416 的拒絕只在 iCloud 量過，判斷靠 `isDetached` 或 id 裡的 `/RID=`，以及從 `/RID=` 前面那段 id 列出系列。#320 在 Google
+量到這兩者可靠，Exchange 沒有量。**出 #416 的版本打 tag 之前**，用剛 build 的 binary 的 `--cli`，有 Google 或 Exchange
+帳號時，在該來源名稱含 `#416` 的拋棄式日曆上：
 
-1. 一次性事件：`update_event` 與 `delete_event` 都帶 span `all`，要成功。若以「names one occurrence」拒絕，就是
-   該來源把一次性事件回報成 detached，要回報；
+1. 一次性事件：`update_event` 與 `delete_event` 都帶 span `all`，要成功。若被拒絕（「reported as one occurrence」），
+   就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
 2. 每週 5 次的系列，單獨改第 3 場 → 用該場次的 id 帶 span `all` 的 `update_event` 與 `delete_event`：要被拒絕，
    系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報；
-3. 同一個系列，單獨改第 1 場 → 用第 1 場的 id 帶 span `all` 的 `update_event`：iCloud 上會更新全部場次。該來源的 id
-   沒有 `/RID=` 時會被拒絕（列不出系列），這是已知限制，記下來，不算 bug。
+3. 同一個系列，單獨改第 1 場 → 用第 1 場的 id：`update_event` span `all` 在 iCloud 上會更新全部場次，`delete_event`
+   span `future` 會刪掉整個系列，span `all` 會被拒絕。該來源的 id 沒有 `/RID=` 時前者會被拒絕（列不出系列），
+   這是已知限制，記下來，不算 bug；
+4. 第一場被刪、第二場與第四場單獨改過 → 用第二場的 id 帶 span `all` 的 `update_event`：iCloud 上全部場次更新、新 id
+   （2026-11-05）。
 
 結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
 （2026-11-05，空的）。

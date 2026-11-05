@@ -246,8 +246,10 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
-        XCTAssertFalse(reason.contains("RID"), "an occurrence's own id is not a way to the whole series")
-        XCTAssertFalse(reason.contains("own id"))
+        // #416 measured it: the occurrence that comes first reaches the series through its own id.
+        // A later edited occurrence does not, so the hint names that one only.
+        XCTAssertTrue(reason.contains("The occurrence that comes first in the series reaches it through its own id"), reason)
+        XCTAssertFalse(reason.contains("RID"))
     }
 
     func testEveryRefusalSiteReportsTheHintThroughOneHelper() throws {
