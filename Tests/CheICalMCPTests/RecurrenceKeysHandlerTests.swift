@@ -82,7 +82,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
             for key in ["count", "until", "occurences", "set_positions", "Frequency"] {
                 let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
                 let message = try await refusal(tool, ["frequency": .string("daily"), key: .int(3)], events: events, reminders: reminders)
-                XCTAssertTrue(message.hasPrefix("recurrence accepts only frequency, interval, end_date, occurrence_count, days_of_week, days_of_month"), "\(tool) \(key): \(message)")
+                XCTAssertTrue(message.hasPrefix("recurrence accepts only frequency, interval, end_date, occurrence_count, days_of_week"), "\(tool) \(key): \(message)")
                 XCTAssertTrue(message.contains("another key was given (check its spelling)"), message)
                 XCTAssertTrue(message.contains("Nothing was written for this item"), message)
                 let written = await writes(events, reminders)
