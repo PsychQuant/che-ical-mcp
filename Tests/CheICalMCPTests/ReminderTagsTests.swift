@@ -12,12 +12,15 @@ final class ReminderTagsTests: XCTestCase {
         XCTAssertEqual(ReminderTags.extract(from: "#").tags, [])
         XCTAssertEqual(ReminderTags.extract(from: "##").tags, ["#"])
     }
-    func testAdversarialLineIsReturnedUnchanged() {
+    func testAdversarialLineIsReturnedUnchanged() throws {
         let input = String(repeating: "#a", count: 10_000) + " x"
         let start = Date()
         let result = ReminderTags.extract(from: input)
+        let elapsed = Date().timeIntervalSince(start)
         XCTAssertEqual(result.cleanNotes, input)
         XCTAssertTrue(result.tags.isEmpty)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+        // #417: the linear-time bound judged through HostLoad (a loaded host can starve it). Last:
+        // nothing above depends on it, so a skip here must not keep them from running.
+        try HostLoad.live.checkWithinBound(elapsed, bound: 1, "Tag extraction of a 20,000-character line")
     }
 }

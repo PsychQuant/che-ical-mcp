@@ -10,6 +10,16 @@ import XCTest
 ///   `XCTSkip`, with the measurement and the load ("cannot judge");
 /// - over it otherwise, including when the load cannot be read: `XCTFail`, with the load.
 /// The reader is a closure so each branch is tested with injected values (`HostLoadTests`).
+///
+/// Where a check goes in a test (#417). An `XCTSkip` cannot retract a failure recorded before it,
+/// and a skip stops the test, so:
+/// - before every assertion that reads output the bound protects: a child's stdout or stderr, or
+///   anything else that may be incomplete when the bound is exceeded (an overrun there makes that
+///   assertion fail first, and the later skip turns into a failure);
+/// - after assertions whose input is complete either way (the value a pure function returned,
+///   the result a runner returned, whether a cap fired), so a skip cannot keep them from running;
+/// - after cleanup that must run whatever the verdict (closing descriptors, disconnecting), or
+///   that cleanup is registered with `addTeardownBlock` / `defer`, since a skip is a thrown error.
 struct HostLoad {
     struct Snapshot: Equatable {
         /// `getloadavg`'s 1-minute average; nil when it could not be read.
@@ -70,6 +80,17 @@ struct HostLoad {
                           file: StaticString = #filePath, line: UInt = #line) throws {
         let measured = String(format: "%@ %.3f s, bound %.1f s", what, elapsed, bound)
         try report(Self.verdict(exceeded: !(elapsed < bound), what: measured, snapshot: read()), file: file, line: line)
+    }
+
+    /// `checkWithinBound` for a `Duration` (in-process clocks), converted here so the conversion is
+    /// tested once, with injected values, instead of in each test file (PR #422 verify round 2).
+    func checkWithinBound(_ elapsed: Duration, bound: Duration, _ what: String,
+                          file: StaticString = #filePath, line: UInt = #line) throws {
+        try checkWithinBound(Self.seconds(elapsed), bound: Self.seconds(bound), what, file: file, line: line)
+    }
+
+    static func seconds(_ duration: Duration) -> TimeInterval {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     func checkNotTimedOut(_ timedOut: Bool, bound: TimeInterval, _ what: String,

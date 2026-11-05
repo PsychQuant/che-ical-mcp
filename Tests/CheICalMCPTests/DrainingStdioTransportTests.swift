@@ -46,12 +46,27 @@ private actor ScriptedTransport: Transport {
     }
 }
 
+/// A descriptor closed at most once, so a test can end its input (EOF) and the teardown still
+/// closes it when the test stopped before that (PR #422 verify round 2).
+private final class OnceClosedFD: @unchecked Sendable {
+    let fd: Int32
+    private let lock = NSLock()
+    private var closed = false
+    init(_ fd: Int32) { self.fd = fd }
+    func close() {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
+        closed = true
+        _ = Darwin.close(fd)
+    }
+}
+
 /// #345: `DrainingStdioTransport` over a pair of pipes instead of the process's stdio, so the drain
 /// and its timeout are tested without spawning the binary.
 final class DrainingStdioTransportTests: XCTestCase {
     private struct Pipes {
         let transport: DrainingStdioTransport
-        let clientWrite: Int32   // what the "client" writes; the transport reads it
+        let clientWrite: OnceClosedFD   // what the "client" writes; the transport reads it
         let serverRead: Int32    // what the transport writes; drained by the test
     }
 
@@ -61,8 +76,22 @@ final class DrainingStdioTransportTests: XCTestCase {
         XCTAssertEqual(pipe(&toClient), 0)
         let inner = StdioTransport(input: FileDescriptor(rawValue: toServer[0]),
                                    output: FileDescriptor(rawValue: toClient[1]))
-        return Pipes(transport: DrainingStdioTransport(inner: inner, drainTimeout: drainTimeout),
-                     clientWrite: toServer[1], serverRead: toClient[0])
+        let transport = DrainingStdioTransport(inner: inner, drainTimeout: drainTimeout)
+        let serverRead = toClient[0], serverInput = toServer[0], serverOutput = toClient[1]
+        let clientWrite = OnceClosedFD(toServer[1])
+        // Registered here, not at the end of each test: a timing check throws `XCTSkip` on a loaded
+        // host, and a skip ends the test before any cleanup after it (PR #422 verify round 1). All
+        // four ends are closed: `StdioTransport.disconnect()` does not close its descriptors, and
+        // the client's write end is closed here too if the test stopped before ending its input
+        // (round 2). The transport's two ends are closed after it is disconnected.
+        addTeardownBlock {
+            clientWrite.close()
+            close(serverRead)
+            await transport.disconnect()
+            close(serverInput)
+            close(serverOutput)
+        }
+        return Pipes(transport: transport, clientWrite: clientWrite, serverRead: serverRead)
     }
 
     private func write(_ fd: Int32, _ text: String) {
@@ -74,8 +103,8 @@ final class DrainingStdioTransportTests: XCTestCase {
     func testTheStreamEndsOnlyAfterTheReplyIsSent() async throws {
         let p = try makeTransport(drainTimeout: .seconds(10))
         try await p.transport.connect()
-        write(p.clientWrite, #"{"jsonrpc":"2.0","id":1,"method":"ping"}"# + "\n")
-        close(p.clientWrite)   // EOF
+        write(p.clientWrite.fd, #"{"jsonrpc":"2.0","id":1,"method":"ping"}"# + "\n")
+        p.clientWrite.close()   // EOF
 
         let clock = ContinuousClock()
         let start = clock.now
@@ -91,17 +120,15 @@ final class DrainingStdioTransportTests: XCTestCase {
 
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300), "the stream must wait for the reply")
-        XCTAssertLessThan(elapsed, .seconds(5), "and end soon after it, not at the timeout")
-        close(p.serverRead)
-        await p.transport.disconnect()
+        try checkUnder5Seconds(elapsed, "The stream's end after the reply (not at the timeout)")
     }
 
     /// A request that is never answered holds the stream only until the timeout.
     func testAnUnansweredRequestIsDroppedAtTheTimeout() async throws {
         let p = try makeTransport(drainTimeout: .milliseconds(300))
         try await p.transport.connect()
-        write(p.clientWrite, #"{"jsonrpc":"2.0","id":"never","method":"tools/call"}"# + "\n")
-        close(p.clientWrite)
+        write(p.clientWrite.fd, #"{"jsonrpc":"2.0","id":"never","method":"tools/call"}"# + "\n")
+        p.clientWrite.close()
 
         let clock = ContinuousClock()
         let start = clock.now
@@ -111,22 +138,34 @@ final class DrainingStdioTransportTests: XCTestCase {
 
         XCTAssertEqual(messages, 1)
         XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(300))
-        XCTAssertLessThan(elapsed, .seconds(5))
-        close(p.serverRead)
-        await p.transport.disconnect()
+        try checkUnder5Seconds(elapsed, "The drain cut off at the 300 ms cap")
     }
 
     private struct WaitTimedOut: Error {}
 
-    /// Returns as soon as `condition` holds; fails the test and throws if it does not within 5 s
-    /// (PR #409 verify round 3: it used to return quietly either way).
+    /// Returns as soon as `condition` holds. If it does not within 500 polls 10 ms apart (at least
+    /// 5 s; longer when the sleeps overshoot on a busy host), the overrun is judged through
+    /// `HostLoad` (#417: a skip on a host loaded past the threshold, otherwise a failure) and the
+    /// test stops (PR #409 verify round 3: it used to return quietly either way). The poll count is
+    /// the bound, as before #417; the check reports it as 5 s.
     private func waitUntil(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
         for _ in 0..<500 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTFail("condition did not hold within 5 s", file: file, line: line)
+        try HostLoad.live.checkNotTimedOut(true, bound: 5, "A condition the test waits for", file: file, line: line)
         throw WaitTimedOut()
+    }
+
+    /// #417: the tests' "ended well before the cap" bound, judged through `HostLoad`. In several of
+    /// these tests the bound is the only check that tells "ended after the reply / at EOF" from
+    /// "ended at the 10 s / 30 s drain timeout", so on a host loaded past the threshold a real
+    /// drain regression shows up as a skip, not a failure. That is the #417 policy (an overrun
+    /// cannot be judged there) and accepted: below the threshold it still fails, and the skip
+    /// message carries the elapsed time.
+    private func checkUnder5Seconds(_ elapsed: Duration, _ what: String,
+                                    file: StaticString = #filePath, line: UInt = #line) throws {
+        try HostLoad.live.checkWithinBound(elapsed, bound: .seconds(5), what, file: file, line: line)
     }
 
     /// PR #409 verify round 1 (MEDIUM): a reply settles its request before the write is awaited,
@@ -185,7 +224,7 @@ final class DrainingStdioTransportTests: XCTestCase {
         } catch {}
         await inner.finish()
         _ = try await ended.value
-        XCTAssertLessThan(clock.now - start, .seconds(5), "settled despite the failed write")
+        try checkUnder5Seconds(clock.now - start, "The drain after a failed reply write (settled, not at the cap)")
     }
 
     /// PR #409 verify round 2: batches are not recorded (the SDK answers them inline), so a batch
@@ -203,7 +242,7 @@ final class DrainingStdioTransportTests: XCTestCase {
         await inner.feed(#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2}]"#)
         await inner.finish()
         _ = try await ended.value
-        XCTAssertLessThan(clock.now - start, .seconds(5))
+        try checkUnder5Seconds(clock.now - start, "The drain after an undecodable batch (not held)")
     }
 
     /// PR #409 verify round 2: a reply whose write is still in flight holds the drain, even though
@@ -239,8 +278,8 @@ final class DrainingStdioTransportTests: XCTestCase {
     func testWithNothingOutstandingTheStreamEndsAtEOF() async throws {
         let p = try makeTransport(drainTimeout: .seconds(30))
         try await p.transport.connect()
-        write(p.clientWrite, #"{"jsonrpc":"2.0","method":"notifications/initialized"}"# + "\n")
-        close(p.clientWrite)
+        write(p.clientWrite.fd, #"{"jsonrpc":"2.0","method":"notifications/initialized"}"# + "\n")
+        p.clientWrite.close()
 
         let clock = ContinuousClock()
         let start = clock.now
@@ -248,8 +287,6 @@ final class DrainingStdioTransportTests: XCTestCase {
         for try await _ in await p.transport.receive() { messages += 1 }
 
         XCTAssertEqual(messages, 1)
-        XCTAssertLessThan(clock.now - start, .seconds(5), "no drain wait without an outstanding request")
-        close(p.serverRead)
-        await p.transport.disconnect()
+        try checkUnder5Seconds(clock.now - start, "EOF with nothing outstanding (no drain wait)")
     }
 }

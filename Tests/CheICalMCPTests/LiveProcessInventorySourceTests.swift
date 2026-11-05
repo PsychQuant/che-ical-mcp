@@ -13,6 +13,10 @@ final class LiveProcessInventorySourceTests: XCTestCase {
     /// loaded host made `ps -A` overrun it and the empty-match test fail with "ps timed out
     /// after 500ms" (captured 2026-11-05, load average about 830). The timeout path itself stays
     /// covered by `testEnumerateWithTinyTimeout_surfacesTimeoutOrCompletes`.
+    ///
+    /// A deliberate exception (#417) to routing wall-clock bounds through `HostLoad`: this is a
+    /// budget handed to the production source, not a test's own bound, and a `ps` that overruns it
+    /// says so in `failureReason` ("ps timed out after 10000ms").
     static let generousTimeoutMilliseconds = 10_000
 
     // MARK: - Missing binary

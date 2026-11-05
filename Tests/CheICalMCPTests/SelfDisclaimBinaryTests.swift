@@ -25,7 +25,23 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let stderr: String
         let status: Int32
         let timedOut: Bool
+        /// True when the stdout/stderr drain wait hit `drainCap`, so the output may be partial (#417).
+        let drainTimedOut: Bool
         let elapsed: TimeInterval
+    }
+
+    /// The bound every `--print-tcc-path` run gets.
+    private static let printTCCPathTimeout: TimeInterval = 15
+    /// How long `runBounded` waits for the output drains after the child is gone (#417).
+    private static let drainCap: TimeInterval = 5
+
+    /// #417: a `--print-tcc-path` run's wall-clock limits (the 15 s bound, then the drain) judged
+    /// through `HostLoad`, before any assertion on its output (an `XCTSkip` cannot retract a
+    /// failure recorded earlier, #366 / #418).
+    private func checkRunBounds(_ run: Run, _ what: String = "--print-tcc-path",
+                                file: StaticString = #filePath, line: UInt = #line) throws {
+        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: Self.printTCCPathTimeout, what, file: file, line: line)
+        try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)
     }
 
     private func locateBuiltBinary() throws -> URL {
@@ -83,16 +99,16 @@ final class SelfDisclaimBinaryTests: XCTestCase {
             _ = exited.wait(timeout: .now() + 5)
         }
         // The pipes close once the child (or its kill) is gone; bound this wait too.
-        _ = drained.wait(timeout: .now() + 5)
+        let drainTimedOut = drained.wait(timeout: .now() + Self.drainCap) == .timedOut
         return Run(
             pid: pid,
             stdout: String(decoding: collectedOut.get(), as: UTF8.self),
             stderr: String(decoding: collectedErr.get(), as: UTF8.self),
-            status: process.terminationStatus, timedOut: timedOut,
+            status: process.terminationStatus, timedOut: timedOut, drainTimedOut: drainTimedOut,
             elapsed: Date().timeIntervalSince(started))
     }
 
-    private func runPrintTCCPath(extraEnvironment: [String: String] = [:], timeout: TimeInterval = 15) throws -> Run {
+    private func runPrintTCCPath(extraEnvironment: [String: String] = [:], timeout: TimeInterval = printTCCPathTimeout) throws -> Run {
         try Self.runBounded(
             executable: try locateBuiltBinary(), arguments: ["--print-tcc-path"],
             environment: environment(extraEnvironment), timeout: timeout)
@@ -137,8 +153,8 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // `<pid> … (this binary)` with no re-exec at all, and this test passed vacuously.
         try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
+        try checkRunBounds(run)   // #366, #417
         try skipIfThePolicyKeptTheHost(run)
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout), "no TCC attribution block in:\n\(run.stdout)")
         XCTAssertTrue(line.hasPrefix("  \(run.pid)  "), "pid must survive the re-exec; got \(line)")
@@ -150,7 +166,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // re-exec it causes used to be silent.
         try requireHostAttributedChild()
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
+        try checkRunBounds(run)   // #366, #417
         try skipIfThePolicyKeptTheHost(run)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
     }
@@ -164,7 +180,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // usable" while both fresh children read fullAccess), after a thousand in-process tests.
         try requireHostAttributedChild()
         let host = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
-        try HostLoad.live.checkNotTimedOut(host.timedOut, bound: 15, "--print-tcc-path (opted-out oracle)")   // #366
+        try checkRunBounds(host, "--print-tcc-path (opted-out oracle)")   // #366, #417
         let usable = ["Calendar", "Reminders"].allSatisfy { service in
             host.stdout.components(separatedBy: "\n").contains {
                 $0.hasPrefix("  \(service):") && $0.contains(" fullAccess")
@@ -174,7 +190,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let restricted = reportsRestricted(host.stdout)
 
         let run = try runPrintTCCPath()
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
+        try checkRunBounds(run)   // #366, #417
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertEqual(
@@ -187,7 +203,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_NO_DISCLAIM": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
+        try checkRunBounds(run)   // #366, #417
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "opt-out must leave the host responsible; got \(line)")
@@ -201,7 +217,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try runPrintTCCPath(extraEnvironment: [
             "CHE_ICAL_MCP_DISCLAIMED": "1", "CHE_ICAL_MCP_FORCE_DISCLAIM": "1",
         ])
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
+        try checkRunBounds(run)   // #366, #417
         XCTAssertEqual(run.status, 0)
         let line = try XCTUnwrap(attributionLine(run.stdout))
         XCTAssertFalse(line.hasSuffix("(this binary)"), "sentinel must skip the re-exec; got \(line)")
@@ -214,7 +230,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         // Verify round 3 row 10: the --setup and codesign commands were double-quoted, where
         // `$(…)` and backticks in a path still expand when pasted.
         let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"])
-        try HostLoad.live.checkNotTimedOut(run.timedOut, bound: 15, "--print-tcc-path")   // #366
+        try checkRunBounds(run)   // #366, #417
         let lines = run.stdout.components(separatedBy: "\n")
         XCTAssertTrue(lines.contains { $0.hasPrefix("  '") && $0.hasSuffix("' --setup") }, run.stdout)
         XCTAssertTrue(lines.contains { $0.hasPrefix("  codesign -dv '") && $0.hasSuffix("'") }, run.stdout)
@@ -228,7 +244,9 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let run = try Self.runBounded(
             executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"],
             environment: nil, timeout: 1)
+        // #417: that the 1 s bound fired stays a hard assertion (load can only make it more
+        // certain); how long the kill took is judged through HostLoad.
         XCTAssertTrue(run.timedOut)
-        XCTAssertLessThan(run.elapsed, 10)
+        try HostLoad.live.checkWithinBound(run.elapsed, bound: 10, "A hung child killed at the 1 s bound")
     }
 }

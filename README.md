@@ -63,7 +63,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_calendars` | List all calendars and reminder lists (includes source_type) |
-| `create_calendar` | Create a new calendar. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
+| `create_calendar` | Create a new calendar. If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; if whether it was saved cannot be checked, the list is kept and the call fails with an error that says how to check before creating it again (#289); fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
 | `delete_calendar` | Delete a calendar or reminder list (not undoable). `require_empty: true` refuses one that holds any event (checked only about 200 years either side of now; a passed check returns `checked_empty`, `searched_from` / `searched_to`) or any reminder (#328) |
 | `update_calendar` | Rename a calendar or change its color (v0.9.0) |
 
@@ -91,7 +91,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_reminders` | List reminders with filter/sort/limit, tags extraction (v1.0.0) |
-| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267); with a due date, bare or timed, the response carries `date_sync` with `aligned` judged on the saved reminder (#301, #308; a timed due that lost its time zone on save is written again and saved a second time, as `update_reminder` does). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
+| `create_reminder` | Create a reminder with due date, tags (v1.3.0); a bare `YYYY-MM-DD` due date makes it date-only (#267); with a due date, bare or timed, the response carries `date_sync` with `aligned` judged on the saved reminder (#301, #308; a timed due that lost its time zone on save is written again and saved a second time, as `update_reminder` does). If the save reports an error but the reminder turns out to be saved, the call succeeds; fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261); a save that failed and could not be checked keeps the reminder and fails with an error that says how to check before creating it again (#289) |
 | `update_reminder` | Update a reminder (including tags, `clear_due_date`) (v1.3.0) |
 | `complete_reminder` | Mark as completed/incomplete |
 | `delete_reminder` | Delete a reminder |
@@ -129,7 +129,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `move_events_batch` | Move events to another calendar in place, keeping recurrence and attendees; `span` / `occurrence_dates` for recurring events (#226) |
 | `delete_events_batch` | Delete events by IDs or date range, with dry-run preview (v1.0.0) |
 | `find_duplicate_events` | Find duplicate events across calendars (v0.5.0) |
-| `create_reminders_batch` | Create multiple reminders at once (v0.9.0); a row may carry `store_differs` and `note`, as `create_reminder` does (#261) |
+| `create_reminders_batch` | Create multiple reminders at once (v0.9.0); a row may carry `store_differs` and `note`, as `create_reminder` does (#261); a row whose save failed and could not be checked is kept and its error says how to check before creating it again (#289) |
 | `delete_reminders_batch` | Delete multiple reminders at once (v0.9.0); one `undo` recreates them (#243) |
 
 **Moving events (#226):** a move reassigns the event's calendar, so recurrence, attendees and every other field are kept. The identifier stays the same within an account and changes across accounts (each result reports `id_changed` and `new_event_id`). For a recurring event, `span: this` (default) moves only the occurrence named in `occurrence_dates`, which becomes a one-off; `span: all` moves the whole series; a recurring event without a date is refused. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees. Each result reports `method` (`in_place` / `copied` / `split` / `unchanged`) and any `not_carried_over` fields.
