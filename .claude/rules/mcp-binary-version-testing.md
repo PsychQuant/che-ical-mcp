@@ -286,6 +286,10 @@ build 的 binary 的 `--cli`，只在名稱含 `#423` 的拋棄式清單：
    沒有 `alarms_read_back: false` → 用另一個 `--cli` process 讀回比對。回應是 `[15]` 或 `false` 而 `--cli` 讀到
    `[15, 0]`，就是 reload 沒有讀到 rollover 的結果。2026-11-05 用長駐 stdio server 量過八筆（完成之前分別是剛建立、
    列表、更新、等 3 秒、完成另一筆），都正確；這個 reload 不跑 `refreshSourcesIfNecessary()`。
+   再加 count 系列（#429）：同一個 session 建每週、`occurrence_count: 3`、帶位置提醒與 `[15]` 的提醒，連續完成兩次 →
+   兩次都是 `confirmed`、`[15, 0]`，第一次有 `alarms_note`、第二次沒有，都沒有 `alarms_read_back: false` → 第三次原地
+   完成，`unknown`（`successor_not_observed`）→ 用 `--cli` 讀回，最後一筆的 `occurrence_count` 是 1。2026-11-05 用長駐
+   stdio server 量過兩筆（有無位置提醒各一），都正確。
 
 **需要使用者在場的一步**（`--cli` 與 stdio 看不到，不可用 AppleScript 代替）：
 

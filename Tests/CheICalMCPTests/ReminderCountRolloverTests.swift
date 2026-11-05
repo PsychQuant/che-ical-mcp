@@ -6,8 +6,12 @@ import XCTest
 /// (measured on iCloud, 2026-11-05: weekly, daily, monthly, date-only, several weekdays, overdue).
 /// `evaluate` accepts exactly that change and no other. In-memory EventKit objects only.
 final class ReminderCountRolloverTests: XCTestCase {
-    private func rule(count: Int? = nil, interval: Int = 1, frequency: EKRecurrenceFrequency = .weekly) -> EKRecurrenceRule {
-        EKRecurrenceRule(recurrenceWith: frequency, interval: interval, end: count.map { EKRecurrenceEnd(occurrenceCount: $0) })
+    private func rule(count: Int? = nil, interval: Int = 1, frequency: EKRecurrenceFrequency = .weekly,
+                      days: [EKWeekday]? = nil) -> EKRecurrenceRule {
+        EKRecurrenceRule(recurrenceWith: frequency, interval: interval,
+                         daysOfTheWeek: days?.map { EKRecurrenceDayOfWeek($0) }, daysOfTheMonth: nil, monthsOfTheYear: nil,
+                         weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil,
+                         end: count.map { EKRecurrenceEnd(occurrenceCount: $0) })
     }
 
     private func snap(day: Int, rules: [EKRecurrenceRule], completed: Bool = false) -> ReminderCompletionSnapshot {
@@ -50,13 +54,21 @@ final class ReminderCountRolloverTests: XCTestCase {
     }
 
     func testAnotherChangedFieldNextToTheCountIsNotTheRollover() {
-        let changes: [(String, EKRecurrenceRule)] = [
-            ("interval", rule(count: 2, interval: 2)),
-            ("frequency", rule(count: 2, frequency: .daily))
+        let changes: [(String, EKRecurrenceRule, EKRecurrenceRule)] = [
+            ("interval", rule(count: 3), rule(count: 2, interval: 2)),
+            ("frequency", rule(count: 3), rule(count: 2, frequency: .daily)),
+            ("days_of_week changed", rule(count: 3, days: [.monday, .thursday]), rule(count: 2, days: [.monday])),
+            ("days_of_week appeared", rule(count: 3), rule(count: 2, days: [.monday]))
         ]
-        for (name, after) in changes {
-            XCTAssertEqual(evaluate([rule(count: 3)], [after]).reason, "recurrence_unverified", name)
+        for (name, before, after) in changes {
+            XCTAssertEqual(evaluate([before], [after]).reason, "recurrence_unverified", name)
         }
+    }
+
+    /// The selectors carried over unchanged (the measured Mon + Thu series).
+    func testACountOneLowerWithTheSameDaysIsTheRollover() {
+        let next = evaluate([rule(count: 4, days: [.monday, .thursday])], [rule(count: 3, days: [.monday, .thursday])])
+        XCTAssertEqual(next.status, .confirmed)
     }
 
     func testADifferentNumberOfRulesIsNotTheRollover() {

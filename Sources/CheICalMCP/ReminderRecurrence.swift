@@ -20,7 +20,7 @@ struct ReminderRecurrenceRuleValue: Equatable, Sendable {
     let daysOfYear: [Int]?
     let setPositions: [Int]?
     let endDate: Date?
-    /// What the rule holds now: a rollover lowers it, so on a saved series it is the count left (#429).
+    /// What the rule holds now: on iCloud a rollover lowers it, so after a completion it is the count left (#429).
     private(set) var occurrenceCount: Int?
 
     init(from rule: EKRecurrenceRule) {
