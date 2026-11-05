@@ -20,7 +20,8 @@ struct ReminderRecurrenceRuleValue: Equatable, Sendable {
     let daysOfYear: [Int]?
     let setPositions: [Int]?
     let endDate: Date?
-    let occurrenceCount: Int?
+    /// What the rule holds now: a rollover lowers it, so on a saved series it is the count left (#429).
+    private(set) var occurrenceCount: Int?
 
     init(from rule: EKRecurrenceRule) {
         frequencyRawValue = rule.frequency.rawValue
@@ -46,6 +47,18 @@ struct ReminderRecurrenceRuleValue: Equatable, Sendable {
         } else {
             occurrenceCount = nil
         }
+    }
+
+    /// Whether this rule, read after a rollover, is `before` carried over: unchanged, or with
+    /// `occurrenceCount` exactly one lower and every other field equal. On iCloud a rollover lowers
+    /// the count by one per completion, even when the due date skips occurrences (#429).
+    func continues(_ before: Self) -> Bool {
+        if self == before { return true }
+        guard let remaining = occurrenceCount, let original = before.occurrenceCount,
+              remaining == original - 1 else { return false }
+        var restored = self
+        restored.occurrenceCount = original
+        return restored == before
     }
 
     var dictionary: [String: Any] {

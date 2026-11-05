@@ -99,7 +99,10 @@ struct ReminderNextOccurrence: Equatable, Sendable {
         }
         guard observed.hasRecurrence, let rules = before.rules, !rules.isEmpty,
               rules.allSatisfy({ $0.frequency != "unknown" }),
-              rules == observed.rules else { return .unknown(reason: "recurrence_unverified") }
+              let observedRules = observed.rules, observedRules.count == rules.count,
+              zip(rules, observedRules).allSatisfy({ $1.continues($0) }) else {
+            return .unknown(reason: "recurrence_unverified")
+        }
         guard !observed.isCompleted else { return .unknown(reason: "successor_not_observed") }
         guard let originalDue = before.due, let observedDue = observed.due,
               originalDue.hasSamePrecisionAndTimeZone(as: observedDue),
