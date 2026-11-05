@@ -130,6 +130,8 @@ struct ReminderCompletionResult: Sendable {
     let afterSave: ReminderCompletionSnapshot
     let requestedCompleted: Bool
     let nextOccurrence: ReminderNextOccurrence
+    /// #423: the next occurrence's relative alarms, read after a reload (nil when not observed).
+    var rolloverAlarms: ReminderRolloverAlarms? = nil
 
     /// The reminder's own wall clock (plus its zone when it has one) — never a
     /// UTC instant, which can name a different calendar day than the user set.
@@ -162,7 +164,10 @@ struct ReminderCompletionResult: Sendable {
         } else {
             message = "This reminder was completed successfully."
         }
-        return [
+        var nextOccurrenceDict = nextOccurrence.dictionary
+        // #423: the next occurrence's relative alarms, and the note when the store added any.
+        if let rolloverAlarms { nextOccurrenceDict.merge(rolloverAlarms.nextOccurrenceFields) { $1 } }
+        var dict: [String: Any] = [
             // Retain legacy semantics. operation is authoritative for the write outcome.
             "action": "completed",
             "id": before.id,
@@ -186,9 +191,11 @@ struct ReminderCompletionResult: Sendable {
                     "was_completed": before.isCompleted
                 ] as [String: Any]
             ] as [String: Any],
-            "next_occurrence": nextOccurrence.dictionary,
+            "next_occurrence": nextOccurrenceDict,
             "message": message
         ]
+        if let rolloverAlarms { dict.merge(rolloverAlarms.topLevelFields) { $1 } }
+        return dict
     }
 }
 

@@ -13,6 +13,8 @@ extension EventKitManager {
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
         let before = ReminderCompletionSnapshot(from: reminder)
+        // #423: the relative alarms before the save, to name the ones the store adds at the rollover.
+        let beforeRelativeAlarms = ReminderRelativeAlarms.storedMinutesBefore(reminder)
         ReminderCompletionWrite.applyRequest(to: reminder, completed: completed, now: Date())
         let writtenCompletionDate = reminder.completionDate
         try eventStore.save(reminder, commit: true)
@@ -30,8 +32,12 @@ extension EventKitManager {
         // is discarded once the identifier resolves to a later occurrence — see
         // executeUndo); legacy identifier-keyed record for everything else.
         await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: afterSave.title, savedCompletionDate: completed ? (afterSave.completionDate ?? writtenCompletionDate) : nil))
+        // #423: only for an observed rollover (the identifier now names the next occurrence), and
+        // after the observation above and the undo record, so neither sees the reload. Reads only.
+        let rolloverAlarms = next.status == .confirmed
+            ? ReminderRolloverAlarms.observe(before: beforeRelativeAlarms, item: reminder, reload: { reminder.refresh() }) : nil
         return ReminderCompletionResult(before: before, afterSave: afterSave,
-                                        requestedCompleted: completed, nextOccurrence: next)
+                                        requestedCompleted: completed, nextOccurrence: next, rolloverAlarms: rolloverAlarms)
     }
 
     /// The recorded identifier may now resolve to the NEXT occurrence: on
