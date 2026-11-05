@@ -16,11 +16,13 @@ import EventKit
 /// update span `all` with an earlier occurrence left, delete span `all` with any other occurrence
 /// left. These are the coordinator's defaults while the maintainer has not answered.
 ///
-/// Also refused (PR #431 round 2): through such an identifier with span `all` or `future`, a change
-/// of the recurrence or to a calendar of another account (`clear_recurrence` answered updated and
-/// changed nothing, measured; the bare id refuses these through a stand-in, and the account change
-/// was only shown safe within one account), and an `occurrence_date` that is not this occurrence
-/// (it was ignored, and the write started at the occurrence the id names, measured).
+/// Also refused (PR #431 round 2): through such an identifier with span `all` or `future`,
+/// `clear_recurrence` (it answered updated and changed nothing, measured) and a calendar of another
+/// account (not measured, and only shown safe within one account), and with any span an
+/// `occurrence_date` that is not this occurrence (it was ignored, and the write started at the
+/// occurrence the id names, measured). A new `recurrence` is not refused: with span `all` from the
+/// first occurrence and from the first left, and with span `future` from a middle one, it did what
+/// it says (measured).
 ///
 /// Not refused:
 /// - `update_event` span `future`: it does what the span says, from this occurrence on, and a split
@@ -150,12 +152,12 @@ enum DetachedOccurrenceSpan {
         return batch ? seriesDeleteBatchReason : seriesDeleteReason
     }
 
-    /// A change of the recurrence or to a calendar of another account through one occurrence, with
-    /// span `all` or `future`.
+    /// `clear_recurrence` or a calendar of another account through one occurrence, with span `all`
+    /// or `future`.
     static func refusesSeriesProperty(identifier: String, isDetached: Bool, wholeSeries: Bool, span: EKSpan,
-                                      changesAccount: Bool, changesRecurrence: Bool) -> Bool {
+                                      changesAccount: Bool, clearsRecurrence: Bool) -> Bool {
         guard wholeSeries || span != .thisEvent else { return false }
-        return (changesAccount || changesRecurrence) && addressesOneOccurrence(identifier: identifier, isDetached: isDetached)
+        return (changesAccount || clearsRecurrence) && addressesOneOccurrence(identifier: identifier, isDetached: isDetached)
     }
 
     /// An `occurrence_date` that is not the occurrence the identifier names. Span `all` takes no
@@ -189,7 +191,7 @@ enum DetachedOccurrenceSpan {
         "This identifier is reported as one occurrence edited on its own, and the rest of its series cannot be listed from it, so span 'all' cannot be shown to do what it says. Use span 'this' on this occurrence, which also does what span 'all' would if this is a single event reported wrongly. \(suffix)"
     }
 
-    static let seriesPropertyReason = "event_id names one occurrence of a recurring series, edited on its own, and span 'all' or 'future' through it cannot take recurrence, clear_recurrence or a calendar of another account: these belong to the series, and clear_recurrence through it would answer updated and change nothing. To change them, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'; if that is refused too, the change is not supported on this series. Nothing was written."
+    static let seriesPropertyReason = "event_id names one occurrence of a recurring series, edited on its own, and span 'all' or 'future' through it cannot take clear_recurrence or a calendar of another account: clear_recurrence through it would answer updated and change nothing, and a move to another account was not shown safe from an occurrence. To make either change, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'; if that is refused too, the change is not supported on this series. Nothing was written."
 
     static let occurrenceDateReason = "event_id names one occurrence, edited on its own, and occurrence_date is another day. To act on that other occurrence, use that occurrence's own id from list_events; to act on this one, leave occurrence_date out. Nothing was changed."
 }

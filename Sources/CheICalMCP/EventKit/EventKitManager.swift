@@ -1204,10 +1204,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             changesRecurrence: clearRecurrence || recurrenceRule != nil) {
             throw EventKitError.standInRefused(reason: Self.standInSeriesPropertyReason)
         }
-        // #416 round 2: the same changes through an occurrence's own id, where `viaStandIn` is false.
+        // #416 round 2: through an occurrence's own id `viaStandIn` is false. A new recurrence is not
+        // here: it worked through an occurrence (measured), unlike clear_recurrence.
         if DetachedOccurrenceSpan.refusesSeriesProperty(
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span,
-            changesAccount: crossesAccounts, changesRecurrence: clearRecurrence || recurrenceRule != nil) {
+            changesAccount: crossesAccounts, clearsRecurrence: clearRecurrence) {
             throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesPropertyReason)
         }
         // #268 verify round 4: an occurrence edit that would move the series to another account.

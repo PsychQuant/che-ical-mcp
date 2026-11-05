@@ -221,18 +221,21 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     // MARK: - Series-level changes through an occurrence
 
-    func testSeriesLevelChangesAreRefusedThroughAnOccurrenceWithSpanAllOrFuture() {
+    /// `clear_recurrence` answered updated and changed nothing (measured), and a calendar of another
+    /// account was not measured. A new `recurrence` is not here: it worked with span `all` from the
+    /// first occurrence and from the first left, and with span `future` from a middle one (measured).
+    func testOnlyWhatDidNotWorkOrWasNotMeasuredIsRefusedThroughAnOccurrence() {
         func refused(id: String = "CAL-1:SERIES-1/RID=826768800", detached: Bool = true, all: Bool = false, span: EKSpan = .futureEvents,
-                     account: Bool = false, recurrence: Bool = false) -> Bool {
+                     account: Bool = false, clears: Bool = false) -> Bool {
             DetachedOccurrenceSpan.refusesSeriesProperty(identifier: id, isDetached: detached, wholeSeries: all, span: span,
-                                                         changesAccount: account, changesRecurrence: recurrence)
+                                                         changesAccount: account, clearsRecurrence: clears)
         }
-        XCTAssertTrue(refused(recurrence: true))
+        XCTAssertTrue(refused(clears: true))
         XCTAssertTrue(refused(account: true))
-        XCTAssertTrue(refused(all: true, recurrence: true))
-        XCTAssertFalse(refused(), "no series-level change")
-        XCTAssertFalse(refused(span: .thisEvent, recurrence: true), "span this keeps its own checks (#426)")
-        XCTAssertFalse(refused(id: series, detached: false, all: true, recurrence: true), "the series' own id")
+        XCTAssertTrue(refused(all: true, clears: true))
+        XCTAssertFalse(refused(), "a new recurrence or any other field")
+        XCTAssertFalse(refused(span: .thisEvent, clears: true), "span this keeps its own checks (#426)")
+        XCTAssertFalse(refused(id: series, detached: false, all: true, clears: true), "the series' own id")
     }
 
     // MARK: - occurrence_date through an occurrence's own id
@@ -296,12 +299,13 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testTheSeriesPropertyRefusalSaysWhyAndOffersAnUneditedOccurrence() {
         let reason = DetachedOccurrenceSpan.seriesPropertyReason
-        for phrase in ["recurrence, clear_recurrence or a calendar of another account",
+        for phrase in ["cannot take clear_recurrence or a calendar of another account",
                        "clear_recurrence through it would answer updated and change nothing",
                        "use the id list_events shows for an occurrence that was not edited on its own, with span 'all'",
                        "if that is refused too, the change is not supported on this series"] {
             XCTAssertTrue(reason.contains(phrase), reason)
         }
+        XCTAssertFalse(reason.contains("recurrence, clear_recurrence"), "a new recurrence goes through: \(reason)")
         XCTAssertTrue(reason.hasSuffix("Nothing was written."), reason)
     }
 
@@ -355,7 +359,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     /// Before the first field is assigned, as #373 requires of every refusal.
     func testTheOtherRefusalsOfAnUpdateComeBeforeTheFirstAssignment() throws {
         let body = try updateBody()
-        XCTAssertTrue(body.contains("if DetachedOccurrenceSpan.refusesSeriesProperty( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span, changesAccount: crossesAccounts, changesRecurrence: clearRecurrence || recurrenceRule != nil) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesPropertyReason) }"), body)
+        XCTAssertTrue(body.contains("if DetachedOccurrenceSpan.refusesSeriesProperty( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, span: span, changesAccount: crossesAccounts, clearsRecurrence: clearRecurrence) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.seriesPropertyReason) }"), body)
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.refusesOccurrenceDate( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, hasOccurrenceDate: occurrenceDate != nil, matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier))"), body)
     }
 

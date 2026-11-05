@@ -141,7 +141,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 - span `this` 修改或刪除該場次。例外是新的 `calendar_name`：它會搬動整個系列（#426）。
 - `update_event` span `future` 從該場次起更新。若該場次在系列中段，系列會在此結束並另起一個新系列，可能重發邀請；`id_changed` 會回報。
 - `update_event` span `all`：該場次是剩下的第一個場次時，會更新所有場次。若前面還有場次，這個呼叫會把系列切開，所以會被拒絕、不寫入任何東西；請改用 `list_events` 顯示的系列第一個場次（以原本的日期為準）的 `id`。首場被刪除的系列，除非剩下的第一個場次也被單獨改過，否則不支援更新整個系列（#326）；剩下的做法是從某場次起用 span `future`，或逐場用 span `this`。
-- 搭配 span `all` 或 `future` 時，`recurrence`、`clear_recurrence` 與另一個帳號的日曆都會被拒絕、不寫入任何東西：`clear_recurrence` 原本會回報 `updated` 卻什麼都沒改。請改用沒有單獨改過的場次。
+- 搭配 span `all` 或 `future` 時，`clear_recurrence` 與另一個帳號的日曆都會被拒絕、不寫入任何東西：`clear_recurrence` 原本會回報 `updated` 卻什麼都沒改，跨帳號搬移則沒有從單一場次量測過。請改用沒有單獨改過的場次。新的 `recurrence` 可以正常使用。
 - 不論哪一種 span，`occurrence_date` 都必須是該場次的日期，否則會被拒絕：它原本會被忽略，寫入從這個 ID 指的場次開始。
 - `delete_event` span `future` 刪除該場次與之後的場次，所以從第一個場次呼叫會刪掉整個系列。
 - `delete_event` span `all` 只會刪掉該場次，所以只要還有其他場次就會被拒絕、不刪除任何東西。要刪掉整個系列，請用系列第一個場次的 `id`：沒有 `/RID=` 時搭配 span `all`，有 `/RID=` 時搭配 span `future`（這個刪除無法 undo）。系列若可能超出四年的掃描範圍，就算作還有其他場次。`delete_events_batch` 以 `event_ids` 呼叫時只拒絕那一列（dry run 也會顯示），其他列照常處理，同一次呼叫列出的場次不算剩餘場次；以日期範圍呼叫時不拒絕，所以若範圍內只有這個單獨改過的場次，只會刪掉它，系列其餘場次留著（#427）。
