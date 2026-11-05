@@ -598,4 +598,18 @@ final class ManifestParityTests: XCTestCase {
         let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "update_reminder" }?["description"] as? String ?? ""
         XCTAssertTrue(summary.contains("alarms_note"), summary)
     }
+
+    /// PR #420 verify round 1: update_reminder names recurrence and clear_recurrence, and that a
+    /// rule change does not move the due date, in its description and its manifest summary.
+    func testUpdateReminderDescribesTheRecurrenceChange() throws {
+        let declared = CheICalMCPServer.defineTools().first { $0.name == "update_reminder" }?.description ?? ""
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "update_reminder" }?["description"] as? String ?? ""
+        for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+            XCTAssertTrue(text.contains("clear_recurrence"), "\(place): \(text)")
+            XCTAssertTrue(text.contains("does not move the due date"), "\(place): \(text)")
+            XCTAssertTrue(text.contains("recurrence_note"), "\(place): \(text)")
+        }
+    }
 }
