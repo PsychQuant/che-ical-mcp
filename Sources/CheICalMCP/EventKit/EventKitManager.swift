@@ -1045,11 +1045,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
-    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future' (which cannot be undone)."
+    /// What reaches such a series, with the conditions it holds under: without them this text
+    /// pointed back to a call that is refused in the same shape (PR #431 round 6). #428 gives the
+    /// rest a way.
+    private static let editedBeforeWays = "The occurrence that comes first in the series reaches it through its own id in two ways: update_event with span 'all' for a new title, notes, location or recurrence, unless the series' first occurrence was deleted and this one holds a location or alarms of its own, and delete_event with span 'future' (which cannot be undone). For any other update no single call reaches this series today: only span 'this' on each occurrence, which an open-ended series cannot finish (#428)."
+
+    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). \(editedBeforeWays)"
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
     /// by `event_ids`) reports it. That tool by `event_ids` cannot take an `occurrence_date`, so the
     /// text names the ways a batch caller has to a single occurrence instead.
-    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'. The occurrence that comes first in the series reaches it through its own id: update_event with span 'all', delete_event with span 'future' (which cannot be undone)."
+    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'. \(editedBeforeWays)"
 
     /// #335 item 6: a reason as a batch row reports it: the edited-before hint becomes
     /// `standInEditedBeforeBatchReason`; every other reason (the all-edited hint, whose `/RID=` ids
@@ -1134,6 +1139,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
+            writesLocation: location != nil,
             neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
@@ -1190,11 +1196,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             )
         }
 
-        // #416: the same allowlist when occurrence_date found an edited occurrence under the series'
+        // #416: the same checks when occurrence_date found an edited occurrence under the series'
         // identifier, the one way to it the check above cannot see.
         if let refusal = DetachedOccurrenceSpan.resolvedOccurrenceRefusal(
             addressedByItsOwnId: event === masterEvent, resolvedIsDetached: event.isDetached,
-            futureSpan: span == .futureEvents && !applyToAll, fields: fields) {
+            futureSpan: span == .futureEvents && !applyToAll, fields: fields,
+            repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
+                title: title, notes: notes, location: location, occurrenceTitle: event.title,
+                occurrenceNotes: event.notes, occurrenceLocation: event.location),
+            writesLocation: location != nil,
+            own: UndoPostState.ownValues(ofResolved: event, series: masterEvent)) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
@@ -1269,9 +1280,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
         // #416: through an occurrence's own id the rule runs from its original day, not the day it
         // shows. Dates cannot be written on this path, so nothing else moves that day.
-        let originalDay = masterEvent.isDetached && (applyToAll || span != .thisEvent)
-            ? UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: masterEvent.calendarItemExternalIdentifier,
-                                         occurrenceDate: masterEvent.occurrenceDate) : nil
+        let originalDay = DetachedOccurrenceSpan.originalDay(
+            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
+            externalIdentifier: masterEvent.calendarItemExternalIdentifier, occurrenceDate: masterEvent.occurrenceDate)
         if let days = daysToValidate, !days.isEmpty {
             let weekday = WeekdayCheck.weekday(
                 of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,

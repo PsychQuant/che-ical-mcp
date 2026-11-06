@@ -220,15 +220,26 @@ enum UndoPostState {
     /// #416: what `occurrence` holds of its own that a new series started from it would carry.
     /// Compared with an occurrence not edited on its own, as the series object may not refresh
     /// (#326); with none listed, everything counts, the side that refuses. Title, notes, time and
-    /// URL are left out: they were measured not to carry.
+    /// URL are left out: they were measured not to carry. Coordinates count as `other`: a written
+    /// `location` replaces the text and was not shown to replace them.
     static func ownValues(one: EventSnapshot, slot: Date, firstStart: Date, series: EventSnapshot?) -> DetachedOccurrenceSpan.OwnValues {
         let firstSlotGone = !sameInstant(slot, firstStart)
         guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true) }
         return .init(firstSlotGone: firstSlotGone,
                      location: (one.location ?? "") != (all.location ?? "") || !EventSnapshot.samePlace(recorded: all, current: one),
                      other: !sameAlarms(all.alarms, one.alarms) || one.isAllDay != all.isAllDay
+                         || one.structuredLocationLat != all.structuredLocationLat
+                         || one.structuredLocationLon != all.structuredLocationLon
                          || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
                          || !sameOccurrenceAvailability(one.availability, all.availability))
+    }
+
+    /// `ownValues` of an occurrence `occurrence_date` found, against the series it was found in.
+    /// nil without the dates to compare (#416 `resolvedOccurrenceRefusal`).
+    static func ownValues(ofResolved occurrence: EKEvent, series: EKEvent) -> DetachedOccurrenceSpan.OwnValues? {
+        let slot: Date? = occurrence.occurrenceDate, first: Date? = series.startDate
+        guard let slot, let first else { return nil }
+        return ownValues(of: occurrence, slot: slot, firstStart: first, series: series)
     }
 
     /// `ownValues` for the events themselves.
