@@ -976,7 +976,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427). With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. By date range, with span all, an occurrence edited on its own is refused the same way, in the dry run too, while another occurrence of its series is not listed (#427). With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2996,7 +2996,7 @@ class CheICalMCPServer {
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
             let uniqueIds = DetachedOccurrenceSpan.occurrenceRowsFirst(items.map(\.identifier))
             let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(
-                identifiers: uniqueIds, refusingOccurrenceIdentifiers: mode == "by_event_ids")
+                identifiers: uniqueIds)
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -3156,19 +3156,32 @@ class CheICalMCPServer {
                 // stays — it's already whatever the caller specified.
                 let previewLimit = EventRangeQuery.previewLimit(searched: searched)
                 let previewed = previewLimit.map { Array(events.prefix($0)) } ?? events
+                // #427: with span all a row of one occurrence, with its series not listed, is
+                // refused by the real call, so the preview says so and does not count it.
+                var refused: [String: String] = [:]
+                if spanStr == "all" {
+                    let named = Set(batchItems.map(\.identifier))
+                    for id in Set(events.filter(\.isDetached).compactMap(\.identifier)) {
+                        let row = try? await eventBatchDeletionSource.previewEventDeletion(
+                            identifier: id, span: .thisEvent, spanAll: true, namedInTheCall: named, goneInTheCall: [])
+                        if case .refused(let reason)? = row { refused[id] = reason }
+                    }
+                }
                 let preview = previewed.map { event -> [String: Any] in
-                    [
+                    var row: [String: Any] = [
                         "event_id": event.identifier ?? "",
                         "start_date_local": localDateFormatter.string(from: event.start),
                         "end_date_local": localDateFormatter.string(from: event.end)
                     ]
+                    if let reason = refused[event.identifier ?? ""] { row["error"] = reason }
+                    return row
                 }
                 var response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_date_range",
                     "calendar": calendarName,
                     "total": events.count,
-                    "deletions": deletions,
+                    "deletions": deletions - refused.count,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles."
                 ]

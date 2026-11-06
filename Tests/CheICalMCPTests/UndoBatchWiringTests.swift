@@ -96,7 +96,7 @@ final class UndoBatchWiringTests: XCTestCase {
     /// `deleteEventsBatch` (`DeletedEventSnapshots.record(for:)` only) and the reminder batch delete
     /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
     func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
-        let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", in: Self.manager))
+        let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) } + undoThroughFirstOccurrence))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
