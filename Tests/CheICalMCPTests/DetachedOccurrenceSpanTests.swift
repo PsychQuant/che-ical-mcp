@@ -409,7 +409,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("if applyToAll, let first = firstEditedOccurrenceID(of: identifier) {"), "update")
         XCTAssertTrue(manager.contains("return (saved.event, DetachedOccurrenceSpan.seriesIdentifier(of: saved.event.eventIdentifier ?? \"\") ?? identifier, saved.matchedOccurrence)"))
         XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first, span: .futureEvents) return }"), "delete")
-        XCTAssertTrue(manager.contains("if refusingOccurrenceIdentifiers, let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {"), "the batch, by event_ids only")
+        XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {"), "the batch, by event_ids only")
         XCTAssertTrue(manager.contains("try eventStore.remove(occurrence, span: .futureEvents)"), "the whole series, from the occurrence that comes first")
         let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
         XCTAssertTrue(preview.contains("if spanAll, let first = firstEditedOccurrenceID(of: identifier), let occurrence = freshEvent(id: first) { return .deletes(start: occurrence.startDate, end: occurrence.endDate) }"), preview)
@@ -852,8 +852,8 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
         XCTAssertTrue(single.contains("if let refusal = seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
-        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
+        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String])", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
+        XCTAssertTrue(batch.contains("if let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
     /// The preview by `event_ids` walks the rows as the real call does and does not list what the

@@ -1581,7 +1581,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// with deleteEventsBatch. One undo restores every series actually removed
     /// (partial failure: only the successes). Lives in the manager so undo
     /// bookkeeping never leaks into the server layer.
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
         var successCount = 0
@@ -1595,7 +1595,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = freshEvent(id: id) else {
                     // #436: as in deleteEventSeries, when the caller named the series' id.
-                    if refusingOccurrenceIdentifiers, let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {
+                    if let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {
                         let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
@@ -1606,9 +1606,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
-                // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
-                // others go on.
-                if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
+                // #416: as in deleteEventSeries; a row refused, the others go on.
+                if let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
                     failures.append((id, refusal))
                     continue
                 }

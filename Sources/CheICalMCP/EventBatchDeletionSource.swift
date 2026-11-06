@@ -9,6 +9,8 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     let start: Date
     let end: Date
     let slot: Date?
+    /// #427: an occurrence edited on its own, by its own identifier.
+    var isDetached = false
 }
 
 /// #416: what the `event_ids` dry run says about one row.
@@ -29,10 +31,10 @@ protocol EventBatchDeletionSource: Sendable {
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent]
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult
-    /// `refusingOccurrenceIdentifiers` (#416): refuse, as a failed row, an identifier of one
-    /// occurrence edited on its own. True for the `event_ids` mode, where the caller named the id;
-    /// false by date range, where the listing put it in the set.
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult
+    /// An identifier of one occurrence edited on its own is refused, as a failed row, while another
+    /// occurrence of its series is left that `identifiers` does not hold (#416). By date range too
+    /// (#427): the row would delete that occurrence alone, answering for the series.
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult
     /// One `event_ids` dry-run row. `span` as the real row takes it, `spanAll` for span `all`.
     /// `namedInTheCall`: every id of the call. `goneInTheCall`: the rows passed so far with span
     /// `all`, which the real call has deleted by the time it gets to this row. Throws what the real
@@ -49,7 +51,7 @@ extension EventKitManager: EventBatchDeletionSource {
         try await listEvents(startDate: startDate, endDate: endDate, calendarName: calendarName,
                              calendarSource: calendarSource)
             .map { BatchDeletionListedEvent(identifier: $0.eventIdentifier, start: $0.startDate,
-                                            end: $0.endDate, slot: $0.occurrenceDate) }
+                                            end: $0.endDate, slot: $0.occurrenceDate, isDetached: $0.isDetached) }
     }
 
     /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
