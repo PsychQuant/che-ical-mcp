@@ -169,6 +169,10 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         try checkRunBounds(run)   // #366, #417
         try skipIfThePolicyKeptTheHost(run)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
+        // #361: the same start says what the host had, and the re-executed image can still say why.
+        XCTAssertTrue(run.stderr.contains("had Calendar "), "stderr: \(run.stderr)")
+        XCTAssertTrue(run.stdout.contains("Re-executed at start (forced, reported by the image before the exec): "),
+                      "stdout: \(run.stdout)")
     }
 
     func testDefault_followsTheHostsAuthorizationStatus() throws {

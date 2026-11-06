@@ -211,7 +211,8 @@ enum ResponsibleProcessFormatter {
     /// purpose is described as kept: a status read alone said so after a failed FORCE re-exec
     /// or an inherited sentinel too, contradicting the stderr line (verify round 3b row 5).
     static func attributionSection(
-        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil
+        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil,
+        reexec: CarriedReexec? = nil
     ) -> String {
         // The path comes from the kernel but names a file anyone can create — escape it
         // like every other interpolated field on this output (CWE-150/117, #169).
@@ -232,6 +233,8 @@ enum ResponsibleProcessFormatter {
             }
             lines.append("  \(escape(line))")
         }
+        // #361: closed vocabulary or fixed text, so there is nothing to escape.
+        if let reexec { lines.append("  \(reexec.attributionLine)") }
         return lines.joined(separator: "\n")
     }
 }

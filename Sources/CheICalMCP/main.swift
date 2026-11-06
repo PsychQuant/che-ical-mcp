@@ -12,29 +12,35 @@ import MCP
 // (#367); anything else re-execs (as do `--setup` and an explicit CHE_ICAL_MCP_FORCE_DISCLAIM,
 // which yields to a restriction). Both reason sets are closed (SelfDisclaimSkipReason,
 // SelfDisclaimReexecReason); any failure is fail-open.
+let responsibleAtStart = LiveResponsibleProcessSource().responsibleProcess(for: getpid())
+var hostReadAtStart: HostAuthorization?   // #361: what the decision read, for the record
+var carriedReexec: CarriedReexec?         // #361: set in the re-executed image
 let startupDecision = SelfDisclaim.decide(
     arguments: CommandLine.arguments,
     environment: ProcessInfo.processInfo.environment,
-    responsible: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
+    responsible: responsibleAtStart,
     hostAuthorization: {
         // Class methods only: this image is about to be replaced, so no EKEventStore is built
         // here (verify round 3, row 15).
-        HostAuthorization(
+        let read = HostAuthorization(
             calendar: EKEventStore.authorizationStatus(for: .event),
             reminders: EKEventStore.authorizationStatus(for: .reminder))
+        hostReadAtStart = read
+        return read
     })
 switch startupDecision {
 case .reexec(let reason):
-    if reason == .forced {
-        let notice = "[che-ical-mcp] \(SelfDisclaim.forceVariable) is set: re-executing so macOS checks "
-            + "CheICalMCP's own Calendar and Reminders grant instead of the host's (#343)\n"
-        FileHandle.standardError.write(Data(notice.utf8))
-    }
-    let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments)
+    // #361: the one line that says why, at every re-exec, and the same facts carried across it.
+    let hostKind: ResponsibleHostKind?
+    if case .resolved(let process) = responsibleAtStart { hostKind = process.kind } else { hostKind = nil }
+    let record = SelfDisclaimRecord(reason: reason, host: hostReadAtStart, kind: hostKind)
+    FileHandle.standardError.write(Data(record.startLine(hostName: SelfDisclaimRecord.hostName(hostKind)).utf8))
+    let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments, record: record)
     let message = "[che-ical-mcp] could not re-exec as its own responsible process "
         + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
     FileHandle.standardError.write(Data(message.utf8))
 case .skip(.alreadyDisclaimed):
+    carriedReexec = ProcessInfo.processInfo.environment[SelfDisclaim.disclaimedSentinel].map(CarriedReexec.init(sentinel:))
     // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
     unsetenv(SelfDisclaim.disclaimedSentinel)
 case .skip(.disclaimIneffective):
@@ -104,7 +110,8 @@ if CommandLine.arguments.contains("--print-tcc-path") {
     let attribution = ResponsibleProcessFormatter.attributionSection(
         selfPid: ProcessInfo.processInfo.processIdentifier,
         result: LiveResponsibleProcessSource().responsibleProcess(for: getpid()),
-        startupDecision: startupDecision)
+        startupDecision: startupDecision,
+        reexec: carriedReexec)
 
     print("""
         CheICalMCP TCC diagnostic info (\(AppVersion.current))

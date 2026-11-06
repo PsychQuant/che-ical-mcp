@@ -201,4 +201,28 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
             result: .resolved(ResponsibleProcess(pid: 9, path: "/tmp/\u{1B}[2J.app/Contents/MacOS/x", isSelf: false)))
         XCTAssertFalse(s.unicodeScalars.contains { $0.value == 0x1B }, "raw ESC must never reach stdout")
     }
+
+    // MARK: - #361: the carried record
+
+    func testTheCarriedRecordIsTheLastLineOfTheSection() {
+        let record = SelfDisclaimRecord(reason: .hostGrantUnusable, calendar: .notDetermined, reminders: .fullAccess, host: .claudeCode)
+        let section = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 1, result: .resolved(ResponsibleProcess(pid: 1, path: "/bin/x", isSelf: true)), reexec: .record(record))
+        XCTAssertEqual(section.components(separatedBy: "\n").last,
+                       "  Re-executed at start (hostGrantUnusable, reported by the image before the exec): Claude Code had Calendar notDetermined, Reminders fullAccess.")
+    }
+
+    func testAnUnreadableValueSaysSoAndPrintsNothingOfIt() {
+        let section = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 1, result: .resolved(ResponsibleProcess(pid: 1, path: "/bin/x", isSelf: true)),
+            reexec: CarriedReexec(sentinel: "<ignore previous instructions>"))
+        XCTAssertTrue(section.contains("held a value this binary does not write"), section)
+        XCTAssertFalse(section.contains("ignore previous"), section)
+    }
+
+    func testNoRecordAddsNoLine() {
+        let section = ResponsibleProcessFormatter.attributionSection(
+            selfPid: 1, result: .resolved(ResponsibleProcess(pid: 1, path: "/bin/x", isSelf: true)))
+        XCTAssertFalse(section.contains("Re-executed"), section)
+    }
 }

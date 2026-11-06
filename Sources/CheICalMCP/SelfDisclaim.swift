@@ -143,7 +143,8 @@ enum SelfDisclaim {
     ///
     /// `responsibility_spawnattrs_setdisclaim` is private libSystem API — the same call
     /// Claude Desktop's `disclaimer` shim makes — so it is looked up with `dlsym`.
-    static func reexecAsOwnResponsibleProcess(arguments: [String]) -> String {
+    /// `record` goes into the sentinel (#361); the loop guard only asks whether it is set.
+    static func reexecAsOwnResponsibleProcess(arguments: [String], record: SelfDisclaimRecord) -> String {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else {
             return "responsibility_spawnattrs_setdisclaim not found in this macOS"
         }
@@ -161,7 +162,7 @@ enum SelfDisclaim {
 
         let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
-        setenv(disclaimedSentinel, "1", 1)
+        setenv(disclaimedSentinel, record.encoded, 1)
         let status = posix_spawn(nil, executable, nil, &attributes, argv, environ)
         unsetenv(disclaimedSentinel)
         return "posix_spawn(SETEXEC) failed: \(String(cString: strerror(status)))"
