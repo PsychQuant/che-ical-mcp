@@ -250,6 +250,7 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
         }
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, days: [6])), "daily by weekday")
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.yearly, dom: [15])), "yearly by day of the month")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.yearly, days: [6])), "yearly by weekday")
         XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, dom: [15])), "daily ignores days of the month")
         XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.weekly, dom: [15])), "weekly ignores days of the month")
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.monthly, days: [6])), "monthly by weekday")

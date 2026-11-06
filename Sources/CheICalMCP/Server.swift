@@ -365,7 +365,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
+                            "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count was measured to come out short: 5 from the second occurrence gave 4 (#443). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -404,7 +404,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove the recurrence rule from the event. Cannot be combined with recurrence, or with one occurrence (span this): pass span all or future. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the recurrence rule from the event. A series takes span all, which leaves one event on its first day and deletes the other occurrences. Cannot be combined with recurrence, or with span this or future on a series; to end a series at an occurrence, use delete_event with span future. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "structured_location": .object([
                             "type": .string("object"),
@@ -3399,15 +3399,17 @@ class CheICalMCPServer {
         }
     }
 
-    /// PR #439 verify: the same for a bound beside `recurrence`, which left the series open-ended,
-    /// and for the read tools' names for a rule, which made a one-off item or, on update_event, no
-    /// change. These names are this server's own, so naming them echoes nothing the caller wrote.
+    /// PR #439 verify: the same for a key of `recurrence` beside it, which nothing read (a bound left
+    /// the series open-ended, `interval` a rule of every week, a `frequency` with no `recurrence` a
+    /// one-off item or, on update_event, no change), and for the read tools' names for a rule. These
+    /// names are this server's own, so naming them echoes nothing the caller wrote.
     private func rejectMisplacedRecurrenceKeys(in arguments: [String: Value]) throws {
         if arguments["excluded_occurrence_dates"] != nil {
             throw ToolError.invalidParameter("excluded_occurrence_dates must be inside the recurrence object (supported on create_event and create_events_batch only) — it is not a top-level parameter")
         }
-        for key in ["occurrence_count", "end_date"] where arguments[key] != nil {
-            throw ToolError.invalidParameter("\(key) must be inside the recurrence object, it is not a top-level parameter. Nothing was written for this item.")
+        for key in RecurrenceRuleInput.inputKeys(allowsExclusions: false) where arguments[key] != nil {
+            let endOfTheEvent = key == "end_date" ? " An event's own end is end_time." : ""
+            throw ToolError.invalidParameter("\(key) must be inside the recurrence object, it is not a top-level parameter.\(endOfTheEvent) Nothing was written for this item.")
         }
         for key in RecurrenceRuleInput.readKeys where arguments[key] != nil {
             throw ToolError.invalidParameter("\(key) is the name the read tools use; to write a rule, pass recurrence, one object. Nothing was written for this item.")

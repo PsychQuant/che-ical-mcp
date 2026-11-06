@@ -127,8 +127,9 @@ final class UpdatedIdentifierTests: XCTestCase {
     // MARK: - #434 verify: the rule of a series is not changed through one occurrence
 
     /// Measured on iCloud: a rule saved on one occurrence (span this) left that occurrence as a
-    /// one-off and deleted the rest of the series, and clear_recurrence there left the series as
-    /// it was. Span all and span future changed the rule.
+    /// one-off and deleted the rest of the series, and clear_recurrence there detached the
+    /// occurrence as a one-off and left the series repeating. Span all and span future changed the
+    /// rule.
     func testARuleChangeOnOneOccurrenceIsRefused() {
         XCTAssertTrue(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .thisEvent, changesRecurrence: true))
         XCTAssertFalse(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .thisEvent, changesRecurrence: false),
@@ -137,16 +138,70 @@ final class UpdatedIdentifierTests: XCTestCase {
                        "a one-off event gains a rule, and span all saves the series object")
         XCTAssertFalse(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .futureEvents, changesRecurrence: true),
                        "span future from an occurrence splits the series and the rule applies from there")
-        let message = EventKitError.recurrenceChangeOnOccurrenceRefused.errorDescription ?? ""
-        XCTAssertTrue(message.contains("span 'all'"), message)
-        XCTAssertTrue(message.contains("Nothing was written."), message)
-        XCTAssertFalse(message.contains(where: { "&<>".contains($0) }), message)
+    }
+
+    /// PR #439 verify round 2, measured on iCloud and on v1.22.0: clear_recurrence with
+    /// occurrence_date and span future left one event on the series' first day, of ten, so the
+    /// occurrences before the one named went too, and answered `updated`. Span all has no
+    /// occurrence object, and leaves that one event on purpose.
+    func testClearingARuleFromOneOccurrenceIsRefused() {
+        XCTAssertTrue(EventKitManager.refusesClearRecurrenceFromOccurrence(onOccurrenceObject: true, span: .futureEvents, clearRecurrence: true))
+        XCTAssertFalse(EventKitManager.refusesClearRecurrenceFromOccurrence(onOccurrenceObject: false, span: .futureEvents, clearRecurrence: true),
+                       "span all saves the series object")
+        XCTAssertFalse(EventKitManager.refusesClearRecurrenceFromOccurrence(onOccurrenceObject: true, span: .futureEvents, clearRecurrence: false),
+                       "a rule from one occurrence on")
+    }
+
+    /// PR #439 verify round 2: only a `/RID=` id or a detached event is its own address, and a
+    /// stand-in was reached through the series' id.
+    func testTheRefusalKnowsHowTheOccurrenceWasAddressed() {
+        func address(_ id: String, detached: Bool, standIn: Bool = false) -> EventKitManager.RecurrenceChangeAddress {
+            EventKitManager.recurrenceChangeAddress(identifier: id, isDetached: detached, viaStandIn: standIn)
+        }
+        XCTAssertEqual(address("S:E", detached: false), .seriesId)
+        XCTAssertEqual(address("S:E/RID=123", detached: true), .occurrenceOwnId(series: "S:E"))
+        XCTAssertEqual(address("X", detached: true), .occurrenceOwnId(series: nil), "another source's id")
+        XCTAssertEqual(address("/RID=123", detached: true), .occurrenceOwnId(series: nil), "nothing before the marker")
+        XCTAssertEqual(address("S:E", detached: true, standIn: true), .seriesId)
+    }
+
+    func testTheRefusalsPointAtWhatWorksFromTheAddressGiven() {
+        func text(clearing: Bool, _ address: EventKitManager.RecurrenceChangeAddress) -> String {
+            EventKitError.recurrenceChangeOnOccurrenceRefused(clearing: clearing, address: address).errorDescription ?? ""
+        }
+        let cases = [(false, EventKitManager.RecurrenceChangeAddress.seriesId), (true, .seriesId),
+                     (false, .occurrenceOwnId(series: "S:E")), (true, .occurrenceOwnId(series: "S:E")),
+                     (false, .occurrenceOwnId(series: nil)), (true, .occurrenceOwnId(series: nil))]
+        for (clearing, address) in cases {
+            let message = text(clearing: clearing, address)
+            XCTAssertTrue(message.contains("Nothing was written."), message)
+            XCTAssertTrue(message.contains("span 'all'"), message)
+            XCTAssertFalse(message.contains(where: { "&<>".contains($0) }), message)
+        }
+        // A bare id: both ways to change the rule, and span future only for a rule.
+        XCTAssertTrue(text(clearing: false, .seriesId).contains("span 'future' with occurrence_date"))
+        // Clearing never goes through span future: it collapsed the series. Ending one is a delete.
+        for address in [EventKitManager.RecurrenceChangeAddress.seriesId, .occurrenceOwnId(series: "S:E")] {
+            let message = text(clearing: true, address)
+            XCTAssertTrue(message.contains("delete_event"), message)
+            XCTAssertTrue(message.contains("deletes the other occurrences"), message)
+            XCTAssertFalse(message.contains("Pass span 'future'"), message)
+        }
+        // An occurrence's own id is told the series' id, not to add a span to itself.
+        for clearing in [false, true] {
+            let message = text(clearing: clearing, .occurrenceOwnId(series: "S:E"))
+            XCTAssertTrue(message.contains("the series' id, S:E,"), message)
+            XCTAssertFalse(message.contains("Pass span"), message)
+            let unnamed = text(clearing: clearing, .occurrenceOwnId(series: nil))
+            XCTAssertTrue(unnamed.contains("the series' id"), unnamed)
+            XCTAssertFalse(unnamed.contains("Pass span"), unnamed)
+        }
     }
 
     func testUpdateEventRefusesARuleChangeOnOneOccurrenceBeforeAnyWrite() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let refusal = "if Self.refusesRecurrenceChangeOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, changesRecurrence: clearRecurrence || recurrenceRule != nil) { throw EventKitError.recurrenceChangeOnOccurrenceRefused }"
+        let refusal = "if Self.refusesRecurrenceChangeOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, changesRecurrence: clearRecurrence || recurrenceRule != nil) || Self.refusesClearRecurrenceFromOccurrence( onOccurrenceObject: event !== masterEvent, span: span, clearRecurrence: clearRecurrence) { throw EventKitError.recurrenceChangeOnOccurrenceRefused( clearing: clearRecurrence, address: Self.recurrenceChangeAddress(identifier: identifier, isDetached: masterEvent.isDetached, viaStandIn: resolved.viaStandIn)) }"
         let refuse = try XCTUnwrap(flat.range(of: refusal), "refusal wired")
         let firstWrite = try XCTUnwrap(flat.range(of: "if let t = title { event.title = t }"))
         XCTAssertLessThan(refuse.lowerBound, firstWrite.lowerBound, "refused before the first field is assigned")
