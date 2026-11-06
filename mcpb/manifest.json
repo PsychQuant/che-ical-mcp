@@ -57,11 +57,11 @@
     },
     {
       "name": "create_event",
-      "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone (an all-day date whose offset moves it to another day in this Mac's zone is reported in warnings)"
+      "description": "Create a new calendar event with optional reminders, recurrence, structured location, and per-event timezone (an all-day date whose offset moves it to another day in this Mac's zone is reported in warnings); unknown recurrence keys are refused"
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
     },
     {
       "name": "delete_event",
@@ -73,11 +73,11 @@
     },
     {
       "name": "create_reminder",
-      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, relative alarms (alarms_minutes_offsets, minutes before a due date with a time) and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy)"
+      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, relative alarms (alarms_minutes_offsets, minutes before a due date with a time) and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy); unknown recurrence keys are refused"
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values)"
+      "description": "Update an existing reminder (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values); unknown recurrence keys are refused"
     },
     {
       "name": "complete_reminder",
@@ -97,7 +97,7 @@
     },
     {
       "name": "create_events_batch",
-      "description": "Create multiple events at once (each result reports all-day dates whose offset moves the day in warnings)"
+      "description": "Create multiple events at once (each result reports all-day dates whose offset moves the day in warnings); unknown recurrence keys fail that item"
     },
     {
       "name": "check_conflicts",
