@@ -394,6 +394,26 @@ enum UndoOperation {
     case moveByCopy(original: EventSnapshot, isSplit: Bool, notCarriedOver: [String], copyID: String, copy: EventSnapshot)
     case batch([UndoOperation])
 
+    /// #435: this record with `new` where it named the event `old`. Records that hold no identifier,
+    /// and reminders, are returned as they are.
+    func replacingEventIdentifier(_ old: String, with new: String) -> UndoOperation {
+        func swapped(_ id: String) -> String { id == old ? new : id }
+        switch self {
+        case .createEvent(let id, let title, let created):
+            return .createEvent(id: swapped(id), title: title, created: created)
+        case .updateEvent(let id, let oldSnapshot, let saved):
+            return .updateEvent(id: swapped(id), oldSnapshot: oldSnapshot, saved: saved)
+        case .updateRecurringEvent(let id, let title, let kind):
+            return .updateRecurringEvent(id: swapped(id), title: title, kind: kind)
+        case .moveEvent(let id, let from, let to, let title, let isSeries):
+            return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
+        case .batch(let operations):
+            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+        default:
+            return self
+        }
+    }
+
     /// Human-readable description of this operation. **Surfaces verbatim
     /// through the `undo_history` MCP tool's response field**, so any
     /// user-controlled title here flows through the same wire path as
@@ -573,6 +593,13 @@ actor CalendarUndoManager {
             undoStack.removeFirst()
         }
         redoStack.removeAll()
+    }
+
+    /// #435: a move gave an event a new identifier. Older records of that event keep working: they
+    /// named it by the identifier it had. The record of the move itself is recorded after this, or
+    /// is the one being undone.
+    func replaceEventIdentifier(_ old: String, with new: String) {
+        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
     }
 
     /// Pop the most recent operation for undoing.

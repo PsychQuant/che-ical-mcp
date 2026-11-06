@@ -152,7 +152,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `create_reminders_batch` | 一次建立多個提醒事項（v0.9.0）；每一列可能帶 `store_differs` 與 `note`，和 `create_reminder` 一樣（#261）；save 失敗又無法確認的列會保留，其錯誤說明再建之前要怎麼確認（#289） |
 | `delete_reminders_batch` | 批次刪除多個提醒事項（v0.9.0）；一次 `undo` 會重建這次刪除的提醒事項（#243） |
 
-**搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。同一帳號內 ID 不變，跨帳號會改變（每筆結果都回報 `id_changed` 與 `new_event_id`）。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
+**搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。在同一個 iCloud 帳號內 ID 不變，在 Google 帳號內會改變，跨帳號也會改變，所以請看每筆結果的 `id_changed` 與 `new_event_id`（#435）。ID 改變時，該事件較舊的 undo 紀錄會跟著改，搬移的 undo 也會回報新的 ID。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
 
 **修改後的 ID（#268）：** `update_event` 與 `update_reminder` 回報的是儲存之後的 ID。ID 只在三種情況改變：`calendar_name` 指向另一個帳號的日曆或清單（事件部分依 #226 的實機結果；改單一場次時指定新的日曆會被拒絕，因為那會搬動整個系列）、`update_event` 從後面的場次以 `span: "future"` 切出新系列（回報新系列的 ID，用單獨改過的場次自己的 ID 時也一樣），以及首場被刪除後，用剩下的第一個場次（單獨改過）自己的 ID 搭配 span `all` 或 `future`（剩下的場次會得到新的 ID）。`id_changed` 說明它和你傳入的 ID 是否不同，只有改變時才會出現的 `previous_id` 是你傳入的 ID。只改單一場次（`occurrence_date`、span `this`）時，`id` 是系列的 ID，另附 `occurrence_id`，即那個場次自己的 ID。
 
