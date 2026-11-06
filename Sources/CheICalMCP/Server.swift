@@ -423,7 +423,7 @@ class CheICalMCPServer {
                         "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone). Refused on a series that ends by a count of occurrences, whose last occurrence it would drop. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
