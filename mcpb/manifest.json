@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy)"
+      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy); a row with an unknown key fails, and recurrence and location_trigger need create_reminder"
     },
     {
       "name": "delete_reminders_batch",
