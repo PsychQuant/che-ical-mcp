@@ -399,7 +399,7 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(update.declared.contains("With span 'all' or 'future' through such an identifier, only title, notes, location and recurrence can be written; for anything else use span 'this', or the id of an occurrence not edited on its own."), update.declared)
         XCTAssertTrue(update.declared.contains("A value the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms."), update.declared)
         XCTAssertFalse(update.declared.contains("recurrence, clear_recurrence"), update.declared)
-        XCTAssertTrue(update.declared.contains("with span 'this' or 'future' occurrence_date must be that occurrence's day"), update.declared)
+        XCTAssertTrue(update.declared.contains("With span 'this' or 'future' occurrence_date must be that occurrence's day."), update.declared)
         XCTAssertFalse(update.declared.contains("with any span"), update.declared)
         XCTAssertTrue(update.summary.contains("with span all or future through it only title, notes, location and recurrence can be written"), update.summary)
         XCTAssertFalse(update.declared.contains("the series' earliest occurrence"), update.declared)
