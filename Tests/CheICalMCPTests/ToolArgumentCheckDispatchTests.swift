@@ -27,6 +27,18 @@ final class ToolArgumentCheckDispatchTests: XCTestCase {
         }
     }
 
+    /// Any other string used to list every calendar, `Reminder` included.
+    func testListCalendarsRefusesAnUnknownType() async throws {
+        for type in ["banana", "", "Reminder", "Event"] {
+            let message = try await refusal("list_calendars", ["type": .string(type)])
+            XCTAssertTrue(message.contains("type must be 'event' or 'reminder'"), message)
+            XCTAssertFalse(message.contains("banana"), message)
+        }
+        let schema = CheICalMCPServer.defineTools().first { $0.name == "list_calendars" }?.inputSchema
+        let type = schema?.objectValue?["properties"]?.objectValue?["type"]?.objectValue
+        XCTAssertEqual(type?["enum"], .array([.string("event"), .string("reminder")]))
+    }
+
     /// The keys a handler refuses for itself keep their own message.
     func testTheHandlersOwnRefusalsAreNotPreempted() async throws {
         let message = try await refusal("find_duplicate_events", ["start_date": .string("2026-01-01"), "end_date": .string("2026-02-01"), "calendar_source": .string("iCloud")])

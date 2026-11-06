@@ -147,7 +147,8 @@ class CheICalMCPServer {
                     "properties": .object([
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Filter by type: 'event' or 'reminder'. If not provided, returns all calendars.")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Filter by type: 'event' or 'reminder'; anything else is refused. If not provided, returns all calendars.")
                         ])
                     ])
                 ]),
@@ -1270,9 +1271,13 @@ class CheICalMCPServer {
     // MARK: - Calendar Handlers
 
     private func handleListCalendars(arguments: [String: Value]) async throws -> String {
-        var entityType: EKEntityType?
-        if let typeStr = arguments["type"]?.stringValue {
-            entityType = typeStr == "event" ? .event : typeStr == "reminder" ? .reminder : nil
+        let entityType: EKEntityType?
+        // PR #457 verify: any other string, `Reminder` included, used to list every calendar.
+        switch arguments["type"]?.stringValue {
+        case nil: entityType = nil
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
         }
 
         let calendars = try await eventKitManager.listCalendars(for: entityType)
