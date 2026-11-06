@@ -12,6 +12,13 @@ import MCP
 // (#367); anything else re-execs (as do `--setup` and an explicit CHE_ICAL_MCP_FORCE_DISCLAIM,
 // which yields to a restriction). Both reason sets are closed (SelfDisclaimSkipReason,
 // SelfDisclaimReexecReason); any failure is fail-open.
+/// #361: what the sentinel says, read before it is removed, which keeps it out of the environments of
+/// the subprocesses we spawn (ps, sqlite3).
+func takeCarriedReexec() -> CarriedReexec? {
+    defer { unsetenv(SelfDisclaim.disclaimedSentinel) }
+    return ProcessInfo.processInfo.environment[SelfDisclaim.disclaimedSentinel].map(CarriedReexec.init(sentinel:))
+}
+
 let responsibleAtStart = LiveResponsibleProcessSource().responsibleProcess(for: getpid())
 var hostReadAtStart: HostAuthorization?   // #361: what the decision read, for the record
 var carriedReexec: CarriedReexec?         // #361: set in the re-executed image
@@ -34,19 +41,18 @@ case .reexec(let reason):
     let hostKind: ResponsibleHostKind?
     if case .resolved(let process) = responsibleAtStart { hostKind = process.kind } else { hostKind = nil }
     let record = SelfDisclaimRecord(reason: reason, host: hostReadAtStart, kind: hostKind)
-    FileHandle.standardError.write(Data(record.startLine(hostName: SelfDisclaimRecord.hostName(hostKind)).utf8))
+    SelfDisclaim.writeStartupLine(record.startLine(hostName: SelfDisclaimRecord.hostName(hostKind)))
     let failure = SelfDisclaim.reexecAsOwnResponsibleProcess(arguments: CommandLine.arguments, record: record)
     let message = "[che-ical-mcp] could not re-exec as its own responsible process "
         + "(\(EventKitErrorSanitizer.escapeForStderr(failure))); continuing under the host's TCC attribution (#343)\n"
-    FileHandle.standardError.write(Data(message.utf8))
+    SelfDisclaim.writeStartupLine(message)
 case .skip(.alreadyDisclaimed):
-    carriedReexec = ProcessInfo.processInfo.environment[SelfDisclaim.disclaimedSentinel].map(CarriedReexec.init(sentinel:))
-    // Keep the sentinel out of the environments of the subprocesses we spawn (ps, sqlite3).
-    unsetenv(SelfDisclaim.disclaimedSentinel)
+    carriedReexec = takeCarriedReexec()
 case .skip(.disclaimIneffective):
     // The sentinel is set but another process still owns the attribution: the re-exec did not
-    // take effect, or the variable leaked in from an earlier run. Say so instead of skipping silently.
-    unsetenv(SelfDisclaim.disclaimedSentinel)
+    // take effect, or the variable leaked in from an earlier run. Say so instead of skipping
+    // silently. The record matters most here: it is what tells those two apart (#361 verify).
+    carriedReexec = takeCarriedReexec()
     let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but another process is still "
         + "responsible for this one (the re-exec did not take effect, or the variable was inherited); "
         + "continuing under the host's TCC attribution (#343)\n"

@@ -209,7 +209,7 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
         let section = ResponsibleProcessFormatter.attributionSection(
             selfPid: 1, result: .resolved(ResponsibleProcess(pid: 1, path: "/bin/x", isSelf: true)), reexec: .record(record))
         XCTAssertEqual(section.components(separatedBy: "\n").last,
-                       "  Re-executed at start (hostGrantUnusable, reported by the image before the exec): Claude Code had Calendar notDetermined, Reminders fullAccess.")
+                       "  CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): Claude Code had Calendar notDetermined, Reminders fullAccess. Not verified.")
     }
 
     func testAnUnreadableValueSaysSoAndPrintsNothingOfIt() {
@@ -223,6 +223,6 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
     func testNoRecordAddsNoLine() {
         let section = ResponsibleProcessFormatter.attributionSection(
             selfPid: 1, result: .resolved(ResponsibleProcess(pid: 1, path: "/bin/x", isSelf: true)))
-        XCTAssertFalse(section.contains("Re-executed"), section)
+        XCTAssertFalse(section.contains("CHE_ICAL_MCP_DISCLAIMED"), section)
     }
 }

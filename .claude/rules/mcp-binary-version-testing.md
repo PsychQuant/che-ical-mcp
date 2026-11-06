@@ -398,3 +398,15 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 
 結果記在 #328。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#328` 的殘留。
 
+## Release gate：自然的 re-exec（#361）
+
+#361 的 stderr 行與 sentinel 記錄只在 forced 路徑上看過：開發機的 host 有完整授權，會保留自己的 grant，自然的 re-exec
+不會發生。`testDefault_followsTheHostsAuthorizationStatus` 依 oracle 斷言，所以也要在沒有授權的 host 上才走得到。
+
+**不要動 TCC 去製造這個環境**：撤銷或重設授權要使用者在場，留給 #382。在一個本來就沒有完整授權的 host 底下：
+
+1. 啟動 server：stderr 有一行 `re-executing so macOS checks CheICalMCP's own Calendar and Reminders grant: <host> had Calendar …, Reminders …`。
+2. 同一個 host 底下跑 `--print-tcc-path`：有 `CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): …`。
+3. 從另一個有完整授權的 host 跑 `--print-tcc-path`：沒有這一行。它只回報自己那次啟動，不回報 server 的。
+
+結果記在 #361。

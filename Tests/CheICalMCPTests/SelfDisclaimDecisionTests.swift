@@ -93,6 +93,24 @@ final class SelfDisclaimDecisionTests: XCTestCase {
         }
     }
 
+    /// The guard asks only whether the sentinel is set. The value is now the record, so it has to
+    /// hold for that, and for anything else a parent could leave there: a narrower check would
+    /// re-exec again on a disclaim that had no effect, which is the loop this exists to stop.
+    func testTheLoopGuardHoldsForEveryValue() {
+        let record = SelfDisclaimRecord(reason: .hostGrantUnusable, calendar: .denied, reminders: .denied, host: .claudeCode)
+        for value in [record.encoded, "1", "garbage", String(repeating: "x", count: 5000)] {
+            XCTAssertEqual(decide(env: [SelfDisclaim.disclaimedSentinel: value], responsible: selfResponsible),
+                           .skip(.alreadyDisclaimed), value)
+            for host in everyOtherHost {
+                XCTAssertEqual(decide(env: [SelfDisclaim.disclaimedSentinel: value], responsible: host),
+                               .skip(.disclaimIneffective), "\(value) \(host)")
+            }
+        }
+        // Empty counts as unset (`isSet`), so it is not the guard's value: the decision goes on.
+        XCTAssertNotEqual(decide(env: [SelfDisclaim.disclaimedSentinel: ""], responsible: selfResponsible),
+                          .skip(.alreadyDisclaimed))
+    }
+
     func testOptOut_skipsEvenWhenTheHostHasNoUsableGrant() {
         for host in everyOtherHost {
             XCTAssertEqual(decide(env: ["CHE_ICAL_MCP_NO_DISCLAIM": "1"], responsible: host), .skip(.optedOut))

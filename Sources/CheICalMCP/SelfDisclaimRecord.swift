@@ -6,8 +6,10 @@ import Foundation
 ///
 /// The variable is unauthenticated and its content gets printed, so a parent process can set it to
 /// anything. So every field is a closed vocabulary, and `decode` takes nothing else: no host name or
-/// path is carried, and a value that is not exactly what `encoded` writes is unreadable. What it says
-/// is reported as said by the image before the exec, not as verified.
+/// path is carried, and a value that is not byte for byte what `encoded` writes, or a combination
+/// `SelfDisclaim.decide` cannot produce, is unreadable. What it says is reported as what the variable
+/// says, not as verified: a parent can set it with no re-exec at all, so a process whose status comes
+/// from an inherited value must not claim one happened.
 struct SelfDisclaimRecord: Equatable, Sendable {
     enum Reason: String, CaseIterable, Sendable {
         case hostGrantUnusable, setup, forced
@@ -90,7 +92,24 @@ struct SelfDisclaimRecord: Equatable, Sendable {
               let calendar = field("cal", of: fields[2]).flatMap(Status.init(rawValue:)),
               let reminders = field("rem", of: fields[3]).flatMap(Status.init(rawValue:)),
               let host = field("host", of: fields[4]).flatMap(Host.init(rawValue:)) else { return nil }
-        return SelfDisclaimRecord(reason: reason, calendar: calendar, reminders: reminders, host: host)
+        let record = SelfDisclaimRecord(reason: reason, calendar: calendar, reminders: reminders, host: host)
+        // Bytes, not `==`: Swift compares strings by canonical equivalence, and U+037E is `;` to it.
+        guard Array(record.encoded.utf8) == Array(value.utf8), record.isPossible else { return nil }
+        return record
+    }
+
+    /// Whether `SelfDisclaim.decide` can produce this: `--setup` reads no status, the other two read
+    /// both; a restriction keeps the host, and so does full access, unless forced.
+    var isPossible: Bool {
+        let statuses = [calendar, reminders]
+        switch reason {
+        case .setup:
+            return statuses == [.notRead, .notRead]
+        case .forced:
+            return !statuses.contains(.notRead) && !statuses.contains(.restricted)
+        case .hostGrantUnusable:
+            return !statuses.contains(.notRead) && !statuses.contains(.restricted) && statuses != [.fullAccess, .fullAccess]
+        }
     }
 
     private static func field(_ name: String, of text: String) -> String? {
@@ -99,12 +118,13 @@ struct SelfDisclaimRecord: Equatable, Sendable {
 
     private var hostStatus: String {
         calendar == .notRead && reminders == .notRead
-            ? "the host's status was not read" : "had Calendar \(calendar.rawValue), Reminders \(reminders.rawValue)"
+            ? "(its status was not read)" : "had Calendar \(calendar.rawValue), Reminders \(reminders.rawValue)"
     }
 
-    /// The line in `--print-tcc-path`, in the image after the exec.
+    /// The line in `--print-tcc-path`. It says what the variable says: nothing has shown that a
+    /// re-exec happened, and in the `disclaimIneffective` branch it did not take effect.
     var attributionLine: String {
-        "Re-executed at start (\(reason.rawValue), reported by the image before the exec): \(host.word) \(hostStatus)."
+        "\(SelfDisclaim.disclaimedSentinel) says this process re-executed at start (\(reason.rawValue)): \(host.word) \(hostStatus). Not verified."
     }
 
     /// The one line on stderr before the exec, at every re-exec. `hostName` is the caller's, and is
@@ -138,7 +158,8 @@ struct SelfDisclaimRecord: Equatable, Sendable {
 /// What the re-executed image found in the variable (#361).
 enum CarriedReexec: Equatable, Sendable {
     case record(SelfDisclaimRecord)
-    /// Set, but not what this binary writes: an older image, or something else set it.
+    /// Set, but not what this binary writes: an older image, or something else set it. It says
+    /// nothing about a re-exec.
     case unreadable
 
     init(sentinel value: String) {
@@ -149,8 +170,8 @@ enum CarriedReexec: Equatable, Sendable {
         switch self {
         case .record(let record): return record.attributionLine
         case .unreadable:
-            return "\(SelfDisclaim.disclaimedSentinel) held a value this binary does not write, so why this "
-                + "process re-executed is not known."
+            return "\(SelfDisclaim.disclaimedSentinel) held a value this binary does not write, so whether and "
+                + "why this process re-executed is not known."
         }
     }
 }

@@ -44,7 +44,7 @@ enum SelfDisclaimReexecReason: Equatable, Sendable {
     case hostGrantUnusable
     /// `--setup` is the foreground action that creates CheICalMCP's own grant.
     case setup
-    /// `CHE_ICAL_MCP_FORCE_DISCLAIM` is set. Printed on stderr, because it is an
+    /// `CHE_ICAL_MCP_FORCE_DISCLAIM` is set. Named on stderr, as every reason is (#361), because it is an
     /// environment variable a parent process can set without the user noticing.
     case forced
 }
@@ -162,10 +162,24 @@ enum SelfDisclaim {
 
         let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
+        // Not `setenv` alone: it replaces only the first of duplicate entries, and with
+        // `NAME=x` then `NAME=` the next image reads the empty one, which defeats the loop guard.
+        // `unsetenv` removes them all (#361 verify).
+        unsetenv(disclaimedSentinel)
         setenv(disclaimedSentinel, record.encoded, 1)
         let status = posix_spawn(nil, executable, nil, &attributes, argv, environ)
         unsetenv(disclaimedSentinel)
         return "posix_spawn(SETEXEC) failed: \(String(cString: strerror(status)))"
+    }
+
+    /// One line on stderr before the exec, and it must not be what stops the exec: start-up is
+    /// fail-open. `FileHandle.write` raises on a closed descriptor and a pipe with no reader sends
+    /// SIGPIPE, so this is `write(2)`, with SIGPIPE ignored only around it: an ignored signal would
+    /// survive the exec into the new image.
+    static func writeStartupLine(_ line: String) {
+        let previous = signal(SIGPIPE, SIG_IGN)
+        _ = line.withCString { write(STDERR_FILENO, $0, strlen($0)) }
+        signal(SIGPIPE, previous)
     }
 
     /// Same convention as `CHE_ICAL_MCP_NO_BANNER`: exported-but-empty counts as unset.

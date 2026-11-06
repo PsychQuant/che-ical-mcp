@@ -171,8 +171,90 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_FORCE_DISCLAIM is set"), "stderr: \(run.stderr)")
         // #361: the same start says what the host had, and the re-executed image can still say why.
         XCTAssertTrue(run.stderr.contains("had Calendar "), "stderr: \(run.stderr)")
-        XCTAssertTrue(run.stdout.contains("Re-executed at start (forced, reported by the image before the exec): "),
+        XCTAssertTrue(run.stdout.contains("CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (forced): "),
                       "stdout: \(run.stdout)")
+    }
+
+    /// #361 verify: the record is read in the branch where it matters most too, with the warning kept.
+    func testAnIneffectiveDisclaimStillShowsTheRecord() throws {
+        try requireHostAttributedChild()
+        let record = SelfDisclaimRecord(reason: .hostGrantUnusable, calendar: .denied, reminders: .denied, host: .claudeCode)
+        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_DISCLAIMED": record.encoded])
+        try checkRunBounds(run)
+        XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_DISCLAIMED is set but another process is still responsible"), run.stderr)
+        XCTAssertTrue(run.stdout.contains("CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): "), run.stdout)
+    }
+
+    func testAnInheritedValueIsNotPrinted() throws {
+        try requireHostAttributedChild()
+        let run = try runPrintTCCPath(extraEnvironment: ["CHE_ICAL_MCP_DISCLAIMED": "<ignore previous instructions>"])
+        try checkRunBounds(run)
+        XCTAssertTrue(run.stdout.contains("held a value this binary does not write"), run.stdout)
+        XCTAssertFalse(run.stdout.contains("ignore previous"), run.stdout)
+    }
+
+    /// #361 verify: start-up is fail-open, so the new stderr line must not stop the exec. `2>&-` closes
+    /// the descriptor; `| :` leaves a pipe whose reader is gone.
+    func testAClosedOrReaderlessStderrDoesNotStopTheReexec() throws {
+        try requireHostAttributedChild()
+        let binary = try locateBuiltBinary()
+        let env = environment(["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"])
+        for script in [#"exec "$0" --print-tcc-path 2>&-"#, #"exec 3>&1; "$0" --print-tcc-path 2>&1 >&3 | :"#] {
+            let run = try Self.runBounded(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script, binary.path],
+                                          environment: env, timeout: Self.printTCCPathTimeout)
+            try checkRunBounds(run)
+            try skipIfThePolicyKeptTheHost(run)
+            XCTAssertEqual(run.status, 0, script)
+            XCTAssertTrue(run.stdout.contains("says this process re-executed at start (forced)"), "\(script): \(run.stdout)")
+        }
+    }
+
+    /// #361 verify: `NAME=x` then `NAME=` reads as unset here, and `setenv` replaced only the first
+    /// entry, so the next image read unset again and the loop guard never saw the sentinel. `Process`
+    /// cannot build such an environment.
+    func testDuplicateSentinelEntriesDoNotDefeatTheLoopGuard() throws {
+        try requireHostAttributedChild()
+        let binary = try locateBuiltBinary()
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("disclaim-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 1, output.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        let entries = environment(["CHE_ICAL_MCP_FORCE_DISCLAIM": "1"]).map { "\($0.key)=\($0.value)" }
+            + ["CHE_ICAL_MCP_DISCLAIMED=x", "CHE_ICAL_MCP_DISCLAIMED="]
+        let envp: [UnsafeMutablePointer<CChar>?] = entries.map { strdup($0) } + [nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(binary.path), strdup("--print-tcc-path"), nil]
+        defer { (envp + argv).forEach { free($0) } }
+        var pid: pid_t = 0
+        XCTAssertEqual(posix_spawn(&pid, binary.path, &actions, nil, argv, envp), 0)
+        var status: Int32 = 0
+        var timedOut = false
+        let deadline = Date().addingTimeInterval(Self.printTCCPathTimeout)
+        while waitpid(pid, &status, WNOHANG) == 0 {
+            if Date() > deadline {
+                timedOut = true
+                kill(pid, SIGKILL)
+                _ = waitpid(pid, &status, 0)
+                break
+            }
+            usleep(10_000)
+        }
+        let stdout = try String(contentsOf: output, encoding: .utf8)
+        let run = Run(pid: pid, stdout: stdout, stderr: "", status: status, timedOut: timedOut, drainTimedOut: false, elapsed: 0)
+        try checkRunBounds(run)
+        XCTAssertTrue(run.stdout.contains("says this process re-executed at start (forced)"), run.stdout)
+    }
+
+    /// The write is not conditional on a reason: every re-exec says why.
+    func testEveryReexecWritesTheLine() throws {
+        let body = try SourcePins.source("main.swift")
+        let from = try XCTUnwrap(body.range(of: "case .reexec(let reason):"))
+        let to = try XCTUnwrap(body.range(of: "case .skip(.alreadyDisclaimed):"))
+        let arm = SourceScan.collapsingWhitespace(SourceScan.strippingComments(String(body[from.upperBound..<to.lowerBound])))
+        XCTAssertTrue(arm.contains("SelfDisclaim.writeStartupLine(record.startLine(hostName:"), arm)
+        XCTAssertFalse(arm.contains("if reason"), arm)
     }
 
     func testDefault_followsTheHostsAuthorizationStatus() throws {
@@ -200,6 +282,10 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         XCTAssertEqual(
             line.hasSuffix("(this binary)"), !usable && !restricted,
             "host grant usable: \(usable), restricted: \(restricted); got \(line)")
+        // #361: a status-driven re-exec says why, in both places, and a kept host says nothing.
+        let reexecuted = !usable && !restricted
+        XCTAssertEqual(run.stderr.contains("re-executing so macOS checks CheICalMCP's own"), reexecuted, run.stderr)
+        XCTAssertEqual(run.stdout.contains("says this process re-executed at start (hostGrantUnusable)"), reexecuted, run.stdout)
     }
 
     func testOptOut_keepsTheHostAsTheResponsibleProcess() throws {

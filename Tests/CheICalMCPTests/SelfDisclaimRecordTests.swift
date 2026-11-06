@@ -5,16 +5,50 @@ import XCTest
 /// #361: the record carried across the re-exec. The variable is unauthenticated and its content is
 /// printed, so `decode` takes only what `encoded` writes.
 final class SelfDisclaimRecordTests: XCTestCase {
-    func testEveryRecordRoundTrips() {
+    /// The line must not say a re-exec happened: an inherited variable reaches it with none.
+    func testTheLineReportsTheVariableNotAReexec() {
+        let record = SelfDisclaimRecord(reason: .forced, calendar: .denied, reminders: .denied, host: .appBundle)
+        XCTAssertEqual(record.attributionLine,
+                       "CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (forced): an app had Calendar denied, Reminders denied. Not verified.")
+        XCTAssertTrue(CarriedReexec.unreadable.attributionLine.contains("whether and why"))
+    }
+
+    func testEveryPossibleRecordRoundTrips() {
+        var possible = 0
         for reason in SelfDisclaimRecord.Reason.allCases {
-            for status in SelfDisclaimRecord.Status.allCases {
-                for host in SelfDisclaimRecord.Host.allCases {
-                    let record = SelfDisclaimRecord(reason: reason, calendar: status, reminders: .fullAccess, host: host)
-                    XCTAssertEqual(SelfDisclaimRecord.decode(record.encoded), record, record.encoded)
-                    XCTAssertLessThanOrEqual(record.encoded.utf8.count, 128, record.encoded)
+            for calendar in SelfDisclaimRecord.Status.allCases {
+                for reminders in SelfDisclaimRecord.Status.allCases {
+                    for host in SelfDisclaimRecord.Host.allCases {
+                        let record = SelfDisclaimRecord(reason: reason, calendar: calendar, reminders: reminders, host: host)
+                        XCTAssertLessThanOrEqual(record.encoded.utf8.count, 128, record.encoded)
+                        XCTAssertEqual(SelfDisclaimRecord.decode(record.encoded), record.isPossible ? record : nil, record.encoded)
+                        if record.isPossible { possible += 1 }
+                    }
                 }
             }
         }
+        XCTAssertGreaterThan(possible, 0)
+    }
+
+    /// `decide` cannot produce these, so a value holding one was not written by this binary.
+    func testImpossibleCombinationsAreRejected() {
+        for bad in ["v1;reason=hostGrantUnusable;cal=fullAccess;rem=fullAccess;host=appBundle",
+                    "v1;reason=hostGrantUnusable;cal=restricted;rem=denied;host=appBundle",
+                    "v1;reason=forced;cal=restricted;rem=fullAccess;host=appBundle",
+                    "v1;reason=forced;cal=notRead;rem=notRead;host=appBundle",
+                    "v1;reason=setup;cal=denied;rem=denied;host=appBundle",
+                    "v1;reason=setup;cal=notRead;rem=denied;host=appBundle"] {
+            XCTAssertNil(SelfDisclaimRecord.decode(bad), bad)
+        }
+        XCTAssertNotNil(SelfDisclaimRecord.decode("v1;reason=forced;cal=fullAccess;rem=fullAccess;host=appBundle"))
+    }
+
+    /// U+037E is canonically equivalent to `;`, so Swift's `==` and `components(separatedBy:)` take it.
+    func testACanonicallyEquivalentSeparatorIsRejected() {
+        let good = "v1;reason=forced;cal=denied;rem=denied;host=appBundle"
+        XCTAssertNotNil(SelfDisclaimRecord.decode(good))
+        XCTAssertNil(SelfDisclaimRecord.decode(good.replacingOccurrences(of: ";", with: "\u{037E}")))
+        XCTAssertNil(SelfDisclaimRecord.decode(String(good.prefix(2)) + "\u{037E}" + good.dropFirst(3)))
     }
 
     func testTheEncodingIsStable() {
@@ -75,7 +109,7 @@ final class SelfDisclaimRecordTests: XCTestCase {
         XCTAssertTrue(forced.startLine(hostName: "Terminal").contains("Terminal had Calendar fullAccess"))
         let setup = SelfDisclaimRecord(reason: .setup, calendar: .notRead, reminders: .notRead, host: .unknown)
         XCTAssertTrue(setup.startLine(hostName: "Terminal").hasPrefix("[che-ical-mcp] --setup:"))
-        XCTAssertTrue(setup.attributionLine.contains("the host's status was not read"), setup.attributionLine)
+        XCTAssertTrue(setup.attributionLine.contains("an unknown host (its status was not read)"), setup.attributionLine)
     }
 
     func testTheHostNameComesFromTheKind() {
