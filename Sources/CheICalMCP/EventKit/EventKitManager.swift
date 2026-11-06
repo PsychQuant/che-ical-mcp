@@ -2198,6 +2198,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         /// #333: the relative alarms read off the saved reminder (minutes before), when the create
         /// asked for `alarmOffsets`; nil otherwise and for a duplicate, which writes none.
         var storedRelativeAlarms: [Double]? = nil
+        /// #433: the call wrote alarms, they were read back, and the earliest one is off the due time.
+        var listShowsAlarmTime = false
     }
 
     /// #301: the duplicate reported among the matches. A list can hold both a date-only and a
@@ -2322,9 +2324,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                                     save: { try eventStore.save(reminder, commit: true) },
                                                     reload: { reminder.refresh() },
                                                     rollback: { reminder.rollback() })
+        let alarms = ReminderCreateWrite.alarmReadBack(offsets: alarmOffsets, saved: reminder, dateSync: dateSync, storeDiffers: storeDiffers)
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
                                           dateSync: dateSync,
-                                          storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) })
+                                          storedRelativeAlarms: alarms.stored,
+                                          listShowsAlarmTime: alarms.listShowsAlarmTime)
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
@@ -2421,11 +2425,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reload: { reminder.refresh() },
             rollback: { reminder.rollback() })
         markNeedsRefresh()
+        // PR #438 verify: judged on the re-read reminder, absolute alarms included; if it could not
+        // be re-read, nothing is reported as stored.
+        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: dateSync, reload: { reminder.refresh() })
         let result = ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
-            storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
+            storedRelativeAlarms: alarms.stored,
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: dateSync),
+            listShowsAlarmTime: alarms.listShowsAlarmTime,
             // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
             // call touched the rule.
             recurrence: (recurrenceRule != nil || clearRecurrence)
