@@ -50,4 +50,18 @@ enum ReminderCreateWrite {
         return ReminderDateSync.confirmSaved(reminder, report: report, save: save, reload: reload, rollback: rollback,
                                              tool: "create_reminder", fallback: storeDiffers.isEmpty, log: log)
     }
+
+    /// PR #438 verify: what a create may say about the alarms it wrote. Not confirmed when the
+    /// read-back failed, or when `storeDiffers` says the store holds another number of alarms: a
+    /// save that threw may leave the object with the list as asked (`NewObjectSave`, not covered on
+    /// a device), so reading it would only repeat the request. A create without a due date has no
+    /// read-back, and an empty list is all it can hold.
+    static func alarmReadBack(offsets: [Int]?, saved reminder: EKReminder, dateSync: ReminderDateSync.Report?,
+                              storeDiffers: [String]) -> ReminderUpdateWrite.AlarmReadBack {
+        guard offsets != nil, dateSync?.reread != false, !storeDiffers.contains("alarm count") else {
+            return .init(stored: nil, listShowsAlarmTime: false)
+        }
+        return .init(stored: ReminderRelativeAlarms.storedMinutesBefore(reminder),
+                     listShowsAlarmTime: ReminderRelativeAlarms.listShowsAlarmTime(saved: reminder))
+    }
 }
