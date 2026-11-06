@@ -239,13 +239,19 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
         }
     }
 
-    /// Weekdays count for every frequency but daily; days of the month only for monthly.
+    /// Weekdays count for every frequency; days of the month for monthly and yearly only. Measured
+    /// on iCloud (#434 verify), for reminders and events: a daily rule with weekdays skips the other
+    /// days, a yearly rule with days of the month repeats on them, and a daily or weekly rule
+    /// ignores days of the month.
     func testDayListsCountOnlyForTheFrequenciesThatUseThem() {
         func rule(_ frequency: RecurrenceRuleInput.Frequency, days: [Int]? = nil, dom: [Int]? = nil) -> ReminderRecurrenceRuleValue {
             ReminderRecurrenceRuleValue(from: EventKitManager.makeRecurrenceRule(from: RecurrenceRuleInput(
                 frequency: frequency, interval: 1, endDate: nil, occurrenceCount: nil, daysOfWeek: days, daysOfMonth: dom, excludedOccurrenceDates: nil)))
         }
-        XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, days: [6])), "daily ignores weekdays")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, days: [6])), "daily by weekday")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.yearly, dom: [15])), "yearly by day of the month")
+        XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.yearly, days: [6])), "yearly by weekday")
+        XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.daily, dom: [15])), "daily ignores days of the month")
         XCTAssertTrue(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.weekly, dom: [15])), "weekly ignores days of the month")
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.monthly, days: [6])), "monthly by weekday")
         XCTAssertFalse(ReminderRecurrenceWrite.dueMatches(thursdayDue, rule: rule(.monthly, dom: [15])))

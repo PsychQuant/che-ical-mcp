@@ -57,6 +57,13 @@ enum UpdatedIdentifier {
 
     private static let occurrenceMarker = "/RID="
 
+    /// The series part of an id that is itself one occurrence (`<series>/RID=<n>`, iCloud's shape);
+    /// nil for any other id, whose series cannot be read from it.
+    static func seriesOfOccurrenceId(_ id: String) -> String? {
+        guard id.contains(occurrenceMarker) else { return nil }
+        return seriesPart(of: id)
+    }
+
     /// `id` without a /RID= suffix; nil when nothing is left.
     private static func seriesPart(of id: String) -> String? {
         let series = id.range(of: occurrenceMarker).map { String(id[..<$0.lowerBound]) } ?? id

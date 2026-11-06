@@ -122,6 +122,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
    `update_event` 改標題 → undo 要成功還原；另建一個一次性事件 → `move_events_batch` 到同來源的另一個
    拋棄式日曆 → undo 要成功搬回。若以「it is an edited occurrence of a series now」拒絕，
    就是該來源把一次性事件回報成 detached（`isDetached` 誤判），要回報、別在真實資料上依賴這兩條 undo。
+   另建一個一次性事件 → `update_event` 帶 `recurrence`、不帶 span，要成功（#434）：單一場次的拒絕也看
+   `isDetached`，誤判的來源會把一次性事件當成單一場次拒絕，訊息說它是 edited on its own。
    另在該來源的兩個拋棄式日曆做第 10 步（經 stand-in 的整串搬移之 undo，#369）：它靠搬移後舊的系列物件
    回報新日曆，這只在 iCloud 看過（2026-11-04）。若 undo 以「still resolves, but neither the series nor an
    occurrence that could stand in for it can be read」拒絕，就是該來源的舊物件回報的還是原日曆，要回報。
