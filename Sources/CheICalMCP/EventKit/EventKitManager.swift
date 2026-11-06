@@ -2484,6 +2484,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // in deleteEventsBatch (#185). Both delete_reminders_batch and cleanup_completed_reminders
         // come through here.
         var undoSnapshots: [ReminderSnapshot] = []
+        var mayLandCount = 0
 
         for id in identifiers {
             do {
@@ -2559,6 +2560,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     )
                 }
                 failures.append((id, sanitized.code))
+                mayLandCount += 1
             }
         }
 
@@ -2570,7 +2572,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,
-            failures: failures
+            failures: failures,
+            mayLandCount: mayLandCount
         )
     }
 
@@ -3317,9 +3320,21 @@ extension UndoOperation {
 /// [`EventKitErrorSanitizer`](EventKitErrorSanitizer.swift) for the full
 /// sanitizer surface.
 struct BatchDeleteResult {
+    /// #274: the response field for `mayLandCount`, shared by `delete_reminders_batch` and
+    /// `cleanup_completed_reminders`, whose rows are bound to stable codes (spec R3).
+    static let failedRowsNote = "Rows that failed with a code may still be deleted by the next save this server makes. Read the reminders back before trying them again."
+
+    /// The field to add to a response: nothing when no row can still land.
+    var failedRowsNoteField: [String: Any] {
+        mayLandCount > 0 ? ["failed_rows_note": Self.failedRowsNote] : [:]
+    }
+
     let successCount: Int
     let failedCount: Int
     let failures: [(identifier: String, error: String)]
+    /// #274: rows whose removal threw: unlike a row that was not found or was refused, it can still
+    /// land with the next save (`ExistingReminderSave`). The row itself keeps its stable code.
+    var mayLandCount: Int = 0
     /// Span "future" items an earlier removal of their series already reached (#325).
     var coveredCount: Int = 0
 }

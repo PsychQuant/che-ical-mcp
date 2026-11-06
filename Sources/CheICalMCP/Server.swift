@@ -1085,7 +1085,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminders_batch",
-                description: "PREFERRED: Delete multiple reminders in a single call. A row that failed with an EventKit code may still be deleted by the next save this server makes, so read the reminders back before trying it again. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
+                description: "PREFERRED: Delete multiple reminders in a single call. When a row fails with a code, it may still be deleted by the next save this server makes: the response then adds failed_rows_note, so read the reminders back before trying it again. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1118,7 +1118,7 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
+                description: "Delete completed reminders in a single call. When a row fails with a code, it may still be deleted by the next save this server makes: the response then adds failed_rows_note. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2260,7 +2260,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("reminder_ids must contain at least one reminder ID")
         }
 
-        let result = try await eventKitManager.deleteRemindersBatch(identifiers: reminderIds)
+        let result = try await reminderCleanupSource.deleteRemindersBatch(identifiers: reminderIds, onlyCompleted: false)
 
         var response: [String: Any] = [
             "total": reminderIds.count,
@@ -2273,6 +2273,7 @@ class CheICalMCPServer {
                 ["reminder_id": failure.identifier, "error": failure.error]
             }
         }
+        response.merge(result.failedRowsNoteField) { $1 }   // #274
 
         return try formatJSON(response)
     }
@@ -2458,7 +2459,7 @@ class CheICalMCPServer {
             "deleted_ids": deletedIds,
             "failures": failures,
             "remaining": remaining
-        ]
+        ].merging(result.failedRowsNoteField) { $1 }   // #274
         return try formatJSON(response)
     }
 
