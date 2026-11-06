@@ -29,7 +29,11 @@ import Foundation
 /// `calendarItem(withIdentifier:)` (this check and the reminder tools) for event ids (iCloud and
 /// Google), a reminder id and ids that no longer existed; `calendar(withIdentifier:)` (calendar
 /// ids from the caller and from undo records) for a reminder id (nil) and ids that no longer
-/// existed. Neither was tried with every kind of id, or on other account types.
+/// existed. Neither was tried with every kind of id, or on other account types. #293 (iCloud,
+/// 2026-11-06, every call through a tool in its own process) added empty, blank and very long
+/// strings, non-UUID text, NUL bytes and `/RID=` forms for all three kinds of id: none raised, and
+/// neither did the other calls that take caller input (dates from year 1 to 9999 saved and read,
+/// recurrence, locations, colors). That covers the inputs on #293, not every input.
 enum EventLookup {
     /// The resolver behind closures (the closure-seam variant, #182), so the order is tested
     /// without a saved reminder.
