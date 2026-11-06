@@ -13,7 +13,7 @@ extension EventKitManager {
     func postWriteSnapshot(eventID: String, saved: EKEvent) -> EventSnapshot {
         // A failed lookup falls back like a missing one: this is a snapshot taken after the write,
         // and the undo that reads it looks the event up itself.
-        if let event = (try? storedEvent(id: eventID)) ?? nil, event.refresh() {
+        if let event = try? storedEvent(id: eventID), event.refresh() {
             return EventSnapshot(from: event)
         }
         return EventSnapshot(from: saved)
@@ -122,31 +122,38 @@ extension EventKitManager {
             try await ensureCalendarAccess()
             let deletesSeries: Bool
             if case .createEvent = operation, verb == .undo { deletesSeries = true } else { deletesSeries = false }
-            return try UndoTargetCheck.check(
-                expected, verb: verb,
-                lookup: { () -> EKEvent? in
-                    if operation.resolvesThroughStandIn {
-                        return try seriesMoveUndoTarget(operation, expected, verb: verb)
-                    }
-                    refreshIfNeeded()
-                    return try storedEvent(id: expected.itemID)
-                },
-                refresh: { $0.refresh() },
-                missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },
-                conflicts: { event in
-                    // Rounds 5–6: update-undo and the undo of a one-off move never write to an
-                    // event that repeats or is an edited occurrence now; refused and discarded
-                    // before the comparison.
-                    if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
-                                                                      isDetached: event.isDetached) {
-                        throw refusal
-                    }
-                    let fields = expected.changedFields(in: event)
-                    guard deletesSeries, event.hasRecurrenceRules else { return fields }
-                    return fields + UndoPostState.seriesConflicts(
-                        modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
-                },
-                refusal: refusal)
+            // #288: every event lookup of undo and redo comes through here. The general text says to
+            // restart the server, which would lose the whole undo history, so this says what to do
+            // with the record instead. Nothing was written and the record stays.
+            do {
+                return try UndoTargetCheck.check(
+                    expected, verb: verb,
+                    lookup: { () -> EKEvent? in
+                        if operation.resolvesThroughStandIn {
+                            return try seriesMoveUndoTarget(operation, expected, verb: verb)
+                        }
+                        refreshIfNeeded()
+                        return try storedEvent(id: expected.itemID)
+                    },
+                    refresh: { $0.refresh() },
+                    missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },
+                    conflicts: { event in
+                        // Rounds 5–6: update-undo and the undo of a one-off move never write to an
+                        // event that repeats or is an edited occurrence now; refused and discarded
+                        // before the comparison.
+                        if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
+                                                                          isDetached: event.isDetached) {
+                            throw refusal
+                        }
+                        let fields = expected.changedFields(in: event)
+                        guard deletesSeries, event.hasRecurrenceRules else { return fields }
+                        return fields + UndoPostState.seriesConflicts(
+                            modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
+                    },
+                    refusal: refusal)
+            } catch EventKitError.eventLookupFailed {
+                throw EventKitError.historyLookupFailed(verb: verb)
+            }
         case .reminder:
             try await ensureReminderAccess()
             var identity: ReminderCompletionSnapshot?

@@ -3051,6 +3051,8 @@ enum EventKitError: LocalizedError {
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
     /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
+    /// #288: the same, met by undo or redo, with what to do about the record.
+    case historyLookupFailed(verb: UndoHistoryVerb)
     /// PR #439 verify: `recurrence` or `clear_recurrence` on one occurrence (span this), or
     /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
     /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
@@ -3179,6 +3181,12 @@ enum EventKitError: LocalizedError {
             return reason
         case .eventLookupFailed(let identifier):
             return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
+        case .historyLookupFailed(let verb):
+            let kept = verb == .undo ? "This history entry was kept" : "This redo entry was kept"
+            let giveUp = verb == .undo
+                ? "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id"
+                : "ask the user whether to give up this redo; any new change clears the redo history"
+            return "Cannot \(verb.rawValue): the event lookup failed, so this event may still exist, and nothing was written. \(kept), so try again. If it keeps failing, \(giveUp)."
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
             let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."

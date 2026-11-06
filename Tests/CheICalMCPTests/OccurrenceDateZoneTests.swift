@@ -67,7 +67,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: move).count, 1, "the exact call")
         XCTAssertEqual(move.components(separatedBy: "eventTimeZone(").count - 1, 1, "looked up in that call only")
         // Round 4: the lookup is for the event at the same index as the date.
-        XCTAssertEqual(SourcePins.ranges(of: "let id = ids[index] occurrenceDates[index] = try await OccurrenceDateInput.resolve(", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let id = ids[index] do { occurrenceDates[index] = try await OccurrenceDateInput.resolve(", in: move).count, 1)
     }
 
     /// Round 3: the parse side and the search side read one zone, `occurrenceZone(of:)`. Pinned as

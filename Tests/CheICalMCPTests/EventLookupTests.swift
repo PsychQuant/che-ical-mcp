@@ -147,6 +147,22 @@ final class EventLookupTests: XCTestCase {
         XCTAssertFalse(EventKitError.eventLookupFailed(identifier: "id") is UnrecoverableUndoError)
     }
 
+    /// Restarting the server loses the undo history, so undo and redo must not suggest it, and the
+    /// record stays until the user agrees to give it up.
+    func testUndoAndRedoAnswerAFailedLookupInTheirOwnWords() throws {
+        for verb in [UndoHistoryVerb.undo, .redo] {
+            let error = EventKitError.historyLookupFailed(verb: verb)
+            let message = try XCTUnwrap(error.errorDescription)
+            XCTAssertTrue(message.hasPrefix("Cannot \(verb.rawValue): the event lookup failed"), message)
+            XCTAssertTrue(message.contains("may still exist"), message)
+            XCTAssertTrue(message.contains("ask the user whether to give up this \(verb.rawValue)"), message)
+            XCTAssertFalse(message.lowercased().contains("restart"), message)
+            XCTAssertFalse(message.lowercased().contains("not found"), message)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
+        XCTAssertTrue(try XCTUnwrap(EventKitError.historyLookupFailed(verb: .undo).errorDescription).contains("discard_id"))
+    }
+
     /// A series that may still be there must not be recorded as gone, or its undo recreates it.
     func testAFailedLookupCountsAsTheSeriesStillResolving() {
         struct Failed: Error {}
@@ -170,6 +186,10 @@ final class EventLookupTests: XCTestCase {
         XCTAssertTrue(guardCode.contains("let resolved = try freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"))
         XCTAssertTrue(guardCode.contains("stored: { try storedEvent(id: id) != nil }"))
         XCTAssertTrue(guardCode.contains("do { stored = try storedEvent(id: id) } catch { return error }"))
+        XCTAssertTrue(guardCode.contains("case EventKitError.eventLookupFailed: return Self.eventLookupFailedReason"),
+                      "a batch row whose second lookup raises must not read as not found")
+        XCTAssertTrue(guardCode.contains("} catch EventKitError.eventLookupFailed { throw EventKitError.historyLookupFailed(verb: verb) }"),
+                      "undo and redo answer in their own words")
         let manager = try code("EventKit/EventKitManager.swift")
         XCTAssertTrue(manager.contains("return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap"),
                       "occurrenceDateTimeZone throws instead of falling back to the host's zone")
