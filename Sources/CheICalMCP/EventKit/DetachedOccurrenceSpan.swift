@@ -198,7 +198,7 @@ enum DetachedOccurrenceSpan {
     /// The fields `update_event` writes with span `all` or `future` through one occurrence: what was
     /// measured field by field. Everything else is refused, a parameter added later included. The
     /// list holds top-level keys only: what is inside `recurrence` is not classified. `days_of_week`
-    /// of a weekly rule is checked against the original day; a monthly rule was not measured.
+    /// of any rule is checked against the original day (#454); only a weekly rule was measured.
     static let allowedUpdateFields: Set<String> = ["title", "notes", "location", "recurrence"]
 
     /// The keys of `update_event` that say what to write to, and write nothing themselves.
