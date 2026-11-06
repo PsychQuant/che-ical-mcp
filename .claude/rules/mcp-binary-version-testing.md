@@ -404,7 +404,7 @@ raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，�
 （出貨的 optimization level），arm64，單一 stdio process，每次呼叫設 timeout，只用名稱含 `#288` 的拋棄式日曆與清單：
 
 1. 建提醒事項，再建事件，留下一筆 undo 紀錄。
-2. 用提醒事項的 id 呼叫 `update_event` 兩次：都回 `Event not found`，process 活著。
+2. 用提醒事項的 id 呼叫 `update_event` 兩次：都回查詢失敗（may still exist、不要重建），process 活著。
 3. `undo`：刪掉第 1 步的事件。
 4. `create_event` 再 `update_event`，走一次 save。
 5. `update_reminder` 那筆提醒事項：讀得到，仍是提醒事項。
@@ -415,7 +415,7 @@ raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，�
 2026-11-06 已在 iCloud 做過第 1 到 7 步（release、arm64），結果記在 #288。**沒做，出版前要補**：
 
 - **x86_64 slice**（Rosetta 或 Intel Mac）：同樣步驟跑一次。
-- **Reminders 權限真的被拒絕**：留給 #382，由使用者撤銷權限後在場執行，種類檢查不用關。給提醒事項的 id：`update_event` 回 not found、
-  process 活著。同時記下 `calendarItem(withIdentifier:)` 回傳什麼（#293 沒量到這個權限狀態），它沒有被包住，raise 的話 process 仍會結束。
+- **Reminders 權限真的被拒絕，以及 `calendarItem(withIdentifier:)` 在那個狀態下回傳什麼**：見 #382 的留言，由使用者撤銷權限後在場執行，
+  種類檢查不用關。`calendarItem` 沒有被包住，raise 的話 process 仍會結束。
 
 結果記在 #288。結束後刪掉拋棄式日曆與清單。

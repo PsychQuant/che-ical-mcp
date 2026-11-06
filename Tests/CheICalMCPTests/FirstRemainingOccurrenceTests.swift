@@ -332,7 +332,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(operation, expected, verb: verb)"), "the helper is called inside the gate")
         let outside = String(body[..<gate.lowerBound]) + String(body[close.upperBound...])
         XCTAssertFalse(outside.contains("seriesMoveUndoTarget("), "and nowhere else in the event arm")
-        XCTAssertTrue(outside.contains("return storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
+        XCTAssertTrue(outside.contains("return try storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
         XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
         XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
         let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
@@ -349,7 +349,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("sourceID: $0.source?.sourceIdentifier"), "the original calendar's account")
         XCTAssertTrue(helper.contains("SeriesMoveUndo.restoringCalendarID(of: expected)"), "the original calendar from the record (tested seam)")
         XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "resolved from that identifier")
-        XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
+        XCTAssertTrue(helper.contains("stored: { try storedEvent(id: id) != nil }"), "the residual case asks the store")
     }
 
     /// #377: the one other stand-in probe in the event arm. It is the not-found hook of the
@@ -483,7 +483,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func freshEvent(id: String) -> EKEvent?"))
+        let from = try XCTUnwrap(source.range(of: "func freshEvent(id: String) throws -> EKEvent?"))
         let to = try XCTUnwrap(source.range(of: "func freshReminder(id: String)", range: from.upperBound..<source.endIndex))
         let body = String(source[from.lowerBound..<to.lowerBound])
         // The branches themselves are tested through `resolve`; this pins that freshEvent uses it.

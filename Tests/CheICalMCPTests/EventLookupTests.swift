@@ -76,71 +76,59 @@ final class EventLookupTests: XCTestCase {
         var eventCalls: [String] = []
         init(item: EKCalendarItem?, found: EKEvent?) { self.item = item; self.found = found }
         func calendarItem(withIdentifier identifier: String) -> EKCalendarItem? { calendarItemCalls.append(identifier); return item }
-        func eventCatchingRaise(identifier: String) -> EventLookupOutcome {
+        func eventCatchingRaise(identifier: String) throws -> EKEvent? {
             eventCalls.append(identifier)
-            return EventLookupOutcome.of(event: found, exceptionName: nil)
+            return found
         }
     }
 
     /// `storedEvent(id:)` hands the manager's store to this; the kind check must ask the store's
     /// own `calendarItem(withIdentifier:)`. A wiring that skips it (`{ _ in nil }`) passes the
     /// resolver tests above and still aborts on a reminder's id.
-    func testAStoreThatHoldsAReminderUnderTheIdIsNeverAskedForAnEvent() {
+    func testAStoreThatHoldsAReminderUnderTheIdIsNeverAskedForAnEvent() throws {
         let fake = FakeStore(item: EKReminder(eventStore: store), found: EKEvent(eventStore: store))
-        XCTAssertNil(EventLookup.event(identifier: "reminder-id", in: fake))
+        XCTAssertNil(try EventLookup.event(identifier: "reminder-id", in: fake))
         XCTAssertEqual(fake.calendarItemCalls, ["reminder-id"])
         XCTAssertEqual(fake.eventCalls, [])
     }
 
-    func testAStoreWithoutAnItemUnderTheIdIsAskedForTheEvent() {
+    func testAStoreWithoutAnItemUnderTheIdIsAskedForTheEvent() throws {
         let event = EKEvent(eventStore: store)
         let fake = FakeStore(item: nil, found: event)
-        XCTAssertTrue(EventLookup.event(identifier: "event-id", in: fake) === event)
+        XCTAssertTrue(try EventLookup.event(identifier: "event-id", in: fake) === event)
         XCTAssertEqual(fake.calendarItemCalls, ["event-id"])
         XCTAssertEqual(fake.eventCalls, ["event-id"])
     }
 
     // MARK: - #288: a lookup that raises
 
-    private func isAbsent(_ outcome: EventLookupOutcome) -> Bool {
-        if case .absent = outcome { return true }
-        return false
-    }
-
-    private func isFailed(_ outcome: EventLookupOutcome) -> Bool {
-        if case .failed = outcome { return true }
-        return false
+    private func assertLookupFails(_ store: CheICalRaisingEventStore, _ label: String,
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(try EventLookup.event(identifier: "some-id", in: store), label, file: file, line: line) { error in
+            guard case EventKitError.eventLookupFailed(let identifier) = error else {
+                return XCTFail("\(label): \(error)", file: file, line: line)
+            }
+            XCTAssertEqual(identifier, "some-id", file: file, line: line)
+        }
     }
 
     /// Before #288 this ended the process, and the test run with it. The raise comes from
     /// Objective-C and stops in `CheICalEventWithIdentifier`, so it crosses no Swift frame.
-    func testTheRaiseSeenForAReminderIdIsAbsent() {
-        let raising = CheICalRaisingEventStore(raising: .undefinedKeyException)
-        XCTAssertTrue(isAbsent(EventLookup.outcome(identifier: "reminder-id", in: raising)))
-        XCTAssertNil(EventLookup.event(identifier: "reminder-id", in: raising))
-    }
-
-    /// Any other raise says nothing about the event, so it must not read as not found: a caller
-    /// could then create the event again.
-    func testAnyOtherRaiseIsAFailedLookup() {
-        for name in [NSExceptionName.genericException, .internalInconsistencyException, .invalidArgumentException] {
-            let raising = CheICalRaisingEventStore(raising: name)
-            XCTAssertTrue(isFailed(EventLookup.outcome(identifier: "event-id", in: raising)), name.rawValue)
-            XCTAssertNil(EventLookup.event(identifier: "event-id", in: raising), name.rawValue)
+    /// `NSUnknownKeyException` is no exception to the rule: it is what a reminder's id was seen to
+    /// raise, not proof that an id which raises it is a reminder's.
+    func testEveryRaiseIsAFailedLookupWhateverItsName() {
+        for name in [NSExceptionName.undefinedKeyException, .genericException, .internalInconsistencyException,
+                     .invalidArgumentException, NSExceptionName("")] {
+            assertLookupFails(CheICalRaisingEventStore(raising: name), name.rawValue)
         }
     }
 
-    func testALookupThatReturnsNothingIsAbsent() {
-        XCTAssertTrue(isAbsent(EventLookup.outcome(identifier: "gone", in: CheICalRaisingEventStore(raising: nil))))
+    func testARaiseWithNoNameIsAFailedLookupToo() {
+        assertLookupFails(CheICalRaisingEventStore(raisingWithoutAName: ()), "no name")
     }
 
-    func testTheOutcomeFollowsTheEventAndTheName() {
-        let event = EKEvent(eventStore: store)
-        XCTAssertTrue(EventLookupOutcome.of(event: event, exceptionName: nil).event === event)
-        XCTAssertTrue(isAbsent(.of(event: nil, exceptionName: nil)))
-        XCTAssertTrue(isAbsent(.of(event: nil, exceptionName: "NSUnknownKeyException")))
-        XCTAssertTrue(isFailed(.of(event: nil, exceptionName: "NSGenericException")))
-        XCTAssertTrue(isFailed(.of(event: nil, exceptionName: "")))
+    func testALookupThatReturnsNothingIsNotFoundNotAFailure() throws {
+        XCTAssertNil(try EventLookup.event(identifier: "gone", in: CheICalRaisingEventStore(raising: nil)))
     }
 
     /// `eventNotFound` is what a caller reads as "create it": the failed-lookup answer must differ.
@@ -152,15 +140,45 @@ final class EventLookupTests: XCTestCase {
         XCTAssertFalse(message.lowercased().contains("not found"), message)
     }
 
-    /// `notFoundError(id:)` is where a lookup that came back empty becomes an error, and the two
-    /// callers of the store's outcome must tell a failed lookup from a missing event.
-    func testNotFoundErrorAndTheBatchReasonTellAFailedLookupApart() throws {
-        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager+UndoGuard.swift")
-        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        let body = try XCTUnwrap(SourceScan.body(of: "func notFoundError(id: String) -> Error {", in: code))
-        XCTAssertTrue(body.contains("let outcome = EventLookup.outcome(identifier: id, in: eventStore) if case .failed = outcome { return EventKitError.eventLookupFailed(identifier: id) } let stored = outcome.event"), body)
-        let reason = try XCTUnwrap(SourceScan.body(of: "func notFoundReason(id: String) -> String {", in: code))
-        XCTAssertTrue(reason.contains("case EventKitError.eventLookupFailed: return Self.eventLookupFailedReason"), reason)
+    /// An undo that meets a failed lookup keeps its record, and says the lookup failed, not that the
+    /// event is gone (which offers to discard the record).
+    func testAnUndoThatMeetsAFailedLookupKeepsItsRecord() {
+        XCTAssertEqual(UndoFailureDisposition.of(EventKitError.eventLookupFailed(identifier: "id")), .restore)
+        XCTAssertFalse(EventKitError.eventLookupFailed(identifier: "id") is UnrecoverableUndoError)
+    }
+
+    /// A series that may still be there must not be recorded as gone, or its undo recreates it.
+    func testAFailedLookupCountsAsTheSeriesStillResolving() {
+        struct Failed: Error {}
+        XCTAssertTrue(EventRemovalKind.seriesResolves { throw Failed() })
+        XCTAssertTrue(EventRemovalKind.seriesResolves { true })
+        XCTAssertFalse(EventRemovalKind.seriesResolves { false })
+        XCTAssertEqual(EventRemovalKind.of(hadRules: true, isDetached: false, span: .futureEvents, fromFirstOccurrence: true,
+                                           seriesResolves: { EventRemovalKind.seriesResolves { throw Failed() } }),
+                       .followingOccurrences)
+    }
+
+    /// The failed lookup is thrown where it happened, on every path that reads an event: nothing
+    /// may turn it into nil again, or read the outcome back from a second lookup.
+    func testTheLookupsThrowAndNothingSwallowsThem() throws {
+        func code(_ file: String) throws -> String {
+            let url = try SourceScan.sourcesDirectory().appendingPathComponent(file)
+            return SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: url, encoding: .utf8)))
+        }
+        let guardCode = try code("EventKit/EventKitManager+UndoGuard.swift")
+        XCTAssertTrue(guardCode.contains("return try storedEvent(id: expected.itemID)"))
+        XCTAssertTrue(guardCode.contains("let resolved = try freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)"))
+        XCTAssertTrue(guardCode.contains("stored: { try storedEvent(id: id) != nil }"))
+        XCTAssertTrue(guardCode.contains("do { stored = try storedEvent(id: id) } catch { return error }"))
+        let manager = try code("EventKit/EventKitManager.swift")
+        XCTAssertTrue(manager.contains("return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap"),
+                      "occurrenceDateTimeZone throws instead of falling back to the host's zone")
+        // The one `try?` allowed: a snapshot taken after a write, whose undo looks the event up itself.
+        for file in ["EventKit/EventKitManager+UndoGuard.swift", "EventKit/EventKitManager.swift", "EventKit/DeleteUndo.swift"] {
+            let swallowed = try code(file).components(separatedBy: "try? storedEvent(").count - 1
+                + code(file).components(separatedBy: "try? freshEvent").count - 1
+            XCTAssertEqual(swallowed, file.hasSuffix("UndoGuard.swift") ? 1 : 0, file)
+        }
     }
 
     // MARK: - Every lookup goes through the resolver
@@ -238,8 +256,8 @@ final class EventLookupTests: XCTestCase {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventLookup.swift")
         let code = SourceScan.collapsingWhitespace(
             SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        let body = try XCTUnwrap(SourceScan.body(of: "func storedEvent(id: String) -> EKEvent? {", in: code))
-        XCTAssertEqual(body.trimmingCharacters(in: .whitespaces), "EventLookup.event(identifier: id, in: eventStore)")
+        let body = try XCTUnwrap(SourceScan.body(of: "func storedEvent(id: String) throws -> EKEvent? {", in: code))
+        XCTAssertEqual(body.trimmingCharacters(in: .whitespaces), "try EventLookup.event(identifier: id, in: eventStore)")
     }
 
     func testOnlyTheResolverCallsTheEventLookup() throws {

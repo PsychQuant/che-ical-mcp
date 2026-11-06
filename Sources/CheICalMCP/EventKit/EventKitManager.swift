@@ -1097,7 +1097,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
         // that would write back over an edit made elsewhere before this call.
-        guard let resolved = freshEventWithOrigin(
+        guard let resolved = try freshEventWithOrigin(
             id: identifier,
             refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: applyToAll)) else {
             throw notFoundError(id: identifier)
@@ -1342,7 +1342,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose zone was read. A reminder's id gives nil here and not found from the write (#260).
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
         try await ensureCalendarAccess()
-        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
+        return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
     }
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
@@ -1379,7 +1379,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = freshEventWithOrigin(
+        guard let masterEvent = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
             throw notFoundError(id: identifier)
         }
@@ -1414,7 +1414,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEventSeries(identifier: String) async throws {
         try await ensureCalendarAccess()
 
-        guard let event = freshEvent(id: identifier) else {
+        guard let event = try freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
 
@@ -1450,7 +1450,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
-                guard let event = freshEvent(id: id) else {
+                guard let event = try freshEvent(id: id) else {
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
@@ -1488,7 +1488,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         try await ensureCalendarAccess()
         // Refreshed, like the writes the dry-run preview describes (#326): a series whose first
         // occurrence was deleted shows its first remaining occurrence, not the deleted one.
-        guard let event = freshEvent(id: identifier) else {
+        guard let event = try freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
         return event
@@ -1642,7 +1642,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
-                guard let masterEvent = freshEventWithOrigin(
+                guard let masterEvent = try freshEventWithOrigin(
                     id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
                     failures.append((item.identifier, notFoundReason(id: item.identifier)))
                     continue
@@ -1794,7 +1794,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
         try await ensureCalendarAccess()
-        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
+        guard let resolved = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
         }
         let sourceEvent = resolved.event
@@ -1830,7 +1830,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
+        guard let sourceEvent = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw notFoundError(id: identifier)
         }
         if sourceEvent.hasRecurrenceRules {
@@ -1851,7 +1851,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
+        guard let resolved = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
         }
         let master = resolved.event
@@ -2991,8 +2991,8 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
-    /// #288: the event lookup raised an exception other than the known one, so it is not known
-    /// whether the event exists.
+    /// #288: the event lookup raised, so it is not known whether the event exists. Not an
+    /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted

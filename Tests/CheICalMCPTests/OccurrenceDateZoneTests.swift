@@ -78,7 +78,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let manager = "EventKit/EventKitManager.swift"
         let lookup = try call(in: "func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {", file: manager)
         XCTAssertEqual(lookup.trimmingCharacters(in: .whitespaces),
-                       "try await ensureCalendarAccess() return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }")
+                       "try await ensureCalendarAccess() return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }")
         XCTAssertFalse(lookup.contains("catch"))
         let helper = try call(in: "static func occurrenceZone(of event: EKEvent) -> TimeZone? {", file: manager)
         XCTAssertEqual(helper.trimmingCharacters(in: .whitespaces), "event.timeZone")

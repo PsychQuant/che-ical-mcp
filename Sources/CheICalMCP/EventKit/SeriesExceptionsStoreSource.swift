@@ -57,7 +57,7 @@ protocol SeriesExceptionsStoreSource {
 }
 
 /// The production `SeriesExceptionsStoreSource`: `EventKitManager`'s store, and the manager's own
-/// helpers for the calls that need it (`restoreCalendar(for:kind:)`, `eventLookup`, the refresh
+/// helpers for the calls that need it (`restoreCalendar(for:kind:)`, `storedEvent`, the refresh
 /// flags), passed in as closures. `EventKitManager` builds it inside its own isolation and uses it there only.
 final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     typealias Event = EKEvent
@@ -65,18 +65,18 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     private let eventStore: EKEventStore
     private let readRestoreCalendar: (EventSnapshot, EventRestoreKind) async throws -> EKCalendar
-    private let eventLookup: (String) -> EventLookupOutcome
+    private let storedEvent: (String) throws -> EKEvent?
     private let markRefresh: () -> Void
     private let refreshIfNeeded: () -> Void
 
     init(eventStore: EKEventStore,
          restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
-         eventLookup: @escaping (String) -> EventLookupOutcome,
+         storedEvent: @escaping (String) throws -> EKEvent?,
          markNeedsRefresh: @escaping () -> Void,
          refreshIfNeeded: @escaping () -> Void) {
         self.eventStore = eventStore
         self.readRestoreCalendar = restoreCalendar
-        self.eventLookup = eventLookup
+        self.storedEvent = storedEvent
         self.markRefresh = markNeedsRefresh
         self.refreshIfNeeded = refreshIfNeeded
     }
@@ -128,11 +128,7 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func isStored(_ event: EKEvent) throws -> Bool {
         guard let id = event.eventIdentifier else { return false }
-        switch eventLookup(id) {
-        case .found: return true
-        case .absent: return false
-        case .failed: throw EventKitError.eventLookupFailed(identifier: id)
-        }
+        return try storedEvent(id) != nil
     }
 
     func markNeedsRefresh() { markRefresh() }

@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface CheICalRaisingEventStore : EKEventStore
 /// With a nil name the event lookup returns nil instead.
 - (instancetype)initRaising:(nullable NSExceptionName)name;
+/// Raises an exception whose name is nil, which `NSException` allows at run time.
+- (instancetype)initRaisingWithoutAName;
 @end
 
 NS_ASSUME_NONNULL_END

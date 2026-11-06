@@ -19,7 +19,10 @@ final class ExceptionCatchTests: XCTestCase {
         }
     }
 
-    func testTheNameIsOptional() {
-        XCTAssertNil(CheICalEventWithIdentifier(CheICalRaisingEventStore(raising: .undefinedKeyException), "id", nil))
+    /// A non-nil name is how the caller knows it raised, so an exception with none still sets one.
+    func testARaiseWithNoNameStillSetsTheName() {
+        var name: NSString?
+        XCTAssertNil(CheICalEventWithIdentifier(CheICalRaisingEventStore(raisingWithoutAName: ()), "id", &name))
+        XCTAssertEqual(name as String?, "")
     }
 }
