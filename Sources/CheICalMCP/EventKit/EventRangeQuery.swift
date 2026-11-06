@@ -75,8 +75,7 @@ enum EventRangeQuery {
         /// `delete_events_batch` by date range always names a calendar and has no `limit`.
         case deletion
         /// `find_duplicate_events` only compares different calendars, so one calendar is no way out:
-        /// it would answer a false `duplicate_count` of 0 (PR #430 verify). A name in
-        /// `calendar_names` that matches nothing is not reported, so naming fewer is not simply safe.
+        /// such a call is refused (#437).
         case duplicates
         /// `check_conflicts` has no `limit`, and one calendar answers for that calendar only.
         case conflicts
@@ -105,7 +104,7 @@ enum EventRangeQuery {
                 case .deletion:
                     return "\(stopped) Nothing was deleted. Give both after_date and before_date, at most \(EventRangeQuery.previousCutDays - 1) days apart."
                 case .duplicates:
-                    return "\(stopped) Nothing was returned. Narrow the range. Naming fewer calendars in calendar_names also reads less: keep at least two, since only events in different calendars are compared, and use the exact names from list_calendars, since a name that matches nothing is not reported."
+                    return "\(stopped) Nothing was returned. Narrow the range. Naming fewer calendars in calendar_names also reads less: keep at least two, since only events in different calendars are compared."
                 case .conflicts:
                     return "\(stopped) Nothing was returned. Narrow the range, or, if no calendar was named, give calendar_name; other calendars are then not checked."
                 }
