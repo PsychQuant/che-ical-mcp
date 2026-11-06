@@ -1716,7 +1716,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #437: never empty, which EventKit reads as all calendars.
         let calendars = try DuplicateCalendars.resolve(names: calendarNames, among: eventStore.calendars(for: .event),
                                                        identifier: { $0.calendarIdentifier },
-                                                       title: { $0.title }, sourceTitle: { $0.source.title })
+                                                       title: { $0.title }, sourceTitle: { $0.source?.title ?? "" })
 
         let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
@@ -1735,19 +1735,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 event1Id: e1.eventIdentifier ?? "",
                 event1Title: e1.title ?? "",
                 event1Calendar: e1.calendar.title,
-                event1CalendarSource: e1.calendar.source.title,
+                event1CalendarSource: e1.calendar.source?.title ?? "",
                 event1StartDate: e1.startDate,
                 event2Id: e2.eventIdentifier ?? "",
                 event2Title: e2.title ?? "",
                 event2Calendar: e2.calendar.title,
-                event2CalendarSource: e2.calendar.source.title,
+                event2CalendarSource: e2.calendar.source?.title ?? "",
                 event2StartDate: e2.startDate,
                 timeDifferenceSeconds: Int(pair.startDifference)
             )
         }
 
         return DuplicateSearchValue(
-            calendarsChecked: DuplicateCalendars.checkedLabels(calendars, title: { $0.title }, sourceTitle: { $0.source.title }),
+            calendarsChecked: DuplicateCalendars.checkedLabels(calendars, title: { $0.title }, sourceTitle: { $0.source?.title ?? "" }),
             pairs: duplicates
         )
     }
@@ -2945,9 +2945,9 @@ enum EventKitError: LocalizedError {
     case calendarNotFound(identifier: String, available: [String] = [])
     case calendarNotFoundWithSource(name: String, source: String, available: [String] = [])
     case multipleCalendarsFound(name: String, sources: String)
-    /// #437: `find_duplicate_events` only compares different calendars. A count only. `named` says
-    /// whether the caller gave `calendar_names`: without them there is nothing more to name.
-    case tooFewCalendarsToCompare(found: Int, named: Bool)
+    /// #437: `find_duplicate_events` only compares different calendars. A count only.
+    /// `canNameMore` is false on a host with fewer than two calendars, where naming more cannot help.
+    case tooFewCalendarsToCompare(found: Int, canNameMore: Bool)
     case eventNotFound(identifier: String)
     case reminderNotFound(identifier: String)
     case calendarNameRequired(forType: String)
@@ -3114,9 +3114,9 @@ enum EventKitError: LocalizedError {
             return reason
         case .saveUnchecked(let code):
             return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed. It may already be saved. If it was not, it stays pending in this server's store, and the next save by this server writes it: a later row of the same batch, or a retry, which would then leave two. If it can never be written, later saves by this server may fail until it restarts (not tried), and it is dropped if the server restarts first (not tried). A check made right away proves nothing: a new store did not see such an item on device, while through this server a pending item may be listed, and a pending reminder list may be reported as existing by create_calendar, without being saved (not tried). Do not create it again until another save by this server has written it or the server has restarted. This item has no undo entry: undo removes the newest recorded operation, not this item; delete it by hand if it is not wanted."
-        case .tooFewCalendarsToCompare(let found, let named):
+        case .tooFewCalendarsToCompare(let found, let canNameMore):
             let needs = "find_duplicate_events compares events in different calendars, so it needs at least two"
-            guard named else { return "\(needs); this host has \(found). Nothing was returned." }
+            guard canNameMore else { return "\(needs); this host has \(found). Nothing was returned." }
             return "\(needs); \(found) found. Nothing was returned. Name two or more in calendar_names (list_calendars shows them)."
         case .calendarNotEmpty(let reason):
             return reason

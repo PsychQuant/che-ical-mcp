@@ -3178,8 +3178,9 @@ class CheICalMCPServer {
         }
         let endDate = try parseFlexibleDate(endStr)
 
-        // #437 verify round 1: the other tools' parameters, which this tool does not read. Ignored,
-        // each would read every calendar.
+        // #437 verify: the other tools' `calendar_name` and `calendar_source`, and `calendars`, which
+        // an older calendar-management skill wrote and a cached plugin may still send. This tool
+        // reads none of them, so a call with no calendar_names read every calendar.
         for key in ["calendar_name", "calendar_source", "calendars"] {
             if let value = arguments[key], value != .null {
                 throw ToolError.invalidParameter("find_duplicate_events does not take \(key). Use calendar_names, an array of calendar titles; a title two accounts share reads both.")

@@ -18,11 +18,12 @@ enum CalendarNameMatch {
 /// every calendar (`[]` reads as all). A name two accounts share reads both, unlike `findCalendars`:
 /// this tool has no `calendar_source`, and those two are what is compared before merging.
 enum DuplicateCalendars {
-    /// All of `all` without names. Refuses a name that matches nothing, then fewer than two calendars.
+    /// All of `all` without names, or with an empty list. Refuses a name that matches nothing, then
+    /// fewer than two calendars.
     static func resolve<Item>(names: [String]?, among all: [Item], identifier: (Item) -> String,
                                   title: (Item) -> String, sourceTitle: (Item) -> String) throws -> [Item] {
         var read = all
-        if let names {
+        if let names, !names.isEmpty {
             var seen = Set<String>()
             read = []
             for name in names {
@@ -31,7 +32,7 @@ enum DuplicateCalendars {
                 read += matched.filter { seen.insert(identifier($0)).inserted }
             }
         }
-        guard read.count >= 2 else { throw EventKitError.tooFewCalendarsToCompare(found: read.count, named: names != nil) }
+        guard read.count >= 2 else { throw EventKitError.tooFewCalendarsToCompare(found: read.count, canNameMore: all.count >= 2) }
         return read
     }
 

@@ -96,8 +96,10 @@ final class DuplicateCalendarsHandlerTests: XCTestCase {
         }
     }
 
-    /// PR #440 verify round 1: the names the other tools use for this. Ignored, each would read
-    /// every calendar, and `calendar_source` would not narrow a name two accounts share.
+    /// PR #440 verify rounds 1-2: `calendar_name` and `calendar_source` are the other tools'
+    /// parameters, and `calendars` is what an older calendar-management skill wrote, so a cached
+    /// plugin may still send it. Ignored, each left the call to run as if it were absent: every
+    /// calendar with no `calendar_names`, and `calendar_source` would not narrow a shared name.
     func testTheOtherToolsCalendarParametersAreRefusedBeforeAnyRead() async throws {
         for (key, value) in [("calendar_name", Value.string("Work")), ("calendar_source", .string("iCloud")),
                              ("calendars", .array([.string("Work"), .string("Home")]))] {
@@ -124,7 +126,7 @@ final class DuplicateCalendarsHandlerTests: XCTestCase {
 
     /// The refusals pass through with their own text.
     func testARefusalReachesTheCaller() async throws {
-        for (error, phrase) in [(EventKitError.tooFewCalendarsToCompare(found: 1, named: true), "at least two"),
+        for (error, phrase) in [(EventKitError.tooFewCalendarsToCompare(found: 1, canNameMore: true), "at least two"),
                                 (EventKitError.calendarNotFound(identifier: "missing"), "missing")] as [(Error, String)] {
             let server = try await CheICalMCPServer(duplicateSearchSource: DuplicateSearchFake(error: error))
             let result = await server.handleToolCallForTesting(name: "find_duplicate_events", arguments: range)
