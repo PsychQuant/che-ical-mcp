@@ -61,11 +61,11 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence; span all through an occurrence edited on its own is refused while an earlier occurrence remains, and with span all or future through it only title, notes, location and recurrence can be written, the rest writing nothing; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
     },
     {
       "name": "delete_event",
-      "description": "Delete a calendar event (with occurrence support for recurring)"
+      "description": "Delete a calendar event (with occurrence support for recurring; span all through an occurrence edited on its own is refused while another occurrence remains, deleting nothing)"
     },
     {
       "name": "list_reminders",
@@ -73,11 +73,11 @@
     },
     {
       "name": "create_reminder",
-      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, relative alarms (alarms_minutes_offsets, minutes before a due date with a time) and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy); unknown recurrence keys are refused"
+      "description": "Create a new reminder with optional due date (a bare YYYY-MM-DD makes it date-only), recurrence, location trigger, relative alarms (alarms_minutes_offsets, minutes before a due date with a time; when the earliest alarm is off the due time, alarms_note says so: in the rows measured the Reminders.app list showed the earliest alarm time, not the due time, and the one notification checked showed it too) and tags (if the save reports an error but the reminder was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title`, `list`, `notes`, `priority`, `completion`, `url`, `start`, `due`, `due time zone`, `alarm count` and `recurrence rule count`, and creating it again with the same parameters may make a second copy); unknown recurrence keys are refused"
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values); unknown recurrence keys are refused"
+      "description": "Update an existing reminder (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated, or, on a call that touches the alarms or the due date, when the earliest alarm is off the due time (in the rows measured the Reminders.app list showed the earliest alarm time, not the due time, and the one notification checked showed it too); changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values); unknown recurrence keys are refused"
     },
     {
       "name": "complete_reminder",
@@ -113,7 +113,7 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; by event_ids, span all through an occurrence edited on its own is refused for that row while another occurrence remains; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",
@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy); a row with an unknown key fails, and recurrence and location_trigger need create_reminder"
+      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; when the earliest alarm is off the due time, the row's alarms_note says so: in the rows measured the Reminders.app list showed the earliest alarm time, not the due time, and the one notification checked showed it too; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy); a row with an unknown key fails, and recurrence and location_trigger need create_reminder"
     },
     {
       "name": "delete_reminders_batch",

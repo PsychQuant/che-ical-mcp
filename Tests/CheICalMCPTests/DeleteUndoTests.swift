@@ -198,7 +198,7 @@ final class DeleteUndoTests: XCTestCase {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let single = try XCTUnwrap(SourcePins.body(of: "func deleteEvent(identifier: String, span: EKSpan", in: source))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: single).count, 1)
-        for declaration in ["func deleteEventSeries(identifier: String)", "func deleteEventSeriesBatch(identifiers: [String])"] {
+        for declaration in ["func deleteEventSeries(identifier: String)", "func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)"] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
             XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptions\(of: event\) \}\)"#, in: body).count, 1, declaration)
             XCTAssertEqual(SourcePins.ranges(of: "withExceptions(", in: body).count, 0, declaration)

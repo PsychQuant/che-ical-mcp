@@ -66,6 +66,20 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
     }
 
+    /// #416: the `event_ids` dry run judges the bare id as if the occurrences this call deletes
+    /// first were gone, as they are when the real call reaches that row. Only those: another edited
+    /// occurrence before the stand-in still blocks it.
+    func testAnEditedOccurrenceTheCallDeletesFirstDoesNotBlock() {
+        let listed = [candidate("S/RID=1", detached: true, rules: false, dayOffset: 2, slotOffset: 0),
+                      candidate("S", dayOffset: 7),
+                      candidate("S", dayOffset: 14)]
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
+        XCTAssertEqual(FirstRemainingOccurrence.pick(listed, identifier: "S", goneInTheCall: ["S/RID=1"]), 1)
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S", goneInTheCall: ["S/RID=9"]))
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed + [candidate("S/RID=2", detached: true, rules: false, dayOffset: 3, slotOffset: 3)],
+                                                   identifier: "S", goneInTheCall: ["S/RID=1"]))
+    }
+
     /// The refusal is conservative about how an edited occurrence is tied to its series (verify
     /// round 2): a detached occurrence that kept the bare series id, and one that other stores give
     /// an unrelated identifier but the same iCalendar UID (the external identifier), count too.
@@ -111,9 +125,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
                                                                     occurrenceStart: standIn, standInStart: standIn))
     }
 
-    /// An occurrence's own id is not a way round the refusal: updating the whole series from an
-    /// occurrence edited on its own splits it too (device, iCloud, 2026-10-20, on a series that
-    /// had lost no occurrence), so the message does not recommend it.
+    /// An occurrence's own id is not a way round this refusal, which is about an unedited first
+    /// occurrence left: updating from a later edited occurrence splits the series too (device,
+    /// iCloud, 2026-10-20 and #416), so the message does not recommend it.
     func testTheRefusalDoesNotRecommendAnOccurrencesOwnId() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
@@ -246,8 +260,10 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
-        XCTAssertFalse(reason.contains("RID"), "an occurrence's own id is not a way to the whole series")
-        XCTAssertFalse(reason.contains("own id"))
+        // #416 measured it: the occurrence that comes first reaches the series through its own id.
+        // A later edited occurrence does not, so the hint names that one only.
+        XCTAssertTrue(reason.contains("The occurrence that comes first in the series reaches it through its own id"), reason)
+        XCTAssertFalse(reason.contains("RID"))
     }
 
     func testEveryRefusalSiteReportsTheHintThroughOneHelper() throws {
@@ -255,8 +271,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         // The sites that resolve with the edited-before refusal on: update, delete (single, series,
-        // series batch, batch), and the dry-run preview. Move and copy resolve without it.
-        for name in ["func updateEvent(", "func deleteEvent(identifier", "func deleteEventSeries(", "func getEvent("] {
+        // series batch, batch), and the dry-run preview (`EventBatchDeletionSource.swift`, pinned in
+        // `DetachedOccurrenceSpanTests`). Move and copy resolve without it.
+        for name in ["func updateEvent(", "func deleteEvent(identifier", "func deleteEventSeries("] {
             let from = try XCTUnwrap(source.range(of: name), name)
             let body = String(source[from.upperBound...].prefix(3600))
             XCTAssertTrue(body.contains("notFoundError(id: "), name)
@@ -465,15 +482,11 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(source.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
     }
 
-    /// `freshEvent` and the dry-run preview (`getEvent`) both resolve through it; the preview used
-    /// to read the unrefreshed object and so showed the deleted occurrence's date.
-    func testGetEventResolvesThroughFreshEvent() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func getEvent(identifier: String) async throws -> EKEvent {"))
-        let to = try XCTUnwrap(source.range(of: "// MARK: - Search and Conflict Detection", range: from.upperBound..<source.endIndex))
-        XCTAssertTrue(source[from.lowerBound..<to.lowerBound].contains("freshEvent(id: identifier)"))
+    /// The dry-run preview resolves as the writes do; it used to read the unrefreshed object and
+    /// so showed the deleted occurrence's date.
+    func testThePreviewResolvesLikeTheWrites() throws {
+        let source = SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift"))
+        XCTAssertTrue(source.contains("freshEventWithOrigin("), source)
     }
 
     /// `freshEvent` falls back to the earliest remaining occurrence only when the series object

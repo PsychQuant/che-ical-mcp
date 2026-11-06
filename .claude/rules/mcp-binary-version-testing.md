@@ -277,12 +277,34 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 
 8. 這一步用自己的提醒（第 1 步的提醒在第 3 步已清掉相對鬧鐘、第 5 步的會被 undo 刪掉，都不能用）：
    `create_reminder` 帶**至少一天後**的時間到期日與 `[15]`（遠的到期日，它的鬧鐘才不會在第 9 步等待時響起被算錯；
-   看完就刪掉它），`list_reminders` 讀回 `minutes_before: 15` → 打開 Reminders.app
-   看它：顯示的日期與時間要是**這一步給的到期時間**，不是「到期減 15 分鐘」（#227 / #235 看過 Reminders.app
-   會把鬧鐘時間當成提醒的日期顯示）。
-9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。到期當下若又出一次通知，
-   **記錄下來、不算失敗**：Reminders 對有到期時間的提醒本來就會在到期時通知，這一步要驗的只是那個提前 2 分鐘
-   的相對鬧鐘有沒有響；到期前 2 分鐘沒有通知才算失敗。
+   看完就刪掉它），回應的 `alarms_note` 有 #433 的說明，`list_reminders` 讀回到期時間不變、`minutes_before: 15` →
+   打開 Reminders.app 看列表：顯示「到期減 15 分鐘」是**已知行為，記錄下來、不算失敗**（#433：2026-11-05 量的 14 列裡，
+   顯示到期時間的列都沒有早於到期的鬧鐘；這 14 列都沒有檢查通知）。失敗條件是 `list_reminders` 讀回的到期時間變了。
+   列表改成顯示到期時間的話也要回報：行為變了，`alarms_note`、tool description 與 README 都要跟著改。
+   再建下面幾筆，到期時間相同（`[1440]` 那筆要**至少兩天後**，否則它的鬧鐘會落在第 9 步等待時）、**標題要不同**
+   （同標題同到期會被當成重複略過），逐筆看列表，記錄顯示的時間，看完全部刪掉再做第 9 步：
+   - `[-15]`：有 note，列表顯示到期加 15 分鐘（量過，已知行為）；
+   - `[15, -15]`：有 note，推得列表顯示到期減 15 分鐘，沒量過；
+   - `[-15, -60]`：有 note，推得列表顯示到期加 15 分鐘，沒量過；
+   - `[0, -15]`：沒有 note。**這一列決定 `listShowsAlarmTime` 的條件**：量到的列分不出它顯示到期時間還是到期加 15
+     分鐘。顯示的不是到期時間，就要回報：規則會變成「最早且不在到期時間上的鬧鐘」，凡是到期時間有鬧鐘、又有更晚鬧鐘的
+     形狀都要改（`[-15]` 加到期時間的絕對鬧鐘、`[0]` 加較晚的絕對鬧鐘也在內），不只 `[0, ...]`；
+   - `[1440]`：跨到前一天，有 note，記錄列表的日期，以及它出現在哪個智慧清單（沒量過）。
+   絕對鬧鐘與相對鬧鐘並存的三個形狀都是推得的，14 列沒有量過，工具也寫不出絕對鬧鐘：
+   - `[-15]` 加到期時間的絕對鬧鐘：沒有 note（`listShowsAlarmTime` 把絕對鬧鐘算進去），推得列表還是到期時間；
+   - `[15]` 加更早的絕對鬧鐘：有 note，推得列表顯示那個絕對鬧鐘的時間；
+   - `[0]` 加更早的絕對鬧鐘：有 note，推得同上。
+   這三個形狀要用未 commit 的本機探針寫絕對鬧鐘（#433 的量測就是這樣做的）；沒有探針時記成沒驗，不算通過。
+   不要用帶 Early Reminder 的提醒代替：列表結果不同時分不出是哪一個造成的。
+   Early Reminder 另外看（手動，#433 只看過一筆，沒有對照組）：同一拋棄式清單手動建兩筆帶時間的提醒，一筆有 Early
+   Reminder、一筆沒有，比較 `list_reminders` 讀回；再對有 Early Reminder 的提醒分別做 `due_date`、以及同一次呼叫帶
+   `due_date` 與 `realign_to_due`（這兩條路徑才會重寫絕對鬧鐘；單獨帶 `realign_to_due` 時鬧鐘已在到期時間，不會重寫，
+   `alarms_minutes_offsets` 也不碰它），回 App 看 Early Reminder 還在不在。
+   只帶 `due_date` 改期一筆帶 `[15]` 的提醒 → 回應有 `alarms_note`；只改標題 → 沒有。
+9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次，記下橫幅顯示的時間。
+   **第一個橫幅出現後就關掉它**，再等到到期時間：2026-11-05 第一個橫幅還在畫面上，到期時有沒有第二個通知沒有量到。
+   到期時有或沒有通知都**記錄下來、不算失敗**，兩邊的文字（`alarmDisplayNote`、README、CHANGELOG）都要照結果改；
+   這一步要驗的只是那個提前 2 分鐘的相對鬧鐘有沒有響，到期前 2 分鐘沒有通知才算失敗。
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 
@@ -421,3 +443,64 @@ raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，�
   種類檢查不用關。`calendarItem` 沒有被包住，raise 的話 process 仍會結束。
 
 結果記在 #288。結束後刪掉拋棄式日曆與清單。
+
+## Release gate：場次自己的 id 上的 span all（#416）
+
+#416 的拒絕只在 iCloud 量過，判斷靠 `isDetached` 或 id 裡的 `/RID=`，以及從 `/RID=` 前面那段 id 列出系列。#320 在 Google
+量到這兩者可靠，Exchange 沒有量。**出 #416 的版本打 tag 之前**，用剛 build 的 binary 的 `--cli`：第 1–4 步在有 Google 或
+Exchange 帳號時，在該來源名稱含 `#416` 的拋棄式日曆上做；**第 5–7 步在 iCloud 上一律要做，不以有第二個帳號為前提**。每個形狀
+都用**新的系列與獨立的 title 前綴**（共用前綴會把兩個系列混在一起，2026-11-05 踩過），每週 5 場，逐場比對 title、start、
+end、notes、location、alarms。
+
+1. 一次性事件：`update_event` 與 `delete_event` 都帶 span `all`，要成功；`update_event` 帶 span `future` 也要成功。若被拒絕
+   （「reported as one occurrence」），就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
+2. 每週 5 次的系列，單獨改第 3 場 → 用該場次的 id 帶 span `all` 的 `update_event` 與 `delete_event`：要被拒絕，
+   系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報。再用系列 id 加第 3 場的 `occurrence_date`、span `future`
+   寫 `start_time`：單獨改過的場次在該來源若沒有自己的 id，會被 `resolvedOccurrenceRefusal` 拒絕；
+3. 新建一個系列，單獨改第 1 場的標題與備註、再把時間 +2h → 用第 1 場的 id：先 `delete_event` span `all`，要被拒絕；再
+   `update_event` span `all` 只改 `location`：iCloud 上全部場次都有 `location`，每一場的 title、start、end、notes 都不變；
+   最後 `delete_event` span `future`，整個系列刪除。該來源的 id 沒有 `/RID=` 時 span `all` 的 update 會被拒絕（列不出系列），
+   這是已知限制，記下來，不算 bug；
+4. 新建一個系列，第一場刪掉、第二場與第四場單獨改過（第二場改時間、第四場改標題與備註）→ 用第二場的 id 帶 span `all` 只改
+   `location`：iCloud 上全部場次更新、新 id，其他欄位不變（2026-11-05）。再新建一個系列，單獨改第 3 場的標題與備註、再把時間
+   +2h → 用它的 id 帶 span `future` 只改 `location`：第 1、2 場不動，第 3 場起 `location` 寫入、新 id；
+5. **放行清單**（2026-11-06，iCloud，系列 10:00–11:00）：
+   (a) 用第 1 場（時間 +2h）與第 3 場的 id，span `all`、`future`，`start_time`、`end_time`、`all_day`（`true` 與 `false`）、
+   `timezone`、`clear_timezone`、`url`、`alarms_minutes_offsets`、`structured_location`、`calendar_name`（同帳號）、
+   `clear_recurrence`：全部拒絕、系列不變；
+   (b) 新值：第 1 場改標題、備註、地點、+2h，span `all` 寫 `title`、`notes`、`location`：別的場次都拿到新值，其他欄位不變，
+   第 1 場保留其他自己的值；`recurrence` weekly 不帶 `days_of_week`：新規則生效，別的場次不變；第 3 場 span `future` 同樣（只改
+   過標題、備註、時間，沒有自己的地點或鬧鐘時）；
+   (c) 相同值：第 1 場地點 R101，span `all` 寫 R101；第 3 場 span `future`；title、notes 各一次：全部拒絕。沒有這個拒絕的 build
+   回 `updated`、別的場次沒變；
+   (d) 帶到新系列：第 3 場有自己的地點或鬧鐘，span `future` 只寫 `title`；第 1 場刪掉、第 2 場有自己的地點，span `all`：都拒絕。
+   沒有這個拒絕的 build 上新系列帶著它的地點與鬧鐘（`url`、標題、備註、時間不會帶）。第 3 場只有自己的地點（沒有鬧鐘）時，span
+   `future` 寫新的 `location`：放行。第 1 場（含移過時間 +2h 的，也含全天每週系列）span `all` 只寫 `title`：放行，地點與鬧鐘不動。全天系列的
+   `/RID=` 是當地日期讀成 UTC，非 UTC 主機若當瞬間比，第 1 場會被當成已刪；再用 `TZ=America/Los_Angeles` 跑一次；
+   (e) `days_of_week`：第 1 場移到週三，寫 `[週三]` 被拒絕（沒有這個拒絕的 build 在週三留下兩場），寫 `[週一]` 放行；
+   (f) 系列 id、span `all`，第 3 場或第 1 場改過時的預期結果：別的場次都拿到新值，**單獨改過的場次保留改過的內容**：
+   `start_time` 09:00：只改結束的場次 09:00 起、保留自己的長度；+2h 的場次留在 12:00；移到週三的場次留在週三、09:00 起。
+   `end_time` 12:00：只改結束的場次不變；+2h 的場次到 14:00。`timezone`：每場位移相同，與沒有單獨改過場次的系列一樣。
+   `title`、`notes`、`location`：第 3 場只改時間、第 4 場改標題與備註、第 5 場改地點：改過那一欄的場次留著自己的值，其他都拿到新值。
+   `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
+   `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
+   `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
+   **已知限制**：第 1 場只改標題或結束（開始時間沒動，#428），或第 1 場刪掉、第 2 場單獨改過時，系列 id 被拒絕，span `future`
+   也一樣。訊息只說這個形狀還沒有測試過的路徑並點名 #428，不得指回會被拒絕的呼叫，也不做更多斷言。`move_events_batch` span `all`
+   可搬同帳號的日曆，整個系列搬走，要走一次。第 1 場自己的 id 帶 span `all` 仍可寫新的 `title`、`notes`、`location`、`recurrence`，
+   除非它有自己的值而這次呼叫沒有取代。
+   **這張 PR 拿掉的呼叫**：(a) 裡的 `start_time`，從只移時間、長度與系列相同的場次，span `all`、`future`，在沒有這些拒絕的 build
+   上做得到它說的事（第 4 輪的 (b)、(e-b)），隨整類一起拒絕。#428 修好後才恢復；
+   (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、
+   `structured_location` 只動後面的場次；`all_day`、`clear_recurrence`、`calendar_name` 不是（#451），訊息不給這條路；
+6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
+   系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
+   上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
+   訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。第 1 場刪掉、第 2 場只改標題的
+   形狀同樣走一次。span `this` 帶系列 id：dry run 與實際都回 `occurrence_date` 那一句；
+7. 超出掃描範圍：開始日超過五年前的每週開放式系列，單獨改最近一場 → 用它的 id 的 `update_event` span `all`、`delete_event`
+   span `all`、`delete_events_batch`（含 dry run）：都拒絕、系列不變，訊息是「past what can be listed」；用系列 id 帶 span `all`
+   更新 `location` 與 `start_time`，再刪除：都走得通（2026-11-06，2020 年開始的系列）。
+
+結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
+（2026-11-05，空的）。
