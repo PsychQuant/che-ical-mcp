@@ -375,6 +375,16 @@ enum DetachedOccurrenceSpan {
 
     static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
 
+    /// #455: `clear_timezone` on a series bounded by a count. Measured on iCloud (weekly and daily,
+    /// count 5, with and without an edited occurrence): the last occurrence went, and the rule read
+    /// back unchanged, also when it was written again in the same save. A rule with an end date and
+    /// an open-ended one kept every occurrence, and span `future` was not run, so it counts.
+    static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int]) -> Bool {
+        clearTimezone && wholeOrFollowing && occurrenceCounts.contains { $0 > 0 }
+    }
+
+    static let clearTimezoneReason = "This series ends by a count of occurrences, and clearing its time zone drops the last one. A series with an end date, or with no end, takes it. Nothing was written."
+
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call
     /// as deleted, so the result must not depend on the order: with the series' row first and the

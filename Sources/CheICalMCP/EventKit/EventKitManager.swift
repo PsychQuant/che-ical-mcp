@@ -1244,6 +1244,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
+        // #455: it answered updated and the last occurrence went (device).
+        if DetachedOccurrenceSpan.refusesClearTimezone(
+            clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents,
+            occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason)
+        }
+
         // Series-level properties through the stand-in (verify rounds 6-7), decided before the
         // first field of the event is assigned, so nothing is half-written when it throws. A new
         // calendar moves the whole series even with span this (device), so one of another account

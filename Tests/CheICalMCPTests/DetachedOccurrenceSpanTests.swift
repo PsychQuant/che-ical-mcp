@@ -393,6 +393,19 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                       "a length of its own: the others took it (measured)")
     }
 
+    // MARK: - clear_timezone on a series with a count (#455)
+
+    func testClearingTheTimeZoneIsRefusedOnlyOnASeriesWithACount() throws {
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [0]), "an end date or no end: measured clean")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: []), "a one-off")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: false, occurrenceCounts: [5]), "one occurrence")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: false, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.hasSuffix("Nothing was written."))
+        let body = try updateBody()
+        XCTAssertTrue(body.contains("if DetachedOccurrenceSpan.refusesClearTimezone( clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents, occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason) }"), body)
+    }
+
     // MARK: - all_day on a series with an edited occurrence (#442)
 
     /// Measured: an edited occurrence's original slot came back as an extra occurrence, whatever
