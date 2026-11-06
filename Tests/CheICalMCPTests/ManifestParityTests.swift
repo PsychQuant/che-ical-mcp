@@ -291,7 +291,7 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary("search_events").contains("those closest to today"), summary("search_events"))
         // Only different calendars are compared, so one calendar is not a way out.
         XCTAssertTrue(declared("find_duplicate_events").contains("naming fewer calendars in calendar_names, at least two"), declared("find_duplicate_events"))
-        XCTAssertTrue(declared("find_duplicate_events").contains("the exact names from list_calendars"), declared("find_duplicate_events"))
+        XCTAssertFalse(declared("find_duplicate_events").contains("not reported"), "#437: such a name is refused now")
         XCTAssertTrue(declared("delete_events_batch").contains("give both after_date and before_date, at most 1460 days apart"), declared("delete_events_batch"))
     }
 
@@ -306,6 +306,24 @@ final class ManifestParityTests: XCTestCase {
             let summary = entries.first { $0["name"] as? String == name }?["description"] as? String ?? ""
             XCTAssertTrue(summary.contains("unknown recurrence keys"), "mcpb/manifest.json \(name): \(summary)")
         }
+    }
+
+    /// #437: find_duplicate_events says what it does with calendar_names and what calendars_checked is.
+    func testFindDuplicateEventsDescribesItsCalendars() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let tool = CheICalMCPServer.defineTools().first { $0.name == "find_duplicate_events" }
+        let declared = tool?.description ?? ""
+        XCTAssertTrue(declared.contains("A name that matches no calendar, or fewer than two calendars, is refused and nothing is returned"), declared)
+        XCTAssertTrue(declared.contains("calendars_checked lists the calendars read"), declared)
+        XCTAssertTrue(declared.contains("Each side of a pair gives calendar and calendar_source"), declared)
+        let schema = "\(String(describing: tool?.inputSchema))"
+        XCTAssertTrue(schema.contains("matched as the other tools match them"), schema)
+        XCTAssertTrue(schema.contains("A name two accounts share reads both"), schema)
+        XCTAssertTrue(schema.contains("not a label from calendars_checked"), schema)
+        let summary = entries.first { $0["name"] as? String == "find_duplicate_events" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("calendar_names that match nothing, or fewer than two calendars, are refused"), summary)
     }
 
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the

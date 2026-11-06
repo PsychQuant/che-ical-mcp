@@ -51,6 +51,7 @@ class CheICalMCPServer {
     private let calendarDeletionSource: any CalendarDeletionSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
+    private let duplicateSearchSource: any DuplicateSearchSource
     private let eventRangeReadSource: any EventRangeReadSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
@@ -86,6 +87,7 @@ class CheICalMCPServer {
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
+         duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
@@ -102,6 +104,7 @@ class CheICalMCPServer {
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
+        self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
 
         dateFormatter = ISO8601DateFormatter()
@@ -1015,14 +1018,14 @@ class CheICalMCPServer {
             // Feature 9: Find Duplicate Events
             Tool(
                 name: "find_duplicate_events",
-                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole) stops with an error and returns nothing: narrow the range; naming fewer calendars in calendar_names, at least two, also reads less (only different calendars are compared, and a name that matches nothing is not reported, so use the exact names from list_calendars). Over such a range the search also stops with an error, returning nothing, once it passes 2,000,000 comparisons (a large tolerance_minutes over two calendars of one repeating event); narrow the range or the tolerance.",
+                description: "Find duplicate events across calendars. Useful before merging calendars to avoid duplicates. Matches by title (case-insensitive) and time (with configurable tolerance). Only events in different calendars are compared. A name that matches no calendar, or fewer than two calendars, is refused and nothing is returned; calendars_checked lists the calendars read, with the account where two share a title. Each side of a pair gives calendar and calendar_source. The range is searched in full, in queries of at most four years each; a range longer than 146,000 days (about 400 years) is refused with an error. Over a range longer than 1462 days, a read that passes about 200,000 event occurrences (about 2,000 a year over 100 years, all calendars read together; checked after each 1460-day part, which is read whole) stops with an error and returns nothing: narrow the range; naming fewer calendars in calendar_names, at least two, also reads less. Over such a range the search also stops with an error, returning nothing, once it passes 2,000,000 comparisons (a large tolerance_minutes over two calendars of one repeating event); narrow the range or the tolerance.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "calendar_names": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("string")]),
-                            "description": .string("Calendar names to check for duplicates. If empty or omitted, checks ALL calendars.")
+                            "description": .string("Calendar names to compare, matched as the other tools match them: the exact title, or ignoring case when no title matches exactly. A name two accounts share reads both; this tool has no calendar_source. Give titles from list_calendars, not a label from calendars_checked. If empty or omitted, compares ALL calendars, which must be at least two.")
                         ]),
                         "start_date": .object([
                             "type": .string("string"),
@@ -3179,19 +3182,29 @@ class CheICalMCPServer {
         }
         let endDate = try parseFlexibleDate(endStr)
 
-        var calendarNames: [String]?
-        if let namesArray = arguments["calendar_names"]?.arrayValue {
-            calendarNames = namesArray.compactMap { $0.stringValue }
-            if calendarNames?.isEmpty == true {
-                calendarNames = nil
+        // #437 verify: the other tools' `calendar_name` and `calendar_source`, and `calendars`, which
+        // an older calendar-management skill wrote and a cached plugin may still send. This tool
+        // reads none of them, so a call with no calendar_names read every calendar.
+        for key in ["calendar_name", "calendar_source", "calendars"] {
+            if let value = arguments[key], value != .null {
+                throw ToolError.invalidParameter("find_duplicate_events does not take \(key). Use calendar_names, an array of calendar titles; a title two accounts share reads both.")
             }
+        }
+
+        // #437: a value that is not an array of strings used to read all calendars, or fewer than named.
+        var calendarNames: [String]?
+        if let value = arguments["calendar_names"], value != .null {
+            guard let names = value.arrayValue?.map(\.stringValue), !names.contains(nil) else {
+                throw ToolError.invalidParameter("calendar_names must be an array of strings")
+            }
+            calendarNames = names.isEmpty ? nil : names.compactMap { $0 }
         }
 
         let toleranceMinutes = try InputValidation.requireIntIfPresent(arguments, key: "tolerance_minutes", default: 5)
 
-        let duplicates: [DuplicatePair]
+        let search: DuplicateSearchValue
         do {
-            duplicates = try await eventKitManager.findDuplicateEvents(
+            search = try await duplicateSearchSource.findDuplicateEvents(
                 calendarNames: calendarNames,
                 startDate: startDate,
                 endDate: endDate,
@@ -3200,6 +3213,7 @@ class CheICalMCPServer {
         } catch {
             throw EventRangeQuery.worded(error, for: .duplicates)
         }
+        let duplicates = search.pairs
 
         let result = duplicates.map { pair -> [String: Any] in
             [
@@ -3207,6 +3221,7 @@ class CheICalMCPServer {
                     "id": pair.event1Id,
                     "title": pair.event1Title,
                     "calendar": pair.event1Calendar,
+                    "calendar_source": pair.event1CalendarSource,
                     "start_date": dateFormatter.string(from: pair.event1StartDate),
                     "start_date_local": localDateFormatter.string(from: pair.event1StartDate)
                 ],
@@ -3214,6 +3229,7 @@ class CheICalMCPServer {
                     "id": pair.event2Id,
                     "title": pair.event2Title,
                     "calendar": pair.event2Calendar,
+                    "calendar_source": pair.event2CalendarSource,
                     "start_date": dateFormatter.string(from: pair.event2StartDate),
                     "start_date_local": localDateFormatter.string(from: pair.event2StartDate)
                 ],
@@ -3228,7 +3244,7 @@ class CheICalMCPServer {
                 "end": dateFormatter.string(from: endDate),
                 "end_local": localDateFormatter.string(from: endDate)
             ],
-            "calendars_checked": calendarNames ?? ["all calendars"],
+            "calendars_checked": search.calendarsChecked,
             "tolerance_minutes": toleranceMinutes,
             "duplicate_count": duplicates.count,
             "duplicates": result

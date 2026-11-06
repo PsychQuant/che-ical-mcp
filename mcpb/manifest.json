@@ -117,7 +117,7 @@
     },
     {
       "name": "find_duplicate_events",
-      "description": "Find duplicate events across calendars (ranges up to 146,000 days, about 400 years; over 1462 days, at most 2,000,000 comparisons and a read of about 200,000 occurrences (about 2,000 a year over 100 years))"
+      "description": "Find duplicate events across calendars (ranges up to 146,000 days, about 400 years; over 1462 days, at most 2,000,000 comparisons and a read of about 200,000 occurrences (about 2,000 a year over 100 years)); calendar_names that match nothing, or fewer than two calendars, are refused"
     },
     {
       "name": "update_calendar",

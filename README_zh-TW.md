@@ -378,7 +378,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 ### 模糊行事曆匹配
 
-行事曆名稱現在**不區分大小寫**匹配。如果找不到，錯誤訊息會列出所有可用的行事曆。
+行事曆名稱現在**不區分大小寫**匹配。如果找不到，錯誤訊息是 `Calendar not found: <名稱>`，帶 `calendar_source` 時是 `Calendar '<名稱>' not found in source '<來源>'`；可用 `list_calendars` 查看名稱。
 
 ### 增強的列出/刪除工具
 
@@ -386,7 +386,9 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 - **`list_reminders`**：`filter`（all/incomplete/completed/overdue）、`sort`（due_date/creation_date/priority/title）、`limit`
 - **`delete_events_batch`**：日期範圍模式（`before_date`/`after_date`）+ `dry_run` 預覽
 
-**大範圍讀取的上限（#332）：** 1462 天以內的範圍不論有多少事件都完整讀取；跨過時鐘調整的四個日曆年是 1461 天又一小時，所以仍算窄範圍。超過 1462 天時，`list_events`、`search_events`、`check_conflicts`、`find_duplicate_events` 與依日期範圍的 `delete_events_batch` 一旦讀到超過約 200,000 個場次就會停下並回錯誤，不回傳任何結果，也不刪除任何東西。所有被讀取的行事曆合併計算，`search_events` 是在比對關鍵字之前計數。這是安全閥，不是日常上限：在 100 年的範圍約等於每年 2,000 個場次（五到六條沒有結束日的每日系列，或約 40 條每週系列），在 400 年的上限範圍約等於每年 500 個場次。每讀完一段 1460 天才檢查一次，而 EventKit 一次讀完一段，所以實際讀入量可能再超過那一段的量。`limit` 不會解除這個上限。請縮小範圍或指定一個行事曆；`find_duplicate_events` 減少 `calendar_names` 也能少讀一些，但至少留兩個，因為它只比對不同行事曆，並請用 `list_calendars` 的確切名稱，因為對不上的名稱不會被回報；`check_conflicts` 指定行事曆後，其他行事曆就不會檢查；`delete_events_batch` 請同時給 `after_date` 與 `before_date`，相距最多 1460 天。
+**`find_duplicate_events` 會檢查 `calendar_names`（#437）：** 名稱的比對方式與其他工具相同：先比對完全相同的標題，都沒有時才忽略大小寫。對不到任何行事曆的名稱、不足兩個行事曆，或不是字串陣列的值，都會被拒絕，不回傳結果，因為它只比對不同行事曆。沒給名稱時比對每個行事曆，所以這台電腦不足兩個行事曆時同樣會被拒絕。兩個帳號共用的名稱兩邊都會讀；這個工具沒有 `calendar_source`，`calendar_name`、`calendar_source` 與 `calendars` 都會被拒絕，不會被忽略。`calendars_checked` 列出實際讀到的行事曆，標題相同時附上帳號（`Work (iCloud)` 是標籤，傳入時要用 `list_calendars` 的標題）；沒給名稱時列出每個行事曆，不再是 `all calendars`。配對的每一邊都有 `calendar` 與 `calendar_source`，可分出兩個帳號；同一帳號內兩個同名行事曆，配對兩邊的內容會相同。兩個帳號共用名稱的情況只有單元測試；沒給名稱的讀取還沒在裝置上跑過。
+
+**大範圍讀取的上限（#332）：** 1462 天以內的範圍不論有多少事件都完整讀取；跨過時鐘調整的四個日曆年是 1461 天又一小時，所以仍算窄範圍。超過 1462 天時，`list_events`、`search_events`、`check_conflicts`、`find_duplicate_events` 與依日期範圍的 `delete_events_batch` 一旦讀到超過約 200,000 個場次就會停下並回錯誤，不回傳任何結果，也不刪除任何東西。所有被讀取的行事曆合併計算，`search_events` 是在比對關鍵字之前計數。這是安全閥，不是日常上限：在 100 年的範圍約等於每年 2,000 個場次（五到六條沒有結束日的每日系列，或約 40 條每週系列），在 400 年的上限範圍約等於每年 500 個場次。每讀完一段 1460 天才檢查一次，而 EventKit 一次讀完一段，所以實際讀入量可能再超過那一段的量。`limit` 不會解除這個上限。請縮小範圍或指定一個行事曆；`find_duplicate_events` 減少 `calendar_names` 也能少讀一些，但至少留兩個，因為它只比對不同行事曆；`check_conflicts` 指定行事曆後，其他行事曆就不會檢查；`delete_events_batch` 請同時給 `after_date` 與 `before_date`，相距最多 1460 天。
 
 超過 1462 天時，沒給 `limit` 最多回傳 500 筆，並回報 `default_limit`（`list_events` 在 `metadata.default_limit`）。`search_events` 只給 `start_date` 或只給 `end_date` 時，另一端維持距今兩年，所以這種範圍常常超過 1462 天。`limit` 最多 10000，需要更多筆時請縮小範圍。不論範圍多大，`event_count` 都是總數，只要回傳筆數少於 `event_count` 就會出現 `truncated: true`，不管是預設值還是你的 `limit` 造成的。截斷時留下哪些事件依工具而定：`list_events` 依 `sort` 取前面的；`search_events` 沒有排序參數，所以保留最接近今天的事件，依開始時間排序回傳，並在 `truncation_note` 說明。沒有截斷時，`search_events` 依讀取順序回傳，那不是時間順序。
 
@@ -472,7 +474,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 → list_events(calendar_name: "工作", calendar_source: "Google", ...)
 ```
 
-如果偵測到歧義，錯誤訊息會列出所有可用的來源。
+如果偵測到歧義，錯誤訊息會說有多個行事曆同名，並要求帶 `calendar_source`；可用 `list_calendars` 查看來源。
 
 ---
 
