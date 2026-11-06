@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
+| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`。這個上限不保證長標題留得住：曾有一輪連 255 字元的標題也在 `list_calendars` 讀不到（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 

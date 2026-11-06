@@ -45,7 +45,7 @@
     },
     {
       "name": "create_calendar",
-      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title` and `account`, and creating it again with the same parameters may make a second copy); a title is 1 to 255 characters and not only whitespace, and type is event or reminder"
+      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title` and `account`, and creating it again with the same parameters may make a second copy); a title is 1 to 255 characters and not only whitespace, which does not promise that a long title stays, and type is event or reminder"
     },
     {
       "name": "delete_calendar",
@@ -121,7 +121,7 @@
     },
     {
       "name": "update_calendar",
-      "description": "Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values); a title is 1 to 255 characters and not only whitespace"
+      "description": "Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values); a title is 1 to 255 characters and not only whitespace, which does not promise that a long title stays"
     },
     {
       "name": "search_reminders",

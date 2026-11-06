@@ -164,7 +164,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace")
+                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "type": .object([
                             "type": .string("string"),
@@ -211,7 +211,7 @@ class CheICalMCPServer {
                         ]),
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace")
+                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "color": .object([
                             "type": .string("string"),
