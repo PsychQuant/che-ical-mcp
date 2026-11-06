@@ -1107,6 +1107,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     static let occurrenceAcrossAccountsReason = "Moving to a calendar in another account moves the whole series, so it cannot be combined with an edit of one occurrence (occurrence_date with span 'this'). To move the series, call update_event with span 'all' and no occurrence_date, or move_events_batch; to edit the occurrence, leave calendar_name out. A calendar whose account cannot be read counts as another account. Nothing was written."
 
+    /// #426: a new calendar on one occurrence, within one account. See
+    /// `refusesOccurrenceEditAcrossAccounts` for another account, which comes first.
+    static func refusesCalendarOnOccurrence(onOccurrence: Bool, span: EKSpan, applyToAll: Bool, changesCalendar: Bool) -> Bool {
+        onOccurrence && span == .thisEvent && !applyToAll && changesCalendar
+    }
+
+    static let occurrenceCalendarReason = "A new calendar on one occurrence moves the whole series, so it cannot be combined with an edit of one occurrence. To move the series, use move_events_batch with span 'all'. To move this occurrence alone, use move_events_batch with its occurrence_dates and span 'this', which copies it out of the series as a single event. To edit the occurrence, leave calendar_name out. Nothing was written."
+
     func updateEvent(
         identifier: String,
         fields: Set<String>,
@@ -1272,6 +1280,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if Self.refusesOccurrenceEditAcrossAccounts(
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) {
             throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason)
+        }
+        // #426: within one account too. It answered updated and every occurrence moved (device), with
+        // the series' id plus occurrence_date and with the occurrence's own id.
+        if Self.refusesCalendarOnOccurrence(
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, applyToAll: applyToAll,
+            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false) {
+            throw EventKitError.moveRefused(reason: Self.occurrenceCalendarReason)
         }
         if Self.refusesRecurrenceChangeOnOccurrence(
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span,
@@ -2147,7 +2162,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let sourceEvent = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw notFoundError(id: identifier)
         }
-        if sourceEvent.hasRecurrenceRules {
+        // #426: an occurrence by its own id has no rules of its own, and a new calendar moves its
+        // whole series (device).
+        if EventMovePolicy.movesAsRecurring(hasRules: sourceEvent.hasRecurrenceRules, identifier: identifier, isDetached: sourceEvent.isDetached) {
             throw EventKitError.moveRefused(reason: "copy_event cannot move a recurring event; use move_events_batch with span and occurrence_dates.")
         }
         return try await moveEvent(identifier: identifier, occurrenceDate: nil, span: .this,
@@ -2170,7 +2187,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         let master = resolved.event
         let targetCalendar = try writableTargetCalendar(name: toCalendarName, source: toCalendarSource)
-        let isRecurring = master.hasRecurrenceRules
+        // #426: an occurrence by its own id reads as a one-off (no rules of its own), and a calendar
+        // assigned to it moves the whole series (device): it takes the rules of a recurring event.
+        let isRecurring = EventMovePolicy.movesAsRecurring(hasRules: master.hasRecurrenceRules, identifier: identifier, isDetached: master.isDetached)
         // Across accounts EventKit does a create plus a delete from a middle occurrence, which was
         // only ever shown to be safe within one account: refused outright (verify rounds 5-6).
         if FirstRemainingOccurrence.refusesMoveThroughStandIn(
@@ -2236,7 +2255,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             currentIdentifier: identifier,
             inPlace: {
                 subject.calendar = targetCalendar
-                try self.eventStore.save(subject, span: isRecurring ? .futureEvents : .thisEvent)
+                // As measured from an occurrence's own id (#426): span this there moves the series.
+                try self.eventStore.save(subject, span: master.hasRecurrenceRules ? .futureEvents : .thisEvent)
                 let movedIdentifier = subject.eventIdentifier ?? identifier
                 undo = .moveEvent(id: movedIdentifier, fromCalendarIdentifier: originalCalendar.calendarIdentifier,
                                   toCalendarIdentifier: targetCalendar.calendarIdentifier,
