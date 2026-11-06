@@ -297,7 +297,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -310,21 +310,21 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Mutually exclusive with occurrence_count.")
+                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For monthly: days of month to repeat (1-31)")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
                                 ]),
                                 "excluded_occurrence_dates": .object([
                                     "type": .string("array"),
@@ -353,7 +353,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is; span 'future' or 'all' with the identifier of an occurrence edited on its own splits the series into a new one (a known behavior, #335). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id only with span 'this': with span 'future' or 'all' it splits the series. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is, also when event_id is the identifier of an occurrence edited on its own; span 'all' or 'future' with the identifier of an occurrence edited on its own that is the first occurrence left, after the first was deleted, gives what remains a new identifier. Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id with span 'this' to edit that occurrence, or span 'future' to update from it on, within the limits below. span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416); use the id list_events shows for the occurrence that comes first in the series. A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326). With span 'all' or 'future' through such an identifier, only title, notes, location and recurrence can be written; for anything else use span 'this', or the id of an occurrence not edited on its own. A value the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms. With span 'this' or 'future' occurrence_date must be that occurrence's day. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -368,7 +368,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday."),
+                            "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count was measured to come out short: 5 from the second occurrence gave 4 (#443). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -381,21 +381,21 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Mutually exclusive with occurrence_count.")
+                                    "description": .string("When to stop recurring (ISO8601 date). A bare date stops before that day's occurrence, so to keep it pass a time after its start. Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For monthly: days of month to repeat (1-31)")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
                                 ])
                             ]),
                             "required": .array([.string("frequency")])
@@ -407,7 +407,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove recurrence rule from event Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the recurrence rule from the event. A series takes span all, which leaves one event on its first day and deletes the other occurrences. Cannot be combined with recurrence, or with span this or future on a series; to end a series at an occurrence, pass recurrence with the series' whole rule and an end_date after that occurrence's start, with span all. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "structured_location": .object([
                             "type": .string("object"),
@@ -441,7 +441,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_event",
-                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence. Undo of a deleted occurrence (span 'this') restores it as a one-off event, because an occurrence cannot be put back into its series; an absolute-date alarm of the series becomes an alarm at its start. Undo of span 'future' recreates the series only when the delete started at the series' first occurrence and removed all of it; otherwise (it started at a later occurrence, the last one included, or event_id named an edited occurrence) that undo is refused and its history entry discarded, writing nothing. Undo of a whole-series delete (that case, or span 'all') recreates the series from its rules and then restores its exceptions inside the scan window (from one day before the first occurrence to the end of the rule, at most four years): an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event that no longer belongs to the series; the undo text says how many of each. Not restored as exceptions, and said in the text: a first occurrence edited or deleted on its own (kept from the rule, so its edit is lost or its deleted occurrence comes back), an edited occurrence moved more than a year outside the window (its slot counts as deleted), a series whose exceptions could not be listed, and a record that does not match the recreated series (none is applied); exceptions outside that window come back from the rules alone. If restoring them fails the recreated series and the one-off events are deleted again and the entry is kept for a retry; if that delete fails too, the error says so and the entry (in a batch, that member) is dropped. Undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so.",
+                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence. Span 'all' through the identifier of an occurrence edited on its own would delete that occurrence only, so it is refused and deletes nothing while another occurrence remains (#416); when the series can be listed, the refusal says which id and span delete it. With span 'this' or 'future' through such an identifier occurrence_date must be that occurrence's day. Undo of a deleted occurrence (span 'this') restores it as a one-off event, because an occurrence cannot be put back into its series; an absolute-date alarm of the series becomes an alarm at its start. Undo of span 'future' recreates the series only when the delete started at the series' first occurrence and removed all of it; otherwise (it started at a later occurrence, the last one included, or event_id named an edited occurrence) that undo is refused and its history entry discarded, writing nothing. Undo of a whole-series delete (that case, or span 'all') recreates the series from its rules and then restores its exceptions inside the scan window (from one day before the first occurrence to the end of the rule, at most four years): an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event that no longer belongs to the series; the undo text says how many of each. Not restored as exceptions, and said in the text: a first occurrence edited or deleted on its own (kept from the rule, so its edit is lost or its deleted occurrence comes back), an edited occurrence moved more than a year outside the window (its slot counts as deleted), a series whose exceptions could not be listed, and a record that does not match the recreated series (none is applied); exceptions outside that window come back from the rules alone. If restoring them fails the recreated series and the one-off events are deleted again and the entry is kept for a retry; if that delete fails too, the error says so and the entry (in a batch, that member) is dropped. Undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -539,7 +539,7 @@ class CheICalMCPServer {
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Recurrence rule. Example: {\"frequency\": \"daily\"} for daily reminder."),
+                            "description": .string("Recurrence rule. Example: {\"frequency\": \"daily\"} for daily reminder. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -552,21 +552,21 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Mutually exclusive with occurrence_count.")
+                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For monthly: days of month to repeat (1-31)")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
                                 ])
                             ]),
                             "required": .array([.string("frequency")])
@@ -646,7 +646,7 @@ class CheICalMCPServer {
                         ]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency but daily and days_of_month by monthly only. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false, with recurrence_read_back_note, when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule."),
+                            "description": .string("Replaces the reminder's recurrence rule (same object as create_reminder's recurrence, without excluded_occurrence_dates); the identifier stays. It does not move the due date: when the due date is not on the new rule's days, the pending occurrence stays on it, and the response adds recurrence_note (after it is completed the reminder repeats on the rule's days: measured on iCloud for a weekly rule, expected for other rules); pass due_date to update_reminder to move it. days_of_week is used by every frequency and days_of_month by monthly and yearly. Needs a due date after the call (the request's or the stored one); refused on a completed reminder. The response reads back has_recurrence, reminder_recurrence_rules and due from the saved reminder after re-reading it (recurrence_read_back false, with recurrence_read_back_note, when it cannot be re-read). Cannot be combined with clear_recurrence. Undo restores the previous rule. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -659,21 +659,21 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Mutually exclusive with occurrence_count.")
+                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Mutually exclusive with end_date.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency but daily")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For monthly: days of month to repeat (1-31)")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
                                 ])
                             ]),
                             "required": .array([.string("frequency")])
@@ -874,14 +874,14 @@ class CheICalMCPServer {
                                     "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
-                                        "description": .string("Recurrence rule"),
+                                        "description": .string("Recurrence rule. Any other key than these fails this item, so a misspelled bound cannot leave the series open-ended."),
                                         "properties": .object([
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000")]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
-                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
+                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
                                         ]),
                                         "required": .array([.string("frequency")])
@@ -976,7 +976,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to; with span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427). With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1531,6 +1531,10 @@ class CheICalMCPServer {
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
         let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
+        // PR #439 verify: clear_recurrence goes first in the manager, so the rule would be dropped.
+        if recurrenceRule != nil && clearRecurrence {
+            throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
+        }
         let structuredLocation = parseStructuredLocation(from: arguments)
         let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
@@ -1547,6 +1551,7 @@ class CheICalMCPServer {
 
         let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
+            fields: Set(arguments.filter { $0.value != .null }.keys),
             title: title,
             startDate: startDate,
             endDate: endDate,
@@ -1851,7 +1856,7 @@ class CheICalMCPServer {
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
-        let recurrenceRule = try parseRecurrenceRule(from: arguments)
+        let recurrenceRule = try parseRecurrenceRule(from: arguments, forReminder: true)
         let locationTrigger = try parseLocationTrigger(from: arguments)
         // #333: refused before the store is called when the alarm could not fire as asked.
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
@@ -1949,7 +1954,7 @@ class CheICalMCPServer {
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
         // #354: the rule; both together, or a rule with clear_due_date, are refused here.
-        let recurrenceRule = try parseRecurrenceRule(from: arguments)
+        let recurrenceRule = try parseRecurrenceRule(from: arguments, forReminder: true)
         let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
@@ -3005,8 +3010,9 @@ class CheICalMCPServer {
             // Deduplicate IDs for series deletion (each series only needs one delete).
             // #185 — routed through the manager's batch method so the whole call is
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
-            let uniqueIds = Array(Set(items.map(\.identifier)))
-            let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(identifiers: uniqueIds)
+            let uniqueIds = DetachedOccurrenceSpan.occurrenceRowsFirst(items.map(\.identifier))
+            let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(
+                identifiers: uniqueIds, refusingOccurrenceIdentifiers: mode == "by_event_ids")
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -3063,15 +3069,31 @@ class CheICalMCPServer {
                 // those raw here would bypass the wrapper boundary just like
                 // the original #21 F3 pattern. Callers who need titles pipe
                 // through list_events (which IS wrapped).
+                //
+                // #416: with span all the rows run as in the real call, occurrences' own ids first,
+                // and a bare id is judged with the occurrences before it gone, so the preview
+                // does not refuse a row the real call deletes.
+                let spanAll = spanStr == "all"
+                let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+                let named = Set(eventIds)
+                var gone = Set<String>()
                 var preview: [[String: Any]] = []
-                for id in eventIds {
+                for id in rows {
                     do {
-                        let event = try await eventKitManager.getEvent(identifier: id)
-                        preview.append([
-                            "event_id": id,
-                            "start_date_local": localDateFormatter.string(from: event.startDate),
-                            "end_date_local": localDateFormatter.string(from: event.endDate)
-                        ])
+                        let row = try await eventBatchDeletionSource.previewEventDeletion(
+                            identifier: id, span: spanStr == "future" ? .futureEvents : .thisEvent, spanAll: spanAll,
+                            namedInTheCall: named, goneInTheCall: gone)
+                        switch row {
+                        case .refused(let refusal):
+                            preview.append(["event_id": id, "error": refusal])
+                        case .deletes(let start, let end):
+                            if spanAll { gone.insert(id) }
+                            preview.append([
+                                "event_id": id,
+                                "start_date_local": localDateFormatter.string(from: start),
+                                "end_date_local": localDateFormatter.string(from: end)
+                            ])
+                        }
                     } catch {
                         preview.append([
                             "event_id": id,
@@ -3087,7 +3109,7 @@ class CheICalMCPServer {
                 let response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_event_ids",
-                    "total": eventIds.count,
+                    "total": rows.count,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles/calendar names."
                 ]
@@ -3427,20 +3449,41 @@ class CheICalMCPServer {
         }
     }
 
-    private func rejectMisplacedExclusions(in arguments: [String: Value]) throws {
+    /// PR #439 verify: the same for a key of `recurrence` beside it, which nothing read (a bound left
+    /// the series open-ended, `interval` a rule of every week, a `frequency` with no `recurrence` a
+    /// one-off item or, on update_event, no change), and for the read tools' names for a rule. These
+    /// names are this server's own, so naming them echoes nothing the caller wrote.
+    private func rejectMisplacedRecurrenceKeys(in arguments: [String: Value], forReminder: Bool) throws {
         if arguments["excluded_occurrence_dates"] != nil {
             throw ToolError.invalidParameter("excluded_occurrence_dates must be inside the recurrence object (supported on create_event and create_events_batch only) — it is not a top-level parameter")
         }
+        for key in RecurrenceRuleInput.inputKeys(allowsExclusions: false) where arguments[key] != nil {
+            // A caller who meant the item's own date must not be sent into a rule, or to a key this
+            // tool ignores: a reminder has no end_time.
+            let ownDate = key != "end_date" ? "" : forReminder ? " A reminder's own date is due_date." : " An event's own end is end_time."
+            throw ToolError.invalidParameter("\(key) must be inside the recurrence object, it is not a top-level parameter.\(ownDate) Nothing was written for this item.")
+        }
+        for key in RecurrenceRuleInput.readKeys where arguments[key] != nil {
+            throw ToolError.invalidParameter("\(key) is the name the read tools use; to write a rule, pass recurrence, one object. Nothing was written for this item.")
+        }
     }
 
-    private func parseRecurrenceRule(from arguments: [String: Value], defaultTimezone: TimeZone? = nil, allowsExclusions: Bool = false) throws -> RecurrenceRuleInput? {
-        try rejectMisplacedExclusions(in: arguments)
+    private func parseRecurrenceRule(from arguments: [String: Value], defaultTimezone: TimeZone? = nil, allowsExclusions: Bool = false,
+                                     forReminder: Bool = false) throws -> RecurrenceRuleInput? {
+        try rejectMisplacedRecurrenceKeys(in: arguments, forReminder: forReminder)
         // #184 — present-but-wrong-type must throw, not silently drop (#101 F2):
         // a string like "recurrence": "daily" used to vanish, creating a
         // NON-recurring event while the response looked successful.
         guard let recurrenceValue = arguments["recurrence"] else { return nil }
         guard let recurrenceDict = recurrenceValue.objectValue else {
             throw ToolError.invalidParameter("recurrence must be an object (e.g. {\"frequency\": \"daily\"}), got a non-object value")
+        }
+        // #434: a key that is not read is dropped, and a misspelled bound leaves a rule with no end,
+        // so the series never ends. Checked first, so a misspelled frequency is named as a key. The
+        // key is not echoed (#37), as delete_calendar does (#328).
+        guard Set(recurrenceDict.keys).isSubset(of: RecurrenceRuleInput.inputKeys(allowsExclusions: true)) else {
+            let accepted = RecurrenceRuleInput.inputKeys(allowsExclusions: allowsExclusions)
+            throw ToolError.invalidParameter("recurrence accepts only \(accepted.dropLast().joined(separator: ", ")) and \(accepted[accepted.count - 1]); another key was given. Nothing was written for this item.")
         }
 
         guard let freqStr = recurrenceDict["frequency"]?.stringValue else {
@@ -3486,6 +3529,10 @@ class CheICalMCPServer {
             }
             occurrenceCount = n
         }
+        // PR #439 verify: `makeRecurrenceRule` takes end_date and drops the count, with no message.
+        if endDate != nil && occurrenceCount != nil {
+            throw ToolError.invalidParameter("recurrence end_date and occurrence_count cannot be combined: give one of them. Nothing was written for this item.")
+        }
 
         // PR #420 verify round 1: a day list that is not an array is refused, not dropped.
         for key in ["days_of_week", "days_of_month"] {
@@ -3517,6 +3564,12 @@ class CheICalMCPServer {
                 }
                 return n
             }
+        }
+        // PR #439 verify, measured on iCloud (events and reminders): a daily or weekly rule stores
+        // the list, reads it back, and repeats as if it were not there, so the days asked for are
+        // dropped with no message. Monthly and yearly use it. An empty list asks for nothing.
+        if frequency == .daily || frequency == .weekly, daysOfMonth?.isEmpty == false {
+            throw ToolError.invalidParameter("recurrence days_of_month is used by monthly and yearly rules only; a \(freqStr) rule would repeat as if it were not there. Nothing was written for this item.")
         }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.

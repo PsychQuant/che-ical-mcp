@@ -97,9 +97,9 @@ final class ReminderBatchRowKeysHandlerTests: XCTestCase {
         let created = await fake.created
         let request = try XCTUnwrap(created.first)
         XCTAssertEqual(request.title, "t")
-        XCTAssertEqual(request.notes?.contains("n"), true)
-        XCTAssertEqual(request.notes?.contains("#a"), true)
-        XCTAssertNotNil(request.due)
+        XCTAssertEqual(request.notes, "n\n#a")
+        let due = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-12-07T09:00:00+08:00"))
+        XCTAssertEqual(request.due, .timed(due))
         XCTAssertEqual(request.priority, 5)
         XCTAssertEqual(request.calendarName, "Work")
         XCTAssertEqual(request.calendarSource, "iCloud")
