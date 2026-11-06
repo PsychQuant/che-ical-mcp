@@ -1572,12 +1572,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var successCount = 0
         var failures: [(String, String)] = []
         var undoSnapshots: [EventSnapshot] = []
+        var undoThroughFirstOccurrence: [UndoOperation] = []
 
         for id in identifiers {
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = freshEvent(id: id) else {
+                    // #436: as in deleteEventSeries, when the caller named the series' id.
+                    if refusingOccurrenceIdentifiers, let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {
+                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
+                        try eventStore.remove(occurrence, span: .futureEvents)
+                        successCount += 1
+                        undoThroughFirstOccurrence.append(snapshots.record(for: snapshots.kind(
+                            span: .futureEvents, seriesResolves: { seriesResolves(identifier: first) })))
+                        continue
+                    }
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
@@ -1606,8 +1616,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         markNeedsRefresh()
-        if !undoSnapshots.isEmpty {
-            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
+        if !undoSnapshots.isEmpty || !undoThroughFirstOccurrence.isEmpty {
+            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) } + undoThroughFirstOccurrence))
         }
         return BatchDeleteResult(
             successCount: successCount,

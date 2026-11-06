@@ -409,6 +409,10 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("if applyToAll, let first = firstEditedOccurrenceID(of: identifier) {"), "update")
         XCTAssertTrue(manager.contains("return (saved.event, DetachedOccurrenceSpan.seriesIdentifier(of: saved.event.eventIdentifier ?? \"\") ?? identifier, saved.matchedOccurrence)"))
         XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first, span: .futureEvents) return }"), "delete")
+        XCTAssertTrue(manager.contains("if refusingOccurrenceIdentifiers, let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {"), "the batch, by event_ids only")
+        XCTAssertTrue(manager.contains("try eventStore.remove(occurrence, span: .futureEvents)"), "the whole series, from the occurrence that comes first")
+        let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
+        XCTAssertTrue(preview.contains("if spanAll, let first = firstEditedOccurrenceID(of: identifier), let occurrence = freshEvent(id: first) { return .deletes(start: occurrence.startDate, end: occurrence.endDate) }"), preview)
     }
 
     /// Every update route ends here and not at another call, and says no more: each longer version
@@ -848,7 +852,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
         XCTAssertTrue(single.contains("if let refusal = seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
-        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
+        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
         XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
@@ -860,7 +864,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(server.contains("let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds"), "the real call's order")
         XCTAssertTrue(server.contains("identifier: id, span: spanStr == \"future\" ? .futureEvents : .thisEvent, spanAll: spanAll, namedInTheCall: named, goneInTheCall: gone"), server)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
-        XCTAssertTrue(source.contains("guard let event = freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else { throw notFoundError(id: identifier) }"), source)
+        XCTAssertTrue(source.contains("guard let event = freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else {"), source)
         XCTAssertTrue(source.contains("if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }"), source)
         XCTAssertTrue(source.contains("if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) { return .refused(refusal) }"), source)
         let scan = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))

@@ -97,7 +97,7 @@ final class UndoBatchWiringTests: XCTestCase {
     /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
     func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
         let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
+        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) } + undoThroughFirstOccurrence))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
         // Round 5, findings 5, 16: an `insert`, `+=` or reassignment passed the append count, so

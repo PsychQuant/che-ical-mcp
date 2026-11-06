@@ -440,8 +440,9 @@ end、notes、location、alarms。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
    `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
    **系列 id 走到第一場（#428）**：第 1 場只改標題或結束（開始時間沒動），或第 1 場刪掉、第 2 場單獨改過時，系列 id 帶 span `all` 的
-   `update_event`、`delete_event` 改走該場次自己的 id：見 (h)。`id` 是系列 id（第 1 場刪掉時是新 id），回 `occurrence_id`。
-   span `future` 與 `delete_events_batch` 的 `event_ids` 在這個形狀仍被拒絕。`move_events_batch` span `all` 可搬同帳號的日曆，整個
+   `update_event`、`delete_event`、`delete_events_batch`（`event_ids`，含 dry run，#436）改走該場次自己的 id：見 (h)。`id` 是系列 id
+   （第 1 場刪掉時是新 id），回 `occurrence_id`。span `future` 在這個形狀仍被拒絕。#436 是在 Google 帳號上量到的，那裡要再跑一次
+   刪除（`create_calendar` 只建在預設來源，要手動建拋棄式日曆）。`move_events_batch` span `all` 可搬同帳號的日曆，整個
    系列搬走，要走一次；
    (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、
    `structured_location` 只動後面的場次；`all_day`、`clear_recurrence`、`calendar_name` 不是（#451），訊息不給這條路；
@@ -453,7 +454,7 @@ end、notes、location、alarms。
    span `future` 搬走全部 5 場、別的場次時間不對且多一場。日期與新 `recurrence` 一起帶：拒絕（沒量）。`days_of_week` 系列，第 1 場
    的 id 帶別的星期的 `start_time`：weekday 拒絕；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
-   系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
+   系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
    訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。第 1 場刪掉、第 2 場只改標題的
    形狀同樣走一次。span `this` 帶系列 id：dry run 與實際都回 `occurrence_date` 那一句；
