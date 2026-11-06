@@ -8,12 +8,12 @@ import Foundation
 /// capture never does.
 extension EventKitManager {
     /// The production store: this manager's `eventStore` and its own helpers (the #269 calendar read
-    /// `restoreCalendar(for:kind:)`, `storedEvent`, the refresh flags). Built inside the manager's
+    /// `restoreCalendar(for:kind:)`, the event lookup, the refresh flags). Built inside the manager's
     /// isolation and used there only, for the call it was built for.
     var seriesExceptionsStore: EventKitSeriesExceptionsStore {
         EventKitSeriesExceptionsStore(eventStore: eventStore,
                                       restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },
-                                      storedEvent: { self.storedEvent(id: $0) },
+                                      eventLookup: { EventLookup.outcome(identifier: $0, in: self.eventStore) },
                                       markNeedsRefresh: { self.markNeedsRefresh() },
                                       refreshIfNeeded: { self.refreshIfNeeded() })
     }

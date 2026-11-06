@@ -33,9 +33,13 @@ let package = Package(
                 ])
             ]
         ),
+        .target(
+            name: "CheICalMCPObjCTestSupport",
+            path: "Tests/CheICalMCPObjCTestSupport"
+        ),
         .testTarget(
             name: "CheICalMCPTests",
-            dependencies: ["CheICalMCP", "CheICalMCPObjC"],
+            dependencies: ["CheICalMCP", "CheICalMCPObjC", "CheICalMCPObjCTestSupport"],
             path: "Tests/CheICalMCPTests"
         )
     ]

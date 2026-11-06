@@ -55,7 +55,11 @@ extension EventKitManager {
     /// hint. A scan on the failure path only.
     func notFoundError(id: String) -> Error {
         refreshIfNeeded()
-        let stored = storedEvent(id: id)
+        // #288: a raise that is not the known one says nothing about the event, so it is not reported
+        // as missing, which could lead the caller to create it again.
+        let outcome = EventLookup.outcome(identifier: id, in: eventStore)
+        if case .failed = outcome { return EventKitError.eventLookupFailed(identifier: id) }
+        let stored = outcome.event
         let hint = FirstRemainingOccurrence.hintsEditedBefore(
             stored: stored != nil,
             refreshes: stored.map { $0.refresh() } ?? false,
@@ -78,8 +82,11 @@ extension EventKitManager {
     /// `notFoundError(id:)` as the short reason a batch row reports, in the batch's own words
     /// (`batchRowReason`, #335 item 6).
     func notFoundReason(id: String) -> String {
-        if case EventKitError.standInRefused(let reason) = notFoundError(id: id) { return Self.batchRowReason(reason) }
-        return "Event not found"
+        switch notFoundError(id: id) {
+        case EventKitError.standInRefused(let reason): return Self.batchRowReason(reason)
+        case EventKitError.eventLookupFailed: return Self.eventLookupFailedReason
+        default: return "Event not found"
+        }
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.

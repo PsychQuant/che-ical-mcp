@@ -13,13 +13,19 @@ import Foundation
 /// The check holds only while `calendarItem(withIdentifier:)` returns the reminder. That was
 /// checked on device with Calendar and Reminders access both granted, on iCloud, with reminder ids
 /// as the reminder tools return them. Without Reminders access it may return nil for a reminder's
-/// id, so #288 wraps `event(withIdentifier:)` as well (`catchingRaise`): with the check switched
-/// off, a reminder's id raised `NSUnknownKeyException` on device, the call answered not found, and
-/// the same process went on to read and to delete an event through the same store (iCloud,
-/// 2026-11-06). What the lookup returns with Reminders access denied has not been seen. The check
-/// stays first: it answers without raising, and nothing is known about what a raised lookup leaves
-/// behind beyond that run. The store is not refreshed here (`freshEvent` refreshes first; the
-/// freshness of the other callers is #271).
+/// id, so the lookup itself runs in `CheICalEventWithIdentifier` (#288), which catches the raise in
+/// the Objective-C frame that made the call. `NSUnknownKeyException`, the raise seen for a
+/// reminder's id, is not found; any other name is a failed lookup (`EventLookupOutcome`), which is
+/// not reported as missing. `calendarItem(withIdentifier:)` is not wrapped (#293).
+///
+/// Measured with the check switched off in a local build, release, arm64, one stdio process, iCloud,
+/// 2026-11-06: 1002 calls with a reminder's id each raised and answered not found; the undo history
+/// survived and undo worked; later saves, and a read and a write of that reminder, worked; nothing
+/// hung. Each raise leaks about 6 KB (flat with the same calls that do not raise), which is objects
+/// in the EventKit frames the exception unwinds and cannot be freed from here. Not run: the x86_64
+/// slice, and with Reminders access actually denied (release gate in
+/// `.claude/rules/mcp-binary-version-testing.md`). The store is not refreshed here (`freshEvent`
+/// refreshes first; the freshness of the other callers is #271).
 ///
 /// Not `calendarItem(withIdentifier:) as? EKEvent`: the ids this server hands out for events are
 /// `eventIdentifier`s, for which that lookup returned nil on device (one-off and recurring events
@@ -43,31 +49,62 @@ enum EventLookup {
         return event(identifier)
     }
 
-    /// The resolver asking `store` for both lookups; tested with a fake store.
-    static func event(identifier: String, in store: some EventLookupSource) -> EKEvent? {
-        event(identifier: identifier, calendarItem: { store.calendarItem(withIdentifier: $0) },
-              event: { id in catchingRaise { store.event(withIdentifier: id) } })
+    /// The resolver asking `store` for both lookups; tested with a fake store and with a store
+    /// that raises from Objective-C.
+    static func outcome(identifier: String, in store: some EventLookupSource) -> EventLookupOutcome {
+        var outcome = EventLookupOutcome.absent
+        _ = event(identifier: identifier, calendarItem: { store.calendarItem(withIdentifier: $0) },
+                  event: { id in
+                      outcome = store.eventCatchingRaise(identifier: id)
+                      return outcome.event
+                  })
+        return outcome
     }
 
-    /// #288: the event lookup, with an Objective-C exception turned into not found, so this call
-    /// cannot end the process. The name goes to stderr; the reason is left out (#37).
-    static func catchingRaise(_ lookup: () -> EKEvent?) -> EKEvent? {
-        var exceptionName: NSString?
-        let found = CheICalCatchingException({ lookup() }, &exceptionName)
-        if let exceptionName {
-            FileHandle.standardError.write(Data("event lookup raised \(exceptionName); answered as not found\n".utf8))
-        }
-        return found as? EKEvent
+    static func event(identifier: String, in store: some EventLookupSource) -> EKEvent? {
+        outcome(identifier: identifier, in: store).event
+    }
+}
+
+/// What an event lookup came to (#288). `failed` is the one that matters: a raise that is not the
+/// known one says nothing about whether the event exists, so it must not read as not found, which
+/// could lead a caller to create the event again.
+enum EventLookupOutcome {
+    case found(EKEvent)
+    case absent
+    case failed
+
+    var event: EKEvent? {
+        if case .found(let event) = self { return event }
+        return nil
+    }
+
+    /// `NSUnknownKeyException` is the raise seen for a reminder's id (#260): that id is not an
+    /// event, so it is absent. Any other name has not been seen, so nothing follows from it.
+    static func of(event: EKEvent?, exceptionName: String?) -> EventLookupOutcome {
+        guard let exceptionName else { return event.map(EventLookupOutcome.found) ?? .absent }
+        return exceptionName == NSExceptionName.undefinedKeyException.rawValue ? .absent : .failed
     }
 }
 
 /// The two `EKEventStore` lookups `EventLookup` uses (#260, narrow seam per CLAUDE.md).
 protocol EventLookupSource {
     func calendarItem(withIdentifier identifier: String) -> EKCalendarItem?
-    func event(withIdentifier identifier: String) -> EKEvent?
+    func eventCatchingRaise(identifier: String) -> EventLookupOutcome
 }
 
-extension EKEventStore: EventLookupSource {}
+extension EKEventStore: EventLookupSource {
+    /// #288: through the Objective-C function, so a raise stops in its frame and no Swift frame is
+    /// unwound. The exception's name goes to stderr; its reason is left out (#37).
+    func eventCatchingRaise(identifier: String) -> EventLookupOutcome {
+        var exceptionName: NSString?
+        let event = CheICalEventWithIdentifier(self, identifier, &exceptionName)
+        if let exceptionName {
+            FileHandle.standardError.write(Data("event lookup raised \(exceptionName)\n".utf8))
+        }
+        return EventLookupOutcome.of(event: event, exceptionName: exceptionName as String?)
+    }
+}
 
 extension EventKitManager {
     /// The event stored under `id` through `EventLookup`, as `event(withIdentifier:)` returns it

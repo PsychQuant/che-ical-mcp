@@ -47,7 +47,8 @@ protocol SeriesExceptionsStoreSource {
     func save(_ event: Event) throws
     func remove(_ event: Event, span: EKSpan) throws
     /// Whether the store holds an event under `event`'s identifier.
-    func isStored(_ event: Event) -> Bool
+    /// Throws when the lookup failed (#288): that is not "not stored".
+    func isStored(_ event: Event) throws -> Bool
     func markNeedsRefresh()
 
     /// The events in `calendar` from `snapshot`'s start for its length (at least a minute), read
@@ -56,7 +57,7 @@ protocol SeriesExceptionsStoreSource {
 }
 
 /// The production `SeriesExceptionsStoreSource`: `EventKitManager`'s store, and the manager's own
-/// helpers for the calls that need it (`restoreCalendar(for:kind:)`, `storedEvent`, the refresh
+/// helpers for the calls that need it (`restoreCalendar(for:kind:)`, `eventLookup`, the refresh
 /// flags), passed in as closures. `EventKitManager` builds it inside its own isolation and uses it there only.
 final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     typealias Event = EKEvent
@@ -64,18 +65,18 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     private let eventStore: EKEventStore
     private let readRestoreCalendar: (EventSnapshot, EventRestoreKind) async throws -> EKCalendar
-    private let storedEvent: (String) -> EKEvent?
+    private let eventLookup: (String) -> EventLookupOutcome
     private let markRefresh: () -> Void
     private let refreshIfNeeded: () -> Void
 
     init(eventStore: EKEventStore,
          restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
-         storedEvent: @escaping (String) -> EKEvent?,
+         eventLookup: @escaping (String) -> EventLookupOutcome,
          markNeedsRefresh: @escaping () -> Void,
          refreshIfNeeded: @escaping () -> Void) {
         self.eventStore = eventStore
         self.readRestoreCalendar = restoreCalendar
-        self.storedEvent = storedEvent
+        self.eventLookup = eventLookup
         self.markRefresh = markNeedsRefresh
         self.refreshIfNeeded = refreshIfNeeded
     }
@@ -125,9 +126,13 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func remove(_ event: EKEvent, span: EKSpan) throws { try eventStore.remove(event, span: span) }
 
-    func isStored(_ event: EKEvent) -> Bool {
+    func isStored(_ event: EKEvent) throws -> Bool {
         guard let id = event.eventIdentifier else { return false }
-        return storedEvent(id) != nil
+        switch eventLookup(id) {
+        case .found: return true
+        case .absent: return false
+        case .failed: throw EventKitError.eventLookupFailed(identifier: id)
+        }
     }
 
     func markNeedsRefresh() { markRefresh() }

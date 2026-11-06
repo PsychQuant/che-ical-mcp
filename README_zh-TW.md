@@ -79,7 +79,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `update_event` | 更新事件（含時區、重複規則、recurring span） |
 | `delete_event` | 刪除事件 |
 
-> **事件工具收到提醒事項的 ID（#260）**：`update_event`、`delete_event`、`copy_event`、`move_events_batch`、`delete_events_batch` 會回 `Event not found: <id>`（批次工具是該列的錯誤），不再讓 server 結束。沒有提醒事項權限時，EventKit 可能不會把它認成提醒事項，這時事件查詢的 Objective-C 例外會被接住，一樣回 not found（#288）。這是在裝置上關掉種類檢查量到的，還沒有在提醒事項權限真的被拒絕的情況下跑過。
+> **事件工具收到提醒事項的 ID（#260）**：`update_event`、`delete_event`、`copy_event`、`move_events_batch`、`delete_events_batch` 會回 `Event not found: <id>`（批次工具是該列的錯誤），不再讓 server 結束。沒有提醒事項權限時，EventKit 可能不會把它認成提醒事項，這時事件查詢的 Objective-C 例外會被接住，一樣回 not found（#288）。其他種類的例外則回報查詢失敗、事件可能還在。這是關掉種類檢查量到的，還沒有在提醒事項權限真的被拒絕的情況下跑過。
 
 > **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。排除的日期是被移除的場次，不是被單獨修改的場次（2026-10-05 只在 iCloud 確認過，其他來源沒有檢查），所以不會擋下這次復原；建立之後被單獨修改過的場次則會（#236）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。
 

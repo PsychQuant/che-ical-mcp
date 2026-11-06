@@ -1091,6 +1091,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         onOccurrence && span == .thisEvent && crossesAccounts
     }
 
+    /// #288: fixed text, no EventKit text. It does not say not found, and it says not to recreate.
+    static let eventLookupFailedReason = "The event lookup failed, so this event may still exist. Do not create it again; try again, and restart the server if this keeps happening"
+
     static let occurrenceAcrossAccountsReason = "Moving to a calendar in another account moves the whole series, so it cannot be combined with an edit of one occurrence (occurrence_date with span 'this'). To move the series, call update_event with span 'all' and no occurrence_date, or move_events_batch; to edit the occurrence, leave calendar_name out. A calendar whose account cannot be read counts as another account. Nothing was written."
 
     func updateEvent(
@@ -3006,6 +3009,9 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
+    /// #288: the event lookup raised an exception other than the known one, so it is not known
+    /// whether the event exists.
+    case eventLookupFailed(identifier: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3131,6 +3137,8 @@ enum EventKitError: LocalizedError {
             return reason
         case .standInRefused(let reason):
             return reason
+        case .eventLookupFailed(let identifier):
+            return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):

@@ -1,12 +1,15 @@
+#import <EventKit/EventKit.h>
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// #288: runs `body` and returns its result, or nil when it raises an Objective-C exception, which
-/// Swift cannot catch. `exceptionName`, when given, receives the exception's name; its reason is
-/// left out because it can quote what the caller passed in. Keep `body` to one EventKit call: a
-/// wider one would turn real failures into a nil.
-id _Nullable CheICalCatchingException(NS_NOESCAPE id _Nullable (^body)(void),
-                                      NSString * _Nullable * _Nullable exceptionName);
+/// #288: `[store eventWithIdentifier:]`, with an Objective-C exception caught here, in the frame
+/// that made the call: Swift cannot catch one, and unwinding through Swift frames is not supported,
+/// so no Swift code runs between the raise and this catch. Returns nil when it raises, and puts the
+/// exception's name in `exceptionName`. The reason is left out, because it can quote the caller's
+/// input. This wraps one call on purpose: each EventKit call that needs this gets its own function,
+/// not a shared wrapper taking a block written in Swift.
+EKEvent * _Nullable CheICalEventWithIdentifier(EKEventStore *store, NSString *identifier,
+                                               NSString * _Nullable * _Nullable exceptionName);
 
 NS_ASSUME_NONNULL_END

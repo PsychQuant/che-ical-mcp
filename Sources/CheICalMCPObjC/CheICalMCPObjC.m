@@ -1,9 +1,9 @@
 #import "CheICalMCPObjC.h"
 
-id _Nullable CheICalCatchingException(NS_NOESCAPE id _Nullable (^body)(void),
-                                      NSString * _Nullable * _Nullable exceptionName) {
+EKEvent * _Nullable CheICalEventWithIdentifier(EKEventStore *store, NSString *identifier,
+                                               NSString * _Nullable * _Nullable exceptionName) {
     @try {
-        return body();
+        return [store eventWithIdentifier:identifier];
     } @catch (NSException *exception) {
         if (exceptionName != NULL) {
             *exceptionName = exception.name;
