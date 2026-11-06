@@ -378,6 +378,75 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         }
     }
 
+    // MARK: - #444: occurrence_count on a yearly event rule with days_of_week
+
+    private static let yearlyByWeekday: [String: Value] = ["frequency": .string("yearly"), "days_of_week": .array([.int(3)]), "occurrence_count": .int(6)]
+
+    /// Measured on iCloud: a count of 6 gave 22 occurrences, the store counting years. The call
+    /// answered `created`, and the rule read back with the count asked for.
+    func testACountOnAYearlyEventRuleByWeekdayIsRefused() async throws {
+        for tool in ["create_event", "update_event"] {
+            let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+            let message = try await refusal(tool, Self.yearlyByWeekday, events: events, reminders: reminders)
+            for phrase in ["occurrence_count", "monthly", "interval 12", "end_date", "Nothing was written for this item"] {
+                XCTAssertTrue(message.contains(phrase), "\(tool) \(phrase): \(message)")
+            }
+            let written = await writes(events, reminders)
+            XCTAssertEqual(written, 0, tool)
+        }
+        let batch = try await batchError(Self.yearlyByWeekday)
+        XCTAssertTrue(batch.error.contains("interval 12"), batch.error)
+        XCTAssertEqual(batch.written, ["good"], "only that row fails")
+    }
+
+    /// Measured on iCloud: completing such a reminder gave the three occurrences asked for.
+    func testACountOnAYearlyReminderRuleByWeekdayIsWritten() async throws {
+        for tool in ["create_reminder", "update_reminder"] {
+            let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+            let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+            _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(Self.yearlyByWeekday)))
+            let rule = await writtenRule(events, reminders)
+            XCTAssertEqual(rule?.occurrenceCount, 6, tool)
+        }
+    }
+
+    /// The shapes next to it, where the count was measured to hold or no count is given.
+    func testTheShapesBesideItStillReachTheWrite() async throws {
+        let week: Value = .array([.int(3)])
+        let allowed: [[String: Value]] = [
+            ["frequency": .string("yearly"), "interval": .int(2), "days_of_week": week, "occurrence_count": .int(6)],
+            ["frequency": .string("yearly"), "days_of_week": week, "days_of_month": .array([.int(15)]), "occurrence_count": .int(2)],
+            ["frequency": .string("yearly"), "days_of_month": .array([.int(15)]), "occurrence_count": .int(3)],
+            ["frequency": .string("yearly"), "occurrence_count": .int(3)],
+            ["frequency": .string("yearly"), "days_of_week": .array([]), "occurrence_count": .int(3)],
+            ["frequency": .string("yearly"), "days_of_week": week, "end_date": .string("2033-12-31T23:59:59+08:00")],
+            ["frequency": .string("yearly"), "days_of_week": week],
+            ["frequency": .string("monthly"), "interval": .int(12), "days_of_week": week, "occurrence_count": .int(6)],
+            ["frequency": .string("monthly"), "days_of_week": week, "occurrence_count": .int(3)]
+        ]
+        for tool in ["create_event", "update_event"] {
+            for recurrence in allowed {
+                let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+                let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
+                let written = await writes(events, reminders)
+                XCTAssertEqual(written, 1, "\(tool) \(recurrence.keys.sorted())")
+            }
+        }
+    }
+
+    func testTheEventSchemasStateIt() throws {
+        let tools = CheICalMCPServer.defineTools()
+        for name in ["create_event", "update_event", "create_events_batch"] {
+            let schema = "\(String(describing: tools.first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("with days_of_week it stays in the start's month, and occurrence_count is refused"), name)
+        }
+        for name in ["create_reminder", "update_reminder"] {
+            let schema = "\(String(describing: tools.first { $0.name == name }?.inputSchema))"
+            XCTAssertFalse(schema.contains("occurrence_count is refused"), name)
+        }
+    }
+
     /// The guard's list is the schema's: a key added to one and not the other fails here, in either
     /// direction, so the guard cannot start refusing a key the schema offers.
     func testTheAcceptedKeysAreTheSchemasKeys() throws {

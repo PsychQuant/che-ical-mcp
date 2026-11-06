@@ -314,7 +314,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. On a yearly rule: with days_of_week it stays in the start's month, and occurrence_count is refused, so use frequency monthly with interval 12 or end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -385,7 +385,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. On a yearly rule: with days_of_week it stays in the start's month, and occurrence_count is refused, so use frequency monthly with interval 12 or end_date.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -879,7 +879,7 @@ class CheICalMCPServer {
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. On a yearly rule: with days_of_week it stays in the start's month, and occurrence_count is refused, so use frequency monthly with interval 12 or end_date.")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
@@ -3536,6 +3536,10 @@ class CheICalMCPServer {
         // dropped with no message. Monthly and yearly use it. An empty list asks for nothing.
         if frequency == .daily || frequency == .weekly, daysOfMonth?.isEmpty == false {
             throw ToolError.invalidParameter("recurrence days_of_month is used by monthly and yearly rules only; a \(freqStr) rule would repeat as if it were not there. Nothing was written for this item.")
+        }
+        if !forReminder, RecurrenceRuleInput.countsYearsForAnEvent(frequency: frequency, interval: interval, daysOfWeek: daysOfWeek,
+                                                                   daysOfMonth: daysOfMonth, occurrenceCount: occurrenceCount) {
+            throw ToolError.invalidParameter("recurrence occurrence_count does not count occurrences on a yearly event rule with days_of_week, so the series would be longer than asked. Use frequency monthly with interval 12, which repeats on the same days and holds the count, or end_date. Nothing was written for this item.")
         }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.
