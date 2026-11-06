@@ -110,6 +110,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **提醒事項的相對鬧鐘（#333）：** `create_reminder`、`create_reminders_batch` 的每一列與 `update_reminder` 接受 `alarms_minutes_offsets`，單位是到期前幾分鐘（正數是到期前、負數是到期後；只收 -525600 到 525600 的整數，即一年；事件工具也套用同一個範圍），所以存下來的到期日可以留在真正的時間，通知可以提早來（Reminders.app 列表與通知橫幅顯示的是鬧鐘時間，見下）。只寫相對鬧鐘：`update_reminder` 用這份清單取代提醒事項的相對鬧鐘，`[]` 會把它們移除；絕對時間鬧鐘（#227）與位置提醒（#229）不變。這和 `update_event` 不同，`update_event` 的清單會取代所有鬧鐘。相對鬧鐘需要帶時間的到期日：提醒事項沒有到期日（鬧鐘永遠不會響），或是純日期提醒時，會拒絕並且什麼都不寫，因為 Reminders 在沒有時間的日子什麼時候觸發相對鬧鐘還沒在實機量過（EventKit 存得進去也讀得回來；#333 step 0）。循環提醒的鬧鐘預期會由 EventKit 跟著每一次重複移動，這一點還沒在實機確認（列在 release gate）。**Reminders.app 顯示的時間（#433）：** 量過的 14 列裡，列表顯示的是最早的時間型鬧鐘（相對或絕對），不是到期時間，所以到期 15:30、帶 `[15]` 的提醒顯示 15:15，帶 `[-15]` 顯示 15:45。這是對那些列的歸納，不是文件寫明的規則。存下來的到期日沒有變（`list_reminders` 讀回 15:30）。做過的那一次通知檢查（#333：到期 09:54、`[2]`）通知提前來，橫幅顯示的時間與列表相同，是 09:52，不是到期時間。到期時間沒有看到第二個橫幅，但第一個橫幅還在畫面上，不能排除有一個被它擋住。最早的時間型鬧鐘不在帶時間的到期時間上時，呼叫有帶 `alarms_minutes_offsets`、`due_date` 或 `realign_to_due` 就會有 `alarms_note` 說明；這三個都沒碰的呼叫（例如只改標題）沒有 note，純日期提醒也沒有（#267 量過 App 在純日期提醒上會繼續顯示絕對鬧鐘的時間），所以沒有 note 不代表列表顯示到期時間。量過的列表列：`[15]`、`[60]`、`[2]`、`[15, 0]`、`[0]`、`[-15]`、在到期時間或更早的絕對鬧鐘，以及 `[15]` 加到期時間的絕對鬧鐘。其他形狀都是由這些列推得的，例如 `[60, 15]`、`[15, -15]`、`[-15, -60]`、`[1440]`、晚於到期時間的絕對鬧鐘、`[-15]` 加到期時間的絕對鬧鐘（沒有 note），以及 `[15]` 或 `[0]` 加更早的絕對鬧鐘（有 note）。這些列判斷不了 `[0, -15]`：目前沒有 note，留給 release gate 第 8 步確認。顯示到期時間的那幾列都沒有早於到期的鬧鐘，多加一個到期時間的鬧鐘也沒有讓列表回到到期時間（`[15]` 加它仍顯示 15:15）；這 14 列都沒有檢查通知。Reminders.app 裡設定的「提早提醒」（Early Reminder）不一樣：手動建的那一筆讀回來是一個到期時間的絕對鬧鐘，沒有早於到期的鬧鐘，這個 server 寫不出來。保留 `alarms_minutes_offsets` 是預設，之後可以改。量的是一個 iCloud 清單的列表列。沒有檢查：詳細面板、其他裝置、跨到別天的 offset（`[1440]`）、`[-15]` 什麼時候響、過去的到期時間、已完成的提醒，以及 `update_reminder` 會不會保留 App 裡設定的 Early Reminder。回應以 `alarms_minutes_offsets`（到期前幾分鐘）列出讀回的相對鬧鐘；和要求的不同時附上 `alarms_differ` 與 `alarms_note`（顯示的 note 也成立時，兩件事都說）。存檔後讀不回提醒事項時，`update_reminder` 不列 `alarms_minutes_offsets`，改回 `alarms_read_back: false` 與 `alarms_read_back_note`。`update_reminder` 沒帶 `alarms_minutes_offsets`、但動到到期日（`due_date` 或 `clear_due_date`），而存好的提醒事項變成只有日期或沒有到期日時，相對鬧鐘會留著，回應附上 `alarms_note`：說明留下幾個、沒有到期日就永遠不會響或只有日期時何時觸發尚未量測，以及用 `alarms_minutes_offsets: []` 移除（`clear_due_date` 之後的數目取自存檔後的物件，沒有重新讀取）；略過的重複建立會得到 `alarms_applied: false`。復原這次更新會還原原本的鬧鐘，位置鬧鐘也包含在內。記憶體內測過的是：還原本身，以及 #236 的檢查依值比對鬧鐘（別處改過時會點名 `alarms`）；同步後實際 store 讀回的樣子待 release gate 確認。
 
+**會檢查 `create_reminders_batch` 每一列的鍵（#441）：** 一列帶了 `title`、`notes`、`due_date`、`priority`、`calendar_name`、`calendar_source`、`tags`、`alarms_minutes_offsets` 以外的鍵時，該列失敗、什麼都不寫入，其他列照常處理。以前這種鍵會被忽略，所以列上帶 `recurrence` 建出來的提醒不會重複。`recurrence` 與 `location_trigger` 要用 `create_reminder`。
+
 **純日期提醒事項（#267）：** `create_reminder`、`create_reminders_batch`、`update_reminder` 的 `due_date` 只給日期（`2026-10-18`）時，會寫成純日期提醒：有日期、沒有時間，和在 Reminders.app 建立的一樣；讀回時 `due.time` 是 `null`。`update_reminder` 會把 start date 設為那一天（原本刻意設在別天的也一樣），並移除絕對時間鬧鐘，因為 Reminders.app 顯示的是最早一個絕對時間鬧鐘，留著它就會繼續顯示時間（已在實機確認）；相對鬧鐘與位置鬧鐘保留，`date_sync.absolute_alarms_removed` 會回報移除了幾個。有時間的提醒事項給它同一天的日期，就是把時間拿掉。帶時間的到期日行為不變。只給日期的 `create_reminder`（以及 `create_reminders_batch` 建立成功的每一列）會讀回存好的提醒並回傳 `date_sync`，和 `update_reminder` 一樣：到期日讀回時帶了時間、讀回時不見了，或提醒無法重新讀取時，`date_sync.aligned` 為 `false`（#301）。`update_reminder` 寫入的到期日讀回時不見了，同樣得到 `aligned: false`；以前這種情況不回報 `aligned`。在 `list_reminders` 裡，純日期提醒要等那一天在主機時區結束才算逾期；`list_reminders` 與 `search_reminders` 的 `due_date` / `due_date_local` 則是那一天主機時區的 00:00（#297）。
 
 **提醒事項自身的時區（#241）：** `list_reminders` 與 `search_reminders` 以 `item_timezone` 回報提醒事項自己存的時區（時區識別碼，通常是 IANA；固定位移的時區會是 `GMT+0800` 這種寫法）；沒有存時區的提醒為 `null`，包括浮動的定時提醒、純日期提醒與沒有到期日的提醒（浮動定時提醒是 `item_timezone` 為 null 且 `due.time` 有值）。每筆提醒的 `timezone` 是主機時區，也就是 `*_local` 字串所用的時區，不是提醒事項自己的時區。
@@ -372,7 +374,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 ### 模糊行事曆匹配
 
-行事曆名稱現在**不區分大小寫**匹配。如果找不到，錯誤訊息會列出所有可用的行事曆。
+行事曆名稱現在**不區分大小寫**匹配。如果找不到，錯誤訊息是 `Calendar not found: <名稱>`，帶 `calendar_source` 時是 `Calendar '<名稱>' not found in source '<來源>'`；可用 `list_calendars` 查看名稱。
 
 ### 增強的列出/刪除工具
 
@@ -380,7 +382,9 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 - **`list_reminders`**：`filter`（all/incomplete/completed/overdue）、`sort`（due_date/creation_date/priority/title）、`limit`
 - **`delete_events_batch`**：日期範圍模式（`before_date`/`after_date`）+ `dry_run` 預覽
 
-**大範圍讀取的上限（#332）：** 1462 天以內的範圍不論有多少事件都完整讀取；跨過時鐘調整的四個日曆年是 1461 天又一小時，所以仍算窄範圍。超過 1462 天時，`list_events`、`search_events`、`check_conflicts`、`find_duplicate_events` 與依日期範圍的 `delete_events_batch` 一旦讀到超過約 200,000 個場次就會停下並回錯誤，不回傳任何結果，也不刪除任何東西。所有被讀取的行事曆合併計算，`search_events` 是在比對關鍵字之前計數。這是安全閥，不是日常上限：在 100 年的範圍約等於每年 2,000 個場次（五到六條沒有結束日的每日系列，或約 40 條每週系列），在 400 年的上限範圍約等於每年 500 個場次。每讀完一段 1460 天才檢查一次，而 EventKit 一次讀完一段，所以實際讀入量可能再超過那一段的量。`limit` 不會解除這個上限。請縮小範圍或指定一個行事曆；`find_duplicate_events` 減少 `calendar_names` 也能少讀一些，但至少留兩個，因為它只比對不同行事曆，並請用 `list_calendars` 的確切名稱，因為對不上的名稱不會被回報；`check_conflicts` 指定行事曆後，其他行事曆就不會檢查；`delete_events_batch` 請同時給 `after_date` 與 `before_date`，相距最多 1460 天。
+**`find_duplicate_events` 會檢查 `calendar_names`（#437）：** 名稱的比對方式與其他工具相同：先比對完全相同的標題，都沒有時才忽略大小寫。對不到任何行事曆的名稱、不足兩個行事曆，或不是字串陣列的值，都會被拒絕，不回傳結果，因為它只比對不同行事曆。沒給名稱時比對每個行事曆，所以這台電腦不足兩個行事曆時同樣會被拒絕。兩個帳號共用的名稱兩邊都會讀；這個工具沒有 `calendar_source`，`calendar_name`、`calendar_source` 與 `calendars` 都會被拒絕，不會被忽略。`calendars_checked` 列出實際讀到的行事曆，標題相同時附上帳號（`Work (iCloud)` 是標籤，傳入時要用 `list_calendars` 的標題）；沒給名稱時列出每個行事曆，不再是 `all calendars`。配對的每一邊都有 `calendar` 與 `calendar_source`，可分出兩個帳號；同一帳號內兩個同名行事曆，配對兩邊的內容會相同。兩個帳號共用名稱的情況只有單元測試；沒給名稱的讀取還沒在裝置上跑過。
+
+**大範圍讀取的上限（#332）：** 1462 天以內的範圍不論有多少事件都完整讀取；跨過時鐘調整的四個日曆年是 1461 天又一小時，所以仍算窄範圍。超過 1462 天時，`list_events`、`search_events`、`check_conflicts`、`find_duplicate_events` 與依日期範圍的 `delete_events_batch` 一旦讀到超過約 200,000 個場次就會停下並回錯誤，不回傳任何結果，也不刪除任何東西。所有被讀取的行事曆合併計算，`search_events` 是在比對關鍵字之前計數。這是安全閥，不是日常上限：在 100 年的範圍約等於每年 2,000 個場次（五到六條沒有結束日的每日系列，或約 40 條每週系列），在 400 年的上限範圍約等於每年 500 個場次。每讀完一段 1460 天才檢查一次，而 EventKit 一次讀完一段，所以實際讀入量可能再超過那一段的量。`limit` 不會解除這個上限。請縮小範圍或指定一個行事曆；`find_duplicate_events` 減少 `calendar_names` 也能少讀一些，但至少留兩個，因為它只比對不同行事曆；`check_conflicts` 指定行事曆後，其他行事曆就不會檢查；`delete_events_batch` 請同時給 `after_date` 與 `before_date`，相距最多 1460 天。
 
 超過 1462 天時，沒給 `limit` 最多回傳 500 筆，並回報 `default_limit`（`list_events` 在 `metadata.default_limit`）。`search_events` 只給 `start_date` 或只給 `end_date` 時，另一端維持距今兩年，所以這種範圍常常超過 1462 天。`limit` 最多 10000，需要更多筆時請縮小範圍。不論範圍多大，`event_count` 都是總數，只要回傳筆數少於 `event_count` 就會出現 `truncated: true`，不管是預設值還是你的 `limit` 造成的。截斷時留下哪些事件依工具而定：`list_events` 依 `sort` 取前面的；`search_events` 沒有排序參數，所以保留最接近今天的事件，依開始時間排序回傳，並在 `truncation_note` 說明。沒有截斷時，`search_events` 依讀取順序回傳，那不是時間順序。
 
@@ -466,7 +470,7 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 → list_events(calendar_name: "工作", calendar_source: "Google", ...)
 ```
 
-如果偵測到歧義，錯誤訊息會列出所有可用的來源。
+如果偵測到歧義，錯誤訊息會說有多個行事曆同名，並要求帶 `calendar_source`；可用 `list_calendars` 查看來源。
 
 ---
 

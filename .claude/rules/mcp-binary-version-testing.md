@@ -214,6 +214,25 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 
 結果記在 #374。結束後刪掉拋棄式日曆。
 
+## Release gate：find_duplicate_events（#437）
+
+兩項 PR #440 在開發時沒有量：`create_calendar` 只能建在預設來源，所以兩個帳號同名要手動建；沒給
+`calendar_names` 的讀取會碰真實行事曆，所以由使用者本人做，只比數字，不讀事件內容。**出 #437 的那個版本
+打 tag 之前**：
+
+1. **兩個帳號同名**（有第二個來源時）：在 Calendar.app 於第二個來源手動建拋棄式日曆，再用 `create_calendar`
+   建同名日曆（名稱含 `#437`，預設來源）。兩邊各用 `create_event` 建同標題同時間的事件 →
+   `find_duplicate_events` 的 `calendar_names` 只給那個名稱：`duplicate_count` 是 1，`calendars_checked`
+   列出 `<名稱> (<來源>)` 兩筆，配對兩邊的 `calendar_source` 不同。
+2. **沒給名稱**（使用者本人做，代理不要跑）：用舊版與新版 binary 對同一個範圍各呼叫一次、都不給
+   `calendar_names`，比較 `duplicate_count`，兩者要相同。再核對 `calendars_checked` 的長度等於
+   `list_calendars` 回傳的事件行事曆數。
+   - 舊版回應的 `calendars_checked` 是 `all calendars`，這裡只比 `duplicate_count`。
+   - 不同代表 `calendars: nil` 改成明列全部行事曆之後讀到的範圍變了，要回報。
+
+結果記在 #437。結束後刪掉拋棄式日曆（第二個來源的那個也要手動刪）。做完後把 README 與 CHANGELOG 的
+「沒有在裝置上跑過」改成量到的結果。
+
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有

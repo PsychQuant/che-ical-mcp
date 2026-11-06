@@ -117,7 +117,7 @@
     },
     {
       "name": "find_duplicate_events",
-      "description": "Find duplicate events across calendars (ranges up to 146,000 days, about 400 years; over 1462 days, at most 2,000,000 comparisons and a read of about 200,000 occurrences (about 2,000 a year over 100 years))"
+      "description": "Find duplicate events across calendars (ranges up to 146,000 days, about 400 years; over 1462 days, at most 2,000,000 comparisons and a read of about 200,000 occurrences (about 2,000 a year over 100 years)); calendar_names that match nothing, or fewer than two calendars, are refused"
     },
     {
       "name": "update_calendar",
@@ -129,7 +129,7 @@
     },
     {
       "name": "create_reminders_batch",
-      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; when the earliest alarm is off the due time, the row's alarms_note says so: in the rows measured the Reminders.app list showed the earliest alarm time, not the due time, and the one notification checked showed it too; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy)"
+      "description": "Create multiple reminders at once (with tags and per-row alarms_minutes_offsets; when the earliest alarm is off the due time, the row's alarms_note says so: in the rows measured the Reminders.app list showed the earliest alarm time, not the due time, and the one notification checked showed it too; a bare YYYY-MM-DD due_date makes a date-only reminder; a result may carry store_differs and note, as create_reminder does, and creating that reminder again with the same parameters may make a second copy); a row with an unknown key fails, and recurrence and location_trigger need create_reminder"
     },
     {
       "name": "delete_reminders_batch",
