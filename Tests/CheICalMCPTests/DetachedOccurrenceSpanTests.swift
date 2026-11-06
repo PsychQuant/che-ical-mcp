@@ -385,6 +385,12 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(own(start: slot.addingTimeInterval(7200)), "moved")
         XCTAssertTrue(own(start: slot, allDay: true), "all-day in a timed series")
         XCTAssertTrue(UndoPostState.ownValues(one: series, slot: slot, firstStart: slot, series: nil).time, "nothing to compare with")
+        let longer = EKEvent(eventStore: SharedTestStore.store)
+        longer.calendar = EKCalendar(for: .event, eventStore: SharedTestStore.store)
+        longer.startDate = slot
+        longer.endDate = slot.addingTimeInterval(3 * 3600)
+        XCTAssertTrue(UndoPostState.ownValues(one: EventSnapshot(from: longer, includeRecurrence: false), slot: slot, firstStart: slot, series: series).time,
+                      "a length of its own: the others took it (measured)")
     }
 
     // MARK: - The series' id with the first occurrence edited (#428)
