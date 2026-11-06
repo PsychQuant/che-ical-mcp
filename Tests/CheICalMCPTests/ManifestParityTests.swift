@@ -416,6 +416,36 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("occurrence_start for the occurrence occurrence_date matched"), summary)
     }
 
+    /// #416: the writes refused through the identifier of an occurrence edited on its own say when,
+    /// in both places a client reads about them, and update_event lists the cases that change the
+    /// id as they were measured.
+    func testTheWritesRefusedThroughAnOccurrenceIdentifierSaySo() throws {
+        let update = try descriptions(of: "update_event")
+        XCTAssertTrue(update.declared.contains("in three cases only"), update.declared)
+        XCTAssertFalse(update.declared.contains("a known behavior"), update.declared)
+        XCTAssertTrue(update.declared.contains("span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416)"), update.declared)
+        XCTAssertTrue(update.declared.contains("the first occurrence left, after the first was deleted"), update.declared)
+        XCTAssertFalse(update.declared.contains("Use occurrence_id only with span 'this'"), update.declared)
+        XCTAssertTrue(update.declared.contains("A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326)."), update.declared)
+        XCTAssertTrue(update.declared.contains("With span 'all' or 'future' through such an identifier, only title, notes, location and recurrence can be written; for anything else use span 'this', or the id of an occurrence not edited on its own."), update.declared)
+        XCTAssertTrue(update.declared.contains("A value the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms."), update.declared)
+        XCTAssertFalse(update.declared.contains("recurrence, clear_recurrence"), update.declared)
+        XCTAssertTrue(update.declared.contains("With span 'this' or 'future' occurrence_date must be that occurrence's day."), update.declared)
+        XCTAssertFalse(update.declared.contains("with any span"), update.declared)
+        XCTAssertTrue(update.summary.contains("with span all or future through it only title, notes, location and recurrence can be written"), update.summary)
+        XCTAssertFalse(update.declared.contains("the series' earliest occurrence"), update.declared)
+        XCTAssertTrue(update.summary.contains("span all through an occurrence edited on its own is refused while an earlier occurrence remains"), update.summary)
+        let single = try descriptions(of: "delete_event")
+        XCTAssertTrue(single.declared.contains("With span 'this' or 'future' through such an identifier occurrence_date must be that occurrence's day."), single.declared)
+        XCTAssertTrue(single.declared.contains("Span 'all' through the identifier of an occurrence edited on its own would delete that occurrence only, so it is refused and deletes nothing while another occurrence remains (#416)"), single.declared)
+        XCTAssertTrue(single.summary.contains("span all through an occurrence edited on its own is refused while another occurrence remains"), single.summary)
+        let batch = try descriptions(of: "delete_events_batch")
+        XCTAssertTrue(batch.declared.contains("By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416)"), batch.declared)
+        XCTAssertTrue(batch.summary.contains("span all through an occurrence edited on its own is refused for that row while another occurrence remains"), batch.summary)
+        // By date range the row is not refused (the listing named it, not the caller): measured.
+        XCTAssertTrue(batch.declared.contains("By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427)"), batch.declared)
+    }
+
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
     /// removes absolute-date alarms; both places a client reads about the three writers say so.
     func testReminderWritersDescribeTheBareDateForm() throws {

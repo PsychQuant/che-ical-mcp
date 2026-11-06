@@ -1024,11 +1024,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
-    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series)."
+    /// What reaches such a series, with its condition: without one this text pointed back to a call
+    /// that is refused in the same shape (PR #431 round 6). #428 gives the rest a way.
+    private static let editedBeforeWays = "The occurrence that comes first in the series reaches it through its own id: update_event with span 'all' for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace, and delete_event with span 'future' (which cannot be undone). Anything else has no tested way yet (#428)."
+
+    static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). \(editedBeforeWays)"
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
     /// by `event_ids`) reports it. That tool by `event_ids` cannot take an `occurrence_date`, so the
     /// text names the ways a batch caller has to a single occurrence instead.
-    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'."
+    static let standInEditedBeforeBatchReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on, and delete_events_batch by event_ids cannot name a single occurrence. To delete single occurrences, use delete_event with occurrence_date and span 'this', or this tool by calendar_name and a date range with span 'this'. \(editedBeforeWays)"
 
     /// #335 item 6: a reason as a batch row reports it: the edited-before hint becomes
     /// `standInEditedBeforeBatchReason`; every other reason (the all-edited hint, whose `/RID=` ids
@@ -1107,6 +1111,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     func updateEvent(
         identifier: String,
+        fields: Set<String>,
         title: String? = nil,
         startDate: Date? = nil,
         endDate: Date? = nil,
@@ -1136,6 +1141,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
+        // #416: through an occurrence edited on its own, span 'all' or 'future' writes only what was
+        // measured to do what it says (`DetachedOccurrenceSpan`); refused before anything is read
+        // into the update or written.
+        if let refusal = DetachedOccurrenceSpan.updateRefusal(
+            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
+            futureSpan: span == .futureEvents, fields: fields,
+            repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
+                title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
+                occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
+            writesLocation: location != nil,
+            neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
+            throw EventKitError.occurrenceAddressRefused(reason: refusal)
+        }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
         // occurrence, and saving the whole series from it splits it into a new series with a new
         // identifier (device, iCloud). Refused rather than done silently; the other writes
@@ -1157,6 +1175,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var matchedOccurrence: MatchedOccurrence?
         if !masterEvent.hasRecurrenceRules {
             event = masterEvent
+            // #416: an occurrence's own id answers for itself, so occurrence_date has to be that
+            // occurrence. It was ignored here, and the write started at the wrong one (device).
+            if DetachedOccurrenceSpan.refusesOccurrenceDate(
+                identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
+                hasOccurrenceDate: occurrenceDate != nil,
+                matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) {
+                throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason)
+            }
+            if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) {
+                matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent))
+            }
         } else if applyToAll {
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
@@ -1176,6 +1205,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.invalidTimeRange(
                 message: "For recurring events, occurrence_date is required to identify which occurrence to modify."
             )
+        }
+
+        // #416: the same checks when occurrence_date found an edited occurrence under the series'
+        // identifier, the one way to it the check above cannot see.
+        if let refusal = DetachedOccurrenceSpan.resolvedOccurrenceRefusal(
+            addressedByItsOwnId: event === masterEvent, resolvedIsDetached: event.isDetached,
+            futureSpan: span == .futureEvents && !applyToAll, fields: fields,
+            repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
+                title: title, notes: notes, location: location, occurrenceTitle: event.title,
+                occurrenceNotes: event.notes, occurrenceLocation: event.location),
+            writesLocation: location != nil,
+            own: UndoPostState.ownValues(ofResolved: event, series: masterEvent)) {
+            throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
         // Series-level properties through the stand-in (verify rounds 6-7), decided before the
@@ -1257,11 +1299,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }()
 
         let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
+        // #416: through an occurrence's own id the rule runs from its original day, not the day it
+        // shows. Dates cannot be written on this path, so nothing else moves that day.
+        let originalDay = DetachedOccurrenceSpan.originalDay(
+            identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
+            externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)
         if let days = daysToValidate, !days.isEmpty {
             let weekday = WeekdayCheck.weekday(
-                of: datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
+                of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
                 requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
             if !days.contains(weekday) {
+                if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }
                 let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                 let startDay = dayNames[weekday]
                 let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
@@ -1428,6 +1476,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
             throw notFoundError(id: identifier)
         }
+        // #416: as in updateEvent; the delete removed the occurrence the id names, not that day's.
+        if DetachedOccurrenceSpan.refusesOccurrenceDate(
+            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: false,
+            hasOccurrenceDate: occurrenceDate != nil,
+            matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason)
+        }
         let hadRules = masterEvent.hasRecurrenceRules
 
         // For recurring events, always resolve the specific occurrence (this/future both need it).
@@ -1462,6 +1517,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let event = freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
+        // #416: through an occurrence edited on its own this removes that occurrence only (device,
+        // iCloud: it has no recurrence rules of its own), while the answer says the series.
+        if let refusal = seriesDeleteRefusal(event, id: identifier) {
+            throw EventKitError.occurrenceAddressRefused(reason: refusal)
+        }
 
         // If the event has recurrence rules, it is (or belongs to) a recurring series.
         // eventStore.event(withIdentifier:) returns the master event for recurring series,
@@ -1480,11 +1540,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         await CalendarUndoManager.shared.record(.deleteEvent(snapshot: snapshot))
     }
 
+    /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no
+    /// date is passed, so every bare recurring id gets this; its dry run says the same (#416).
+    static let batchOccurrenceDateRequired = "For recurring events, occurrence_date is required"
+
     /// #185 — batch series deletion with a single aggregated undo unit, symmetric
     /// with deleteEventsBatch. One undo restores every series actually removed
     /// (partial failure: only the successes). Lives in the manager so undo
     /// bookkeeping never leaks into the server layer.
-    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
         var successCount = 0
@@ -1497,6 +1561,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = freshEvent(id: id) else {
                     failures.append((id, notFoundReason(id: id)))
+                    continue
+                }
+                // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
+                // others go on.
+                if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
+                    failures.append((id, refusal))
                     continue
                 }
                 let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
@@ -1526,17 +1596,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             failedCount: failures.count,
             failures: failures
         )
-    }
-
-    /// Get a single event by identifier
-    func getEvent(identifier: String) async throws -> EKEvent {
-        try await ensureCalendarAccess()
-        // Refreshed, like the writes the dry-run preview describes (#326): a series whose first
-        // occurrence was deleted shows its first remaining occurrence, not the deleted one.
-        guard let event = freshEvent(id: identifier) else {
-            throw notFoundError(id: identifier)
-        }
-        return event
     }
 
     // MARK: - Search and Conflict Detection
@@ -1709,7 +1768,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                                removedStart: removedStart, removedSlot: removedSlot)
                     }
                 } else if hadRules {
-                    failures.append((item.identifier, "For recurring events, occurrence_date is required"))
+                    failures.append((item.identifier, Self.batchOccurrenceDateRequired))
                     continue
                 } else {
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
@@ -3058,6 +3117,9 @@ enum EventKitError: LocalizedError {
     /// where the next save of anything can commit it (`ExistingReminderSave`). `code` is sanitized.
     case reminderSaveMayLand(code: String)
     case reminderRemovalMayLand(code: String)
+    /// #416: a whole-series write addressed through the identifier of one occurrence that was
+    /// edited on its own (`DetachedOccurrenceSpan`). `reason` is one of its fixed strings.
+    case occurrenceAddressRefused(reason: String)
     /// PR #439 verify: `recurrence` or `clear_recurrence` on one occurrence (span this), or
     /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
     /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
@@ -3188,6 +3250,8 @@ enum EventKitError: LocalizedError {
             return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes. Read the reminder back before trying again."
         case .reminderRemovalMayLand(let code):
             return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying again."
+        case .occurrenceAddressRefused(let reason):
+            return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
             let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."
