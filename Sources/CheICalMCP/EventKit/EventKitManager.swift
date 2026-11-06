@@ -3005,6 +3005,8 @@ struct RecurrenceRuleInput: Sendable {
     /// and the store expands it as a count of years, so 6 gave 22 occurrences. A rule with `interval`
     /// above 1, or with `days_of_month` as well, held its count, and so did every other frequency.
     /// A reminder held it too: completing one with a count of 3 gave three occurrences.
+    /// A count of 1 held as well, and is refused on purpose: the rule should not depend on the
+    /// value of the count, for a series of one, which needs no rule. An empty `days_of_month` is none.
     static func countsYearsForAnEvent(frequency: Frequency, interval: Int, daysOfWeek: [Int]?, daysOfMonth: [Int]?,
                                       occurrenceCount: Int?) -> Bool {
         frequency == .yearly && interval == 1 && occurrenceCount != nil

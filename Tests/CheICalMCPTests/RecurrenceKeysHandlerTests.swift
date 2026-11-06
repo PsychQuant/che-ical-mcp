@@ -388,7 +388,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         for tool in ["create_event", "update_event"] {
             let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
             let message = try await refusal(tool, Self.yearlyByWeekday, events: events, reminders: reminders)
-            for phrase in ["occurrence_count", "monthly", "interval 12", "end_date", "Nothing was written for this item"] {
+            for phrase in ["occurrence_count", "interval 1 ", "monthly", "interval 12", "end_date", "#443", "yearly without days_of_week", "Nothing was written for this item"] {
                 XCTAssertTrue(message.contains(phrase), "\(tool) \(phrase): \(message)")
             }
             let written = await writes(events, reminders)
@@ -397,6 +397,24 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         let batch = try await batchError(Self.yearlyByWeekday)
         XCTAssertTrue(batch.error.contains("interval 12"), batch.error)
         XCTAssertEqual(batch.written, ["good"], "only that row fails")
+    }
+
+    /// A count of 1 held, and is refused on purpose, so the rule does not depend on the count. An
+    /// empty `days_of_month` is none.
+    func testTheRefusalCoversACountOfOneAndAnEmptyDayList() async throws {
+        let week: Value = .array([.int(3)])
+        for recurrence: [String: Value] in [
+            ["frequency": .string("yearly"), "days_of_week": week, "occurrence_count": .int(1)],
+            ["frequency": .string("yearly"), "days_of_week": week, "days_of_month": .array([]), "occurrence_count": .int(6)],
+            ["frequency": .string("yearly"), "interval": .int(1), "days_of_week": week, "occurrence_count": .int(6)]
+        ] {
+            let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+            let message = try await refusal("create_event", recurrence, events: events, reminders: reminders)
+            XCTAssertTrue(message.contains("is not taken"), message)
+            XCTAssertFalse(message.contains("longer than asked"), "not true of a count of 1: \(message)")
+            let written = await writes(events, reminders)
+            XCTAssertEqual(written, 0)
+        }
     }
 
     /// Measured on iCloud: completing such a reminder gave the three occurrences asked for.
@@ -439,11 +457,13 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         let tools = CheICalMCPServer.defineTools()
         for name in ["create_event", "update_event", "create_events_batch"] {
             let schema = "\(String(describing: tools.first { $0.name == name }?.inputSchema))"
-            XCTAssertTrue(schema.contains("with days_of_week it stays in the start's month, and occurrence_count is refused"), name)
+            XCTAssertTrue(schema.contains("A yearly rule with days_of_week repeats in the start's month"), name)
+            XCTAssertTrue(schema.contains("With interval 1 and no days_of_month the rule refuses occurrence_count"), name)
+            XCTAssertTrue(schema.contains("yearly without days_of_week for once a year"), name)
         }
         for name in ["create_reminder", "update_reminder"] {
             let schema = "\(String(describing: tools.first { $0.name == name }?.inputSchema))"
-            XCTAssertFalse(schema.contains("occurrence_count is refused"), name)
+            XCTAssertFalse(schema.contains("refuses occurrence_count"), name)
         }
     }
 
