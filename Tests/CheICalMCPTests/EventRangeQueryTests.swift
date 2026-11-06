@@ -208,11 +208,11 @@ final class EventRangeQueryTests: XCTestCase {
 
         // Only different calendars are compared: one calendar would answer a false duplicate_count of 0.
         let duplicates = try text(.duplicates)
-        for phrase in common + ["Nothing was returned.", "Narrow the range.", "at least two", "different calendars",
-                                "exact names from list_calendars", "matches nothing is not reported"] {
+        for phrase in common + ["Nothing was returned.", "Narrow the range.", "at least two", "different calendars"] {
             XCTAssertTrue(duplicates.contains(phrase), "\(phrase): \(duplicates)")
         }
         XCTAssertFalse(duplicates.contains("read one"), duplicates)
+        XCTAssertFalse(duplicates.contains("not reported"), "#437: such a name is refused now: \(duplicates)")
 
         // check_conflicts has no limit, and one calendar answers for that calendar only.
         let conflicts = try text(.conflicts)
@@ -222,7 +222,7 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertFalse(conflicts.contains("limit"), conflicts)
     }
 
-    /// The two handlers with no seam word the refusal for themselves: dropping either catch would
+    /// The two handlers word the refusal for themselves: dropping either catch would
     /// bring back the listing's advice, which tells find_duplicate_events to read one calendar and
     /// check_conflicts about a limit it does not have.
     func testTheConflictAndDuplicateHandlersWordTheRefusal() throws {

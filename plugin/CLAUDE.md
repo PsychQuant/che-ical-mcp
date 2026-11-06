@@ -61,7 +61,7 @@ Use `calendar-management` skill as the entry point — it covers tool selection,
 
 - Prefer batch tools (`create_events_batch`, `delete_events_batch`, `move_events_batch`) over loops, except where reminders are needed: `create_events_batch` cannot set them, so an event module (`rules/event-modules.md`) creates events one by one with `create_event`
 - Always use `--dry-run` first for destructive ops (see `delete_events_batch` schema)
-- Check `find_duplicate_events` before mass-creating
+- Before mass-creating, check the target calendar with `list_events` or `search_events`. `find_duplicate_events` only compares events in different calendars and refuses fewer than two, so it does not answer for one calendar
 
 ### TCC permission model (mental model)
 

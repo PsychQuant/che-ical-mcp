@@ -454,21 +454,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ) throws -> EKCalendar {
         let allCalendars = eventStore.calendars(for: entityType)
 
-        // 1. Exact match (case-sensitive)
-        var calendars = allCalendars.filter { cal in
-            cal.title == name &&
-            (source == nil || cal.source.title == source)
-        }
-
-        // 2. Case-insensitive fallback
-        if calendars.isEmpty {
-            let lowerName = name.lowercased()
-            let lowerSource = source?.lowercased()
-            calendars = allCalendars.filter { cal in
-                cal.title.lowercased() == lowerName &&
-                (lowerSource == nil || cal.source.title.lowercased() == lowerSource)
-            }
-        }
+        // Exact, then ignoring case (#437: one rule, shared with find_duplicate_events).
+        let calendars = CalendarNameMatch.matching(allCalendars, name: name, source: source,
+                                                   title: { $0.title }, sourceTitle: { $0.source.title })
 
         if calendars.isEmpty {
             let available = allCalendars.map { "\($0.title) (\($0.source.title))" }
@@ -500,21 +488,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ) throws -> [EKCalendar] {
         let allCalendars = eventStore.calendars(for: entityType)
 
-        // 1. Exact match (case-sensitive)
-        var calendars = allCalendars.filter { cal in
-            cal.title == name &&
-            (source == nil || cal.source.title == source)
-        }
-
-        // 2. Case-insensitive fallback
-        if calendars.isEmpty {
-            let lowerName = name.lowercased()
-            let lowerSource = source?.lowercased()
-            calendars = allCalendars.filter { cal in
-                cal.title.lowercased() == lowerName &&
-                (lowerSource == nil || cal.source.title.lowercased() == lowerSource)
-            }
-        }
+        // Exact, then ignoring case (#437: one rule, shared with find_duplicate_events).
+        let calendars = CalendarNameMatch.matching(allCalendars, name: name, source: source,
+                                                   title: { $0.title }, sourceTitle: { $0.source.title })
 
         if calendars.isEmpty {
             let available = allCalendars.map { "\($0.title) (\($0.source.title))" }
@@ -1736,16 +1712,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         startDate: Date,
         endDate: Date,
         toleranceMinutes: Int = 5
-    ) async throws -> [DuplicatePair] {
+    ) async throws -> DuplicateSearchValue {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
-        // Get specified calendars or all
-        var calendars: [EKCalendar]?
-        if let names = calendarNames, !names.isEmpty {
-            let allCalendars = eventStore.calendars(for: .event)
-            calendars = allCalendars.filter { names.contains($0.title) }
-        }
+        // #437: never empty, which EventKit reads as all calendars.
+        let calendars = try DuplicateCalendars.resolve(names: calendarNames, among: eventStore.calendars(for: .event),
+                                                       identifier: { $0.calendarIdentifier },
+                                                       title: { $0.title }, sourceTitle: { $0.source?.title ?? "" })
 
         let events = try self.events(from: startDate, to: endDate, calendars: calendars)
 
@@ -1764,16 +1738,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 event1Id: e1.eventIdentifier ?? "",
                 event1Title: e1.title ?? "",
                 event1Calendar: e1.calendar.title,
+                event1CalendarSource: e1.calendar.source?.title ?? "",
                 event1StartDate: e1.startDate,
                 event2Id: e2.eventIdentifier ?? "",
                 event2Title: e2.title ?? "",
                 event2Calendar: e2.calendar.title,
+                event2CalendarSource: e2.calendar.source?.title ?? "",
                 event2StartDate: e2.startDate,
                 timeDifferenceSeconds: Int(pair.startDifference)
             )
         }
 
-        return duplicates
+        return DuplicateSearchValue(
+            calendarsChecked: DuplicateCalendars.checkedLabels(calendars, title: { $0.title }, sourceTitle: { $0.source?.title ?? "" }),
+            pairs: duplicates
+        )
     }
 
     /// Check for events that overlap with the given time range
@@ -2969,6 +2948,9 @@ enum EventKitError: LocalizedError {
     case calendarNotFound(identifier: String, available: [String] = [])
     case calendarNotFoundWithSource(name: String, source: String, available: [String] = [])
     case multipleCalendarsFound(name: String, sources: String)
+    /// #437: `find_duplicate_events` only compares different calendars. A count only.
+    /// `canNameMore` is false on a host with fewer than two calendars, where naming more cannot help.
+    case tooFewCalendarsToCompare(found: Int, canNameMore: Bool)
     case eventNotFound(identifier: String)
     case reminderNotFound(identifier: String)
     case calendarNameRequired(forType: String)
@@ -3092,10 +3074,7 @@ enum EventKitError: LocalizedError {
             // path. EKCalendar.title comes from CalendarStore which includes
             // shared/subscribed/CalDAV calendars whose titles are set by remote
             // publishers — same threat class as #21/#27 .ics attack. The
-            // operator hint that listed available calendars is preserved on
-            // stderr via the `EventKitError.calendarNotFound.operatorHint`
-            // computed property, which catch sites can write to stderr
-            // separately (untrusted channel).
+            // `available` list stays on the error and reaches no caller.
             return "Calendar not found: \(id)"
         case .calendarNotFoundWithSource(let name, let source, _):
             // Same reasoning as `calendarNotFound`: drop `available:` from the
@@ -3143,6 +3122,10 @@ enum EventKitError: LocalizedError {
             return reason
         case .saveUnchecked(let code):
             return "The save failed (\(code)), and a new store could not be read to check whether it was saved, so the item was not removed. It may already be saved. If it was not, it stays pending in this server's store, and the next save by this server writes it: a later row of the same batch, or a retry, which would then leave two. If it can never be written, later saves by this server may fail until it restarts (not tried), and it is dropped if the server restarts first (not tried). A check made right away proves nothing: a new store did not see such an item on device, while through this server a pending item may be listed, and a pending reminder list may be reported as existing by create_calendar, without being saved (not tried). Do not create it again until another save by this server has written it or the server has restarted. This item has no undo entry: undo removes the newest recorded operation, not this item; delete it by hand if it is not wanted."
+        case .tooFewCalendarsToCompare(let found, let canNameMore):
+            let needs = "find_duplicate_events compares events in different calendars, so it needs at least two"
+            guard canNameMore else { return "\(needs); this host has \(found). Nothing was returned." }
+            return "\(needs); \(found) found. Nothing was returned. Name two or more in calendar_names (list_calendars shows them)."
         case .calendarNotEmpty(let reason):
             return reason
         case .copyRefused(let code, let alarmKinds):
@@ -3260,14 +3243,16 @@ struct BatchDeleteResult {
     var coveredCount: Int = 0
 }
 
-struct DuplicatePair {
+struct DuplicatePair: Sendable {
     let event1Id: String
     let event1Title: String
     let event1Calendar: String
+    let event1CalendarSource: String
     let event1StartDate: Date
     let event2Id: String
     let event2Title: String
     let event2Calendar: String
+    let event2CalendarSource: String
     let event2StartDate: Date
     let timeDifferenceSeconds: Int
 }
