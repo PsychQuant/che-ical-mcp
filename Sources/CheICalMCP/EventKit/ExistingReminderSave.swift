@@ -1,44 +1,55 @@
 import EventKit
 
-/// #274: a save of a reminder that is already in the store. When it throws, `discard` runs before
-/// the error goes on, so a later, unrelated call cannot write what failed.
+/// #274: a save or a removal of a reminder that is already in the store, when it throws. The change
+/// cannot be dropped, so the error says it may still land.
 ///
 /// Measured on iCloud (2026-11-06, one store, a commit made to fail with the #261 method): the failed
-/// change stays pending in the store, and the next save of anything commits it. For an edit that was
-/// the new title; for a completion of a repeating reminder it was the rollover. `rollback()`,
-/// `reset()` and `refresh()` on the reminder did not stop it (`rollback()` only cleared
-/// `hasChanges`). `EKEventStore.reset()` did: the store kept the old values, later saves of
-/// reminders and events, a bare `commit()`, and reads and lists through the same store all worked.
-/// Reset alone leaves the failed values on the object, so it is refreshed too.
+/// change stays pending in the store, and the next save of anything commits it. That was the new
+/// title of an edit, the rollover of a repeating reminder, and a removal, which deleted the reminder
+/// with no undo record. `rollback()`, `refresh()` and `reset()` on the reminder did not stop it:
+/// `rollback()` only clears `hasChanges`, so it is here to keep the object honest, not to undo the
+/// failure. A failed save of an event or a calendar, and a failed removal of an event, left nothing
+/// pending, with or without `rollback()`.
 ///
-/// Every write of this server commits at once, so the reset drops only the write that failed. A call
-/// suspended at that moment keeps the objects it holds (an object fetched before the reset could
-/// still be read and refreshed on device). A commit that fails because of the reminder itself was
-/// not reached on device: a list deleted through another store did not make the save fail.
+/// `EKEventStore.reset()` does drop it, and PR #456 used it, but it stays out (verify of that PR).
+/// The header says "All objects ever created/fetched, etc. using this store are no longer connected
+/// to it and are considered invalid". The manager is a reentrant actor and swift-sdk runs each
+/// request in its own task, so a reset would hit unrelated calls: `createReminder` holds a calendar
+/// across `await findDuplicateReminder`, the undo paths hold objects across awaits, the handlers read
+/// `EKEvent`s off the actor, and a `fetchReminders` in flight might never call back. That means false
+/// successes, hangs or a crash in calls that did nothing wrong, against a rare failure whose change
+/// is what the caller asked for. What a reset would need is on #459.
 enum ExistingReminderSave {
     /// Closure seam (#182), so the order is tested without a store.
-    static func run(save: () throws -> Void, discard: () -> Void) throws {
+    static func run(write: () throws -> Void, rollback: () -> Void, report: (Error) -> Error) throws {
         do {
-            try save()
+            try write()
         } catch {
-            discard()
-            throw error
+            rollback()
+            throw report(error)
         }
     }
 }
 
 extension EventKitManager {
-    func saveExistingReminder(_ reminder: EKReminder) throws {
-        try ExistingReminderSave.run(save: { try eventStore.save(reminder, commit: true) },
-                                     discard: { discardFailedSave(of: reminder) })
+    /// `handler` names the failure on stderr; the response gets the code and the warning.
+    func saveExistingReminder(_ reminder: EKReminder, handler: String) throws {
+        try ExistingReminderSave.run(
+            write: { try eventStore.save(reminder, commit: true) },
+            rollback: { reminder.rollback() },
+            report: { error in
+                EventKitError.reminderSaveMayLand(code: EventKitErrorSanitizer.writeFailureLog(
+                    handler: handler, identifier: reminder.calendarItemIdentifier, error: error))
+            })
     }
 
-    /// The discard behind `ExistingReminderSave`, also what `update_reminder` and the create
-    /// fallback hand their seams as `rollback`.
-    func discardFailedSave(of reminder: EKReminder) {
-        reminder.rollback()
-        eventStore.reset()
-        _ = reminder.refresh()
-        markNeedsRefresh()
+    func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {
+        try ExistingReminderSave.run(
+            write: { try eventStore.remove(reminder, commit: true) },
+            rollback: { reminder.rollback() },
+            report: { error in
+                EventKitError.reminderRemovalMayLand(code: EventKitErrorSanitizer.writeFailureLog(
+                    handler: handler, identifier: reminder.calendarItemIdentifier, error: error))
+            })
     }
 }

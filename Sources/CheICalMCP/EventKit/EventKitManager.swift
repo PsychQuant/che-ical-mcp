@@ -1334,9 +1334,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // #373 verify round 2: a failed save (a read-only calendar, an alarm or recurrence EventKit
-        // rejects) would leave every field assigned above on the cached event, where a later save
-        // in this process could write it. Discard every unsaved change before rethrowing, as the
-        // move path does.
+        // rejects) would leave every field assigned above on the cached event. Discard every unsaved
+        // change before rethrowing, as the move path does. #274 measured it (iCloud, 2026-11-06): a
+        // failed save of an event, a series or a calendar change left nothing pending, with or without
+        // this, and saving the same object again did not write the failed title either. It clears
+        // `hasChanges`; it is not what stops the change. Reminders differ (`ExistingReminderSave`).
         do {
             try eventStore.save(event, span: span)
         } catch {
@@ -2265,7 +2267,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers,
                                                     save: { try eventStore.save(reminder, commit: true) },
                                                     reload: { reminder.refresh() },
-                                                    rollback: { discardFailedSave(of: reminder) })
+                                                    rollback: { reminder.rollback() })
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
                                           dateSync: dateSync,
                                           storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) })
@@ -2361,9 +2363,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let oldSnapshot = ReminderSnapshot(from: reminder)
         let dateSync = try ReminderUpdateWrite.apply(
             request, to: reminder, calendar: calendar,
-            save: { try store.save(reminder, commit: true) },
+            save: { try saveExistingReminder(reminder, handler: "updateReminder") },
             reload: { reminder.refresh() },
-            rollback: { discardFailedSave(of: reminder) })
+            rollback: { reminder.rollback() })
         markNeedsRefresh()
         let result = ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
@@ -2401,7 +2403,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         let snapshot = ReminderSnapshot(from: reminder)
-        try eventStore.remove(reminder, commit: true)
+        try removeExistingReminder(reminder, handler: "deleteReminder")
         markNeedsRefresh()
         await CalendarUndoManager.shared.record(.deleteReminder(snapshot: snapshot))
     }
@@ -2727,7 +2729,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // the identifier may only be unresolvable (moved to another account, recreated under
             // a new identifier by a delete-undo), and the spec keeps not-found records.
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
-            try eventStore.remove(reminder, commit: true)
+            try removeExistingReminder(reminder, handler: "undo")
             markNeedsRefresh()
             return "Undone: removed created reminder '\(undoVisibleTitle(title))'"
 
@@ -2738,14 +2740,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
             let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })
-            try saveExistingReminder(reminder)
+            try saveExistingReminder(reminder, handler: "undo")
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
 
         case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-            try saveExistingReminder(reminder)
+            try saveExistingReminder(reminder, handler: "undo")
             markNeedsRefresh()
             return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)"
 
@@ -2851,7 +2853,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // while the reminder is in the state the undo left (#236).
             let reminder = try await verifiedReminder(of: operation, verb: .redo)
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-            try saveExistingReminder(reminder)
+            try saveExistingReminder(reminder, handler: "redo")
             markNeedsRefresh()
             return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)"
 
@@ -3049,6 +3051,10 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
+    /// #274: a save or a removal of an existing reminder failed, and it stays pending in the store,
+    /// where the next save of anything can commit it (`ExistingReminderSave`). `code` is sanitized.
+    case reminderSaveMayLand(code: String)
+    case reminderRemovalMayLand(code: String)
     /// PR #439 verify: `recurrence` or `clear_recurrence` on one occurrence (span this), or
     /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
     /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
@@ -3175,6 +3181,10 @@ enum EventKitError: LocalizedError {
             return reason
         case .standInRefused(let reason):
             return reason
+        case .reminderSaveMayLand(let code):
+            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes. Read the reminder back before trying again."
+        case .reminderRemovalMayLand(let code):
+            return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying again."
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
             let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."

@@ -77,15 +77,15 @@
     },
     {
       "name": "update_reminder",
-      "description": "Update an existing reminder (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values); unknown recurrence keys are refused"
+      "description": "Update an existing reminder; a failed save may still land with the next save, so read it back before retrying (including tags, clear_due_date, recurrence and clear_recurrence (a rule change does not move the due date; recurrence_note says when it is off the rule's days), alarms_minutes_offsets, which replaces only the relative alarms, with alarms_note when relative alarms are left on a reminder made date-only or undated; changing due_date also moves the start date and absolute-date alarms, a bare YYYY-MM-DD due_date makes it date-only and removes absolute-date alarms, realign_to_due puts them onto the due date, date_sync reports whether they agree; the response's id is the identifier after the save, with id_changed and previous_id) (annotated destructive: updates can replace or clear existing values); unknown recurrence keys are refused"
     },
     {
       "name": "complete_reminder",
-      "description": "Complete or reopen a reminder with an explicit operation result and observed next occurrence with its relative alarms (alarms_minutes_offsets), plus a top-level alarms_note when one appeared on the read-back (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
+      "description": "Complete or reopen a reminder (a failed save may still land with the next save, so read it back before retrying) with an explicit operation result and observed next occurrence with its relative alarms (alarms_minutes_offsets), plus a top-level alarms_note when one appeared on the read-back (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
     },
     {
       "name": "delete_reminder",
-      "description": "Delete a reminder"
+      "description": "Delete a reminder (a failed deletion may still land with the next save: read back before retrying)"
     },
     {
       "name": "search_events",
@@ -133,7 +133,7 @@
     },
     {
       "name": "delete_reminders_batch",
-      "description": "Delete multiple reminders at once (one undo recreates them from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder)"
+      "description": "Delete multiple reminders at once (a failed row may still be deleted by the next save: read back before retrying; one undo recreates them from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder)"
     },
     {
       "name": "list_reminder_tags",

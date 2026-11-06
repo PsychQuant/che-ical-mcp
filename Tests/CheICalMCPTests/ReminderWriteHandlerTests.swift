@@ -339,7 +339,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertTrue(flat.contains("dateReport = ReminderDateSync.setDueDay(reminder, to: day)"), flat)
         // #308: the same read-back judges a timed create, with the store's real save and rollback
         // (`ReminderCreateWriteTests` pins the order against the undo record).
-        XCTAssertTrue(flat.contains("ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { discardFailedSave(of: reminder) })"), flat)
+        XCTAssertTrue(flat.contains("ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { reminder.rollback() })"), flat)
         XCTAssertTrue(flat.contains("dateSync: dateSync"), flat)
         let save = try XCTUnwrap(flat.range(of: "saveNewReminder("))
         let confirm = try XCTUnwrap(flat.range(of: "ReminderCreateWrite.readBack("))

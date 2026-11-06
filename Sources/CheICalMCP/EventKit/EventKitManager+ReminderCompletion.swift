@@ -17,7 +17,7 @@ extension EventKitManager {
         let beforeRelativeAlarms = ReminderRelativeAlarms.storedMinutesBefore(reminder)
         ReminderCompletionWrite.applyRequest(to: reminder, completed: completed, now: Date())
         let writtenCompletionDate = reminder.completionDate
-        try saveExistingReminder(reminder)
+        try saveExistingReminder(reminder, handler: "completeReminder")
         // Observe exactly once, synchronously, before any suspension point. On
         // iCloud (on-device probe, PR #195) save advances a recurring reminder in
         // place, so this read already reflects the successor; a store that surfaces
@@ -63,7 +63,7 @@ extension EventKitManager {
     func undoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot) async throws -> String {
         let reminder = try await verifiedReminder(of: operation, verb: .undo)
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-        try saveExistingReminder(reminder)
+        try saveExistingReminder(reminder, handler: "undo")
         markNeedsRefresh()
         return "Undone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(before.isCompleted)"
     }
@@ -71,7 +71,7 @@ extension EventKitManager {
     func redoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot, requestedCompleted: Bool) async throws -> String {
         let reminder = try await verifiedReminder(of: operation, verb: .redo)
         try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-        try saveExistingReminder(reminder)
+        try saveExistingReminder(reminder, handler: "redo")
         markNeedsRefresh()
         return "Redone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(requestedCompleted)"
     }

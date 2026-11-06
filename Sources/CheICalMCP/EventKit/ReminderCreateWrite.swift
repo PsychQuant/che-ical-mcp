@@ -25,13 +25,13 @@ enum ReminderCreateWrite {
 
     /// Judges a created reminder after its save, or returns nil for a create without a due date
     /// (nothing to judge; it is not re-read). `save` writes to the store, `reload` re-reads the
-    /// reminder (`EKObject.refresh()`), `rollback` discards the failed change.
+    /// reminder (`EKObject.refresh()`), `rollback` is `EKObject.rollback()`.
     ///
     /// A timed due that read back without its time or zone runs the #237 fallback, which saves the
     /// reminder a second time. A failed second save calls `rollback` and is reported as
-    /// `aligned: false`, never thrown, since the create itself is saved. The caller's `rollback`
-    /// is `discardFailedSave(of:)`: `EKObject.rollback()` alone did not drop the pending change
-    /// (#274, `ExistingReminderSave`).
+    /// `aligned: false`, never thrown, since the create itself is saved. `rollback` does not
+    /// drop the change (#274, `ExistingReminderSave`), so that second save may still land with the
+    /// next save; what it writes is the due date the caller asked for.
     /// A date-only due never runs the fallback.
     ///
     /// `storeDiffers` is what `saveNewReminder` returned. Non-empty means the first save threw and a

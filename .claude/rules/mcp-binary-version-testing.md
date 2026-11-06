@@ -354,8 +354,8 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
 `reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
 `rollback` 有被呼叫。#274 的探測（2026-11-06）已回答：`EKObject.rollback()` **不會**丟掉已在 store 的
-提醒事項上待存的改動，下一次存檔仍會寫入；要 `EKEventStore.reset()`，所以 `rollback` 現在是
-`discardFailedSave(of:)`（見 `ExistingReminderSave`）。
+提醒事項上待存的改動，下一次存檔仍會寫入（見 `ExistingReminderSave`，那裡也寫了為什麼不用
+`EKEventStore.reset()`）。所以這次 fallback 存檔失敗時，改動可能隨下一次存檔落地。
 
 前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
 讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
@@ -364,8 +364,7 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
    `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
    `create_reminder: the saved due date read back without its time or zone` 這行。
-2. 沒有這樣的來源時，這一步不能在裝置上做。丟棄本身已由 #274 的探測量過，fallback 這條路徑上的那次失敗
-   沒有誘發過，release note 照 CHANGELOG 的寫法說明。
+2. 沒有這樣的來源時，這一步不能在裝置上做，fallback 這條路徑上的失敗沒有誘發過，release note 照 CHANGELOG 的寫法說明。
 
 結果記在 #308。結束後刪掉拋棄式清單。
 
