@@ -304,9 +304,11 @@ final class ManifestParityTests: XCTestCase {
         let declared = tool?.description ?? ""
         XCTAssertTrue(declared.contains("A name that matches no calendar, or fewer than two calendars, is refused and nothing is returned"), declared)
         XCTAssertTrue(declared.contains("calendars_checked lists the calendars read"), declared)
+        XCTAssertTrue(declared.contains("Each side of a pair gives calendar and calendar_source"), declared)
         let schema = "\(String(describing: tool?.inputSchema))"
         XCTAssertTrue(schema.contains("matched as the other tools match them"), schema)
         XCTAssertTrue(schema.contains("A name two accounts share reads both"), schema)
+        XCTAssertTrue(schema.contains("not a label from calendars_checked"), schema)
         let summary = entries.first { $0["name"] as? String == "find_duplicate_events" }?["description"] as? String ?? ""
         XCTAssertTrue(summary.contains("calendar_names that match nothing, or fewer than two calendars, are refused"), summary)
     }

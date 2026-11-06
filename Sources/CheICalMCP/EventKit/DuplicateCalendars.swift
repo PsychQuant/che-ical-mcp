@@ -31,11 +31,13 @@ enum DuplicateCalendars {
                 read += matched.filter { seen.insert(identifier($0)).inserted }
             }
         }
-        guard read.count >= 2 else { throw EventKitError.tooFewCalendarsToCompare(found: read.count) }
+        guard read.count >= 2 else { throw EventKitError.tooFewCalendarsToCompare(found: read.count, named: names != nil) }
         return read
     }
 
-    /// `calendars_checked`: the titles read, with the account where two share a title.
+    /// `calendars_checked`: the titles read, with the account where two share a title. For reading,
+    /// not a name to pass back: `calendar_names` takes titles. Two calendars of one title in one
+    /// account get one label.
     static func checkedLabels<Item>(_ read: [Item], title: (Item) -> String,
                                         sourceTitle: (Item) -> String) -> [String] {
         let titles = read.map(title)

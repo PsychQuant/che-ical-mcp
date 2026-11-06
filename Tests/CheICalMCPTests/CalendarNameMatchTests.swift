@@ -49,10 +49,30 @@ final class CalendarNameMatchTests: XCTestCase {
         for declaration in ["func findCalendar(", "func findCalendars("] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: manager), declaration)
             XCTAssertEqual(SourcePins.ranges(of: "CalendarNameMatch.matching(", in: body).count, 1, declaration)
+            // PR #440 verify round 1: `calendar_source` narrows the lookup only if it reaches the match.
+            XCTAssertEqual(SourcePins.ranges(of: "CalendarNameMatch.matching(allCalendars, name: name, source: source,", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: "sourceTitle: { $0.source.title }", in: body).count, 1, declaration)
             for refusal in ["calendarNotFoundWithSource(", "calendarNotFound(", "multipleCalendarsFound("] {
                 XCTAssertEqual(SourcePins.ranges(of: "EventKitError.\(refusal)", in: body).count, 1, "\(declaration) \(refusal)")
             }
         }
+    }
+
+    /// PR #440 verify round 1: an in-memory store cannot run `findDuplicateEvents`, and restoring
+    /// the old filter there would leave every other test green. It reads what the resolver resolved,
+    /// reports what it read, and says which account each side of a pair is in.
+    func testTheManagerReadsWhatTheResolverResolved() throws {
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        let body = try XCTUnwrap(SourcePins.body(of: "func findDuplicateEvents(", in: manager))
+        XCTAssertEqual(SourcePins.ranges(of: "let calendars = try DuplicateCalendars.resolve(", in: body).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "DuplicateCalendars.checkedLabels(calendars,", in: body).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "try self.events(from: startDate, to: endDate, calendars: calendars)", in: body).count, 1)
+        let resolve = try XCTUnwrap(SourcePins.ranges(of: "DuplicateCalendars.resolve(", in: body).first)
+        let read = try XCTUnwrap(SourcePins.ranges(of: "self.events(from:", in: body).first)
+        XCTAssertLessThan(resolve.lowerBound, read.lowerBound)
+        XCTAssertTrue(SourcePins.ranges(of: "names.contains", in: body).isEmpty)
+        XCTAssertEqual(SourcePins.ranges(of: "event1CalendarSource: e1.calendar.source.title", in: body).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "event2CalendarSource: e2.calendar.source.title", in: body).count, 1)
     }
 
     // MARK: what find_duplicate_events reads
@@ -82,27 +102,38 @@ final class CalendarNameMatchTests: XCTestCase {
     }
 
     func testFewerThanTwoCalendarsIsRefused() {
-        let cases: [([String]?, [Cal], Int)] = [
-            (["Work"], [work, home], 1),
-            (["Work", "work", "WORK"], [work, home], 1),   // one calendar, named three ways
-            (nil, [work], 1),
-            (nil, [], 0)
+        let cases: [([String]?, [Cal], Int, Bool)] = [
+            (["Work"], [work, home], 1, true),
+            (["Work", "work", "WORK"], [work, home], 1, true),   // one calendar, named three ways
+            (nil, [work], 1, false),
+            (nil, [], 0, false)
         ]
-        for (names, all, found) in cases {
+        for (names, all, found, named) in cases {
             XCTAssertThrowsError(try resolve(names, all), "\(String(describing: names))") { error in
-                guard case EventKitError.tooFewCalendarsToCompare(let count) = error else { return XCTFail("\(error)") }
+                guard case EventKitError.tooFewCalendarsToCompare(let count, let wasNamed) = error else { return XCTFail("\(error)") }
                 XCTAssertEqual(count, found)
+                XCTAssertEqual(wasNamed, named)
             }
         }
     }
 
     func testTheRefusalSaysWhyAndIsTrusted() {
-        let error = EventKitError.tooFewCalendarsToCompare(found: 1)
+        let error = EventKitError.tooFewCalendarsToCompare(found: 1, named: true)
         XCTAssertTrue((error as Error) is TrustedErrorMessage)
         let text = error.localizedDescription
         for phrase in ["at least two", "1 found", "different calendars", "Nothing was returned", "calendar_names"] {
             XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
         }
+    }
+
+    /// PR #440 verify round 1: with no names there is nothing to name, so the refusal must not
+    /// tell the caller to name more.
+    func testTheRefusalWithNoNamesDoesNotAdviseNamingMore() {
+        let text = EventKitError.tooFewCalendarsToCompare(found: 1, named: false).localizedDescription
+        for phrase in ["at least two", "this host has 1", "Nothing was returned"] {
+            XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)")
+        }
+        XCTAssertFalse(text.contains("calendar_names"), text)
     }
 
     // MARK: calendars_checked

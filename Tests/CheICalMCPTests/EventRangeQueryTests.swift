@@ -222,7 +222,7 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertFalse(conflicts.contains("limit"), conflicts)
     }
 
-    /// The two handlers with no seam word the refusal for themselves: dropping either catch would
+    /// The two handlers word the refusal for themselves: dropping either catch would
     /// bring back the listing's advice, which tells find_duplicate_events to read one calendar and
     /// check_conflicts about a limit it does not have.
     func testTheConflictAndDuplicateHandlersWordTheRefusal() throws {
