@@ -18,6 +18,59 @@ final class EventMoveUndoTests: XCTestCase {
     }
 }
 
+/// #435: within a Google account a move changed the identifier, and so did its undo. Older records
+/// named the event by the old one, and an older create record then answered not found (measured).
+final class EventMoveIdentifierTests: XCTestCase {
+    private let snapshot = UndoSnapshotFixtures.event(title: "Standup")
+
+    private func id(of operation: UndoOperation) -> String? {
+        switch operation {
+        case .createEvent(let id, _, _), .updateEvent(let id, _, _), .updateRecurringEvent(let id, _, _): return id
+        case .moveEvent(let id, _, _, _, _): return id
+        default: return nil
+        }
+    }
+
+    func testEveryRecordThatNamesTheEventFollowsIt() {
+        let named: [UndoOperation] = [
+            .createEvent(id: "old", title: "Standup", created: snapshot),
+            .updateEvent(id: "old", oldSnapshot: snapshot, saved: snapshot),
+            .updateRecurringEvent(id: "old", title: "Standup", kind: .rulesRemoved),
+            .moveEvent(id: "old", fromCalendarIdentifier: "A", toCalendarIdentifier: "B", title: "Standup", isSeries: false)
+        ]
+        for operation in named {
+            XCTAssertEqual(id(of: operation.replacingEventIdentifier("old", with: "new")), "new", operation.description)
+            XCTAssertEqual(id(of: operation.replacingEventIdentifier("other", with: "new")), "old", "another event: \(operation.description)")
+        }
+        guard case .batch(let members) = UndoOperation.batch(named).replacingEventIdentifier("old", with: "new") else {
+            return XCTFail("a batch stays a batch")
+        }
+        XCTAssertEqual(members.compactMap { id(of: $0) }, ["new", "new", "new", "new"], "inside a batch too")
+    }
+
+    func testTheStackFollowsItAndKeepsItsRecords() async throws {
+        let manager = CalendarUndoManager()
+        await manager.record(.createEvent(id: "old", title: "Standup", created: snapshot))
+        await manager.record(.createEvent(id: "other", title: "Other", created: snapshot))
+        let before = await manager.historySnapshot().entries.map(\.id)
+        await manager.replaceEventIdentifier("old", with: "new")
+        let after = await manager.historySnapshot().entries.map(\.id)
+        XCTAssertEqual(before, after, "the same history entries")
+        let top = try await XCTUnwrapAsync(await manager.popUndo())
+        XCTAssertEqual(id(of: top.operation), "other")
+        let older = try await XCTUnwrapAsync(await manager.popUndo())
+        XCTAssertEqual(id(of: older.operation), "new")
+    }
+
+    private func XCTUnwrapAsync<T>(_ value: T?) async throws -> T { try XCTUnwrap(value) }
+
+    func testTheMoveAndItsUndoReportAndFollow() throws {
+        let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertTrue(source.contains("if let restoredID = event.eventIdentifier, restoredID != movedID { await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID) return \"Undone: moved event '\\(undoVisibleTitle(title))' back to its original calendar (new ID: \\(restoredID))\" }"), "the undo")
+        XCTAssertTrue(source.contains("if result.eventIdentifier != identifier, !result.eventIdentifier.isEmpty, result.method == .inPlace { await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier) }"), "the move")
+    }
+}
+
 /// #369: the undo of a whole-series move resolves its target through the stand-in, as the move
 /// did (#326); every other record keeps the plain lookup.
 final class EventMoveUndoStandInTests: XCTestCase {
