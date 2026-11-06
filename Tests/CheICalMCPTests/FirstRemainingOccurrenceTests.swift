@@ -66,6 +66,20 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
     }
 
+    /// #416: the `event_ids` dry run judges the bare id as if the occurrences this call deletes
+    /// first were gone, as they are when the real call reaches that row. Only those: another edited
+    /// occurrence before the stand-in still blocks it.
+    func testAnEditedOccurrenceTheCallDeletesFirstDoesNotBlock() {
+        let listed = [candidate("S/RID=1", detached: true, rules: false, dayOffset: 2, slotOffset: 0),
+                      candidate("S", dayOffset: 7),
+                      candidate("S", dayOffset: 14)]
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S"))
+        XCTAssertEqual(FirstRemainingOccurrence.pick(listed, identifier: "S", goneInTheCall: ["S/RID=1"]), 1)
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed, identifier: "S", goneInTheCall: ["S/RID=9"]))
+        XCTAssertNil(FirstRemainingOccurrence.pick(listed + [candidate("S/RID=2", detached: true, rules: false, dayOffset: 3, slotOffset: 3)],
+                                                   identifier: "S", goneInTheCall: ["S/RID=1"]))
+    }
+
     /// The refusal is conservative about how an edited occurrence is tied to its series (verify
     /// round 2): a detached occurrence that kept the bare series id, and one that other stores give
     /// an unrelated identifier but the same iCalendar UID (the external identifier), count too.

@@ -8,6 +8,7 @@ import XCTest
 /// source. What lives inside `EventKitManager.deleteEventsBatch` (exact-slot lookup, when a span
 /// "future" removal is recorded, `/RID=` identifiers, the count behind `already_removed`) is not
 /// reachable from here; `FutureDeletionCoverageTests` and the device checks cover it.
+/// `SeriesModel` below is the other double: one series as data, for the `event_ids` rows.
 private actor BatchDeletionFake: EventBatchDeletionSource {
     struct ListCall: Equatable { let start: Date; let end: Date; let calendarName: String?; let calendarSource: String? }
     struct DeleteCall: Equatable { let identifiers: [String]; let occurrenceDates: [Date?]; let span: EKSpan; let slots: [Date?]? }
@@ -50,7 +51,78 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
         return result
     }
 
+    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+        .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))
+    }
+
     var anyDelete: Bool { !deleteCalls.isEmpty || !seriesCalls.isEmpty }
+}
+
+/// #416: one series held as data. The dry run and the real call each walk the rows through the
+/// rules the manager uses (`FirstRemainingOccurrence.pick`, `DetachedOccurrenceSpan`), over what is
+/// left when the row is reached, so a test compares the two answers instead of scripting them. The
+/// first slot is taken out of the series (deleted, or edited at its original start), so the bare id
+/// reaches the series through the stand-in, as on iCloud (#326, #428).
+private actor SeriesModel: EventBatchDeletionSource {
+    private let series: String
+    private var occurrences: [FirstRemainingOccurrence.Candidate]
+
+    init(series: String, occurrences: [FirstRemainingOccurrence.Candidate]) {
+        self.series = series
+        self.occurrences = occurrences
+    }
+
+    var left: Int { occurrences.count }
+
+    /// nil when the row goes ahead; a refusal; or a throw, as the bare id's edited-before refusal.
+    private func judge(_ id: String, named: Set<String>, gone: Set<String>) throws -> String? {
+        guard id != series else {
+            guard FirstRemainingOccurrence.pick(occurrences, identifier: series, goneInTheCall: gone) != nil else {
+                throw EventKitError.standInRefused(reason: EventKitManager.standInEditedBeforeBatchReason)
+            }
+            return nil
+        }
+        guard let own = occurrences.first(where: { $0.eventIdentifier == id }) else {
+            throw EventKitError.eventNotFound(identifier: id)
+        }
+        return DetachedOccurrenceSpan.seriesDeleteRefusal(
+            identifier: id, isDetached: own.isDetached, batch: true,
+            neighbours: DetachedOccurrenceSpan.neighbours(of: id, slot: own.slot ?? own.start, among: occurrences,
+                                                          coversWholeSeries: true, namedInTheCall: named))
+    }
+
+    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+        if let refusal = try judge(identifier, named: namedInTheCall, gone: goneInTheCall) { return .refused(refusal) }
+        return .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 3600))
+    }
+
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+        var succeeded = 0
+        var failures: [(String, String)] = []
+        for id in identifiers {
+            do {
+                if let refusal = try judge(id, named: Set(identifiers), gone: []) {
+                    failures.append((id, refusal))
+                    continue
+                }
+                occurrences.removeAll { $0.eventIdentifier == id }
+                succeeded += 1
+            } catch {
+                failures.append((id, "refused"))
+            }
+        }
+        return BatchDeleteResult(successCount: succeeded, failedCount: failures.count, failures: failures)
+    }
+
+    func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
+                               calendarSource: String?) async throws -> [BatchDeletionListedEvent] { [] }
+
+    func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
+                           slots: [Date?]?) async throws -> BatchDeleteResult {
+        BatchDeleteResult(successCount: 0, failedCount: 0, failures: [])
+    }
 }
 
 final class DeleteEventsBatchHandlerTests: XCTestCase {
@@ -301,5 +373,87 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         _ = try await call(range, args(after: base, before: base.addingTimeInterval(10 * day), span: "all", dryRun: false))
         let rangeRefusals = await range.seriesRefusals
         XCTAssertEqual(rangeRefusals, [false])
+    }
+
+    // MARK: - #416: the event_ids dry run and the real call agree
+
+    private let series = "S"
+
+    private func unedited(_ days: Double) -> FirstRemainingOccurrence.Candidate {
+        .init(eventIdentifier: series, isDetached: false, hasRecurrenceRules: true, start: base.addingTimeInterval(days * day))
+    }
+
+    private func editedOccurrence(_ days: Double) -> FirstRemainingOccurrence.Candidate {
+        let slot = base.addingTimeInterval(days * day)
+        return .init(eventIdentifier: ownId(days), isDetached: true, hasRecurrenceRules: false, start: slot, slot: slot)
+    }
+
+    private func ownId(_ days: Double) -> String { "\(series)/RID=\(Int(base.timeIntervalSince1970 + days * day))" }
+
+    /// What each mode says about the same call on a fresh copy of the series.
+    private func dryRunAndRealCall(_ occurrences: [FirstRemainingOccurrence.Candidate], ids: [String]) async throws
+        -> (dry: [[String: Any]], total: Int?, real: [String: Any], left: Int) {
+        let args: [String: Value] = ["event_ids": .array(ids.map { .string($0) }), "span": .string("all")]
+        let dryServer = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(series: series, occurrences: occurrences))
+        var dryArgs = args
+        dryArgs["dry_run"] = .bool(true)
+        let dry = try object(await dryServer.executeToolCall(name: "delete_events_batch", arguments: dryArgs))
+        let model = SeriesModel(series: series, occurrences: occurrences)
+        let realServer = try await CheICalMCPServer(eventBatchDeletionSource: model)
+        var realArgs = args
+        realArgs["dry_run"] = .bool(false)
+        let real = try object(await realServer.executeToolCall(name: "delete_events_batch", arguments: realArgs))
+        return (try XCTUnwrap(dry["events_to_delete"] as? [[String: Any]]), dry["total"] as? Int, real, await model.left)
+    }
+
+    private func assertSameAnswer(_ occurrences: [FirstRemainingOccurrence.Candidate], ids: [String], deletes: Int, left: Int,
+                                  file: StaticString = #filePath, line: UInt = #line) async throws {
+        let answer = try await dryRunAndRealCall(occurrences, ids: ids)
+        let previewed = answer.dry.filter { $0["error"] == nil }.count
+        XCTAssertEqual(previewed, deletes, "\(answer.dry)", file: file, line: line)
+        XCTAssertEqual(answer.real["succeeded"] as? Int, deletes, "\(answer.real)", file: file, line: line)
+        XCTAssertEqual(answer.real["failed"] as? Int, answer.dry.count - previewed, "\(answer.real)", file: file, line: line)
+        XCTAssertEqual(answer.total, answer.real["total"] as? Int, file: file, line: line)
+        XCTAssertEqual(answer.left, left, file: file, line: line)
+    }
+
+    /// [S, S/RID=first], first occurrence edited: the occurrence's row runs first, and the bare id
+    /// is judged with it gone. The dry run used to refuse S and list one deletion, while the real
+    /// call deleted everything. In either order of the ids.
+    func testTheDryRunShowsTheWholeDeleteWhenTheFirstOccurrenceWasEdited() async throws {
+        let shape = [editedOccurrence(0), unedited(7), unedited(14), unedited(21), unedited(28)]
+        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 2, left: 0)
+        try await assertSameAnswer(shape, ids: [ownId(0), series], deletes: 2, left: 0)
+    }
+
+    /// The first occurrence deleted, the first one left edited: the same rows, the same answer.
+    func testTheDryRunShowsTheWholeDeleteWhenTheFirstLeftWasEdited() async throws {
+        let shape = [editedOccurrence(7), unedited(14), unedited(21), unedited(28)]
+        try await assertSameAnswer(shape, ids: [series, ownId(7)], deletes: 2, left: 0)
+    }
+
+    /// Another edited occurrence the call does not name: the occurrence's row is refused, so it is
+    /// not gone, and the bare id stays refused. Both modes refuse both rows and nothing is deleted.
+    func testTheDryRunRefusesBothRowsWhenAnEditedOccurrenceIsNotNamed() async throws {
+        let shape = [editedOccurrence(0), unedited(7), editedOccurrence(14), unedited(21)]
+        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 0, left: 4)
+    }
+
+    /// Every edited occurrence named: each runs first, and the bare id then reaches the rest.
+    func testTheDryRunShowsTheWholeDeleteWhenEveryEditedOccurrenceIsNamed() async throws {
+        let shape = [editedOccurrence(0), unedited(7), editedOccurrence(14), unedited(21)]
+        try await assertSameAnswer(shape, ids: [series, ownId(14), ownId(0)], deletes: 3, left: 0)
+    }
+
+    /// The bare id alone: refused in both modes, nothing deleted.
+    func testTheDryRunRefusesTheBareIdAlone() async throws {
+        let shape = [editedOccurrence(0), unedited(7), unedited(14)]
+        try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 3)
+    }
+
+    /// `total` counts each id once, as the real call does.
+    func testTheDryRunCountsARepeatedIdOnce() async throws {
+        let shape = [editedOccurrence(0), unedited(7)]
+        try await assertSameAnswer(shape, ids: [series, ownId(0), series], deletes: 2, left: 0)
     }
 }

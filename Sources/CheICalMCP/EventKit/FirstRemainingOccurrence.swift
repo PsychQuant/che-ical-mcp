@@ -39,7 +39,11 @@ enum FirstRemainingOccurrence {
     /// move changes the calendar of the whole series and a copy copies one occurrence, so neither
     /// leaves an edited occurrence behind (device, iCloud, 2026-10-20), whereas a delete from the
     /// stand-in does.
-    static func pick(_ candidates: [Candidate], identifier: String, refuseWhenEditedBefore: Bool = true) -> Int? {
+    ///
+    /// `goneInTheCall` (#416): identifiers an `event_ids` dry run has already passed. They do not
+    /// count as edited before the stand-in, as they are deleted by the time the real call gets here.
+    static func pick(_ candidates: [Candidate], identifier: String, refuseWhenEditedBefore: Bool = true,
+                     goneInTheCall: Set<String> = []) -> Int? {
         var best: Int?
         for (index, candidate) in candidates.enumerated() {
             guard candidate.eventIdentifier == identifier, !candidate.isDetached, candidate.hasRecurrenceRules else { continue }
@@ -50,7 +54,7 @@ enum FirstRemainingOccurrence {
         guard refuseWhenEditedBefore else { return best }
         let standIn = candidates[best].start
         let editedBefore = candidates.contains { candidate in
-            guard candidate.isDetached else { return false }
+            guard candidate.isDetached, !goneInTheCall.contains(candidate.eventIdentifier ?? "") else { return false }
             let id = candidate.eventIdentifier
             let ofTheSeries = id == identifier || (id?.hasPrefix(identifier + "/") ?? false) || candidate.sameSeriesByExternalID
             return ofTheSeries && (candidate.slot ?? candidate.start) < standIn
@@ -196,13 +200,6 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
-    /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
-    /// refresh (#326): read it with care. nil without a `/RID=` part: nothing says what the series'
-    /// identifier is (#320).
-    func seriesObject(ofOccurrence id: String) -> EKEvent? {
-        DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { storedEvent(id: $0) }
-    }
-
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and
     /// addressed by its own `id`. nil when the series cannot be listed or the scan did not reach
     /// the occurrence. `seriesOccurrences` reads the series object with care, so one that fails to
@@ -222,7 +219,7 @@ extension EventKitManager {
             of: id, slot: slot, among: candidates,
             coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries(
                 rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-                firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.current),
+                firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current)),
             namedInTheCall: namedInTheCall)
     }
 
@@ -230,11 +227,6 @@ extension EventKitManager {
     func seriesDeleteRefusal(_ event: EKEvent, id: String, namedInTheCall: Set<String> = [], batch: Bool = false) -> String? {
         DetachedOccurrenceSpan.seriesDeleteRefusal(identifier: id, isDetached: event.isDetached, batch: batch,
                                                    neighbours: occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))
-    }
-
-    /// The same for the `delete_events_batch` dry run, which holds no event.
-    func seriesDeleteRefusal(identifier: String, namedInTheCall: Set<String>) -> String? {
-        freshEvent(id: identifier).flatMap { seriesDeleteRefusal($0, id: identifier, namedInTheCall: namedInTheCall, batch: true) }
     }
 
     /// #416: whether `date` is the day of `occurrence`, by the time it shows or by its original slot:
@@ -258,9 +250,11 @@ extension EventKitManager {
     /// series with rules is searched (a one-off or a deleted event is not, which also spares the
     /// scan), `startDate` is optional-checked, and the series' own calendar is required, never
     /// widened to all calendars.
-    func firstRemainingOccurrence(of stale: EKEvent, id: String, refuseWhenEditedBefore: Bool = true) -> EKEvent? {
+    func firstRemainingOccurrence(of stale: EKEvent, id: String, refuseWhenEditedBefore: Bool = true,
+                                  goneInTheCall: Set<String> = []) -> EKEvent? {
         guard let (listed, candidates) = seriesOccurrences(of: stale, id: id) else { return nil }
-        guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore),
+        guard let index = FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore,
+                                                        goneInTheCall: goneInTheCall),
               listed[index].refresh() else { return nil }
         return listed[index]
     }

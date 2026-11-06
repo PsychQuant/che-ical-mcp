@@ -1125,9 +1125,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         let masterEvent = resolved.event
         // #416: span 'all' through an occurrence edited on its own, with an earlier one left, splits
-        // the series (device, iCloud); refused before anything is read into the update or written.
+        // the series (device, iCloud), and a date written through it with span 'all' or 'future'
+        // gives the other occurrences this one's time, length or day (device, PR #431 round 4);
+        // refused before anything is read into the update or written.
         if let refusal = DetachedOccurrenceSpan.updateRefusal(
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
+            futureSpan: span == .futureEvents,
+            changesDates: startDate != nil || endDate != nil || isAllDay != nil || timezone != nil || clearTimezone,
             neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
@@ -1247,16 +1251,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Read from the values the event will have after this update: the planned start, in the
         // zone WeekdayCheck.zone picks (the host zone for an all-day result).
         let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
-        // #416 round 2: the detached object has no rules of its own; a new start over the series
-        // still has to fit the series' rule. Without a new start there is nothing to check: the
-        // occurrence may already show another weekday (it does not spread, round 3).
-        let rulesForWeekday = masterEvent.isDetached && (applyToAll || span != .thisEvent)
-            ? (startDate == nil ? nil : seriesObject(ofOccurrence: identifier)?.recurrenceRules) : event.recurrenceRules
         let existingWeeklyDays: [Int]? = {
             guard !clearRecurrence, // skip if clearing recurrence
                   recurrenceRule == nil, // only check existing rules if not replacing
                   startDate != nil || timezone != nil, // only if start/tz changed
-                  let rules = rulesForWeekday,
+                  let rules = event.recurrenceRules,
                   let firstRule = rules.first,
                   firstRule.frequency == .weekly,
                   let ekDays = firstRule.daysOfTheWeek, !ekDays.isEmpty

@@ -350,7 +350,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is, also when event_id is the identifier of an occurrence edited on its own; span 'all' or 'future' with the identifier of an occurrence edited on its own that is the first occurrence left, after the first was deleted, gives what remains a new identifier. Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id with span 'this' to edit that occurrence, or span 'future' to update from it on. span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416); use the id list_events shows for the occurrence that comes first in the series. A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326). With span 'all' or 'future' through such an identifier, clear_recurrence and a calendar of another account are refused, and with span 'this' or 'future' occurrence_date must be that occurrence's day. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is, also when event_id is the identifier of an occurrence edited on its own; span 'all' or 'future' with the identifier of an occurrence edited on its own that is the first occurrence left, after the first was deleted, gives what remains a new identifier. Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id with span 'this' to edit that occurrence, or span 'future' to update from it on, except dates (below). span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416); use the id list_events shows for the occurrence that comes first in the series. A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326). With span 'all' or 'future' through such an identifier, start_time, end_time, all_day, timezone, clear_recurrence and a calendar of another account are refused and write nothing (a date would give the other occurrences this one's own time, length or day; span 'this' changes it alone), and with span 'this' or 'future' occurrence_date must be that occurrence's day. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -3031,20 +3031,30 @@ class CheICalMCPServer {
                 // those raw here would bypass the wrapper boundary just like
                 // the original #21 F3 pattern. Callers who need titles pipe
                 // through list_events (which IS wrapped).
+                //
+                // #416: with span all the rows run as in the real call, occurrences' own ids first,
+                // and a bare id is judged with the occurrences before it gone, so the preview
+                // does not refuse a row the real call deletes.
+                let spanAll = spanStr == "all"
+                let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+                let named = Set(eventIds)
+                var gone = Set<String>()
                 var preview: [[String: Any]] = []
-                for id in eventIds {
+                for id in rows {
                     do {
-                        let event = try await eventKitManager.getEvent(identifier: id)
-                        // #416: what the real call refuses is not listed as a deletion.
-                        if spanStr == "all", let refusal = await eventKitManager.seriesDeleteRefusal(identifier: id, namedInTheCall: Set(eventIds)) {
+                        let row = try await eventBatchDeletionSource.previewEventDeletion(
+                            identifier: id, spanAll: spanAll, namedInTheCall: named, goneInTheCall: gone)
+                        switch row {
+                        case .refused(let refusal):
                             preview.append(["event_id": id, "error": refusal])
-                            continue
+                        case .deletes(let start, let end):
+                            if spanAll { gone.insert(id) }
+                            preview.append([
+                                "event_id": id,
+                                "start_date_local": localDateFormatter.string(from: start),
+                                "end_date_local": localDateFormatter.string(from: end)
+                            ])
                         }
-                        preview.append([
-                            "event_id": id,
-                            "start_date_local": localDateFormatter.string(from: event.startDate),
-                            "end_date_local": localDateFormatter.string(from: event.endDate)
-                        ])
                     } catch {
                         preview.append([
                             "event_id": id,
@@ -3060,7 +3070,7 @@ class CheICalMCPServer {
                 let response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_event_ids",
-                    "total": eventIds.count,
+                    "total": rows.count,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles/calendar names."
                 ]

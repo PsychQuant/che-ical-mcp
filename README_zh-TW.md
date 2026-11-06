@@ -138,17 +138,19 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **用場次自己的 ID 寫入（#416）：** 單獨改過的場次有自己的 ID（在 iCloud 上是系列 ID 後面接 `/RID=` 和一個數字）。透過這個 ID，span 的效果取決於場次的位置：
 
-- span `this` 修改或刪除該場次，例外記在 #426：新的 `calendar_name` 會搬動整個系列，`clear_recurrence` 回報 `updated` 卻什麼都沒改，`recurrence` 會回 EventKit 錯誤。
-- `update_event` span `future` 從該場次起更新。若該場次在系列中段，系列會在此結束並另起一個新系列，可能重發邀請；`id_changed` 會回報。
-- `update_event` span `all`：該場次是剩下的第一個場次時，會更新所有場次。若前面還有場次，這個呼叫會把系列切開，所以會被拒絕、不寫入任何東西；請改用 `list_events` 顯示的系列第一個場次（以原本的日期為準）的 `id`。首場被刪除的系列，除非剩下的第一個場次也被單獨改過，否則不支援更新整個系列（#326）；剩下的做法是從較後面的場次起用 span `future`，或逐場用 span `this`。
-- 搭配 span `all` 或 `future` 時，`clear_recurrence` 與另一個帳號的日曆都會被拒絕、不寫入任何東西：`clear_recurrence` 原本會回報 `updated` 卻什麼都沒改，跨帳號搬移則沒有從單一場次量測過。請改用沒有單獨改過的場次。新的 `recurrence` 可以正常使用。
+- span `this` 修改或刪除該場次，例外記在 #426：同一帳號內新的 `calendar_name` 會搬動整個系列（另一帳號的日曆會被拒絕），`clear_recurrence` 回報 `updated` 卻什麼都沒改，`recurrence` 會回 EventKit 錯誤。
+- `update_event` span `future` 從該場次起更新，日期除外（見下）。若該場次在系列中段，系列會在此結束並另起一個新系列，可能重發邀請；`id_changed` 會回報。
+- `update_event` span `all`：該場次是剩下的第一個場次時，會更新所有場次，日期除外（見下）。若前面還有場次，這個呼叫會把系列切開，所以會被拒絕、不寫入任何東西；請改用 `list_events` 顯示的系列第一個場次（以原本的日期為準）的 `id`。首場被刪除的系列，除非剩下的第一個場次也被單獨改過，否則不支援更新整個系列（#326）；剩下的做法是從較後面的場次起用 span `future`，或逐場用 span `this`。
+- 搭配 span `all` 或 `future` 時，`start_time`、`end_time`、`all_day` 與 `timezone` 都會被拒絕、不寫入任何東西，因為其他場次會變成這個場次自己的時間、長度或星期。以每週 5 場的系列實測：只帶 `start_time` 時其他場次變成它的長度，只帶 `end_time` 時變成它的時間，帶 `all_day` 時變成它的星期。span `all` 的做法：`start_time`、`end_time` 或 `timezone` 請用 `list_events` 顯示的、沒有單獨改過的場次的 `id`。若那也被拒絕（第一個場次被刪除，或單獨改過而開始時間沒變），或要改 `all_day`（經那個 `id` 改時，單獨改過的場次原本的時段會多出一個場次，#442），就沒有單一呼叫能改整個系列，請逐場用 span `this`，`id` 沒有 `/RID=` 時加上 `occurrence_date`。span `future` 不支援從單獨改過的場次這樣做；span `this` 只改該場次。
+- 搭配 span `all` 時，`clear_recurrence` 與另一個帳號的日曆都會被拒絕、不寫入任何東西：`clear_recurrence` 原本會回報 `updated` 卻什麼都沒改，跨帳號搬移則沒有從單一場次量測過。請改用沒有單獨改過的場次。搭配 span `future` 時，從單獨改過的場次兩者都不支援。
+- 新的 `recurrence` 搭配 span `all` 或 `future` 可以使用。沒有場次變成這個場次的標題、備註或時間（實測：從第一個場次、剩下的第一個場次與中段場次，場次改過標題、備註與時間，或移到別的星期；每週、每天、每兩週）。兩個限制：`days_of_week` 比對的是這個場次顯示的星期，所以從移到別的星期的場次，寫系列原本星期的規則會被拒絕；span `future` 時 `occurrence_count` 可能比寫的少，經系列 ID 也一樣（從第三場寫 6 次只有 4 次，#443）。
 - 搭配 span `this` 或 `future` 時，`occurrence_date` 必須是該場次的日期，否則會被拒絕：它原本會被忽略，寫入從這個 ID 指的場次開始。
-- 放行的更新不會擴散該場次的內容：它的標題、備註、時間與星期留在它身上，其他場次維持原樣（實測）。
+- 其他欄位：只寫 `location` 時，它會寫到 span 涵蓋的場次，該場次的標題、備註、時間與星期留在它身上（實測：從第一個場次、剩下的第一個場次與中段場次）。寫入的標題會寫到 span 涵蓋的每個場次，包括其他單獨改過的場次。`url`、鬧鐘與 `structured_location` 沒有量測。
 - `delete_event` span `future` 刪除該場次與之後的場次，所以從第一個場次呼叫會刪掉整個系列。
-- `delete_event` span `all` 只會刪掉該場次，所以只要還有其他場次就會被拒絕、不刪除任何東西。要刪掉整個系列，請用系列第一個場次的 `id`：沒有 `/RID=` 時搭配 span `all`，有 `/RID=` 時搭配 span `future`（這個刪除無法 undo）。系列若可能超出掃描範圍（約五年），就算作還有其他場次。`delete_events_batch` 以 `event_ids` 呼叫時只拒絕那一列（dry run 也會顯示），其他列照常處理，同一次呼叫列出的場次不算剩餘場次；以日期範圍呼叫時不拒絕，所以若範圍內只有這個單獨改過的場次，只會刪掉它，系列其餘場次留著（#427）。
+- `delete_event` span `all` 只會刪掉該場次，所以只要還有其他場次就會被拒絕、不刪除任何東西。要刪掉整個系列，請用系列第一個場次的 `id`：沒有 `/RID=` 時搭配 span `all`，有 `/RID=` 時搭配 span `future`（這個刪除無法 undo）。系列若可能超出掃描範圍（約五年），就算作還有其他場次。`delete_events_batch` 以 `event_ids` 呼叫時只拒絕那一列（dry run 也會顯示），其他列照常處理，同一次呼叫列出的場次不算剩餘場次，span `all` 時這些列先執行（dry run 也一樣），所以兩者答案相同；以日期範圍呼叫時不拒絕，所以若範圍內只有這個單獨改過的場次，只會刪掉它，系列其餘場次留著（#427）。
 - `move_events_batch` span `all` 在同一個 iCloud 帳號內會搬動整個系列、ID 不變；跨帳號沒有量測。
 
-以上是在 iCloud 上實測的。系列第一個場次被單獨改過時，系列 ID 本身會被拒絕（#428），所以上面的路徑都經由第一個場次。Google 上 #320 量到 `/RID=` 與 `isDetached` 可靠，但這些拒絕沒有在 Google 上跑過。沒有 `/RID=` 的來源（Exchange 可能如此，尚未量測）無法從 ID 列出系列其餘場次，所以 span `all` 會被拒絕，被誤報為單獨改過場次的單一事件也一樣；請用 span `this`。在 iCloud 上，開放式系列開始超過約五年、場次落在掃描範圍外時，也是這個拒絕。
+以上是在 iCloud 上實測的。系列第一個場次被單獨改過且開始時間沒變時，系列 ID 本身會被拒絕（#428），所以上面的路徑都經由第一個場次。Google 上 #320 量到 `/RID=` 與 `isDetached` 可靠，但這些拒絕沒有在 Google 上跑過。沒有 `/RID=` 的來源（Exchange 可能如此，尚未量測）無法從 ID 列出系列其餘場次，所以 span `all` 會被拒絕，被誤報為單獨改過場次的單一事件也一樣；請用 span `this`。在 iCloud 上，系列從開始起延伸超過約五年、場次落在掃描範圍外時，也是這個拒絕。
 
 **帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、請求的日期在這台 Mac 時區下會寫成的那一天（`host_day`；重複而被略過的建立不會寫入，訊息會說既有事件沒有改變）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
 
