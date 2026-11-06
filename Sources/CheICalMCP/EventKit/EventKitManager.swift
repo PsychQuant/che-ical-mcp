@@ -1067,6 +1067,39 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         onOccurrence && span == .thisEvent && crossesAccounts
     }
 
+    /// PR #439 verify: the rule belongs to the series. Measured on iCloud: a rule saved on one
+    /// occurrence (span this) left that occurrence as a one-off and deleted the rest of the series,
+    /// answering `updated`; clear_recurrence there detached the occurrence and left the series
+    /// repeating. Span all changes the rule and a rule with span future changes it from that
+    /// occurrence on, so only span this is refused. A one-off event gaining a rule is not an
+    /// occurrence.
+    static func refusesRecurrenceChangeOnOccurrence(onOccurrence: Bool, span: EKSpan, changesRecurrence: Bool) -> Bool {
+        onOccurrence && span == .thisEvent && changesRecurrence
+    }
+
+    /// PR #439 verify round 2, measured on iCloud and on v1.22.0: clear_recurrence with
+    /// occurrence_date and span future left one event on the series' first day, of ten, deleting
+    /// the occurrences before the one named as well, and answered `updated`. `onOccurrenceObject`
+    /// is true for an object found by occurrence_date only: span all saves the series object, which
+    /// is what clearing means, and an occurrence's own id is the object it resolved to.
+    static func refusesClearRecurrenceFromOccurrence(onOccurrenceObject: Bool, span: EKSpan, clearRecurrence: Bool) -> Bool {
+        onOccurrenceObject && span == .futureEvents && clearRecurrence
+    }
+
+    /// How a refused rule change named the event, for the message: span 'all' and span 'future' on
+    /// an occurrence's own id take another path, so that caller is told the series' id instead.
+    enum RecurrenceChangeAddress: Equatable, Sendable {
+        case seriesId
+        /// `series` is nil when the id does not show it (only iCloud's `/RID=` shape does).
+        case occurrenceOwnId(series: String?)
+    }
+
+    static func recurrenceChangeAddress(identifier: String, isDetached: Bool, viaStandIn: Bool) -> RecurrenceChangeAddress {
+        // A stand-in may be an edited occurrence, but the caller named the series.
+        guard isDetached, !viaStandIn else { return .seriesId }
+        return .occurrenceOwnId(series: UpdatedIdentifier.seriesOfOccurrenceId(identifier))
+    }
+
     static let occurrenceAcrossAccountsReason = "Moving to a calendar in another account moves the whole series, so it cannot be combined with an edit of one occurrence (occurrence_date with span 'this'). To move the series, call update_event with span 'all' and no occurrence_date, or move_events_batch; to edit the occurrence, leave calendar_name out. A calendar whose account cannot be read counts as another account. Nothing was written."
 
     func updateEvent(
@@ -1168,6 +1201,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if Self.refusesOccurrenceEditAcrossAccounts(
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) {
             throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason)
+        }
+        if Self.refusesRecurrenceChangeOnOccurrence(
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span,
+            changesRecurrence: clearRecurrence || recurrenceRule != nil)
+            || Self.refusesClearRecurrenceFromOccurrence(
+                onOccurrenceObject: event !== masterEvent, span: span, clearRecurrence: clearRecurrence) {
+            throw EventKitError.recurrenceChangeOnOccurrenceRefused(
+                clearing: clearRecurrence,
+                address: Self.recurrenceChangeAddress(identifier: identifier, isDetached: masterEvent.isDetached,
+                                                      viaStandIn: resolved.viaStandIn))
         }
 
         // #373 verify (PR #379): every check that can refuse the update runs here, before the first
@@ -2895,6 +2938,17 @@ struct RecurrenceRuleInput: Sendable {
     static let maxInterval = 1000
     static let maxOccurrenceCount = 10_000
 
+    /// PR #439 verify: the read tools' names for a rule. `parseRecurrenceRule` refuses them beside
+    /// `recurrence`, where a caller copying a read result puts them and nothing reads them.
+    static let readKeys = ["recurrence_rules", "event_recurrence_rules", "reminder_recurrence_rules"]
+
+    /// #434: the keys a `recurrence` object may have; `parseRecurrenceRule` refuses any other. The
+    /// tools that do not take `excluded_occurrence_dates` refuse it with their own message.
+    static func inputKeys(allowsExclusions: Bool) -> [String] {
+        ["frequency", "interval", "end_date", "occurrence_count", "days_of_week", "days_of_month"]
+            + (allowsExclusions ? ["excluded_occurrence_dates"] : [])
+    }
+
     let frequency: Frequency
     let interval: Int
     let endDate: Date?
@@ -2925,6 +2979,10 @@ struct LocationTriggerInput: Sendable {
 // MARK: - Errors
 
 enum EventKitError: LocalizedError {
+    private static func seriesName(_ series: String?) -> String {
+        series.map { "the series' id, \($0)," } ?? "the series' id"
+    }
+
     /// - Parameter deniedByStatus: the TCC status was already `.denied`/`.restricted`
     ///   at the gate, so `requestFullAccess` was skipped (the status-first check only
     ///   requests on `.notDetermined`). Under the `.mcpb` install this is the #154
@@ -2988,6 +3046,10 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
+    /// PR #439 verify: `recurrence` or `clear_recurrence` on one occurrence (span this), or
+    /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
+    /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
+    case recurrenceChangeOnOccurrenceRefused(clearing: Bool, address: EventKitManager.RecurrenceChangeAddress)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3110,6 +3172,20 @@ enum EventKitError: LocalizedError {
             return reason
         case .standInRefused(let reason):
             return reason
+        case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
+            // Not delete_event: it takes the occurrence named as well, and undo refuses it.
+            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."
+            let wholeSeries = "span 'all' leaves one event on the series' first day and deletes the other occurrences"
+            switch (clearing, address) {
+            case (false, .seriesId):
+                return "The recurrence rule belongs to the whole series, so it cannot be changed on one occurrence (occurrence_date with span 'this'). Pass span 'all' for the whole series, or span 'future' with occurrence_date to change it from that occurrence on. Nothing was written."
+            case (true, .seriesId):
+                return "clear_recurrence removes the rule of the whole series, so it cannot start from one occurrence (occurrence_date with span 'this' or 'future'): \(wholeSeries). \(ending) Nothing was written."
+            case (false, .occurrenceOwnId(let series)):
+                return "This id is one occurrence edited on its own, and the recurrence rule belongs to the whole series. Call update_event with \(Self.seriesName(series)) instead: span 'all' for the whole series, or span 'future' with the occurrence_date of an occurrence not edited on its own. Nothing was written."
+            case (true, .occurrenceOwnId(let series)):
+                return "This id is one occurrence edited on its own, and clear_recurrence removes the rule of the whole series. Call update_event with \(Self.seriesName(series)) instead: \(wholeSeries). \(ending) Nothing was written."
+            }
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):
