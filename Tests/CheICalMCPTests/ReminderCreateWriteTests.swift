@@ -187,7 +187,7 @@ final class ReminderCreateWriteTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = SourceScan.collapsingWhitespace(body)
         XCTAssertTrue(flat.contains("dateReport = ReminderCreateWrite.writeTimedDue(reminder, components: ReminderDateSync.timedDueComponents(for: due))"), flat)
-        XCTAssertTrue(flat.contains("let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { reminder.rollback() })"), flat)
+        XCTAssertTrue(flat.contains("let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers, save: { try eventStore.save(reminder, commit: true) }, reload: { reminder.refresh() }, rollback: { discardFailedSave(of: reminder) })"), flat)
         let save = try XCTUnwrap(flat.range(of: "saveNewReminder("))
         let readBack = try XCTUnwrap(flat.range(of: "ReminderCreateWrite.readBack("))
         let snapshot = try XCTUnwrap(flat.range(of: "ReminderWriteSnapshot(from: reminder), isDuplicate: false"))

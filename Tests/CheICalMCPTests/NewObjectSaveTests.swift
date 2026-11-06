@@ -599,7 +599,7 @@ final class NewObjectSaveTests: XCTestCase {
         // through the #237 fallback), and its report rides with the result. #333: so do the relative
         // alarms read off the saved reminder.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?, ?storedRelativeAlarms: ?alarmOffsets\.map ?\{ ?_ in ReminderRelativeAlarms\.storedMinutesBefore\( ?reminder ?\) ?\} ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?discardFailedSave\( ?of: ?reminder ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?, ?storedRelativeAlarms: ?alarmOffsets\.map ?\{ ?_ in ReminderRelativeAlarms\.storedMinutesBefore\( ?reminder ?\) ?\} ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
@@ -755,6 +755,9 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"commit: ?(?!true\b|false\b)[^ ,)]"#, in: code).count, 2 * forwarded,
                        "commit flags are literals, apart from the overrides' parameter and forwarding")
         XCTAssertEqual(try matches(#"span: ?[^,)]*, ?commit: ?false"#, in: code).count, 0)
-        XCTAssertEqual(try matches(#"\.reset\( ?\)"#, in: code).count, 0)
+        // #274: one reset, the discard of a failed save of an existing reminder, which nothing else
+        // drops (measured, `ExistingReminderSave`). A second one would be a new decision.
+        XCTAssertEqual(try matches(#"\.reset\( ?\)"#, in: code).count, 1)
+        XCTAssertEqual(try matches(#"reminder\.rollback\( ?\) eventStore\.reset\( ?\)|reminder\.rollback\( ?\)\s+eventStore\.reset\( ?\)"#, in: code).count, 1)
     }
 }

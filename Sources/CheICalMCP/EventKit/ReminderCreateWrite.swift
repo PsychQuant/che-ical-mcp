@@ -25,13 +25,13 @@ enum ReminderCreateWrite {
 
     /// Judges a created reminder after its save, or returns nil for a create without a due date
     /// (nothing to judge; it is not re-read). `save` writes to the store, `reload` re-reads the
-    /// reminder (`EKObject.refresh()`), `rollback` discards unsaved changes (`EKObject.rollback()`).
+    /// reminder (`EKObject.refresh()`), `rollback` discards the failed change.
     ///
     /// A timed due that read back without its time or zone runs the #237 fallback, which saves the
     /// reminder a second time. A failed second save calls `rollback` and is reported as
-    /// `aligned: false`, never thrown, since the create itself is saved. Whether `rollback()`
-    /// drops the pending change of an object that is already in the store has not been seen on a
-    /// device (#274 open question; release-gate step in `.claude/rules/mcp-binary-version-testing.md`).
+    /// `aligned: false`, never thrown, since the create itself is saved. The caller's `rollback`
+    /// is `discardFailedSave(of:)`: `EKObject.rollback()` alone did not drop the pending change
+    /// (#274, `ExistingReminderSave`).
     /// A date-only due never runs the fallback.
     ///
     /// `storeDiffers` is what `saveNewReminder` returned. Non-empty means the first save threw and a

@@ -606,6 +606,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let t = title { calendar.title = t }
         if let c = color { calendar.cgColor = parseColor(c) }
 
+        // #274: no discard. A failed save left nothing pending (iCloud, 2026-11-06: the same probe
+        // as `ExistingReminderSave`, with nothing done after the failure: the next saves, and a
+        // later save of the same calendar, kept the old title), and this object is not reused.
         try eventStore.saveCalendar(calendar, commit: true)
         markNeedsRefresh()
         return calendar
@@ -2219,7 +2222,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let dateSync = ReminderCreateWrite.readBack(reminder, report: dateReport, storeDiffers: storeDiffers,
                                                     save: { try eventStore.save(reminder, commit: true) },
                                                     reload: { reminder.refresh() },
-                                                    rollback: { reminder.rollback() })
+                                                    rollback: { discardFailedSave(of: reminder) })
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
                                           dateSync: dateSync,
                                           storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) })
@@ -2317,7 +2320,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             request, to: reminder, calendar: calendar,
             save: { try store.save(reminder, commit: true) },
             reload: { reminder.refresh() },
-            rollback: { reminder.rollback() })
+            rollback: { discardFailedSave(of: reminder) })
         markNeedsRefresh()
         let result = ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
@@ -2692,14 +2695,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
             let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })
-            try eventStore.save(reminder, commit: true)
+            try saveExistingReminder(reminder)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
 
         case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-            try eventStore.save(reminder, commit: true)
+            try saveExistingReminder(reminder)
             markNeedsRefresh()
             return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)"
 
@@ -2805,7 +2808,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // while the reminder is in the state the undo left (#236).
             let reminder = try await verifiedReminder(of: operation, verb: .redo)
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-            try eventStore.save(reminder, commit: true)
+            try saveExistingReminder(reminder)
             markNeedsRefresh()
             return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)"
 
