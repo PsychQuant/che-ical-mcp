@@ -11,19 +11,34 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     let slot: Date?
 }
 
+/// #416: what the `event_ids` dry run says about one row.
+enum BatchDeletionPreviewRow: Sendable, Equatable {
+    case deletes(start: Date, end: Date)
+    case refused(String)
+}
+
 /// #331: the narrow seam `delete_events_batch` goes through (CLAUDE.md "Test Seam Convention"):
 /// the date-range listing and the two batch deletes, so a handler test reads the response
 /// (`searched_from` / `searched_to`, the deletion ceiling, `deletions`, `preview_truncated`,
 /// `already_removed`) instead of the handler's source. The two deletes also carry the `event_ids`
-/// mode's real deletion, which shares `deleteEventsWithSpan`; the `event_ids` dry run still reads
-/// each event with `EventKitManager.getEvent`, outside the seam. Production passes nothing and
-/// gets `EventKitManager.shared`; access checks and undo recording stay inside the manager.
+/// mode's real deletion, which shares `deleteEventsWithSpan`, and `previewEventDeletion` its dry
+/// run (#416). Production passes nothing and gets `EventKitManager.shared`; access checks and undo
+/// recording stay inside the manager.
 protocol EventBatchDeletionSource: Sendable {
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent]
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult
-    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult
+    /// `refusingOccurrenceIdentifiers` (#416): refuse, as a failed row, an identifier of one
+    /// occurrence edited on its own. True for the `event_ids` mode, where the caller named the id;
+    /// false by date range, where the listing put it in the set.
+    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult
+    /// One `event_ids` dry-run row. `span` as the real row takes it, `spanAll` for span `all`.
+    /// `namedInTheCall`: every id of the call. `goneInTheCall`: the rows passed so far with span
+    /// `all`, which the real call has deleted by the time it gets to this row. Throws what the real
+    /// row would fail with when the id does not resolve.
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
+                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow
 }
 
 extension EventKitManager: EventBatchDeletionSource {
@@ -35,5 +50,23 @@ extension EventKitManager: EventBatchDeletionSource {
                              calendarSource: calendarSource)
             .map { BatchDeletionListedEvent(identifier: $0.eventIdentifier, start: $0.startDate,
                                             end: $0.endDate, slot: $0.occurrenceDate) }
+    }
+
+    /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
+    /// deleted shows its first remaining occurrence, not the deleted one.
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
+                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+        try await ensureCalendarAccess()
+        guard let event = freshEventWithOrigin(
+            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
+            goneInTheCall: goneInTheCall)?.event else {
+            throw notFoundError(id: identifier)
+        }
+        // #416: what the real call refuses is not listed as a deletion.
+        if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
+            return .refused(refusal)
+        }
+        if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }
+        return .deletes(start: event.startDate, end: event.endDate)
     }
 }
