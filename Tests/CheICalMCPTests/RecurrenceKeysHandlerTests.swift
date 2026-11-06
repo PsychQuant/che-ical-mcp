@@ -378,6 +378,14 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         }
     }
 
+    /// #448: through the handler, a row with an unknown key fails and the others are written.
+    func testABatchRowWithAKeyNothingReadsFailsAlone() async throws {
+        let batch = try await batchError(["frequency": .string("daily")], extra: ["timzone": .string("Asia/Taipei")])
+        XCTAssertTrue(batch.error.contains("does not read"), batch.error)
+        XCTAssertFalse(batch.error.contains("timzone"), "#37: \(batch.error)")
+        XCTAssertEqual(batch.written, ["good"])
+    }
+
     /// The guard's list is the schema's: a key added to one and not the other fails here, in either
     /// direction, so the guard cannot start refusing a key the schema offers.
     func testTheAcceptedKeysAreTheSchemasKeys() throws {

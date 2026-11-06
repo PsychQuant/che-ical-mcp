@@ -366,6 +366,7 @@ class CheICalMCPServer {
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
                             "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count was measured to come out short: 5 from the second occurrence gave 4 (#443). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
@@ -1191,6 +1192,7 @@ class CheICalMCPServer {
     }
 
     func executeToolCall(name: String, arguments: [String: Value]) async throws -> String {
+        try ToolArgumentCheck.check(tool: name, arguments: arguments)
         switch name {
         // Calendar Tools
         case "list_calendars":
@@ -1316,11 +1318,8 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
-        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
-        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
-            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
-        }
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so null must not fall
+        // back to the unchecked delete. A misspelled key is refused at dispatch (#448).
         if case .null? = arguments["require_empty"] {
             throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
         }
@@ -2183,6 +2182,12 @@ class CheICalMCPServer {
                 continue
             }
 
+            // #448: a numeric due_date or a bare-string tags read as absent.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_reminders_batch", rowsKey: "reminders", row: reminderDict, index: index, checksKeys: false) {
+                results.append(["index": index, "success": false, "error": problem])
+                continue
+            }
+
             guard let title = reminderDict["title"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "title is required"])
                 continue
@@ -2612,6 +2617,11 @@ class CheICalMCPServer {
         for (index, eventValue) in eventsArray.enumerated() {
             guard let eventDict = eventValue.objectValue else {
                 results.append(["index": index, "success": false, "error": "Invalid event format"])
+                continue
+            }
+            // #448: a misspelled timezone read naive times in the host zone. Only this row fails.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_events_batch", rowsKey: "events", row: eventDict, index: index, checksKeys: true) {
+                results.append(["index": index, "success": false, "error": problem])
                 continue
             }
 

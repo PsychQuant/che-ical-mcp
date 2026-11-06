@@ -74,8 +74,8 @@ final class CalendarDeletionHandlerTests: XCTestCase {
     func testNullAndUnknownKeysAreRefusedWithNothingDeleted() async throws {
         let cases: [([String: Value], String)] = [
             (["id": .string("cal-1"), "require_empty": .null], "require_empty must be true or false"),
-            (["id": .string("cal-1"), "requireEmpty": .bool(true)], "accepts only id and require_empty"),
-            (["id": .string("cal-1"), "require-empty": .bool(true)], "accepts only id and require_empty"),
+            (["id": .string("cal-1"), "requireEmpty": .bool(true)], "It accepts: id, require_empty."),
+            (["id": .string("cal-1"), "require-empty": .bool(true)], "It accepts: id, require_empty."),
         ]
         for (args, expected) in cases {
             let fake = CalendarDeletionFake()
