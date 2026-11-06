@@ -1051,7 +1051,7 @@ class CheICalMCPServer {
                     "properties": .object([
                         "reminders": .object([
                             "type": .string("array"),
-                            "description": .string("Array of reminder objects to create"),
+                            "description": .string("Array of reminder objects to create. A key that is not one of a row's properties fails that row and nothing is written for it; recurrence and location_trigger are not accepted here, use create_reminder for those."),
                             "items": .object([
                                 "type": .string("object"),
                                 "properties": .object([
@@ -2150,6 +2150,10 @@ class CheICalMCPServer {
         return try formatJSON(response)
     }
 
+    /// #441: the keys a `create_reminders_batch` row may have; the handler reads exactly these and
+    /// refuses a row with any other.
+    static let reminderBatchRowKeys = ["title", "notes", "due_date", "priority", "calendar_name", "calendar_source", "tags", "alarms_minutes_offsets"]
+
     private func handleCreateRemindersBatch(arguments: [String: Value]) async throws -> String {
         guard let remindersArray = arguments["reminders"]?.arrayValue else {
             throw ToolError.invalidParameter("reminders array is required")
@@ -2160,6 +2164,16 @@ class CheICalMCPServer {
         for (index, reminderValue) in remindersArray.enumerated() {
             guard let reminderDict = reminderValue.objectValue else {
                 results.append(["index": index, "success": false, "error": "Invalid reminder format"])
+                continue
+            }
+
+            // #441: a key that is not read is dropped, so `recurrence` made a one-off reminder and a
+            // misspelled `due_date` one with no due date. Checked first, so a misspelled `title` is
+            // named as a key. The key is not echoed (#37).
+            guard Set(reminderDict.keys).isSubset(of: Self.reminderBatchRowKeys) else {
+                let keys = Self.reminderBatchRowKeys
+                let message = "Row \(index) accepts only \(keys.dropLast().joined(separator: ", ")) and \(keys[keys.count - 1]); another key was given. For recurrence or location_trigger, use create_reminder. Nothing was written for this row."
+                results.append(["index": index, "success": false, "error": message])
                 continue
             }
 
