@@ -521,6 +521,8 @@ Under a Claude Code **native install**, the real executable lives at a **version
 
 ### SSH Access
 
+> **Since v1.23.0 ([#343](https://github.com/PsychQuant/che-ical-mcp/issues/343))**: an SSH session's context usually has no grant of its own, so by [the rule above](#claude-code-updates-rotate-the-host-side-grant-170) the binary re-execs onto CheICalMCP's own grant, as under any other host. Whether macOS honours that grant over SSH has not been measured ([#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)), so the steps below and the SSH error messages have not been changed for it: they were written before the re-exec, Workaround A is the first thing to try, and Workaround B may not be needed, or may not help, after a re-exec.
+
 macOS TCC (Transparency, Consent, and Control) grants privacy permissions **per-application**. SSH sessions run under `sshd`, which is a different security context — so permissions granted to Terminal or Claude Code locally do **not** carry over to SSH.
 
 **Workaround A — Run locally first (recommended):**

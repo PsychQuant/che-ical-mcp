@@ -483,6 +483,8 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 ### SSH 存取
 
+> **v1.23.0 起（[#343](https://github.com/PsychQuant/che-ical-mcp/issues/343)）**：SSH session 的環境通常沒有自己的授權，所以依照上方的規則，binary 會和在其他 host 底下一樣 re-exec 改用 CheICalMCP 自己的授權。macOS 在 SSH 下會不會採用這份授權還沒量過（[#382](https://github.com/PsychQuant/che-ical-mcp/issues/382)），所以下方步驟與 SSH 的錯誤訊息都沒有因此更改：它們寫於 re-exec 之前；方法 A 是最先該試的，re-exec 之後方法 B 可能不需要，也可能沒有幫助。
+
 macOS TCC（透明度、同意與控制）的隱私權限是**依應用程式**授予的。SSH session 跑在 `sshd` 底下，是不同的安全環境 — 因此在本機授予 Terminal 或 Claude Code 的權限**不會**延伸到 SSH。
 
 **方法 A — 先在本機執行一次（建議）：**
