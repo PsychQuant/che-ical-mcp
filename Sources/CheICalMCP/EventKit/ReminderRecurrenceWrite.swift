@@ -57,17 +57,18 @@ enum ReminderRecurrenceWrite {
         }
     }
 
-    /// Whether `due`'s day is one the rule names: a weekday in `days_of_week` (for every frequency
-    /// but daily, which does not use it) and a day in `days_of_month` (for monthly only; PR #420
-    /// verify round 1: EventKit stores the list on other frequencies too, and they do not use it). A
-    /// rule that names neither repeats from the due itself, so it matches. The weekday is the
-    /// label's (year, month, day), whatever the zone.
+    /// Whether `due`'s day is one the rule names: a weekday in `days_of_week` (every frequency uses
+    /// it) and a day in `days_of_month` (monthly and yearly use it; EventKit keeps the list on a
+    /// daily or weekly rule and does not use it, and the parser now refuses that, so such a rule
+    /// can only be an older one; measured on iCloud, PR #439 verify, which corrects what PR #420
+    /// verify round 1 assumed for daily and yearly). A rule that names neither repeats from the due
+    /// itself, so it matches. The weekday is the label's (year, month, day), whatever the zone.
     static func dueMatches(_ due: DateComponents, rule: ReminderRecurrenceRuleValue) -> Bool {
-        if rule.frequency != "daily", let weekdays = rule.weekdays, !weekdays.isEmpty {
+        if let weekdays = rule.weekdays, !weekdays.isEmpty {
             guard let weekday = weekday(of: due) else { return true }
             if !weekdays.contains(where: { $0.day == weekday }) { return false }
         }
-        if rule.frequency == "monthly", let days = rule.daysOfMonth, !days.isEmpty, let day = due.day {
+        if rule.frequency == "monthly" || rule.frequency == "yearly", let days = rule.daysOfMonth, !days.isEmpty, let day = due.day {
             if !days.contains(day) { return false }
         }
         return true

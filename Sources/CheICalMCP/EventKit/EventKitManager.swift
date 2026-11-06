@@ -1091,6 +1091,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         onOccurrence && span == .thisEvent && crossesAccounts
     }
 
+    /// PR #439 verify: the rule belongs to the series. Measured on iCloud: a rule saved on one
+    /// occurrence (span this) left that occurrence as a one-off and deleted the rest of the series,
+    /// answering `updated`; clear_recurrence there detached the occurrence and left the series
+    /// repeating. Span all changes the rule and span future changes it from that occurrence on, so
+    /// only span this is refused. A one-off event gaining a rule is not an occurrence.
+    static func refusesRecurrenceChangeOnOccurrence(onOccurrence: Bool, span: EKSpan, changesRecurrence: Bool) -> Bool {
+        onOccurrence && span == .thisEvent && changesRecurrence
+    }
+
     static let occurrenceAcrossAccountsReason = "Moving to a calendar in another account moves the whole series, so it cannot be combined with an edit of one occurrence (occurrence_date with span 'this'). To move the series, call update_event with span 'all' and no occurrence_date, or move_events_batch; to edit the occurrence, leave calendar_name out. A calendar whose account cannot be read counts as another account. Nothing was written."
 
     func updateEvent(
@@ -1192,6 +1201,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if Self.refusesOccurrenceEditAcrossAccounts(
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, crossesAccounts: crossesAccounts) {
             throw EventKitError.moveRefused(reason: Self.occurrenceAcrossAccountsReason)
+        }
+        if Self.refusesRecurrenceChangeOnOccurrence(
+            onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span,
+            changesRecurrence: clearRecurrence || recurrenceRule != nil) {
+            throw EventKitError.recurrenceChangeOnOccurrenceRefused
         }
 
         // #373 verify (PR #379): every check that can refuse the update runs here, before the first
@@ -2916,6 +2930,10 @@ struct RecurrenceRuleInput: Sendable {
     static let maxInterval = 1000
     static let maxOccurrenceCount = 10_000
 
+    /// PR #439 verify: the read tools' names for a rule. `parseRecurrenceRule` refuses them beside
+    /// `recurrence`, where a caller copying a read result puts them and nothing reads them.
+    static let readKeys = ["recurrence_rules", "event_recurrence_rules", "reminder_recurrence_rules"]
+
     /// #434: the keys a `recurrence` object may have; `parseRecurrenceRule` refuses any other. The
     /// tools that do not take `excluded_occurrence_dates` refuse it with their own message.
     static func inputKeys(allowsExclusions: Bool) -> [String] {
@@ -3013,6 +3031,9 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
+    /// PR #439 verify: `recurrence` or `clear_recurrence` on one occurrence (span this), which
+    /// `refusesRecurrenceChangeOnOccurrence` refuses before anything is written.
+    case recurrenceChangeOnOccurrenceRefused
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3138,6 +3159,8 @@ enum EventKitError: LocalizedError {
             return reason
         case .standInRefused(let reason):
             return reason
+        case .recurrenceChangeOnOccurrenceRefused:
+            return "The recurrence rule belongs to the whole series, so it cannot be changed or cleared on one occurrence (occurrence_date with span 'this'). Pass span 'all' for the whole series, or span 'future' with occurrence_date to change it from that occurrence on. Nothing was written."
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):

@@ -124,6 +124,34 @@ final class UpdatedIdentifierTests: XCTestCase {
         XCTAssertFalse(reason.contains(where: { "&<>".contains($0) }), reason)
     }
 
+    // MARK: - #434 verify: the rule of a series is not changed through one occurrence
+
+    /// Measured on iCloud: a rule saved on one occurrence (span this) left that occurrence as a
+    /// one-off and deleted the rest of the series, and clear_recurrence there left the series as
+    /// it was. Span all and span future changed the rule.
+    func testARuleChangeOnOneOccurrenceIsRefused() {
+        XCTAssertTrue(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .thisEvent, changesRecurrence: true))
+        XCTAssertFalse(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .thisEvent, changesRecurrence: false),
+                       "an ordinary edit of one occurrence")
+        XCTAssertFalse(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: false, span: .thisEvent, changesRecurrence: true),
+                       "a one-off event gains a rule, and span all saves the series object")
+        XCTAssertFalse(EventKitManager.refusesRecurrenceChangeOnOccurrence(onOccurrence: true, span: .futureEvents, changesRecurrence: true),
+                       "span future from an occurrence splits the series and the rule applies from there")
+        let message = EventKitError.recurrenceChangeOnOccurrenceRefused.errorDescription ?? ""
+        XCTAssertTrue(message.contains("span 'all'"), message)
+        XCTAssertTrue(message.contains("Nothing was written."), message)
+        XCTAssertFalse(message.contains(where: { "&<>".contains($0) }), message)
+    }
+
+    func testUpdateEventRefusesARuleChangeOnOneOccurrenceBeforeAnyWrite() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
+        let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let refusal = "if Self.refusesRecurrenceChangeOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, changesRecurrence: clearRecurrence || recurrenceRule != nil) { throw EventKitError.recurrenceChangeOnOccurrenceRefused }"
+        let refuse = try XCTUnwrap(flat.range(of: refusal), "refusal wired")
+        let firstWrite = try XCTUnwrap(flat.range(of: "if let t = title { event.title = t }"))
+        XCTAssertLessThan(refuse.lowerBound, firstWrite.lowerBound, "refused before the first field is assigned")
+    }
+
     /// The wiring in `EventKitManager.updateEvent` (no in-memory store can run it).
     func testUpdateEventDerivesTheSeriesFromTheSavedObjectIdentity() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))

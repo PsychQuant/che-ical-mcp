@@ -83,7 +83,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
                 let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
                 let message = try await refusal(tool, ["frequency": .string("daily"), key: .int(3)], events: events, reminders: reminders)
                 XCTAssertTrue(message.hasPrefix("recurrence accepts only frequency, interval, end_date, occurrence_count, days_of_week"), "\(tool) \(key): \(message)")
-                XCTAssertTrue(message.contains("another key was given (check its spelling)"), message)
+                XCTAssertTrue(message.contains("another key was given"), message)
                 XCTAssertTrue(message.contains("Nothing was written for this item"), message)
                 let written = await writes(events, reminders)
                 XCTAssertEqual(written, 0, "\(tool) \(key)")
@@ -156,21 +156,50 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         XCTAssertEqual(created.map(\.title), ["good 1", "good 2"])
     }
 
-    /// Every legal key still reaches the write, on every tool: the guard must not stop a real call.
+    /// The rule that reached the write: nil when the fake was not asked to write one.
+    private func writtenRule(_ events: RecurrenceEventFake, _ reminders: RecurrenceReminderFake) async -> RecurrenceRuleInput? {
+        let eventsCreated = await events.created, eventsUpdated = await events.updated
+        let remindersCreated = await reminders.created, remindersUpdated = await reminders.updated
+        return eventsCreated.first?.recurrenceRule ?? eventsUpdated.first?.recurrenceRule
+            ?? remindersCreated.first?.recurrenceRule ?? remindersUpdated.first?.recurrenceRule
+    }
+
+    /// Every legal key reaches the write with its value, on every tool: the guard must not stop a
+    /// real call, and a key the guard lets through must be one the parser reads. Reading the wrong
+    /// key in the parser (`until` for `end_date`, say) drops the bound, which is the #434 failure.
     func testEveryLegalKeyReachesTheWrite() async throws {
-        func rule(_ bound: [String: Value]) -> [String: Value] {
-            ["frequency": .string("monthly"), "interval": .int(2), "days_of_month": .array([.int(1)])].merging(bound) { $1 }
-        }
-        let bounds: [[String: Value]] = [["end_date": .string("2027-06-01")], ["occurrence_count": .int(5)]]
+        let endDate = "2027-06-01T00:00:00+08:00"
+        let expectedEnd = try XCTUnwrap(ISO8601DateFormatter().date(from: endDate))
+        let bounds: [(rule: [String: Value], end: Date?, count: Int?)] = [
+            (["end_date": .string(endDate)], expectedEnd, nil),
+            (["occurrence_count": .int(5)], nil, 5)
+        ]
         for tool in Self.singleWriteTools {
             for bound in bounds {
-                let weekly: [String: Value] = ["frequency": .string("weekly"), "days_of_week": .array([.int(2)])]
-                for recurrence in [rule(bound), weekly.merging(bound) { $1 }] {
+                let monthly: [String: Value] = ["frequency": .string("monthly"), "interval": .int(2), "days_of_month": .array([.int(1), .int(15)])]
+                let weekly: [String: Value] = ["frequency": .string("weekly"), "interval": .int(3), "days_of_week": .array([.int(2), .int(6)])]
+                for recurrence in [monthly.merging(bound.rule) { $1 }, weekly.merging(bound.rule) { $1 }] {
                     let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
                     let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
                     _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
+                    let label = "\(tool) \(recurrence.keys.sorted())"
                     let written = await writes(events, reminders)
-                    XCTAssertEqual(written, 1, "\(tool) \(recurrence.keys.sorted())")
+                    XCTAssertEqual(written, 1, label)
+                    let rule = await writtenRule(events, reminders)
+                    let parsed = try XCTUnwrap(rule, label)
+                    XCTAssertEqual(parsed.endDate, bound.end, label)
+                    XCTAssertEqual(parsed.occurrenceCount, bound.count, label)
+                    if recurrence["frequency"] == .string("monthly") {
+                        XCTAssertEqual(parsed.frequency, .monthly, label)
+                        XCTAssertEqual(parsed.interval, 2, label)
+                        XCTAssertEqual(parsed.daysOfMonth, [1, 15], label)
+                        XCTAssertNil(parsed.daysOfWeek, label)
+                    } else {
+                        XCTAssertEqual(parsed.frequency, .weekly, label)
+                        XCTAssertEqual(parsed.interval, 3, label)
+                        XCTAssertEqual(parsed.daysOfWeek, [2, 6], label)
+                        XCTAssertNil(parsed.daysOfMonth, label)
+                    }
                 }
             }
         }
@@ -181,6 +210,131 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
             "excluded_occurrence_dates": .array([.string("2026-12-08")])])))
         let created = await events.created
         XCTAssertEqual(created.first?.recurrenceRule?.excludedOccurrenceDates?.count, 1)
+        XCTAssertEqual(created.first?.recurrenceRule?.occurrenceCount, 5)
+    }
+
+    // MARK: - #434 verify: the same failure, in keys that are all legal
+
+    private func batchError(_ recurrence: [String: Value], extra: [String: Value] = [:]) async throws -> (error: String, written: [String]) {
+        let events = RecurrenceEventFake()
+        let server = try await CheICalMCPServer(eventWriteSource: events)
+        func row(_ title: String, _ fields: [String: Value]) -> Value {
+            .object(["title": .string(title), "start_time": .string("2026-12-07T09:00:00"), "end_time": .string("2026-12-07T10:00:00"),
+                     "calendar_name": .string("Work")].merging(fields) { $1 })
+        }
+        let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array([
+            row("good", ["recurrence": .object(["frequency": .string("daily"), "occurrence_count": .int(3)])]),
+            row("bad", ["recurrence": .object(recurrence)].merging(extra) { $1 })
+        ])])
+        let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        let results = try XCTUnwrap(response["results"] as? [[String: Any]])
+        XCTAssertEqual(results[1]["success"] as? Bool, false)
+        let created = await events.created
+        return (try XCTUnwrap(results[1]["error"] as? String), created.map(\.title))
+    }
+
+    /// `makeRecurrenceRule` takes `end_date` and drops the count, so a rule of 5 occurrences that
+    /// also named a far date ran to that date, with no message.
+    func testBothBoundsAreRefusedOnEveryTool() async throws {
+        let both: [String: Value] = ["frequency": .string("daily"), "occurrence_count": .int(5), "end_date": .string("2027-12-31")]
+        for tool in Self.singleWriteTools {
+            let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+            let message = try await refusal(tool, both, events: events, reminders: reminders)
+            XCTAssertTrue(message.contains("end_date and occurrence_count cannot be combined"), "\(tool): \(message)")
+            XCTAssertTrue(message.contains("Nothing was written for this item"), message)
+            let written = await writes(events, reminders)
+            XCTAssertEqual(written, 0, tool)
+        }
+        let batch = try await batchError(both)
+        XCTAssertTrue(batch.error.contains("end_date and occurrence_count cannot be combined"), batch.error)
+        XCTAssertEqual(batch.written, ["good"], "only that row fails")
+    }
+
+    /// `clear_recurrence` went first in the manager, so the rule that came with it vanished.
+    func testUpdateEventRefusesARuleWithClearRecurrence() async throws {
+        let events = RecurrenceEventFake()
+        let server = try await CheICalMCPServer(eventWriteSource: events)
+        do {
+            _ = try await server.executeToolCall(name: "update_event", arguments: [
+                "event_id": .string("e"), "recurrence": .object(["frequency": .string("daily")]), "clear_recurrence": .bool(true)])
+            XCTFail("update_event wrote with both")
+        } catch ToolError.invalidParameter(let message) {
+            XCTAssertEqual(message, ReminderRecurrenceWrite.bothMessage)
+        }
+        let refused = await events.updated
+        XCTAssertTrue(refused.isEmpty)
+        _ = try await server.executeToolCall(name: "update_event", arguments: [
+            "event_id": .string("e"), "recurrence": .object(["frequency": .string("daily")]), "clear_recurrence": .bool(false)])
+        let updated = await events.updated
+        XCTAssertEqual(updated.first?.recurrenceRule?.frequency, .daily, "false is no request to clear")
+    }
+
+    /// A bound beside `recurrence`, or the name the read tools use, was not read at all: an
+    /// open-ended series, a one-off item, or on update_event no change, with no message.
+    func testRuleKeysAtTheTopLevelAreRefusedOnEveryTool() async throws {
+        for key in ["occurrence_count", "end_date", "recurrence_rules", "event_recurrence_rules", "reminder_recurrence_rules"] {
+            for tool in Self.singleWriteTools {
+                for withRule in [true, false] {
+                    let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+                    let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                    var args = arguments(tool, recurrence: .object(["frequency": .string("daily")]))
+                    if !withRule { args["recurrence"] = nil }
+                    args[key] = .int(3)
+                    do {
+                        _ = try await server.executeToolCall(name: tool, arguments: args)
+                        XCTFail("\(tool) took a top-level \(key)")
+                    } catch ToolError.invalidParameter(let message) {
+                        XCTAssertTrue(message.hasPrefix(key), "\(tool): \(message)")
+                        XCTAssertTrue(message.contains("recurrence"), message)
+                        XCTAssertTrue(message.contains("Nothing was written for this item"), message)
+                    }
+                    let written = await writes(events, reminders)
+                    XCTAssertEqual(written, 0, "\(tool) \(key)")
+                }
+            }
+            let batch = try await batchError(["frequency": .string("daily")], extra: [key: .int(3)])
+            XCTAssertTrue(batch.error.contains("\(key) "), batch.error)
+            XCTAssertEqual(batch.written, ["good"], "only that row fails")
+        }
+    }
+
+    /// Measured on iCloud (events and reminders): a daily or weekly rule stores `days_of_month`,
+    /// reads it back, and repeats as if it were not there. Monthly and yearly use it, and
+    /// `days_of_week` is used by every frequency, daily included.
+    func testDaysOfMonthIsRefusedOnDailyAndWeeklyRules() async throws {
+        for frequency in ["daily", "weekly"] {
+            let rule: [String: Value] = ["frequency": .string(frequency), "days_of_month": .array([.int(15)])]
+            for tool in Self.singleWriteTools {
+                let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+                let message = try await refusal(tool, rule, events: events, reminders: reminders)
+                XCTAssertTrue(message.contains("days_of_month is used by monthly and yearly rules only"), "\(tool): \(message)")
+                XCTAssertTrue(message.contains("Nothing was written for this item"), message)
+                let written = await writes(events, reminders)
+                XCTAssertEqual(written, 0, tool)
+            }
+            let batch = try await batchError(rule)
+            XCTAssertTrue(batch.error.contains("days_of_month is used by monthly and yearly rules only"), batch.error)
+            XCTAssertEqual(batch.written, ["good"], "only that row fails")
+        }
+    }
+
+    func testTheDayListsEveryFrequencyUsesStillReachTheWrite() async throws {
+        let accepted: [(RecurrenceRuleInput.Frequency, [String: Value])] = [
+            (.daily, ["frequency": .string("daily"), "days_of_week": .array([.int(2), .int(3)])]),
+            (.daily, ["frequency": .string("daily"), "days_of_month": .array([])]),
+            (.yearly, ["frequency": .string("yearly"), "days_of_month": .array([.int(15)])]),
+            (.yearly, ["frequency": .string("yearly"), "days_of_week": .array([.int(3)])]),
+            (.monthly, ["frequency": .string("monthly"), "days_of_month": .array([.int(15)]), "days_of_week": .array([.int(3)])])
+        ]
+        for tool in Self.singleWriteTools {
+            for (frequency, recurrence) in accepted {
+                let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
+                let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
+                let rule = await writtenRule(events, reminders)
+                XCTAssertEqual(rule?.frequency, frequency, "\(tool) \(recurrence.keys.sorted())")
+            }
+        }
     }
 
     /// The guard's list is the schema's: a key added to one and not the other fails here, in either
