@@ -4,8 +4,8 @@ import XCTest
 @testable import CheICalMCP
 
 /// #333: relative alarms on reminders. `alarms_minutes_offsets` (positive = minutes before the due
-/// date) replaces or clears only the relative alarms; absolute-date alarms (what Reminders.app
-/// shows as the date, #227) and the location alarm (#229) stay. A relative alarm needs a timed due
+/// date) replaces or clears only the relative alarms; absolute-date alarms (#227) and the location
+/// alarm (#229) stay. A relative alarm needs a timed due
 /// date: without one it never fires, and on a date-only reminder its firing was not measured on a
 /// device (step 0, 2026-11-05), so both are refused. In-memory EventKit objects only.
 final class ReminderRelativeAlarmsTests: XCTestCase {
@@ -53,8 +53,9 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         XCTAssertEqual(ReminderRelativeAlarms.storedMinutesBefore(item), [])
     }
 
-    /// #433: the list shows the earliest time-based alarm of either kind. Only `[15]`, `[-15]`,
-    /// `[15, 0]`, `[0]` and absolute alarms alone are among the measured rows; the rest is inferred.
+    /// #433: the list shows the earliest time-based alarm of either kind. Among the measured rows:
+    /// `[15]`, `[-15]`, `[15, 0]`, `[0]`, an absolute alarm at or before the due time, and `[15]` with
+    /// an absolute alarm at the due time. The rest is inferred, an absolute alarm after the due time too.
     func testTheListTimeFollowsTheEarliestAlarmOfEitherKind() {
         let due = absolute
         let earlier = due.addingTimeInterval(-3600)
@@ -69,6 +70,7 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
             ("[0, -15]", [rel(0), rel(-15)], false),
             ("none", [], false),
             ("[-15] + absolute at the due time", [rel(-15), .absolute(due)], false),
+            ("[15] + absolute at the due time", [rel(15), .absolute(due)], true),
             ("[15] + earlier absolute", [rel(15), .absolute(earlier)], true),
             ("[0] + earlier absolute", [rel(0), .absolute(earlier)], true),
             ("absolute at the due time", [.absolute(due)], false),
@@ -89,9 +91,10 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         let item = reminder()
         item.dueDateComponents = timedDue
         item.addAlarm(locationAlarm())
-        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: item), "a location alarm is not time-based")
-        item.addAlarm(EKAlarm(relativeOffset: -900))
-        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(saved: item))
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: item))
+        // Counted, it would read as a relative alarm at the due time and hide the late one.
+        item.addAlarm(EKAlarm(relativeOffset: 900))
+        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(saved: item), "a location alarm is not time-based")
         let dated = reminder()
         dated.dueDateComponents = DateComponents(year: 2026, month: 12, day: 10)
         dated.addAlarm(EKAlarm(relativeOffset: -900))
@@ -101,8 +104,8 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: undated))
     }
 
-    /// The three mixed shapes on a reminder, read through the same path as the store. None of them
-    /// is among the measured rows.
+    /// Mixed shapes on a reminder, read through the same path as the store. `[15]` with an absolute
+    /// alarm at the due time is the measured one (it read 15:15); the other three are inferred.
     func testMixedAlarmsOnASavedReminder() throws {
         var dueComponents = DateComponents(year: 2026, month: 12, day: 10, hour: 15, minute: 30)
         dueComponents.timeZone = TimeZone(identifier: "Asia/Taipei")
@@ -114,6 +117,8 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
             return item
         }
         let earlier = due.addingTimeInterval(-3600)
+        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(
+            saved: saved(EKAlarm(relativeOffset: -900), EKAlarm(absoluteDate: due))), "[15] + absolute at the due time")
         XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(
             saved: saved(EKAlarm(relativeOffset: 900), EKAlarm(absoluteDate: due))), "[-15] + absolute at the due time")
         XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(
@@ -123,13 +128,18 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
     }
 
     /// A timed due without a zone is read in the host zone, as `date_sync` and the read side read
-    /// it, so an absolute alarm at that wall clock is at the due time.
+    /// it, so an absolute alarm at that wall clock is at the due time. Reading the wall clock as UTC
+    /// is the mistake, and on a UTC host (CI, `TZ=UTC`) the two agree, so the source pin carries
+    /// that case: `NSTimeZone.default` does not reach `TimeZone.current` there.
     func testAFloatingDueIsComparedInTheHostZone() throws {
         let wall = DateComponents(year: 2026, month: 12, day: 10, hour: 15, minute: 30)
         let item = reminder()
         item.dueDateComponents = wall
         item.addAlarm(EKAlarm(absoluteDate: try XCTUnwrap(safeDateFromComponents(wall))))
         XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: item))
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/ReminderRelativeAlarms.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        XCTAssertTrue(code.contains("listShowsAlarmTime(due: safeDateFromComponents(reminder.dueDateComponents),"), "the host-zone reading")
     }
 
     func testWhichUpdatesReportTheListTime() {
@@ -143,12 +153,15 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         XCTAssertFalse(ReminderRelativeAlarms.reportsListTime(request(clear: true)), "no due, no list time to compare")
     }
 
-    /// PR #438 verify: an offsets-only update did not reload, so `stored` was the list just written.
-    func testAnOffsetsOnlyUpdateReadsTheAlarmsBack() throws {
+    /// PR #438 verify: the seam's behaviour is `ReminderUpdateWriteTests`; this pins that the store
+    /// uses it, and nothing else, for the two result fields. `listShowsAlarmTime` defaults to false
+    /// and `storedRelativeAlarms` to nil, so dropping either argument compiles and no fake sees it.
+    func testUpdateReminderWiresTheAlarmReadBack() throws {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        XCTAssertTrue(code.contains("let alarmsReadBack = alarmOffsets == nil || dateSync != nil || reminder.refresh()"), "reload")
-        XCTAssertTrue(code.contains("storedRelativeAlarms: alarmsReadBack ? alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) } : nil"), "use")
+        XCTAssertTrue(code.contains("let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: dateSync, reload: { reminder.refresh() })"), "the read-back")
+        XCTAssertTrue(code.contains("storedRelativeAlarms: alarms.stored"), "the stored alarms")
+        XCTAssertTrue(code.contains("listShowsAlarmTime: alarms.listShowsAlarmTime"), "the note's judgement")
     }
 
     /// A negative value means after the due date; a value too large for `Int * 60` does not trap.

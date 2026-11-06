@@ -6,9 +6,8 @@ import Foundation
 /// sense of the event tools and of the read side's `minutes_before`).
 ///
 /// Only the relative alarms are written: a replace removes the reminder's relative alarms and adds
-/// the requested ones, `[]` removes them. Absolute-date alarms stay (Reminders.app shows the
-/// earliest one as the reminder's date, #227, and they follow the due date through
-/// `ReminderDateSync`), and so does the location alarm (#229). This differs from the event tools,
+/// the requested ones, `[]` removes them. Absolute-date alarms stay (#227: they follow the due date
+/// through `ReminderDateSync`), and so does the location alarm (#229). This differs from the event tools,
 /// whose list replaces every alarm.
 ///
 /// A relative alarm is anchored to the due date, so it is refused (nothing is written) when the
@@ -18,16 +17,18 @@ import Foundation
 ///
 /// #433: alarms change what the Reminders.app list shows. In the 14 rows measured (2026-11-05) the
 /// row showed the earliest time-based alarm of either kind, so 15:30 with `[15]` read 15:15 and with
-/// `[-15]` read 15:45, while the stored due date stayed 15:30; none of them showed the due time and
-/// alerted early. That is a fit to those rows, not a documented rule. An Early Reminder set in the
-/// app reads back as one absolute alarm at the due time, so EventKit does not expose it. The offsets
-/// stay; `alarmDisplayNote` says this.
+/// `[-15]` read 15:45, while the stored due date stayed 15:30. That is a fit to those rows, not a
+/// documented rule. The rows that showed the due time have no alarm before it; firing was not
+/// checked on any of them. #333's one notification check (due 09:54, `[2]`, 2026-11-05) came early
+/// and its banner read 09:52; no second banner was seen at the due time, with the first one still on
+/// screen. The one Early Reminder made by hand read back with one absolute alarm at the due time, so
+/// EventKit did not show it. The offsets stay; `alarmDisplayNote` says this.
 enum ReminderRelativeAlarms {
     /// In `alarms_note` and in each tool's `alarms_minutes_offsets` description.
-    static let alarmDisplayNote = "The alarm does not change the due date, but the Reminders.app list shows the earliest alarm time instead of the due time, so the list can read earlier or later than the due time. An early notification was seen in one check, with a future due date and [2]. An Early Reminder set in Reminders.app is different: EventKit does not expose it, so this server can neither write nor read it."
+    static let alarmDisplayNote = "The alarm does not change the due date, but in the rows measured the Reminders.app list showed the earliest alarm time instead of the due time, so it can read earlier or later than the due time. In the one notification check, with a future due date and [2], the notification came early and its banner showed that same alarm time; no second banner was seen at the due time, though the first was still on screen, so one behind it cannot be excluded. An Early Reminder set in Reminders.app is different: the one made by hand read back with no alarm before the due time, so this server cannot write it."
 
     /// When `alarmDisplayNote` appears, as the tool descriptions state it.
-    static let alarmNoteCondition = "When the earliest time-based alarm, relative or absolute, is not at the due time (inferred from measured list rows; [0, -15] and mixes with absolute alarms were not measured), alarms_note says:"
+    static let alarmNoteCondition = "When the earliest time-based alarm, relative or absolute, is not at the timed due time, alarms_note speaks up. Measured list rows: [15], [60], [2], [15, 0], [0], [-15], absolute alarms at or before the due time, and [15] with an absolute alarm at the due time. Every other shape is inferred from them, and they cannot decide [0, -15], which gets no note for now. The note says:"
 
     enum DueState: Equatable { case none, dateOnly, timed }
 
@@ -87,7 +88,9 @@ enum ReminderRelativeAlarms {
     /// #433: whether the earliest time-based alarm, of either kind, is off `due`, so the list shows
     /// that alarm's time and not the due time (PR #438 verify: absolute alarms stay on the reminder
     /// and count too). `[0, -15]` is false: the measured rows cannot tell whether its list shows the
-    /// due time or the later alarm, so there is no note until release gate step 8 decides.
+    /// due time or the later alarm, so there is no note until release gate step 8 decides. If it
+    /// shows the later alarm, the rule is "the earliest alarm off the due time" and this changes for
+    /// every shape with an alarm at the due time and a later one.
     static func listShowsAlarmTime(due: Date?, alarms: [ReminderReadSnapshot.Alarm]) -> Bool {
         guard let due else { return false }
         let instants = alarms.compactMap { alarm -> Date? in
@@ -101,7 +104,9 @@ enum ReminderRelativeAlarms {
     }
 
     /// On a saved reminder. Only with a timed due: a date-only or undated reminder has no due time
-    /// to compare with, and what it shows or fires was not measured (the leftover note covers it).
+    /// to compare with. On a date-only reminder #267 measured that the app goes on showing an
+    /// absolute alarm's time; that gets no note here (documented), and neither does a relative
+    /// alarm there, whose display was not measured (the leftover note speaks when the due changes).
     static func listShowsAlarmTime(saved reminder: EKReminder) -> Bool {
         guard dueState(of: reminder.dueDateComponents) == .timed else { return false }
         // `safeDateFromComponents`, as `date_sync` compares them: a due without a zone is in the host zone.

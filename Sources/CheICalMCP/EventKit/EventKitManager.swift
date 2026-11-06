@@ -2343,16 +2343,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reload: { reminder.refresh() },
             rollback: { reminder.rollback() })
         markNeedsRefresh()
-        // PR #438 verify: an update that touched no due date did not reload, so the response would
-        // report the list just written. Reloaded here; if that fails, nothing is reported as stored.
-        let alarmsReadBack = alarmOffsets == nil || dateSync != nil || reminder.refresh()
+        // PR #438 verify: judged on the re-read reminder, absolute alarms included; if it could not
+        // be re-read, nothing is reported as stored.
+        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: dateSync, reload: { reminder.refresh() })
         let result = ReminderUpdateResult(
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
-            storedRelativeAlarms: alarmsReadBack ? alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) } : nil,
+            storedRelativeAlarms: alarms.stored,
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
             leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
-            // #433: judged on the saved reminder, absolute alarms included.
-            listShowsAlarmTime: ReminderRelativeAlarms.reportsListTime(request) && ReminderRelativeAlarms.listShowsAlarmTime(saved: reminder),
+            listShowsAlarmTime: alarms.listShowsAlarmTime,
             // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
             // call touched the rule.
             recurrence: (recurrenceRule != nil || clearRecurrence)

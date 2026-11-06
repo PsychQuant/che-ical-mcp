@@ -651,6 +651,7 @@ final class ManifestParityTests: XCTestCase {
             let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
             XCTAssertTrue(summary.contains("earliest alarm time"), "\(name): \(summary)")
             XCTAssertTrue(summary.contains("not the due time"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("the one notification checked showed it too"), "\(name): \(summary)")
             XCTAssertTrue(summary.contains("when the earliest alarm is off the due time"), "\(name): \(summary)")
             XCTAssertTrue(summary.contains("alarms_note"), "\(name): \(summary)")
         }
