@@ -13,7 +13,7 @@ import XCTest
 final class TCCDriftVersionedHostTests: XCTestCase {
 
     private let runningPath = "/Users/test/bin/CheICalMCP"
-    private let versionedHostPath = "/Users/test/.local/share/claude/versions/2.1.206"
+    private let versionedHostPath = "\(NSHomeDirectory())/.local/share/claude/versions/2.1.206"
     private let vsCodePath = "/Applications/Visual Studio Code.app/Contents/MacOS/Electron"
 
     private func resolved(_ path: String, isSelf: Bool = false) -> ResponsibleProcessResult {
