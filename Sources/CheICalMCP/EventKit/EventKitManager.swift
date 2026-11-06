@@ -1276,6 +1276,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.allDayTimezoneConflict
         }
 
+        // #451: span future from a later occurrence, on the fields measured to lose occurrences.
+        if let reason = SeriesRuleWrite.laterOccurrenceRefusal(
+            fromLaterOccurrence: !applyToAll && span == .futureEvents && event !== masterEvent && event.startDate > masterEvent.startDate,
+            changesAllDay: datePlan.isAllDay != event.isAllDay,
+            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar.calendarIdentifier } ?? false,
+            hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
+        // #451: a start moved past occurrences that happened takes them with it, and undo refuses.
+        if SeriesRuleWrite.needsPassedOccurrenceCheck(
+            coversSeries: applyToAll || (span == .futureEvents && event.startDate == masterEvent.startDate),
+            repeats: event.hasRecurrenceRules, firstStart: event.startDate,
+            plannedStart: datePlan.datesToWrite?.start ?? event.startDate, now: Date()),
+           let planned = datePlan.datesToWrite?.start {
+            let series = event.calendarItemIdentifier
+            let starts = try self.events(from: event.startDate, to: planned.addingTimeInterval(1), calendars: [event.calendar])
+                .filter { $0.calendarItemIdentifier == series }.map(\.startDate)
+            if SeriesRuleWrite.passesAnOccurrence(starts: starts.compactMap { $0 }, firstStart: event.startDate, plannedStart: planned) {
+                throw EventKitError.seriesWriteRefused(reason: SeriesRuleWrite.startPassesOccurrencesReason)
+            }
+        }
+
         // Validate recurrence weekday consistency (#5) — check when:
         // 1. A new recurrence rule is being set, OR
         // 2. start_time or timezone changed on an event that already has weekly recurrence
@@ -3120,6 +3142,9 @@ enum EventKitError: LocalizedError {
     /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
     /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
     case recurrenceChangeOnOccurrenceRefused(clearing: Bool, address: EventKitManager.RecurrenceChangeAddress)
+    /// #451: an `update_event` shape measured to lose occurrences. `reason` is one of the fixed
+    /// strings on `SeriesRuleWrite`.
+    case seriesWriteRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3258,6 +3283,8 @@ enum EventKitError: LocalizedError {
             case (true, .occurrenceOwnId(let series)):
                 return "This id is one occurrence edited on its own, and clear_recurrence removes the rule of the whole series. Call update_event with \(Self.seriesName(series)) instead: \(wholeSeries). \(ending) Nothing was written."
             }
+        case .seriesWriteRefused(let reason):
+            return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):
