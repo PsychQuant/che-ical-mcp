@@ -35,21 +35,11 @@ enum SeriesExceptionsPlanner {
         let snapshot: EventSnapshot
     }
 
-    /// The slot the series' rule gave an edited occurrence. The `/RID=` of a timed occurrence is
-    /// an instant; the `/RID=` of an ALL-DAY occurrence is a floating date, the wall-clock date read
-    /// as UTC (device, 2026-10-14: `RID=863049600` is 2028-05-08 00:00 UTC for the all-day
-    /// occurrence of 2028-05-08), while the recreated series' slot is local midnight of that day. So
-    /// an all-day RID is reinterpreted in the host zone; compared as an instant it never matched,
-    /// which made the consistency guard apply nothing for every all-day series with an edit.
+    /// `UndoPostState.ruleSlot` of an occurrence. Compared as an instant, an all-day RID never
+    /// matched, which made the consistency guard apply nothing for every all-day series with an edit.
     static func ruleSlot(of occurrence: ObservedOccurrence) -> Date {
-        let rid = UndoPostState.originalSlot(eventIdentifier: occurrence.ids.eventIdentifier,
-                                             externalIdentifier: occurrence.ids.externalIdentifier, occurrenceDate: nil)
-        guard let rid else { return occurrence.occurrenceDate ?? occurrence.startDate }
-        guard occurrence.snapshot.isAllDay else { return rid }
-        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
-        let day = utc.dateComponents([.year, .month, .day], from: rid)
-        var local = Calendar(identifier: .gregorian); local.timeZone = TimeZone.current
-        return local.date(from: day) ?? rid
+        UndoPostState.ruleSlot(eventIdentifier: occurrence.ids.eventIdentifier, externalIdentifier: occurrence.ids.externalIdentifier,
+                               occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.snapshot.isAllDay) ?? occurrence.startDate
     }
 
     /// Whether a rule slot is inside the window: start inclusive, end EXCLUSIVE, like an EventKit
