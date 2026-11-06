@@ -53,7 +53,7 @@ The match is a judgment, so state it: the report names the rule (section 5), and
 
 ## 4. The calendar must exist
 
-Look the calendar up by name with `list_calendars` (with `source`, in that account only). If it does not exist, say so and ask how to proceed. **Never create a calendar for routing**: routing selects among existing calendars, it does not provision them.
+Look the calendar up by name in the result of `list_calendars`, whose only argument is `type`; when the rule has a `source`, keep only the entries whose `source` matches it. If it does not exist, say so and ask how to proceed. **Never create a calendar for routing**: routing selects among existing calendars, it does not provision them.
 
 ## 5. Report
 

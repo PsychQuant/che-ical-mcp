@@ -1459,7 +1459,7 @@ class CheICalMCPServer {
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
 
         let result = try await eventWriteSource.createEventValue(EventCreateRequest(
             title: title,
@@ -1539,7 +1539,7 @@ class CheICalMCPServer {
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
         }
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
         let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
@@ -1949,7 +1949,7 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = arguments["priority"]?.intValue
+        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -2727,7 +2727,7 @@ class CheICalMCPServer {
                 try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
-                let batchStructuredLocation = parseStructuredLocation(from: eventDict)
+                let batchStructuredLocation = try parseStructuredLocation(from: eventDict)
 
                 let batchNotes = eventDict["notes"]?.stringValue
                 let batchLocation = eventDict["location"]?.stringValue
@@ -3633,14 +3633,16 @@ class CheICalMCPServer {
         )
     }
 
-    private func parseStructuredLocation(from arguments: [String: Value]) -> StructuredLocationInput? {
+    private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else { return nil }
+        guard let title = dict["title"]?.stringValue else {
+            throw ToolError.invalidParameter("structured_location.title is required")
+        }
         return StructuredLocationInput(
             title: title,
-            latitude: dict["latitude"]?.doubleValue,
-            longitude: dict["longitude"]?.doubleValue,
-            radius: dict["radius"]?.doubleValue
+            latitude: InputValidation.number(dict["latitude"]),
+            longitude: InputValidation.number(dict["longitude"]),
+            radius: InputValidation.number(dict["radius"])
         )
     }
 
@@ -3657,13 +3659,13 @@ class CheICalMCPServer {
         guard let title = dict["title"]?.stringValue else {
             throw ToolError.invalidParameter("location_trigger.title is required")
         }
-        guard let lat = dict["latitude"]?.doubleValue else {
+        guard let lat = InputValidation.number(dict["latitude"]) else {
             throw ToolError.invalidParameter("location_trigger.latitude is required")
         }
-        guard let lon = dict["longitude"]?.doubleValue else {
+        guard let lon = InputValidation.number(dict["longitude"]) else {
             throw ToolError.invalidParameter("location_trigger.longitude is required")
         }
-        let radius = dict["radius"]?.doubleValue ?? 100
+        let radius = InputValidation.number(dict["radius"]) ?? 100
         let proximityStr = dict["proximity"]?.stringValue ?? "enter"
         let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
 

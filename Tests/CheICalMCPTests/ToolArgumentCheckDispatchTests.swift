@@ -68,7 +68,7 @@ final class ToolArgumentCheckDispatchTests: XCTestCase {
     }
 
     func testANestedObjectIsChecked() async throws {
-        let location: Value = .object(["title": .string("x"), "latitude": .double(25), "longitude": .double(121), "radiuss": .int(5)])
+        let location: Value = .object(["title": .string("x"), "latitude": .int(25), "longitude": .int(121), "radiuss": .int(5)])
         let message = try await refusal("create_event", ["structured_location": location])
         XCTAssertTrue(message.contains("structured_location has a key"), message)
         XCTAssertFalse(message.contains("radiuss"), message)
