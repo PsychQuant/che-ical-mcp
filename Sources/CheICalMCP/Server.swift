@@ -576,7 +576,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false. When the earliest stored alarm is not at the due time, alarms_note says: \(ReminderRelativeAlarms.alarmDisplayNote)")
+                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote)")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -601,7 +601,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) or the rule (recurrence, clear_recurrence) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
+                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the earliest time-based alarm, relative or absolute); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due), the rule (recurrence, clear_recurrence) or the relative alarms (alarms_minutes_offsets) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -615,7 +615,7 @@ class CheICalMCPServer {
                         ]),
                         "realign_to_due": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. Relative alarms stay, so an early relative alarm still sets what the Reminders.app list shows. The earliest absolute-date alarm lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
@@ -623,7 +623,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for. When the earliest stored alarm is not at the due time, alarms_note says: \(ReminderRelativeAlarms.alarmDisplayNote) When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them.")
+                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote) A call with due_date or realign_to_due and no alarms_minutes_offsets gets the same note on the same condition; a call that touches neither, such as a title change, gets none, so no note does not mean the list shows the due time. When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them.")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -1069,7 +1069,7 @@ class CheICalMCPServer {
                                     "alarms_minutes_offsets": .object([
                                         "type": .string("array"),
                                         "items": .object(["type": .string("integer")]),
-                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row. When the earliest stored alarm is not at the due time, the row's alarms_note says: \(ReminderRelativeAlarms.alarmDisplayNote)")
+                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote)")
                                     ])
                                 ]),
                                 "required": .array([.string("title"), .string("calendar_name")])
@@ -1893,10 +1893,10 @@ class CheICalMCPServer {
     static func alarmResponseFields(requested: [Int]?, result: EventKitManager.CreateReminderResult) -> [String: Any] {
         guard let requested else { return [:] }
         if result.isDuplicate { return ["alarms_applied": false, "alarms_note": duplicateAlarmsNote] }
-        return storedAlarmFields(requested: requested, stored: result.storedRelativeAlarms)
+        return storedAlarmFields(requested: requested, stored: result.storedRelativeAlarms, listShowsAlarmTime: result.listShowsAlarmTime)
     }
 
-    static func storedAlarmFields(requested: [Int], stored: [Double]?) -> [String: Any] {
+    static func storedAlarmFields(requested: [Int], stored: [Double]?, listShowsAlarmTime: Bool) -> [String: Any] {
         guard let stored else { return [:] }
         var fields: [String: Any] = ["alarms_minutes_offsets": stored]
         var notes: [String] = []
@@ -1904,9 +1904,14 @@ class CheICalMCPServer {
             fields["alarms_differ"] = true
             notes.append("The reminder holds different relative alarms than requested; check it in Reminders.")
         }
-        if ReminderRelativeAlarms.movesListTime(stored: stored) { notes.append(ReminderRelativeAlarms.alarmDisplayNote) }   // #433
+        if listShowsAlarmTime { notes.append(ReminderRelativeAlarms.alarmDisplayNote) }   // #433
         if !notes.isEmpty { fields["alarms_note"] = notes.joined(separator: " ") }
         return fields
+    }
+
+    /// `alarms_note` can hold more than one note; none replaces another.
+    static func appendAlarmNote(_ note: String, to fields: inout [String: Any]) {
+        fields["alarms_note"] = (fields["alarms_note"] as? String).map { "\($0) \(note)" } ?? note
     }
 
     private func handleUpdateReminder(arguments: [String: Value]) async throws -> String {
@@ -2000,8 +2005,13 @@ class CheICalMCPServer {
         ))
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
-        if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
-        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }   // PR #415 verify round 1
+        if let alarmOffsets {
+            response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms,
+                                                  listShowsAlarmTime: update.listShowsAlarmTime)) { $1 }
+        }
+        if let leftover = update.leftoverAlarmsNote { Self.appendAlarmNote(leftover, to: &response) }   // PR #415 verify round 1
+        // PR #438 verify: a due change on a reminder that keeps its alarms is what #433 explains.
+        if alarmOffsets == nil, update.listShowsAlarmTime { Self.appendAlarmNote(ReminderRelativeAlarms.alarmDisplayNote, to: &response) }
         // #354: the rule and the due read back off the saved reminder; a note when the due is off the rule's days.
         if let recurrence = update.recurrence {
             if recurrence.confirmed {

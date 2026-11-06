@@ -53,6 +53,104 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
         XCTAssertEqual(ReminderRelativeAlarms.storedMinutesBefore(item), [])
     }
 
+    /// #433: the list shows the earliest time-based alarm of either kind. Only `[15]`, `[-15]`,
+    /// `[15, 0]`, `[0]` and absolute alarms alone are among the measured rows; the rest is inferred.
+    func testTheListTimeFollowsTheEarliestAlarmOfEitherKind() {
+        let due = absolute
+        let earlier = due.addingTimeInterval(-3600)
+        func rel(_ minutes: Double) -> ReminderReadSnapshot.Alarm { .relative(seconds: -minutes * 60) }
+        let cases: [(String, [ReminderReadSnapshot.Alarm], Bool)] = [
+            ("[15]", [rel(15)], true),
+            ("[-15]", [rel(-15)], true),
+            ("[15, -15]", [rel(15), rel(-15)], true),
+            ("[15, 0]", [rel(15), rel(0)], true),
+            ("[-15, -60]", [rel(-15), rel(-60)], true),
+            ("[0]", [rel(0)], false),
+            ("[0, -15]", [rel(0), rel(-15)], false),
+            ("none", [], false),
+            ("[-15] + absolute at the due time", [rel(-15), .absolute(due)], false),
+            ("[15] + earlier absolute", [rel(15), .absolute(earlier)], true),
+            ("[0] + earlier absolute", [rel(0), .absolute(earlier)], true),
+            ("absolute at the due time", [.absolute(due)], false),
+            ("absolute after the due time", [.absolute(due.addingTimeInterval(900))], true),
+            ("absolute earlier", [.absolute(earlier)], true),
+            ("a non-finite offset is left out", [.relative(seconds: .infinity)], false)
+        ]
+        for (name, alarms, expected) in cases {
+            XCTAssertEqual(ReminderRelativeAlarms.listShowsAlarmTime(due: due, alarms: alarms), expected, name)
+        }
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(due: nil, alarms: [rel(15)]), "no instant to compare with")
+    }
+
+    /// Read off the reminder: only a timed due, and a location alarm does not count.
+    func testTheListTimeOnASavedReminder() {
+        var timedDue = DateComponents(year: 2026, month: 12, day: 10, hour: 15, minute: 30)
+        timedDue.timeZone = TimeZone(identifier: "Asia/Taipei")
+        let item = reminder()
+        item.dueDateComponents = timedDue
+        item.addAlarm(locationAlarm())
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: item), "a location alarm is not time-based")
+        item.addAlarm(EKAlarm(relativeOffset: -900))
+        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(saved: item))
+        let dated = reminder()
+        dated.dueDateComponents = DateComponents(year: 2026, month: 12, day: 10)
+        dated.addAlarm(EKAlarm(relativeOffset: -900))
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: dated), "date-only: not measured, the leftover note speaks")
+        let undated = reminder()
+        undated.addAlarm(EKAlarm(relativeOffset: -900))
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: undated))
+    }
+
+    /// The three mixed shapes on a reminder, read through the same path as the store. None of them
+    /// is among the measured rows.
+    func testMixedAlarmsOnASavedReminder() throws {
+        var dueComponents = DateComponents(year: 2026, month: 12, day: 10, hour: 15, minute: 30)
+        dueComponents.timeZone = TimeZone(identifier: "Asia/Taipei")
+        let due = try XCTUnwrap(safeDateFromComponents(dueComponents))
+        func saved(_ alarms: EKAlarm...) -> EKReminder {
+            let item = reminder()
+            item.dueDateComponents = dueComponents
+            alarms.forEach(item.addAlarm)
+            return item
+        }
+        let earlier = due.addingTimeInterval(-3600)
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(
+            saved: saved(EKAlarm(relativeOffset: 900), EKAlarm(absoluteDate: due))), "[-15] + absolute at the due time")
+        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(
+            saved: saved(EKAlarm(relativeOffset: -900), EKAlarm(absoluteDate: earlier))), "[15] + earlier absolute")
+        XCTAssertTrue(ReminderRelativeAlarms.listShowsAlarmTime(
+            saved: saved(EKAlarm(relativeOffset: 0), EKAlarm(absoluteDate: earlier))), "[0] + earlier absolute")
+    }
+
+    /// A timed due without a zone is read in the host zone, as `date_sync` and the read side read
+    /// it, so an absolute alarm at that wall clock is at the due time.
+    func testAFloatingDueIsComparedInTheHostZone() throws {
+        let wall = DateComponents(year: 2026, month: 12, day: 10, hour: 15, minute: 30)
+        let item = reminder()
+        item.dueDateComponents = wall
+        item.addAlarm(EKAlarm(absoluteDate: try XCTUnwrap(safeDateFromComponents(wall))))
+        XCTAssertFalse(ReminderRelativeAlarms.listShowsAlarmTime(saved: item))
+    }
+
+    func testWhichUpdatesReportTheListTime() {
+        func request(offsets: [Int]? = nil, due: ReminderDueInput? = nil, clear: Bool = false, realign: Bool = false) -> ReminderUpdateRequest {
+            ReminderUpdateRequest(identifier: "r", due: due, clearDueDate: clear, realignToDue: realign, alarmOffsets: offsets)
+        }
+        XCTAssertTrue(ReminderRelativeAlarms.reportsListTime(request(offsets: [15])))
+        XCTAssertTrue(ReminderRelativeAlarms.reportsListTime(request(due: .timed(absolute))))
+        XCTAssertTrue(ReminderRelativeAlarms.reportsListTime(request(realign: true)))
+        XCTAssertFalse(ReminderRelativeAlarms.reportsListTime(request()), "a title change says nothing")
+        XCTAssertFalse(ReminderRelativeAlarms.reportsListTime(request(clear: true)), "no due, no list time to compare")
+    }
+
+    /// PR #438 verify: an offsets-only update did not reload, so `stored` was the list just written.
+    func testAnOffsetsOnlyUpdateReadsTheAlarmsBack() throws {
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
+        XCTAssertTrue(code.contains("let alarmsReadBack = alarmOffsets == nil || dateSync != nil || reminder.refresh()"), "reload")
+        XCTAssertTrue(code.contains("storedRelativeAlarms: alarmsReadBack ? alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) } : nil"), "use")
+    }
+
     /// A negative value means after the due date; a value too large for `Int * 60` does not trap.
     func testNegativeAndHugeOffsets() {
         let item = reminder()
