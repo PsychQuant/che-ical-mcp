@@ -20,8 +20,6 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
     private(set) var listCalls: [ListCall] = []
     private(set) var deleteCalls: [DeleteCall] = []
     private(set) var seriesCalls: [[String]] = []
-    /// `refusingOccurrenceIdentifiers` of each series call (#416).
-    private(set) var seriesRefusals: [Bool] = []
 
     /// What every `event_ids` dry-run row answers (PR #465 verify r2).
     private let previewRow: BatchDeletionPreviewRow
@@ -50,9 +48,8 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
         return result
     }
 
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
         seriesCalls.append(identifiers)
-        seriesRefusals.append(refusingOccurrenceIdentifiers)
         return result
     }
 
@@ -72,10 +69,12 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
 private actor SeriesModel: EventBatchDeletionSource {
     private let series: String
     private var occurrences: [FirstRemainingOccurrence.Candidate]
+    private let listed: [BatchDeletionListedEvent]
 
-    init(series: String, occurrences: [FirstRemainingOccurrence.Candidate]) {
+    init(series: String, occurrences: [FirstRemainingOccurrence.Candidate], listed: [BatchDeletionListedEvent] = []) {
         self.series = series
         self.occurrences = occurrences
+        self.listed = listed
     }
 
     var left: Int { occurrences.count }
@@ -120,7 +119,7 @@ private actor SeriesModel: EventBatchDeletionSource {
         return EventKitManager.batchOccurrenceDateRequired
     }
 
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
         var succeeded = 0
         var failures: [(String, String)] = []
         for id in identifiers {
@@ -140,7 +139,7 @@ private actor SeriesModel: EventBatchDeletionSource {
     }
 
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
-                               calendarSource: String?) async throws -> [BatchDeletionListedEvent] { [] }
+                               calendarSource: String?) async throws -> [BatchDeletionListedEvent] { listed }
 
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult {
@@ -171,7 +170,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
 
-    private func call(_ fake: BatchDeletionFake, _ args: [String: Value]) async throws -> [String: Any] {
+    private func call(_ fake: any EventBatchDeletionSource, _ args: [String: Value]) async throws -> [String: Any] {
         let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
         return try object(await server.executeToolCall(name: "delete_events_batch", arguments: args))
     }
@@ -433,20 +432,36 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
 
     // MARK: - #416: span all through an occurrence's own id
 
-    /// With `event_ids` the caller names what to delete, so an id of one occurrence edited on its
-    /// own is refused for span all (it would delete that occurrence only). By date range the
-    /// listing, not the caller, put that id in the set: no refusal there.
-    func testEventIdsSpanAllRefusesOccurrenceIdentifiersAndTheRangeDoesNot() async throws {
-        let byIds = BatchDeletionFake(listed: [])
-        _ = try await call(byIds, ["event_ids": .array([.string("S"), .string("S/RID=1")]), "span": .string("all"),
-                                   "dry_run": .bool(false)])
-        let byIdsRefusals = await byIds.seriesRefusals
-        XCTAssertEqual(byIdsRefusals, [true])
+    /// By date range too (#427): a listed occurrence with its series not listed would be deleted
+    /// alone, answered as the series. Refused in both modes, and not counted as a deletion.
+    func testARangeHoldingOnlyAnEditedOccurrenceRefusesThatRow() async throws {
+        let slot = base.addingTimeInterval(14 * day)
+        let occurrences = [unedited(0), unedited(7), editedOccurrence(14), unedited(21)]
+        func listing() -> [BatchDeletionListedEvent] {
+            [BatchDeletionListedEvent(identifier: ownId(14), start: slot, end: slot.addingTimeInterval(3600), slot: slot, isDetached: true)]
+        }
+        let dryModel = SeriesModel(series: series, occurrences: occurrences, listed: listing())
+        let dry = try await call(dryModel, args(after: slot.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true))
+        XCTAssertEqual(dry["deletions"] as? Int, 0, "\(dry)")
+        let rows = try XCTUnwrap(dry["events_to_delete"] as? [[String: Any]])
+        XCTAssertEqual(rows.first?["error"] as? String, DetachedOccurrenceSpan.seriesDeleteBatchReason)
+        let model = SeriesModel(series: series, occurrences: occurrences, listed: listing())
+        let real = try await call(model, args(after: slot.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: false))
+        XCTAssertEqual(real["failed"] as? Int, 1, "\(real)")
+        XCTAssertEqual(real["succeeded"] as? Int, 0)
+        let left = await model.left
+        XCTAssertEqual(left, 4)
+    }
 
-        let range = BatchDeletionFake(listed: dailySeries("S", count: 3, from: base))
-        _ = try await call(range, args(after: base, before: base.addingTimeInterval(10 * day), span: "all", dryRun: false))
-        let rangeRefusals = await range.seriesRefusals
-        XCTAssertEqual(rangeRefusals, [false])
+    /// The series listed too: its row takes the whole series, as ever.
+    func testARangeHoldingTheSeriesToo() async throws {
+        let first = base, slot = base.addingTimeInterval(14 * day)
+        let listing = [BatchDeletionListedEvent(identifier: series, start: first, end: first, slot: first),
+                       BatchDeletionListedEvent(identifier: ownId(14), start: slot, end: slot, slot: slot, isDetached: true)]
+        let occurrences = [unedited(0), unedited(7), editedOccurrence(14)]
+        let dry = try await call(SeriesModel(series: series, occurrences: occurrences, listed: listing),
+                                 args(after: first.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true))
+        XCTAssertEqual(dry["deletions"] as? Int, 2, "\(dry)")
     }
 
     // MARK: - #416: the event_ids dry run and the real call agree

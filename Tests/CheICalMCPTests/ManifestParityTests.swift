@@ -454,8 +454,8 @@ final class ManifestParityTests: XCTestCase {
         let batch = try descriptions(of: "delete_events_batch")
         XCTAssertTrue(batch.declared.contains("By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416)"), batch.declared)
         XCTAssertTrue(batch.summary.contains("span all through an occurrence edited on its own is refused for that row while another occurrence remains"), batch.summary)
-        // By date range the row is not refused (the listing named it, not the caller): measured.
-        XCTAssertTrue(batch.declared.contains("By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427)"), batch.declared)
+        // By date range the same row is refused (#427).
+        XCTAssertTrue(batch.declared.contains("By date range, with span all, an occurrence edited on its own is refused the same way, in the dry run too, while another occurrence of its series is not listed (#427)."), batch.declared)
     }
 
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also

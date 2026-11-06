@@ -981,7 +981,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("} catch EventKitError.occurrenceAddressRefused(let reason) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted)) }"), "verify r2: the text says the series' id")
                 XCTAssertTrue(manager.contains("return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)"))
         XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first.id, span: .futureEvents) return .firstEditedOccurrence(id: first.id) }"), "delete")
-        XCTAssertTrue(manager.contains("if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids only")
+        XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids and by date range (#427)")
         XCTAssertTrue(manager.contains("if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) { failures.append((id, refusal)) continue } let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence) try eventStore.remove(occurrence, span: .futureEvents) successCount += 1 throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))"), "the batch: delete_event's refusals, then the whole series from the first occurrence, reported and kept out of the undo")
         XCTAssertTrue(manager.contains("await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) })) } else if let refusingMarker { await CalendarUndoManager.shared.record(refusingMarker) }"), "PR #465 verify r1-r2: the batch's undo holds only the rows it can restore; with none, delete_event's refusing record")
         let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
@@ -1447,8 +1447,8 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
         XCTAssertTrue(single.contains("if let refusal = try seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
-        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
+        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String])", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
+        XCTAssertTrue(batch.contains("if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
     /// The preview by `event_ids` walks the rows as the real call does and does not list what the
