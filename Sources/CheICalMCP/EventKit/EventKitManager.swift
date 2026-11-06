@@ -1188,6 +1188,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             neighbours: ownNeighbours) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
+        // #442: it answered updated and an occurrence nobody created appeared (device).
+        if DetachedOccurrenceSpan.refusesAllDayChange(
+            wholeSeries: applyToAll, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
+            hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason)
+        }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
         // occurrence, and saving the whole series from it splits it into a new series with a new
         // identifier (device, iCloud). Refused rather than done silently; the other writes
