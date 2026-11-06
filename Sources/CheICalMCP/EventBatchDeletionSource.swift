@@ -60,6 +60,10 @@ extension EventKitManager: EventBatchDeletionSource {
         guard let event = freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
             goneInTheCall: goneInTheCall)?.event else {
+            // #436: what the real row does when the series reaches only its first occurrence.
+            if spanAll, let first = firstEditedOccurrenceID(of: identifier), let occurrence = freshEvent(id: first) {
+                return .deletes(start: occurrence.startDate, end: occurrence.endDate)
+            }
             throw notFoundError(id: identifier)
         }
         // #416: what the real call refuses is not listed as a deletion.

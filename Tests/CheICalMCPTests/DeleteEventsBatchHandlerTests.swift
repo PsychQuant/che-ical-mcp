@@ -78,7 +78,9 @@ private actor SeriesModel: EventBatchDeletionSource {
     /// nil when the row goes ahead; a refusal; or a throw, as the bare id's edited-before refusal.
     private func judge(_ id: String, named: Set<String>, gone: Set<String>) throws -> String? {
         guard id != series else {
-            guard FirstRemainingOccurrence.pick(occurrences, identifier: series, goneInTheCall: gone) != nil else {
+            let left = occurrences.filter { !gone.contains($0.eventIdentifier ?? "") }
+            guard FirstRemainingOccurrence.pick(occurrences, identifier: series, goneInTheCall: gone) != nil
+                    || FirstRemainingOccurrence.earliestEdited(left, identifier: series) != nil else {
                 throw EventKitError.standInRefused(reason: EventKitManager.standInEditedBeforeBatchReason)
             }
             return nil
@@ -122,7 +124,8 @@ private actor SeriesModel: EventBatchDeletionSource {
                     failures.append((id, refusal))
                     continue
                 }
-                occurrences.removeAll { $0.eventIdentifier == id }
+                // The series' row takes what is left, edited occurrences included (#436: measured).
+                occurrences.removeAll { id == series || $0.eventIdentifier == id }
                 succeeded += 1
             } catch {
                 failures.append((id, "refused"))
@@ -461,11 +464,12 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try await assertSameAnswer(shape, ids: [series, ownId(7)], deletes: 2, left: 0)
     }
 
-    /// Another edited occurrence the call does not name: the occurrence's row is refused, so it is
-    /// not gone, and the bare id stays refused. Both modes refuse both rows and nothing is deleted.
-    func testTheDryRunRefusesBothRowsWhenAnEditedOccurrenceIsNotNamed() async throws {
+    /// Another edited occurrence the call does not name: the occurrence's row is refused, as it would
+    /// delete only that occurrence, and the series' row reaches the series through it (#436), as
+    /// the call named the series. Both modes say so.
+    func testTheDryRunShowsTheSeriesRowWhenAnEditedOccurrenceIsNotNamed() async throws {
         let shape = [editedOccurrence(0), unedited(7), editedOccurrence(14), unedited(21)]
-        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 0, left: 4)
+        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 1, left: 0)
     }
 
     /// Every edited occurrence named: each runs first, and the bare id then reaches the rest.
@@ -474,10 +478,18 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try await assertSameAnswer(shape, ids: [series, ownId(14), ownId(0)], deletes: 3, left: 0)
     }
 
-    /// The bare id alone: refused in both modes, nothing deleted.
-    func testTheDryRunRefusesTheBareIdAlone() async throws {
+    /// The bare id alone, the first occurrence edited (#436): the whole series, in both modes.
+    func testTheDryRunShowsTheWholeDeleteForTheBareIdAlone() async throws {
         let shape = [editedOccurrence(0), unedited(7), unedited(14)]
-        try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 3)
+        try await assertSameAnswer(shape, ids: [series], deletes: 1, left: 0)
+    }
+
+    /// An unedited occurrence first: the bare id reaches no occurrence of its own, and is refused as
+    /// it was, in both modes. Here the edited one is not first, so nothing is delegated.
+    func testTheBareIdIsRefusedWhenAnUneditedOccurrenceComesFirstAndAnEditedOneBlocks() async throws {
+        let shape = [unedited(7), .init(eventIdentifier: "unrelated", isDetached: true, hasRecurrenceRules: false,
+                                        start: base, slot: base, sameSeriesByExternalID: true)]
+        try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 2)
     }
 
     /// Span `this` does not take the edited-before refusal: the first occurrence deleted, the first
