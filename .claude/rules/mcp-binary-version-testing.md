@@ -238,8 +238,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
-原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
-實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`）。#274 的探測（2026-11-06）量過
+commit 失敗：有沒有 `rollback()` 都不會落地，它只清 `hasChanges`。下面這步量的是 session MCP 上的另一種失敗（唯讀日曆）。這是 stateful 的（同一個 server process 內的下一次
 寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
 之後），只用名稱含 `#373` 的拋棄式日曆：
 

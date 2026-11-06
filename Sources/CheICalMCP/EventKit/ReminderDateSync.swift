@@ -322,8 +322,10 @@ enum ReminderDateSync {
             do {
                 try save()
             } catch {
+                // #274: this answers with `aligned: false`, not an error, and `rollback` does not
+                // drop the change, so the due date written here may still land with the next save.
                 rollback()
-                log("\(tool): saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
+                log("\(tool): saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); it may still be written by the next save\n")
             }
             guard reload(), reminder.dueDateComponents != nil else {
                 confirmed.aligned = false

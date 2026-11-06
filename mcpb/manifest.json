@@ -49,7 +49,7 @@
     },
     {
       "name": "delete_calendar",
-      "description": "Delete a calendar or reminder list (not undoable); require_empty refuses a non-empty one, events checked only about 200 years either side of now (answer: checked_empty, searched_from, searched_to or reminders_found)"
+      "description": "A failed deletion of a reminder list may still land with the next save, reminders included. Delete a calendar or reminder list (not undoable); require_empty refuses a non-empty one, events checked only about 200 years either side of now (answer: checked_empty, searched_from, searched_to or reminders_found)"
     },
     {
       "name": "list_events",
@@ -121,7 +121,7 @@
     },
     {
       "name": "update_calendar",
-      "description": "Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values)"
+      "description": "A failed save of a reminder list may still land with the next save. Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values)"
     },
     {
       "name": "search_reminders",
@@ -141,7 +141,7 @@
     },
     {
       "name": "cleanup_completed_reminders",
-      "description": "Delete all completed reminders in one call (dry_run=true by default). Optional calendar_name / calendar_source to scope to a single list. Each call is one undo entry and clears the redo history; one undo recreates the deleted reminders, one at a time, from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder."
+      "description": "Delete all completed reminders in one call (dry_run=true by default; a row that fails with a code may still be deleted by the next save, and failed_rows_note says so). Optional calendar_name / calendar_source to scope to a single list. Each call is one undo entry and clears the redo history; one undo recreates the deleted reminders, one at a time, from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder."
     },
     {
       "name": "undo",

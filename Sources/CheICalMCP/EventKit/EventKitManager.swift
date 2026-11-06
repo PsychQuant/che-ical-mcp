@@ -606,10 +606,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let t = title { calendar.title = t }
         if let c = color { calendar.cgColor = parseColor(c) }
 
-        // #274: no discard. A failed save left nothing pending (iCloud, 2026-11-06: the same probe
-        // as `ExistingReminderSave`, with nothing done after the failure: the next saves, and a
-        // later save of the same calendar, kept the old title), and this object is not reused.
-        try eventStore.saveCalendar(calendar, commit: true)
+        try saveExistingCalendar(calendar)   // #274
         markNeedsRefresh()
         return calendar
     }
@@ -661,7 +658,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             checked = CalendarEmptiness.Checked(searched: searched, reminders: reminders)
         }
 
-        try eventStore.removeCalendar(calendar, commit: true)
+        try removeExistingCalendar(calendar)   // #274
         markNeedsRefresh()
         return checked
     }
@@ -1384,9 +1381,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #373 verify round 2: a failed save (a read-only calendar, an alarm or recurrence EventKit
         // rejects) would leave every field assigned above on the cached event. Discard every unsaved
         // change before rethrowing, as the move path does. #274 measured it (iCloud, 2026-11-06): a
-        // failed save of an event, a series or a calendar change left nothing pending, with or without
-        // this, and saving the same object again did not write the failed title either. It clears
-        // `hasChanges`; it is not what stops the change. Reminders differ (`ExistingReminderSave`).
+        // failed save of an event, a series or a move to another calendar left nothing pending, with
+        // or without this, and saving the same object again did not write the failed title either.
+        // It clears `hasChanges`; it is not what stops the change. Reminders differ
+        // (`ExistingReminderSave`).
         do {
             try eventStore.save(event, span: span)
         } catch {
@@ -2741,9 +2739,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let calendar = try await restoreCalendar(for: oldSnapshot, kind: .revertUpdate)
             let event = try await verifiedEvent(of: operation, verb: .undo)
             oldSnapshot.apply(to: event, calendar: calendar)
-            // #274: a failed save would leave the restored fields on the cached event, where a later
-            // save in this process could write them. Discard every unsaved change before rethrowing,
-            // as `updateEvent` does since #379.
+            // #274: a failed save leaves nothing pending, with or without this (measured, see
+            // `updateEvent`); it clears `hasChanges` on the cached event, as `updateEvent` does.
             do {
                 try eventStore.save(event, span: .thisEvent)
             } catch {
@@ -2773,8 +2770,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             let event = try await verifiedEvent(of: operation, verb: .undo)
             event.calendar = original
-            // #274: a failed save would leave the calendar assignment on the cached event; roll it
-            // back before rethrowing (rollback() restores the calendar, checked on device 2026-10-04).
+            // #274: as above; rollback() also restores the calendar on the object (checked on device
+            // 2026-10-04).
             do {
                 try eventStore.save(event, span: isSeries ? .futureEvents : .thisEvent)
             } catch {
@@ -3117,6 +3114,9 @@ enum EventKitError: LocalizedError {
     /// where the next save of anything can commit it (`ExistingReminderSave`). `code` is sanitized.
     case reminderSaveMayLand(code: String)
     case reminderRemovalMayLand(code: String)
+    /// The same for a reminder list. A removal takes every reminder in the list.
+    case listChangeMayLand(code: String)
+    case listRemovalMayLand(code: String)
     /// #416: a whole-series write addressed through the identifier of one occurrence that was
     /// edited on its own (`DetachedOccurrenceSpan`). `reason` is one of its fixed strings.
     case occurrenceAddressRefused(reason: String)
@@ -3247,9 +3247,13 @@ enum EventKitError: LocalizedError {
         case .standInRefused(let reason):
             return reason
         case .reminderSaveMayLand(let code):
-            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes. Read the reminder back before trying again."
+            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes, with nothing to undo. Read the reminder back before trying again."
         case .reminderRemovalMayLand(let code):
             return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying again."
+        case .listChangeMayLand(let code):
+            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Read the list back before trying again."
+        case .listRemovalMayLand(let code):
+            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, with nothing to undo. Read the lists back before trying again."
         case .occurrenceAddressRefused(let reason):
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
@@ -3386,7 +3390,7 @@ extension UndoOperation {
 struct BatchDeleteResult {
     /// #274: the response field for `mayLandCount`, shared by `delete_reminders_batch` and
     /// `cleanup_completed_reminders`, whose rows are bound to stable codes (spec R3).
-    static let failedRowsNote = "Rows that failed with a code may still be deleted by the next save this server makes. Read the reminders back before trying them again."
+    static let failedRowsNote = "Rows that failed with a code may already be deleted by a later row of this call, or may be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying them again."
 
     /// The field to add to a response: nothing when no row can still land.
     var failedRowsNoteField: [String: Any] {
