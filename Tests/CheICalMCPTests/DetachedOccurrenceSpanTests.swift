@@ -393,6 +393,35 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                       "a length of its own: the others took it (measured)")
     }
 
+    // MARK: - all_day on a series with an edited occurrence (#442)
+
+    /// Measured: an edited occurrence's original slot came back as an extra occurrence, whatever
+    /// the edit. Without an edited occurrence the call does what it says, and the scan is not run
+    /// unless the flag changes on a whole series.
+    func testChangingAllDayIsRefusedOnlyWithAnEditedOccurrence() {
+        var scans = 0
+        func refused(whole: Bool = true, rules: Bool = true, requested: Bool? = true, current: Bool = false, edited: Bool = true) -> Bool {
+            DetachedOccurrenceSpan.refusesAllDayChange(wholeSeries: whole, hasRules: rules, requested: requested, current: current,
+                                                       hasEditedOccurrence: { scans += 1; return edited }())
+        }
+        XCTAssertTrue(refused())
+        XCTAssertEqual(scans, 1)
+        XCTAssertTrue(refused(requested: false, current: true), "not measured: refused too")
+        XCTAssertFalse(refused(edited: false), "no edited occurrence: measured clean")
+        scans = 0
+        XCTAssertFalse(refused(whole: false), "span this or future")
+        XCTAssertFalse(refused(rules: false), "a one-off")
+        XCTAssertFalse(refused(requested: nil), "all_day not given")
+        XCTAssertFalse(refused(requested: false, current: false), "no change")
+        XCTAssertEqual(scans, 0)
+        XCTAssertTrue(DetachedOccurrenceSpan.allDayChangeReason.hasSuffix("Nothing was written."))
+    }
+
+    func testTheAllDayRefusalComesBeforeTheFirstWrite() throws {
+        let head = try collapsed("func updateEvent(", upTo: "let oldSnapshot = EventSnapshot(from: masterEvent)", in: "EventKit/EventKitManager.swift")
+        XCTAssertTrue(head.contains("if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: applyToAll, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason) }"), head)
+    }
+
     // MARK: - The series' id with the first occurrence edited (#428)
 
     func testTheEarliestEditedOccurrenceIsPickedOnlyWhenItComesFirst() {
