@@ -2096,7 +2096,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         /// #333: the relative alarms read off the saved reminder (minutes before), when the create
         /// asked for `alarmOffsets`; nil otherwise and for a duplicate, which writes none.
         var storedRelativeAlarms: [Double]? = nil
-        /// #433: the call wrote alarms and the earliest one is off the due time.
+        /// #433: the call wrote alarms, they were read back, and the earliest one is off the due time.
         var listShowsAlarmTime = false
     }
 
@@ -2222,10 +2222,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                                     save: { try eventStore.save(reminder, commit: true) },
                                                     reload: { reminder.refresh() },
                                                     rollback: { reminder.rollback() })
+        let alarms = ReminderCreateWrite.alarmReadBack(offsets: alarmOffsets, saved: reminder, dateSync: dateSync, storeDiffers: storeDiffers)
         let result = CreateReminderResult(reminder: ReminderWriteSnapshot(from: reminder), isDuplicate: false, storeDiffers: storeDiffers,
                                           dateSync: dateSync,
-                                          storedRelativeAlarms: alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
-                                          listShowsAlarmTime: alarmOffsets != nil && ReminderRelativeAlarms.listShowsAlarmTime(saved: reminder))
+                                          storedRelativeAlarms: alarms.stored,
+                                          listShowsAlarmTime: alarms.listShowsAlarmTime)
         let createdID = result.reminder.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.createReminder(id: createdID, title: result.reminder.title ?? title,
                                                                 created: postWriteSnapshot(reminderID: createdID, saved: reminder)))
@@ -2329,7 +2330,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
             storedRelativeAlarms: alarms.stored,
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request),
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: dateSync),
             listShowsAlarmTime: alarms.listShowsAlarmTime,
             // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
             // call touched the rule.

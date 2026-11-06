@@ -10,14 +10,16 @@ private actor AlarmWriteFake: ReminderWriteSource {
     func createReminder(_ request: ReminderCreateRequest) async throws -> EventKitManager.CreateReminderResult {
         created.append(request)
         let duplicate = request.title == "duplicate"
+        // "unread" stands for a create the store could not confirm.
+        let unread = request.title == "unread"
         // "short" stores one alarm fewer than asked, to drive the mismatch report.
         let stored = request.alarmOffsets.map { offsets in
             (request.title == "short" ? Array(offsets.dropLast()) : offsets).map(Double.init).sorted(by: >)
         }
         return .init(reminder: ReminderWriteSnapshot(id: "saved", title: request.title, notes: request.notes),
                      isDuplicate: duplicate, storeDiffers: [],
-                     storedRelativeAlarms: duplicate ? nil : stored,
-                     listShowsAlarmTime: !duplicate && Self.moved(stored))
+                     storedRelativeAlarms: duplicate || unread ? nil : stored,
+                     listShowsAlarmTime: !duplicate && !unread && Self.moved(stored))
     }
     /// What the store would judge for relative alarms alone, as data: the fake does not call the
     /// production judgement or gate, so these tests cannot pass because of the code they cover.
@@ -138,6 +140,22 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         let mismatch = CheICalMCPServer.storedAlarmFields(requested: [15], stored: [], listShowsAlarmTime: false)
         XCTAssertEqual(mismatch["alarms_differ"] as? Bool, true)
         XCTAssertFalse((mismatch["alarms_note"] as? String ?? "").contains(display))
+    }
+
+    /// PR #438 verify: a create and a batch row the store could not confirm say so, as an update does.
+    func testAnUnconfirmedCreateOmitsTheAlarmsAndSaysSo() async throws {
+        func check(_ result: [String: Any], _ name: String) {
+            XCTAssertNil(result["alarms_minutes_offsets"], name)
+            XCTAssertNil(result["alarms_differ"], name)
+            XCTAssertNil(result["alarms_note"], name)
+            XCTAssertEqual(result["alarms_read_back"] as? Bool, false, name)
+            XCTAssertEqual(result["alarms_read_back_note"] as? String, CheICalMCPServer.alarmsUnreadNote, name)
+        }
+        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let row: [String: Value] = ["title": .string("unread"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(15)])]
+        check(try object(await server.executeToolCall(name: "create_reminder", arguments: row)), "create_reminder")
+        let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array([.object(row)])]))
+        check(try XCTUnwrap((batch["results"] as? [[String: Any]])?.first), "batch row")
     }
 
     /// PR #438 verify: an update whose reminder could not be re-read says so, and judges nothing.
@@ -302,6 +320,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
         let rows = batch.inputSchema.objectValue?["properties"]?.objectValue?["reminders"]?.objectValue?["items"]?.objectValue?["properties"]
         parameters.append(("create_reminders_batch", rows?.objectValue?["alarms_minutes_offsets"]?.objectValue?["description"]?.stringValue ?? ""))
         for (name, parameter) in parameters {
+            XCTAssertTrue(parameter.contains("alarms_read_back"), "\(name): \(parameter)")
             XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.alarmDisplayNote), "\(name): \(parameter)")
             XCTAssertTrue(parameter.contains(ReminderRelativeAlarms.alarmNoteCondition), "\(name): \(parameter)")
             XCTAssertTrue(parameter.contains("alarms_note"), "\(name): \(parameter)")

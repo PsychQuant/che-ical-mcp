@@ -151,8 +151,11 @@ enum ReminderRelativeAlarms {
     /// kept only as a day (the #237 fallback that did not take) gets the date-only note too (round
     /// 3). After `clear_due_date` the reminder is not re-read (`ReminderDateSync.confirmSaved`
     /// returns early when no due was written), so that count is the in-memory one after the save.
-    static func leftoverNote(saved reminder: EKReminder, request: ReminderUpdateRequest) -> String? {
-        leftoverNote(requested: request.alarmOffsets, dueTouched: request.due != nil || request.clearDueDate,
+    /// PR #438 verify: after a reload that failed nothing is counted; `date_sync.aligned` is false.
+    static func leftoverNote(saved reminder: EKReminder, request: ReminderUpdateRequest,
+                             dateSync: ReminderDateSync.Report? = nil) -> String? {
+        guard dateSync?.reread != false else { return nil }
+        return leftoverNote(requested: request.alarmOffsets, dueTouched: request.due != nil || request.clearDueDate,
                      dueAfter: dueState(of: reminder.dueDateComponents),
                      relativeCount: storedMinutesBefore(reminder).count)
     }

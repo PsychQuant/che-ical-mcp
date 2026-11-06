@@ -295,12 +295,14 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
    這三個形狀要用未 commit 的本機探針寫絕對鬧鐘（#433 的量測就是這樣做的）；沒有探針時記成沒驗，不算通過。
    不要用帶 Early Reminder 的提醒代替：列表結果不同時分不出是哪一個造成的。
    Early Reminder 另外看（手動，#433 只看過一筆，沒有對照組）：同一拋棄式清單手動建兩筆帶時間的提醒，一筆有 Early
-   Reminder、一筆沒有，比較 `list_reminders` 讀回；再對有 Early Reminder 的那筆分別帶 `due_date`、`realign_to_due`
-   更新（這兩條路徑才會重寫絕對鬧鐘，`alarms_minutes_offsets` 不碰它），回 App 看 Early Reminder 還在不在。
+   Reminder、一筆沒有，比較 `list_reminders` 讀回；再對有 Early Reminder 的提醒分別做 `due_date`、以及同一次呼叫帶
+   `due_date` 與 `realign_to_due`（這兩條路徑才會重寫絕對鬧鐘；單獨帶 `realign_to_due` 時鬧鐘已在到期時間，不會重寫，
+   `alarms_minutes_offsets` 也不碰它），回 App 看 Early Reminder 還在不在。
    只帶 `due_date` 改期一筆帶 `[15]` 的提醒 → 回應有 `alarms_note`；只改標題 → 沒有。
-9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。到期當下若又出一次通知，
-   **記錄下來、不算失敗**：Reminders 對有到期時間的提醒本來就會在到期時通知，這一步要驗的只是那個提前 2 分鐘
-   的相對鬧鐘有沒有響；到期前 2 分鐘沒有通知才算失敗。
+9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次，記下橫幅顯示的時間。
+   **第一個橫幅出現後就關掉它**，再等到到期時間：2026-11-05 第一個橫幅還在畫面上，到期時有沒有第二個通知沒有量到。
+   到期時有或沒有通知都**記錄下來、不算失敗**，兩邊的文字（`alarmDisplayNote`、README、CHANGELOG）都要照結果改；
+   這一步要驗的只是那個提前 2 分鐘的相對鬧鐘有沒有響，到期前 2 分鐘沒有通知才算失敗。
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 

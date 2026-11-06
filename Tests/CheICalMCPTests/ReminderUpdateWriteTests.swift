@@ -99,6 +99,21 @@ final class ReminderUpdateWriteTests: XCTestCase {
         }
     }
 
+    /// The leftover note counts alarms off the object, so not after a reload that failed.
+    func testTheLeftoverNoteNeedsTheReload() throws {
+        let request = ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2026, month: 10, day: 19)))
+        for (reloaded, expected) in [(true, ReminderRelativeAlarms.leftoverDateOnlyNote(1)), (false, nil)] {
+            let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+            let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { reloaded }, rollback: {})
+            XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: report), expected, "reloaded: \(reloaded)")
+        }
+        // `clear_due_date` has no reload to fail: the count stays, from the object, as documented.
+        let clear = ReminderUpdateRequest(identifier: "r", clearDueDate: true)
+        let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+        let report = try ReminderUpdateWrite.apply(clear, to: reminder, calendar: nil, save: {}, reload: { false }, rollback: {})
+        XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: reminder, request: clear, dateSync: report), ReminderRelativeAlarms.leftoverNoDueNote(1))
+    }
+
     /// `clear_due_date` writes no due, so the date path does not reload; `[]` is still read back.
     func testClearingTheDueWithAnEmptyListIsReloadedHere() throws {
         let request = ReminderUpdateRequest(identifier: "r", clearDueDate: true, alarmOffsets: [])
