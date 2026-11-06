@@ -453,6 +453,10 @@ end、notes、location、alarms。
    `calendar_name`、全天系列的 `all_day: false` 拒絕：在沒有這些拒絕的 build 上，分別是別的場次移位且少一場、回 `updated` 沒改、
    span `future` 搬走全部 5 場、別的場次時間不對且多一場。日期與新 `recurrence` 一起帶：拒絕（沒量）。`days_of_week` 系列，第 1 場
    的 id 帶別的星期的 `start_time`：weekday 拒絕；
+   (i) 搬移（#426，2026-11-06，iCloud，同帳號）：第 3 場改過，用它的 id：`move_events_batch` span `this` 不帶日期、帶別的日期：拒絕，
+   5 場都在原日曆；帶它自己的日期：`split`，它到目標日曆成單一事件，原日曆 4 場。span `all`：全部搬走，id 不變，在 session MCP 上
+   `undo` 搬回來；span `all` 帶日期：拒絕。`copy_event` 的 `delete_original`：拒絕。`update_event` span `this` 帶同帳號的新日曆，
+   經場次自己的 id、經系列 id 加 `occurrence_date`：都拒絕，帶目前的日曆放行；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
