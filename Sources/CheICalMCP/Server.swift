@@ -316,7 +316,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -387,7 +387,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -558,7 +558,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("For weekly: days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -665,7 +665,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday)")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
