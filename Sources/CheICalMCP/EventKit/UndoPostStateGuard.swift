@@ -242,13 +242,16 @@ enum UndoPostState {
     /// the series' place name they are a geocode, not an edit (`samePlace`).
     static func ownValues(one: EventSnapshot, slot: Date, firstStart: Date, series: EventSnapshot?) -> DetachedOccurrenceSpan.OwnValues {
         let firstSlotGone = !sameInstant(slot, firstStart)
-        guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true) }
+        guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true, time: true) }
+        let length = { (event: EventSnapshot) in event.endDate.timeIntervalSince(event.startDate) }
         return .init(firstSlotGone: firstSlotGone,
                      location: (one.location ?? "") != (all.location ?? "") || !EventSnapshot.samePlace(recorded: all, current: one),
                      other: !sameAlarms(all.alarms, one.alarms) || one.isAllDay != all.isAllDay
                          || (one.structuredLocationLat != nil && !EventSnapshot.samePlace(recorded: all, current: one))
                          || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
-                         || !sameOccurrenceAvailability(one.availability, all.availability))
+                         || !sameOccurrenceAvailability(one.availability, all.availability),
+                     time: !sameInstant(one.startDate, slot) || abs(length(one) - length(all)) >= 1 || one.isAllDay != all.isAllDay
+                         || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate))
     }
 
     /// `ownValues` of an occurrence `occurrence_date` found, against the series it was found in.

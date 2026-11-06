@@ -62,6 +62,16 @@ enum FirstRemainingOccurrence {
         return editedBefore ? nil : best
     }
 
+    /// #428: the occurrence edited on its own that comes first in the series, when one does: the
+    /// series' identifier reaches no stand-in then, and a whole-series write goes through that
+    /// occurrence's own identifier, as measured. By slot, with the start standing in. Only an
+    /// occurrence under the identifier's `/`-part: another store's shape was not measured.
+    static func earliestEdited(_ candidates: [Candidate], identifier: String) -> Int? {
+        guard let first = candidates.indices.min(by: { (candidates[$0].slot ?? candidates[$0].start) < (candidates[$1].slot ?? candidates[$1].start) }),
+              candidates[first].isDetached, candidates[first].eventIdentifier?.hasPrefix(identifier + "/") == true else { return nil }
+        return first
+    }
+
     /// Whether a delete or update resolves the stand-in with the edited-before refusal (verify
     /// round 5): a write that covers the rest of the series (`.futureEvents`, or a whole-series
     /// write) leaves an earlier edited occurrence behind; one occurrence (`.thisEvent`) cannot.
@@ -198,6 +208,21 @@ extension EventKitManager {
         guard let (_, candidates) = seriesOccurrences(of: stale, id: id) else { return (false, false) }
         return (FirstRemainingOccurrence.hasStandInCandidate(candidates, identifier: id),
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
+    }
+
+    /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
+    /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
+    func seriesObject(ofOccurrence id: String) -> EKEvent? {
+        DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { storedEvent(id: $0) }
+    }
+
+    /// #428: the identifier of the occurrence edited on its own that comes first in the series
+    /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
+    /// unedited occurrence first, is not this.
+    func firstEditedOccurrenceID(of id: String) -> String? {
+        guard let stored = storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
+              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id) else { return nil }
+        return candidates[index].eventIdentifier
     }
 
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and

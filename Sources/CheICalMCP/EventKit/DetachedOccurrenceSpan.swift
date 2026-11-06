@@ -17,8 +17,9 @@ import EventKit
 /// left. These are the coordinator's defaults while the maintainer has not answered.
 ///
 /// `update_event` with span `all` or `future` through such an identifier is an allowlist (PR #431
-/// round 5): `allowedUpdateFields`, the fields measured field by field, and nothing else, so a new
-/// parameter is refused until it is measured. What the measurements on weekly series of 5 showed,
+/// round 5): `allowedUpdateFields`, and `seriesTimeUpdateFields` while the occurrence still has the
+/// series' time, length and day (#428), the fields measured field by field, and nothing else, so a
+/// new parameter is refused until it is measured. What the measurements on weekly series of 5 showed,
 /// comparing every occurrence's title, start, end, notes, location and alarms before and after:
 ///
 /// - New `title`, `notes`, `location`: they reach the occurrences the span covers, and the
@@ -35,6 +36,13 @@ import EventKit
 ///   or URL. The first occurrence, which starts no new series, carries nothing. So such a write is
 ///   refused while the occurrence holds values of its own (`OwnValues`), unless it writes `location`,
 ///   which replaces that one. Time zone, all-day and availability were not measured and count too.
+/// - The dates and the rest of `seriesTimeUpdateFields` (#428, 2026-11-06): with the occurrence edited
+///   only in title, notes, location or alarms, they did what they say from the first occurrence,
+///   from the first left and with span `future` from a later one, on open-ended series too, and
+///   with a further edited occurrence, which kept what was edited. `all_day: false` on an all-day
+///   series gave the others another time and an extra occurrence, `clear_timezone` moved them and
+///   `clear_recurrence` changed nothing, and `calendar_name` with span `future` moved the whole
+///   series: refused.
 /// - A new `days_of_week` is read from the occurrence's original day: from a first occurrence moved
 ///   to Wednesday, a rule on Wednesdays through its id left two occurrences on that day.
 ///
@@ -72,6 +80,10 @@ enum DetachedOccurrenceSpan {
         /// Alarms (carried, measured), or a time zone, an all-day flag, availability or coordinates
         /// of its own (not measured).
         var other = false
+        /// A time, length, day, all-day flag or time zone of its own: what a date written through it
+        /// would give the others. Read for `seriesTimeUpdateFields`. true when nothing can be
+        /// compared. The default is false, the shape #428 measured.
+        var time = false
     }
 
     /// What is left of the series around the occurrence. `nil` where one is taken means unknown.
@@ -176,12 +188,12 @@ enum DetachedOccurrenceSpan {
     /// depends on it: it scans the series. Unknown comes first, as the other texts claim a series.
     static func updateRefusal(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool = false,
                               fields: Set<String> = [], repeatsOccurrenceValue: Bool = false, writesLocation: Bool = false,
-                              neighbours: @autoclosure () -> Neighbours?) -> String? {
+                              turnsTimed: Bool = false, neighbours: @autoclosure () -> Neighbours?) -> String? {
         guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
         guard let known = neighbours() else {
             return unknownReason(identifier: identifier, span: wholeSeries ? "'all'" : "'future'", suffix: "Nothing was written.")
         }
-        if !refusedUpdateFields(fields).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
+        if turnsTimed || !refusedUpdateFields(fields, holdsOwnTime: known.own.time).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
         if wholeSeries && known.earlierRemain { return updateReason }
         if repeatsOccurrenceValue { return sameValueReason(wholeSeries: wholeSeries) }
         // With no other occurrence left there is nothing to carry to (measured: the only one left).
@@ -201,11 +213,18 @@ enum DetachedOccurrenceSpan {
     /// of a weekly rule is checked against the original day; a monthly rule was not measured.
     static let allowedUpdateFields: Set<String> = ["title", "notes", "location", "recurrence"]
 
+    /// What also goes through while the occurrence holds the series' time, length and day (#428),
+    /// measured the same way. `all_day` only as `true`: `turnsTimed`. Not with `recurrence`: that
+    /// pair was not measured.
+    static let seriesTimeUpdateFields: Set<String> = ["start_time", "end_time", "all_day", "timezone", "url",
+                                                      "alarms_minutes_offsets", "structured_location"]
+
     /// The keys of `update_event` that say what to write to, and write nothing themselves.
     static let updateKeysThatWriteNothing: Set<String> = ["event_id", "span", "occurrence_date"]
 
-    static func refusedUpdateFields(_ fields: Set<String>) -> Set<String> {
-        fields.subtracting(allowedUpdateFields).subtracting(updateKeysThatWriteNothing)
+    static func refusedUpdateFields(_ fields: Set<String>, holdsOwnTime: Bool = true) -> Set<String> {
+        let allowed = holdsOwnTime || fields.contains("recurrence") ? allowedUpdateFields : allowedUpdateFields.union(seriesTimeUpdateFields)
+        return fields.subtracting(allowed).subtracting(updateKeysThatWriteNothing)
     }
 
     /// Whether the call writes a value the occurrence already holds. EventKit writes through what
@@ -262,8 +281,9 @@ enum DetachedOccurrenceSpan {
         return !matches()
     }
 
-    /// The way to the whole series. It is not the series' identifier: that is refused when the first
-    /// occurrence was edited on its own and still starts at its original time (#428). By the original date because the check compares
+    /// The way to the whole series. It is not the series' identifier alone: that reaches the first
+    /// occurrence edited on its own and still at its original time only for `update_event` span
+    /// `all` and `delete_event` span `all` (#428). By the original date because the check compares
     /// slots and an edited occurrence can show another time. For a series whose first occurrence was
     /// deleted, an update takes this route only if the first occurrence left was edited on its own:
     /// unedited, the id resolves through the stand-in, which refuses a whole-series update (#326),
@@ -300,7 +320,7 @@ enum DetachedOccurrenceSpan {
     /// It says no more than that on purpose. Each longer version was false for some field: span
     /// `this` does not take `recurrence` or `clear_recurrence` there, and `move_events_batch` takes
     /// a calendar.
-    private static let noTestedWay = "this shape has no tested way yet (#428)"
+    private static let noTestedWay = "this shape has no tested way yet"
 
     /// The way around every refusal of `update_event` below, as run on a device: with span `all` the
     /// series' id took `start_time`, `end_time`, `timezone`, `url`, alarms, `structured_location`,
@@ -317,16 +337,17 @@ enum DetachedOccurrenceSpan {
         return "Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'. If that id is refused, \(noTestedWay)."
     }
 
+    /// "This call reaches": the series' identifier can get here too (#428).
     private static func opening(_ wholeSeries: Bool) -> String {
-        "event_id names one occurrence of a recurring series, edited on its own, and with span \(wholeSeries ? "'all'" : "'future'") through it"
+        "This call reaches one occurrence of a recurring series, edited on its own, and with span \(wholeSeries ? "'all'" : "'future'") through it"
     }
 
-    /// Everything but `allowedUpdateFields`.
+    /// Everything `refusedUpdateFields` refuses.
     static func fieldsReason(wholeSeries: Bool) -> String {
         let limits = wholeSeries
             ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences. For a calendar of the same account, move_events_batch with span 'all' moves the whole series."
             : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
-        return "\(opening(wholeSeries)) only title, notes, location and recurrence can be written; any other field is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
+        return "\(opening(wholeSeries)) title, notes, location and recurrence can be written. start_time, end_time, all_day true, timezone, url, alarms and structured_location can too, without recurrence, while it has the series' time, length and day. Any other field is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
     }
 
     /// A value the occurrence already holds would answer updated and reach no other occurrence.

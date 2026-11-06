@@ -253,7 +253,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             XCTAssertTrue(reason.hasSuffix(suffix), reason)
             if suffix == "Nothing was written." {
                 XCTAssertTrue(reason.contains("Use the id list_events shows for an occurrence that was not edited on its own, with span 'all', for the whole series."), reason)
-                XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet (#428)."), reason)
+                XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet."), reason)
             } else {
                 XCTAssertTrue(reason.contains("To delete the whole series, use"), reason)
                 XCTAssertFalse(reason.contains("occurrence_date"), "a batch row cannot take one, and the delete has a way: \(reason)")
@@ -274,11 +274,10 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     // MARK: - The closed list of fields through an occurrence (PR #431 round 5)
 
     /// Every key `update_event` has: the schema's, and those the handler reads that the schema does
-    /// not list (`url`). A key added to either fails here until it is put in one of the three lists,
-    /// and until then the code refuses it, so a new field is never let through unmeasured.
-    private let refusedKeys: Set<String> = [
-        "start_time", "end_time", "all_day", "timezone", "clear_timezone", "url", "alarms_minutes_offsets",
-        "structured_location", "calendar_name", "calendar_source", "clear_recurrence"]
+    /// not list (`url`). A key added to either fails here until it is put in one of the lists, and
+    /// until then the code refuses it, so a new field is never let through unmeasured.
+    private let refusedKeys: Set<String> = ["clear_timezone", "calendar_name", "calendar_source", "clear_recurrence"]
+    private let ownTimeKeys = DetachedOccurrenceSpan.seriesTimeUpdateFields
 
     func testEveryKeyOfUpdateEventIsClassified() throws {
         let schema = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_event" }?.inputSchema.objectValue)
@@ -294,19 +293,26 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let allowed = DetachedOccurrenceSpan.allowedUpdateFields
         let unrelated = DetachedOccurrenceSpan.updateKeysThatWriteNothing
         XCTAssertTrue(keys.contains("url"), "the handler's own keys are read")
-        XCTAssertEqual(keys.subtracting(allowed).subtracting(unrelated).subtracting(refusedKeys), [], "classify these")
+        XCTAssertEqual(keys.subtracting(allowed).subtracting(ownTimeKeys).subtracting(unrelated).subtracting(refusedKeys), [], "classify these")
         XCTAssertEqual(allowed, ["title", "notes", "location", "recurrence"])
+        XCTAssertEqual(ownTimeKeys, ["start_time", "end_time", "all_day", "timezone", "url", "alarms_minutes_offsets", "structured_location"])
         XCTAssertEqual(unrelated, ["event_id", "span", "occurrence_date"])
-        XCTAssertTrue(allowed.isDisjoint(with: refusedKeys))
-        XCTAssertTrue(unrelated.isDisjoint(with: refusedKeys))
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys), refusedKeys.intersection(keys))
+        for (one, other) in [(allowed, refusedKeys), (unrelated, refusedKeys), (ownTimeKeys, refusedKeys), (ownTimeKeys, allowed), (ownTimeKeys, unrelated)] {
+            XCTAssertTrue(one.isDisjoint(with: other))
+        }
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys.subtracting(["recurrence"]), holdsOwnTime: false), refusedKeys.intersection(keys))
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys), refusedKeys.union(ownTimeKeys).intersection(keys))
     }
 
     func testAKeyNobodyClassifiedIsRefused() {
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["event_id", "title", "new_field"]), ["new_field"])
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["event_id", "title", "new_field"], holdsOwnTime: false), ["new_field"])
         XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true,
                                                             fields: ["event_id", "new_field"], neighbours: noneEarlier),
                        DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
+    }
+
+    private func ownTime(earlierRemain: Bool = false) -> DetachedOccurrenceSpan.Neighbours {
+        .init(earlierRemain: earlierRemain, othersRemain: true, own: .init(time: true))
     }
 
     func testOnlyTheListedFieldsGoThroughWithSpanAll() {
@@ -319,8 +325,8 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             XCTAssertEqual(refusal(iCloudOccurrence, true, earlier, [key]), reason, "the other routes do not take \(key)")
             XCTAssertNil(refusal(series, false, noneEarlier, [key]), "the series' own id is not this path")
         }
-        XCTAssertEqual(refusal(iCloudOccurrence, false, noneEarlier, ["url"]), reason, "the /RID= arm")
-        XCTAssertEqual(refusal(otherSourceOccurrence, true, noneEarlier, ["url"]), reason, "the isDetached arm")
+        XCTAssertEqual(refusal(iCloudOccurrence, false, noneEarlier, ["calendar_name"]), reason, "the /RID= arm")
+        XCTAssertEqual(refusal(otherSourceOccurrence, true, noneEarlier, ["calendar_name"]), reason, "the isDetached arm")
         XCTAssertNil(refusal(iCloudOccurrence, true, noneEarlier, ["event_id", "span", "title", "notes", "location", "recurrence"]))
     }
 
@@ -336,10 +342,73 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertNil(refusal(future: true, ["title", "notes", "location", "recurrence"]))
     }
 
+    // MARK: - While the occurrence has the series' time, length and day (#428)
+
+    /// Measured on iCloud (2026-11-06): with the occurrence edited only in title, notes, location or
+    /// alarms, these did what they say. With a time, length or day of its own, the others took it.
+    func testTheDatesGoThroughOnlyWhileTheOccurrenceHoldsTheSeriesTime() {
+        for key in ownTimeKeys {
+            for (whole, future) in [(true, false), (false, true)] {
+                let held = DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: future,
+                                                                fields: [key], neighbours: noneEarlier)
+                XCTAssertNil(held, key)
+                XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: future,
+                                                                    fields: [key], neighbours: ownTime()),
+                               DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole), key)
+            }
+        }
+        XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["start_time"], neighbours: earlier),
+                       DetachedOccurrenceSpan.updateReason, "an earlier occurrence left: it would still split")
+    }
+
+    /// `all_day: false` on an all-day series gave the others another time and an extra occurrence.
+    func testAllDayFalseIsRefused() {
+        XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["all_day"],
+                                                            turnsTimed: true, neighbours: noneEarlier),
+                       DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
+    }
+
+    /// A date with a new rule was not measured.
+    func testADateWithARecurrenceIsRefused() {
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["start_time", "recurrence"], holdsOwnTime: false), ["start_time"])
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["url", "recurrence"], holdsOwnTime: false), ["url"])
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["title", "recurrence"], holdsOwnTime: false), [])
+    }
+
+    func testOwnTimeIsReadFromTheOccurrenceAndAnUneditedOne() {
+        let slot = Date(timeIntervalSince1970: 1_800_000_000)
+        let series = UndoSnapshotFixtures.event(title: "Series", startDate: slot.addingTimeInterval(7 * 86_400))
+        func own(start: Date, allDay: Bool = false, to: EventSnapshot? = nil) -> Bool {
+            UndoPostState.ownValues(one: UndoSnapshotFixtures.event(title: "Own", startDate: start, allDay: allDay), slot: slot, firstStart: slot, series: to ?? series).time
+        }
+        XCTAssertFalse(own(start: slot), "title only")
+        XCTAssertTrue(own(start: slot.addingTimeInterval(7200)), "moved")
+        XCTAssertTrue(own(start: slot, allDay: true), "all-day in a timed series")
+        XCTAssertTrue(UndoPostState.ownValues(one: series, slot: slot, firstStart: slot, series: nil).time, "nothing to compare with")
+    }
+
+    // MARK: - The series' id with the first occurrence edited (#428)
+
+    func testTheEarliestEditedOccurrenceIsPickedOnlyWhenItComesFirst() {
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([unedited(7), edited(0), unedited(14)], identifier: series), 1)
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([unedited(14), edited(7), edited(21)], identifier: series), 1, "the first left")
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([unedited(0), edited(7)], identifier: series), "an unedited occurrence first")
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([edited(0, id: "CAL-9:OTHER/RID=1"), unedited(7)], identifier: series), "not under this id: not measured")
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([], identifier: series))
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([unedited(7), edited(0, start: 9)], identifier: series), 1, "by slot, not by the time it shows")
+    }
+
+    func testUpdateAndDeleteGoThroughTheFirstOccurrence() throws {
+        let manager = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertTrue(manager.contains("if applyToAll, let first = firstEditedOccurrenceID(of: identifier) {"), "update")
+        XCTAssertTrue(manager.contains("return (saved.event, DetachedOccurrenceSpan.seriesIdentifier(of: saved.event.eventIdentifier ?? \"\") ?? identifier, saved.matchedOccurrence)"))
+        XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first, span: .futureEvents) return }"), "delete")
+    }
+
     /// Every update route ends here and not at another call, and says no more: each longer version
     /// was false for some field (span `this` does not take `recurrence` or `clear_recurrence` in
     /// these shapes, and `move_events_batch` takes a calendar).
-    private let noTestedWay = "If that id is refused, this shape has no tested way yet (#428)."
+    private let noTestedWay = "If that id is refused, this shape has no tested way yet."
 
     func testNoRefusalPointsBackAtACallThatIsRefused() {
         for whole in [true, false] {
@@ -347,9 +416,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                 XCTAssertTrue(reason.contains(noTestedWay), reason)
             }
         }
-        XCTAssertTrue(DetachedOccurrenceSpan.updateReason.contains("If that is refused, this shape has no tested way yet (#428)."), DetachedOccurrenceSpan.updateReason)
+        XCTAssertTrue(DetachedOccurrenceSpan.updateReason.contains("If that is refused, this shape has no tested way yet."), DetachedOccurrenceSpan.updateReason)
         for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
-            XCTAssertTrue(text.contains("Anything else has no tested way yet (#428)."), text)
+            XCTAssertTrue(text.contains("Anything else has no tested way yet."), text)
             XCTAssertTrue(text.contains("for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace"), text)
         }
         for reason in [DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false),
@@ -361,8 +430,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testTheFieldsRefusalNamesOnlyRoutesThatWereRun() {
         let all = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
-        for phrase in ["with span 'all' through it only title, notes, location and recurrence can be written",
-                       "any other field is refused, even one that changes nothing",
+        for phrase in ["with span 'all' through it title, notes, location and recurrence can be written.",
+                       "start_time, end_time, all_day true, timezone, url, alarms and structured_location can too, without recurrence, while it has the series' time, length and day.",
+                       "Any other field is refused, even one that changes nothing.",
                        "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'.",
                        "Occurrences edited on their own keep what was edited, so they may need span 'this' after that.",
                        noTestedWay,
@@ -371,7 +441,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             XCTAssertTrue(all.contains(phrase), all)
         }
         let future = DetachedOccurrenceSpan.fieldsReason(wholeSeries: false)
-        XCTAssertTrue(future.contains("with span 'future' through it only title, notes, location and recurrence can be written"), future)
+        XCTAssertTrue(future.contains("with span 'future' through it title, notes, location and recurrence can be written."), future)
         XCTAssertTrue(future.contains("Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'."), future)
         XCTAssertTrue(future.contains("That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."), future)
         XCTAssertTrue(future.contains(noTestedWay), future)
@@ -461,10 +531,10 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             UndoPostState.ownValues(one: one, slot: slot, firstStart: first, series: against)
         }
         XCTAssertEqual(own(UndoSnapshotFixtures.event(title: "Own", startDate: later.addingTimeInterval(7200)), slot: start, first: start, against: series),
-                       .init(), "title and time are not carried")
+                       .init(time: true), "title and time are not carried")
         XCTAssertTrue(own(series, slot: later, first: start, against: series).firstSlotGone)
         XCTAssertEqual(own(series, slot: later, first: start),
-                       .init(firstSlotGone: true, location: true, other: true), "nothing to compare with: the side that refuses")
+                       .init(firstSlotGone: true, location: true, other: true, time: true), "nothing to compare with: the side that refuses")
     }
 
     /// A source where an edited occurrence keeps the series' identifier (not measured): the series'
@@ -621,7 +691,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(reason.contains("span 'all' through it would split the series here"), reason)
         XCTAssertTrue(reason.contains("the earlier occurrences would stay in the old series"), reason)
         XCTAssertTrue(reason.contains("To update the whole series, use \(routeToTheFirst) with span 'all'."), reason)
-        XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet (#428)."), reason)
+        XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet."), reason)
         XCTAssertTrue(reason.contains("To update from this occurrence on, use span 'future'"), reason)
         XCTAssertTrue(reason.contains("To edit one occurrence, use span 'this'."), reason)
         XCTAssertTrue(reason.hasSuffix("Nothing was written."), reason)
@@ -706,7 +776,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testUpdateEventChecksBeforeItTakesTheSnapshotOrWrites() throws {
         let head = try collapsed("func updateEvent(", upTo: "let oldSnapshot = EventSnapshot(from: masterEvent)", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(head.contains("if let refusal = DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
+        XCTAssertTrue(head.contains("if let refusal = DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, turnsTimed: isAllDay == false, neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
     }
 
     /// Before the first field is assigned, as #373 requires of every refusal.
@@ -716,17 +786,15 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.refusesOccurrenceDate( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, hasOccurrenceDate: occurrenceDate != nil, matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier))"), body)
     }
 
-    /// A start or a timezone cannot reach the weekday check through an occurrence's id with span
-    /// `all` or `future`, as they are refused first, so the check reads the event as it did. A new
-    /// `days_of_week` does reach it, and is read from the original day: measured, a rule on the day
-    /// a moved first occurrence shows left two occurrences on that day.
+    /// A new start through an occurrence's id with span `all` or `future` is checked against the
+    /// series' rules, as the detached object has none. A new `days_of_week` is read from the original
+    /// day: measured, a rule on the day a moved first occurrence shows left two occurrences there.
     func testTheWeekdayCheckReadsTheEventsOwnRulesAndTheOriginalDay() throws {
         let body = try updateBody()
-        XCTAssertTrue(body.contains("let rules = event.recurrenceRules,"), body)
-        XCTAssertFalse(body.contains("seriesObject"), body)
-        XCTAssertTrue(body.contains("let originalDay = DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)"), body)
+        XCTAssertTrue(body.contains("let rules = detachedWrite ? seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules,"), body)
+        XCTAssertTrue(body.contains("let originalDay = startDate != nil ? nil : DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)"), body)
         XCTAssertTrue(body.contains("of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate"), body)
-        XCTAssertTrue(body.contains("if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }"), body)
+        XCTAssertTrue(body.contains("if originalDay != nil, effectiveRule != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }"), body)
         XCTAssertTrue(DetachedOccurrenceSpan.recurrenceDayReason.contains("Add that day, or leave days_of_week out."))
     }
 
