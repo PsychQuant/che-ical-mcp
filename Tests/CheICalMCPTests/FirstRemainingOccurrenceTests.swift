@@ -271,8 +271,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
         // The sites that resolve with the edited-before refusal on: update, delete (single, series,
-        // series batch, batch), and the dry-run preview. Move and copy resolve without it.
-        for name in ["func updateEvent(", "func deleteEvent(identifier", "func deleteEventSeries(", "func getEvent("] {
+        // series batch, batch), and the dry-run preview (`EventBatchDeletionSource.swift`, pinned in
+        // `DetachedOccurrenceSpanTests`). Move and copy resolve without it.
+        for name in ["func updateEvent(", "func deleteEvent(identifier", "func deleteEventSeries("] {
             let from = try XCTUnwrap(source.range(of: name), name)
             let body = String(source[from.upperBound...].prefix(3600))
             XCTAssertTrue(body.contains("notFoundError(id: "), name)
@@ -481,15 +482,11 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(source.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
     }
 
-    /// `freshEvent` and the dry-run preview (`getEvent`) both resolve through it; the preview used
-    /// to read the unrefreshed object and so showed the deleted occurrence's date.
-    func testGetEventResolvesThroughFreshEvent() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func getEvent(identifier: String) async throws -> EKEvent {"))
-        let to = try XCTUnwrap(source.range(of: "// MARK: - Search and Conflict Detection", range: from.upperBound..<source.endIndex))
-        XCTAssertTrue(source[from.lowerBound..<to.lowerBound].contains("freshEvent(id: identifier)"))
+    /// The dry-run preview resolves as the writes do; it used to read the unrefreshed object and
+    /// so showed the deleted occurrence's date.
+    func testThePreviewResolvesLikeTheWrites() throws {
+        let source = SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift"))
+        XCTAssertTrue(source.contains("freshEventWithOrigin("), source)
     }
 
     /// `freshEvent` falls back to the earliest remaining occurrence only when the series object

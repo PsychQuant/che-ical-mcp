@@ -207,7 +207,7 @@ extension EventKitManager {
     func occurrenceNeighbours(of occurrence: EKEvent, id: String, namedInTheCall: Set<String> = []) -> DetachedOccurrenceSpan.Neighbours? {
         guard let seriesID = DetachedOccurrenceSpan.seriesIdentifier(of: id),
               let series = storedEvent(id: seriesID),
-              let (_, candidates) = seriesOccurrences(of: series, id: seriesID),
+              let (listed, candidates) = seriesOccurrences(of: series, id: seriesID),
               let window = seriesScanWindow(of: series),
               let scannedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max(),
               let slot = UndoPostState.originalSlot(eventIdentifier: id,
@@ -220,7 +220,9 @@ extension EventKitManager {
             coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries(
                 rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
                 firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current)),
-            namedInTheCall: namedInTheCall)
+            namedInTheCall: namedInTheCall,
+            own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart,
+                                         series: listed.first { !$0.isDetached }))
     }
 
     /// #416: the refusal of a span `all` delete of `event`, resolved from `id`, or nil.

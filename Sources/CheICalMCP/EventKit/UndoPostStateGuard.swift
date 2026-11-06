@@ -217,6 +217,26 @@ enum UndoPostState {
             || !sameOccurrenceAvailability(one.availability, all.availability)
     }
 
+    /// #416: what `occurrence` holds of its own that a new series started from it would carry.
+    /// Compared with an occurrence not edited on its own, as the series object may not refresh
+    /// (#326); with none listed, everything counts, the side that refuses. Title, notes, time and
+    /// URL are left out: they were measured not to carry.
+    static func ownValues(one: EventSnapshot, slot: Date, firstStart: Date, series: EventSnapshot?) -> DetachedOccurrenceSpan.OwnValues {
+        let firstSlotGone = !sameInstant(slot, firstStart)
+        guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true) }
+        return .init(firstSlotGone: firstSlotGone,
+                     location: (one.location ?? "") != (all.location ?? "") || !EventSnapshot.samePlace(recorded: all, current: one),
+                     other: !sameAlarms(all.alarms, one.alarms) || one.isAllDay != all.isAllDay
+                         || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
+                         || !sameOccurrenceAvailability(one.availability, all.availability))
+    }
+
+    /// `ownValues` for the events themselves.
+    static func ownValues(of occurrence: EKEvent, slot: Date, firstStart: Date, series: EKEvent?) -> DetachedOccurrenceSpan.OwnValues {
+        ownValues(one: EventSnapshot(from: occurrence, includeRecurrence: false), slot: slot, firstStart: firstStart,
+                  series: series.map { EventSnapshot(from: $0, includeRecurrence: false) })
+    }
+
     /// #245, verify round 1 findings 4/8/14/16: a side that reports no availability
     /// (`.notSupported`) is not compared, so a store that leaves it unreported on occurrences (or
     /// on the series object) cannot make every create-undo of a series refuse. iCloud reports the

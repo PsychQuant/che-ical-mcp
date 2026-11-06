@@ -16,37 +16,34 @@ import EventKit
 /// update span `all` with an earlier occurrence left, delete span `all` with any other occurrence
 /// left. These are the coordinator's defaults while the maintainer has not answered.
 ///
-/// Also refused (PR #431 round 2): through such an identifier with span `all` or `future`,
-/// `clear_recurrence` (it answered updated and changed nothing, measured) and a calendar of another
-/// account (not measured, and only shown safe within one account), and with span `this` or `future`
-/// an `occurrence_date` that is not this occurrence (it was ignored, and the write started at the
-/// occurrence the id names, measured). A new `recurrence` is not refused: with span `all` from the
-/// first occurrence and from the first left, and with span `future` from a middle one, it did what
-/// it says (measured).
+/// `update_event` with span `all` or `future` through such an identifier is an allowlist (PR #431
+/// round 5): `allowedUpdateFields`, the fields measured field by field, and nothing else, so a new
+/// parameter is refused until it is measured. What the measurements on weekly series of 5 showed,
+/// comparing every occurrence's title, start, end, notes, location and alarms before and after:
 ///
-/// What is written through such an identifier was measured field by field, on weekly series of 5,
-/// comparing every occurrence's title, start, end and notes before and after:
+/// - New `title`, `notes`, `location`: they reach the occurrences the span covers, and the
+///   occurrence's other values stay on it. New `recurrence`: applied, no occurrence took this one's
+///   title, notes or time.
+/// - The same value as the occurrence holds: answered updated, and the others did not change. Only
+///   what differs from the object is written through, which also explains `clear_recurrence`
+///   (the object has no rules to clear) and the dates: `start_time` alone gave the others this
+///   occurrence's length, `end_time` alone its time, `all_day` its weekday. So a repeated value is
+///   refused (`sameValueReason`), and the rest are not allowed.
+/// - A write that starts a new series from the occurrence (span `future` from a later one, span
+///   `all` or `future` from the first left after the first was deleted) carries its own location
+///   and alarms to the new series, even when only `title` was written; not its title, notes, time
+///   or URL. The first occurrence, which starts no new series, carries nothing. So such a write is
+///   refused while the occurrence holds values of its own (`OwnValues`), unless it writes `location`,
+///   which replaces that one. Time zone, all-day and availability were not measured and count too.
+/// - A new `days_of_week` is read from the occurrence's original day: from a first occurrence moved
+///   to Wednesday, a rule on Wednesdays through its id left two occurrences on that day.
 ///
-/// - Only `location` (round 3): the occurrence's title and notes, time (+2h) or weekday stayed on
-///   it, and the others kept theirs, with span `all` from the first occurrence, from the first left
-///   and with the fourth edited too, and with span `future` from a middle one.
-/// - Dates (round 4, 2026-11-06), refused: `start_time` alone gave the others this occurrence's
-///   length (10:00–13:00 here, then 09:00 written: every one 09:00–12:00, not 09:00–10:00), span
-///   `all` and `future`; `end_time` alone gave them its time; `all_day` moved them to its weekday,
-///   span `all` and `future`. `start_time` from an occurrence moved by +2h, with the series' length,
-///   did what was asked, and is refused all the same: the class is refused, not the shape, as it
-///   only works while the occurrence still holds the series' values, which nothing here reads.
-///   `timezone` is in the class; it was run once for each span and not judged on its own. A single
-///   occurrence left is refused too; span `this` does the same there.
-/// - A new `recurrence` (round 4): no occurrence took this one's title, notes or time, from the
-///   first occurrence (+2h, or moved to another weekday, weekly and daily and every 2 weeks), from
-///   the first left, and with span `future` from a middle one. Not refused. An `occurrence_count`
-///   with span `future` counts from the series' start, through the series' id too (count 6 from the
-///   third occurrence gave 4 weekly); that is not this path's.
+/// `occurrence_date` that is not this occurrence is refused with span `this` or `future`: it was
+/// ignored, and the write started at the occurrence the id names.
 ///
 /// Not refused:
-/// - `update_event` span `future` without dates: it does what the span says, from this occurrence
-///   on, and a split there is what the description says it does; `id_changed` reports it.
+/// - `update_event` span `future` with the allowed fields: it does what the span says, from this
+///   occurrence on, and a split there is what the description says it does; `id_changed` reports it.
 /// - span `this`, and `delete_event` span `future` (this occurrence and the later ones; from the
 ///   first occurrence, the whole series).
 /// - `move_events_batch` span `all`: all occurrences moved and the identifier stayed, within one
@@ -57,12 +54,25 @@ import EventKit
 /// Sources: `/RID=` and `isDetached` were measured reliable on Google (#320), and these refusals ran
 /// on iCloud only. On a source with no `/RID=`, which Exchange may be (not measured), the rest of the
 /// series cannot be listed, so span `all` is refused with `unknownReason`, also for a one-off that
-/// such a source reports as detached. On iCloud the same text answers for an occurrence past the
-/// scan, in a series that reaches more than about five years from its start.
+/// such a source reports as detached. On iCloud an occurrence past the scan, in a series that
+/// reaches more than about five years from its start, gets `pastScanReason`, which names the
+/// series' id: that route was run there, for an update and a delete.
 ///
 /// The reasons are fixed strings: no EventKit text, no user input.
 enum DetachedOccurrenceSpan {
     private static let slotMarker = "/RID="
+
+    /// What a write that starts a new series from this occurrence would have to deal with.
+    struct OwnValues: Equatable {
+        /// The series' first slot is not this occurrence's: it was deleted, so even span `all`
+        /// saves what remains as a new series (#326).
+        var firstSlotGone = false
+        /// A location or place other than the series' (carried, measured).
+        var location = false
+        /// Alarms (carried, measured), or a time zone, an all-day flag or availability (not
+        /// measured) other than the series'.
+        var other = false
+    }
 
     /// What is left of the series around the occurrence. `nil` where one is taken means unknown.
     struct Neighbours: Equatable {
@@ -72,6 +82,10 @@ enum DetachedOccurrenceSpan {
         /// Any other occurrence the call did not name, or a scan that cannot show there is none:
         /// delete span `all` would leave it.
         let othersRemain: Bool
+        var own = OwnValues()
+
+        /// Whether a save from this occurrence starts a new series.
+        var startsNewSeries: Bool { earlierRemain || own.firstSlotGone }
     }
 
     /// What a rule says about how far the series reaches.
@@ -149,25 +163,58 @@ enum DetachedOccurrenceSpan {
     /// what is around it. `namedInTheCall`: identifiers the same `event_ids` call also deletes,
     /// which do not count as left behind.
     static func neighbours(of identifier: String, slot: Date, among candidates: [FirstRemainingOccurrence.Candidate],
-                           coversWholeSeries: Bool, namedInTheCall: Set<String> = []) -> Neighbours? {
+                           coversWholeSeries: Bool, namedInTheCall: Set<String> = [], own: OwnValues = OwnValues()) -> Neighbours? {
         guard candidates.contains(where: { $0.eventIdentifier == identifier }) else { return nil }
         let others = candidates.filter { $0.eventIdentifier != identifier }
         let unnamed = others.filter { !namedInTheCall.contains($0.eventIdentifier ?? "") }
         return Neighbours(earlierRemain: others.contains { ($0.slot ?? $0.start) < slot },
-                          othersRemain: !unnamed.isEmpty || !coversWholeSeries)
+                          othersRemain: !unnamed.isEmpty || !coversWholeSeries, own: own)
     }
 
-    /// The refusal of `update_event` through one occurrence. With span `all`: with an earlier one
-    /// left, with nothing known about the rest of the series, or for a date. With span `future`:
-    /// for a date. nil when it goes ahead. `neighbours` is read only when the answer depends on it:
-    /// it scans the series. Unknown comes before dates, as `dateReason` claims a series.
+    /// The refusal of `update_event` with span `all` or `future` through one occurrence, or nil
+    /// when it goes ahead. `fields`: the keys of the call. `neighbours` is read only when the answer
+    /// depends on it: it scans the series. Unknown comes first, as the other texts claim a series.
     static func updateRefusal(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool = false,
-                              changesDates: Bool = false, neighbours: @autoclosure () -> Neighbours?) -> String? {
-        guard addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        guard wholeSeries else { return futureSpan && changesDates ? dateReason(wholeSeries: false) : nil }
-        guard let known = neighbours() else { return unknownReason(suffix: "Nothing was written.") }
-        if changesDates { return dateReason(wholeSeries: true) }
-        return known.earlierRemain ? updateReason : nil
+                              fields: Set<String> = [], repeatsOccurrenceValue: Bool = false,
+                              neighbours: @autoclosure () -> Neighbours?) -> String? {
+        guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
+        guard let known = neighbours() else {
+            return unknownReason(identifier: identifier, span: wholeSeries ? "'all'" : "'future'", suffix: "Nothing was written.")
+        }
+        if !refusedUpdateFields(fields).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
+        if wholeSeries && known.earlierRemain { return updateReason }
+        if repeatsOccurrenceValue { return sameValueReason(wholeSeries: wholeSeries) }
+        let carries = known.own.other || (known.own.location && !fields.contains("location"))
+        return known.startsNewSeries && carries ? carriedReason(wholeSeries: wholeSeries) : nil
+    }
+
+    /// The fields `update_event` writes with span `all` or `future` through one occurrence: what was
+    /// measured field by field. Everything else is refused, a parameter added later included.
+    static let allowedUpdateFields: Set<String> = ["title", "notes", "location", "recurrence"]
+
+    /// The keys of `update_event` that say what to write to, and write nothing themselves.
+    static let updateKeysThatWriteNothing: Set<String> = ["event_id", "span", "occurrence_date"]
+
+    static func refusedUpdateFields(_ fields: Set<String>) -> Set<String> {
+        fields.subtracting(allowedUpdateFields).subtracting(updateKeysThatWriteNothing)
+    }
+
+    /// Whether the call writes a value the occurrence already holds. EventKit writes through what
+    /// differs from the object, so that value reaches no other occurrence (measured). nil and empty
+    /// text are the same, as in `UndoPostState.differsFromSeries`.
+    static func repeatsOccurrenceValue(title: String?, notes: String?, location: String?,
+                                       occurrenceTitle: String?, occurrenceNotes: String?, occurrenceLocation: String?) -> Bool {
+        func same(_ new: String?, _ held: String?) -> Bool { new.map { $0 == (held ?? "") } ?? false }
+        return same(title, occurrenceTitle) || same(notes, occurrenceNotes) || same(location, occurrenceLocation)
+    }
+
+    /// An update resolved to an edited occurrence by `occurrence_date`, on a source where that
+    /// occurrence keeps the series' identifier. iCloud cannot get here (`findOccurrence` needs the
+    /// identifier, and an edited occurrence has its own), and no such source was measured: Exchange
+    /// may be one (#320). The save would be the same as through the occurrence's own id.
+    static func resolvedOccurrenceRefusal(addressedByItsOwnId: Bool, resolvedIsDetached: Bool, futureSpan: Bool, fields: Set<String>) -> String? {
+        guard !addressedByItsOwnId, resolvedIsDetached, futureSpan, !refusedUpdateFields(fields).isEmpty else { return nil }
+        return fieldsReason(wholeSeries: false)
     }
 
     /// The refusal of `delete_event` / `delete_events_batch` with span `all` through one occurrence:
@@ -176,18 +223,10 @@ enum DetachedOccurrenceSpan {
                                     neighbours: @autoclosure () -> Neighbours?) -> String? {
         guard addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
         guard let known = neighbours() else {
-            return unknownReason(suffix: batch ? "This row deleted nothing." : "Nothing was deleted.")
+            return unknownReason(identifier: identifier, span: "'all'", suffix: batch ? "This row deleted nothing." : "Nothing was deleted.")
         }
         guard known.othersRemain else { return nil }
         return batch ? seriesDeleteBatchReason : seriesDeleteReason
-    }
-
-    /// `clear_recurrence` or a calendar of another account through one occurrence, with span `all`
-    /// or `future`.
-    static func refusesSeriesProperty(identifier: String, isDetached: Bool, wholeSeries: Bool, span: EKSpan,
-                                      changesAccount: Bool, clearsRecurrence: Bool) -> Bool {
-        guard wholeSeries || span != .thisEvent else { return false }
-        return (changesAccount || clearsRecurrence) && addressesOneOccurrence(identifier: identifier, isDetached: isDetached)
     }
 
     /// An `occurrence_date` that is not the occurrence the identifier names. Span `all` takes no
@@ -215,39 +254,60 @@ enum DetachedOccurrenceSpan {
     /// `seriesDeleteReason` as a `delete_events_batch` row: the other rows may have been deleted.
     static let seriesDeleteBatchReason = "This identifier names one occurrence of a recurring series, edited on its own, and span 'all' through it would delete only this occurrence, not the series. \(seriesDeleteRoute) This row deleted nothing."
 
-    /// With no way to list the series, or an occurrence past the scan, nothing is known about what
-    /// span `all` would do, and on a source with no `/RID=` the routes of the other reasons would
-    /// loop: the first occurrence's id looks the same.
-    static func unknownReason(suffix: String) -> String {
-        "This identifier is reported as one occurrence edited on its own, and the rest of its series cannot be listed from it, so span 'all' cannot be shown to do what it says. Use span 'this' on this occurrence, which also does what span 'all' would if this is a single event reported wrongly. \(suffix)"
+    /// Nothing is known about what the span would do. With no `/RID=` the routes of the other
+    /// reasons would loop, as the first occurrence's id looks the same. With one, the occurrence
+    /// lies past the scan, and the series' id is known: `pastScanReason`.
+    static func unknownReason(identifier: String, span: String, suffix: String) -> String {
+        if seriesIdentifier(of: identifier) != nil { return pastScanReason(span: span, suffix: suffix) }
+        return "This identifier is reported as one occurrence edited on its own, and the rest of its series cannot be listed from it, so span \(span) cannot be shown to do what it says. Use span 'this' on this occurrence, which also does what span \(span) would if this is a single event reported wrongly. \(suffix)"
     }
 
-    /// No route for span `future`: span `all` would reach earlier occurrences the caller did not ask
-    /// for, and it cannot be undone.
-    static func seriesPropertyReason(wholeSeries: Bool) -> String {
-        let span = wholeSeries ? "'all'" : "'future'"
-        let opening = "event_id names one occurrence of a recurring series, edited on its own, and span \(span) through it cannot take clear_recurrence or a calendar of another account: clear_recurrence through it would answer updated and change nothing, and a move to another account was not shown safe from an occurrence."
-        let way = wholeSeries
-            ? "To make either change, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'; if that is refused too, the change is not supported on this series."
-            : "Neither is supported from an occurrence edited on its own."
-        return "\(opening) \(way) Nothing was written."
+    /// Run on a weekly series started about seven years ago, the occurrence edited this year: the
+    /// series' id with span `all` took a location and a start and deleted the series.
+    static func pastScanReason(span: String, suffix: String) -> String {
+        "This identifier names one occurrence of a recurring series, edited on its own, and it lies past what can be listed of the series, about five years from its start, so span \(span) cannot be shown to do what it says. Use the id list_events shows for an occurrence that was not edited on its own, with span 'all', for the whole series. If that is refused, use span 'this' on each occurrence, with occurrence_date when its id has no /RID=… part. \(suffix)"
     }
 
-    /// `start_time`, `end_time`, `all_day`, `timezone` through one occurrence (round 4). Each way
-    /// named here was run on a device. The series' id with span `all` took a start with the first
-    /// occurrence in place, and with the first occurrence edited and its start moved; it is refused
-    /// with the first occurrence edited at its original start (#428) or deleted (#326), and with
-    /// `all_day` it adds an occurrence (#442). Span `this` on each occurrence works through either
-    /// id. No way was run for span `future`, so none is named.
-    static func dateReason(wholeSeries: Bool) -> String {
-        let span = wholeSeries ? "'all'" : "'future'"
-        let others = wholeSeries ? "the other occurrences" : "the later occurrences"
-        let opening = "event_id names one occurrence of a recurring series, edited on its own, and span \(span) through it cannot change start_time, end_time, all_day or timezone: \(others) would take this occurrence's own time, length or day."
-        let way = wholeSeries
-            ? "To change start_time, end_time or timezone for the whole series, use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. If that is refused, or for all_day (through that id it brings an edited occurrence's original slot back as an extra occurrence), no single call changes the whole series: use span 'this' on each occurrence, with occurrence_date when the id list_events shows for it has no /RID=… part."
-            : "This is not supported from an occurrence edited on its own. To change this occurrence alone, use span 'this'."
-        return "\(opening) \(way) Nothing was written."
+    /// The way around every refusal of `update_event` below, as run on a device: with span `all` the
+    /// series' id took `start_time`, `end_time`, `timezone`, `url`, alarms, `structured_location`,
+    /// `clear_recurrence`, `calendar_name` of the same account, and a value the occurrence holds,
+    /// with an edited occurrence present; with span `future` from the next occurrence it took the
+    /// same except `clear_recurrence`, `calendar_name` and `all_day` (#451). Span `this` on each
+    /// occurrence works through either id. `all_day` adds an occurrence (#442), and a calendar of
+    /// another account was not run.
+    private static func otherRoute(wholeSeries: Bool) -> String {
+        let eachOccurrence = "use span 'this' on each occurrence, with occurrence_date when its id has no /RID=… part"
+        if wholeSeries {
+            return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. If that id is refused, \(eachOccurrence)."
+        }
+        return "Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'. If that id is refused, \(eachOccurrence)."
     }
+
+    private static func opening(_ wholeSeries: Bool) -> String {
+        "event_id names one occurrence of a recurring series, edited on its own, and with span \(wholeSeries ? "'all'" : "'future'") through it"
+    }
+
+    /// Everything but `allowedUpdateFields`.
+    static func fieldsReason(wholeSeries: Bool) -> String {
+        let limits = wholeSeries
+            ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences."
+            : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences."
+        return "\(opening(wholeSeries)) only title, notes, location and recurrence can be written; any other field is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
+    }
+
+    /// A value the occurrence already holds would answer updated and reach no other occurrence.
+    static func sameValueReason(wholeSeries: Bool) -> String {
+        "\(opening(wholeSeries)) a title, notes or location equal to what this occurrence already holds reaches no other occurrence, though the call would answer updated. Leave that field out if it is not meant to change. Otherwise: \(otherRoute(wholeSeries: wholeSeries)) Nothing was written."
+    }
+
+    /// A new series started from the occurrence takes its own location and alarms.
+    static func carriedReason(wholeSeries: Bool) -> String {
+        "\(opening(wholeSeries)) this call would start a new series from this occurrence, and that series would take the location or alarms this occurrence holds on its own. \(otherRoute(wholeSeries: wholeSeries)) Nothing was written."
+    }
+
+    /// A rule's day against the occurrence's original day, not the day it shows: through its id the
+    /// new rule runs from the original one, and a rule on the shown day left two occurrences there.
+    static let recurrenceDayReason = "event_id names one occurrence of a recurring series, edited on its own, and days_of_week does not hold the day of the week of its original date, the day the series runs from. Add that day, or leave days_of_week out. Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call

@@ -380,39 +380,52 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 ## Release gate：場次自己的 id 上的 span all（#416）
 
 #416 的拒絕只在 iCloud 量過，判斷靠 `isDetached` 或 id 裡的 `/RID=`，以及從 `/RID=` 前面那段 id 列出系列。#320 在 Google
-量到這兩者可靠，Exchange 沒有量。**出 #416 的版本打 tag 之前**，用剛 build 的 binary 的 `--cli`，有 Google 或 Exchange
-帳號時，在該來源名稱含 `#416` 的拋棄式日曆上：
+量到這兩者可靠，Exchange 沒有量。**出 #416 的版本打 tag 之前**，用剛 build 的 binary 的 `--cli`：第 1–4 步在有 Google 或
+Exchange 帳號時，在該來源名稱含 `#416` 的拋棄式日曆上做；**第 5–7 步在 iCloud 上一律要做，不以有第二個帳號為前提**。每個形狀
+都用**新的系列與獨立的 title 前綴**（共用前綴會把兩個系列混在一起，2026-11-05 踩過），每週 5 場，逐場比對 title、start、
+end、notes、location、alarms。
 
-1. 一次性事件：`update_event` 與 `delete_event` 都帶 span `all`，要成功。若被拒絕（「reported as one occurrence」），
-   就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
+1. 一次性事件：`update_event` 與 `delete_event` 都帶 span `all`，要成功；`update_event` 帶 span `future` 也要成功。若被拒絕
+   （「reported as one occurrence」），就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
 2. 每週 5 次的系列，單獨改第 3 場 → 用該場次的 id 帶 span `all` 的 `update_event` 與 `delete_event`：要被拒絕，
-   系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報；
-3. 新建一個系列，單獨改第 1 場的標題與備註、再把時間 +2h → 記下每一場的 title、start、end、notes → 用第 1 場的 id：
-   先 `delete_event` span `all`，要被拒絕；再 `update_event` span `all` 只改 `location`：iCloud 上全部場次都有
-   `location`，**逐欄比對**，每一場的 title、start、end、notes 都不變（改過的內容沒有擴散）；最後 `delete_event`
-   span `future`，整個系列刪除。該來源的 id 沒有 `/RID=` 時 span `all` 的 update 會被拒絕（列不出系列），這是已知限制，
-   記下來，不算 bug；
-4. 新建一個系列，第一場刪掉、第二場與第四場單獨改過（第二場改時間、第四場改標題與備註）→ 記下每一場 → 用第二場的 id
-   帶 span `all` 的 `update_event` 只改 `location`：iCloud 上全部場次更新、新 id，**逐欄比對**同第 3 步
-   （2026-11-05）。再新建一個系列，單獨改第 3 場的標題與備註、再把時間 +2h → 用它的 id 帶 span `future` 只改 `location`：
-   第 1、2 場不動，第 3 場起 `location` 寫入、新 id、逐欄比對不變；
-5. 日期與新規則。每個形狀都用**新的系列與獨立的 title 前綴**（共用前綴會把兩個系列混在一起，2026-11-05 踩過），
-   每週 5 場，逐場比對 title、start、end、notes。下面 (a)–(c) 與 (e) 的日期寫入要被拒絕、系列不變。**在沒有這些拒絕的
-   build 上**，iCloud 的結果是（2026-11-06，系列 10:00–11:00，寫 09:00）：
-   (a) 第 1 場只把結束延到 13:00，span `all`、只帶 `start_time`：其他場次變 09:00–12:00（長度擴散）；
-   (b) 第 1 場 +2h，同上：其他場次 09:00–10:00（這一形狀乾淨，但整類拒絕）；
-   (c) 第 1 場移到週三，span `all`、`all_day: true`：其他場次全部移到週三（星期擴散）；
-   (d) 第 1 場改標題、備註、+2h，span `all`、新 `recurrence`（weekly，不帶 `days_of_week`）：**放行**，其他場次的 title、
-   notes、時間都不變，新規則生效；每天、每兩週、第 1 場移到別的星期、剩下的第一個場次都一樣；
-   (e) 第 3 場，span `future`，重複 (a)(b)(d)，再加移到週三的 `all_day: true`：(a)(c) 擴散，(b) 乾淨，全部拒絕；(d) 放行，
-   第 1、2 場不動。只帶 `end_time` 時其他場次變成該場次的時間（第 1 場 +2h，寫 14:00：12:00–14:00）。
-   拒絕訊息給的路徑要走一次：第 3 場改過時用系列 id 帶 span `all` 寫 `start_time`（其他場次 09:00–10:00，第 3 場保留自己的
-   長度）；第 1 場只改標題或結束時間時系列 id 被拒絕（#428），改用 span `this`（系列 id 加 `occurrence_date`，或場次自己的
-   id），只動那一場；第 1 場的開始時間改過時系列 id 走得通。`all_day` 經系列 id 會多出一個場次（#442），所以訊息不給這條路；
+   系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報。再用系列 id 加第 3 場的 `occurrence_date`、span `future`
+   寫 `start_time`：單獨改過的場次在該來源若沒有自己的 id，會被 `resolvedOccurrenceRefusal` 拒絕；
+3. 新建一個系列，單獨改第 1 場的標題與備註、再把時間 +2h → 用第 1 場的 id：先 `delete_event` span `all`，要被拒絕；再
+   `update_event` span `all` 只改 `location`：iCloud 上全部場次都有 `location`，每一場的 title、start、end、notes 都不變；
+   最後 `delete_event` span `future`，整個系列刪除。該來源的 id 沒有 `/RID=` 時 span `all` 的 update 會被拒絕（列不出系列），
+   這是已知限制，記下來，不算 bug；
+4. 新建一個系列，第一場刪掉、第二場與第四場單獨改過（第二場改時間、第四場改標題與備註）→ 用第二場的 id 帶 span `all` 只改
+   `location`：iCloud 上全部場次更新、新 id，其他欄位不變（2026-11-05）。再新建一個系列，單獨改第 3 場的標題與備註、再把時間
+   +2h → 用它的 id 帶 span `future` 只改 `location`：第 1、2 場不動，第 3 場起 `location` 寫入、新 id；
+5. **放行清單**（2026-11-06，iCloud，系列 10:00–11:00）：
+   (a) 用第 1 場（時間 +2h）與第 3 場的 id，span `all`、`future`，`start_time`、`end_time`、`all_day`（`true` 與 `false`）、
+   `timezone`、`clear_timezone`、`url`、`alarms_minutes_offsets`、`structured_location`、`calendar_name`（同帳號）、
+   `clear_recurrence`：全部拒絕、系列不變；
+   (b) 新值：第 1 場改標題、備註、地點、+2h，span `all` 寫 `title`、`notes`、`location`：別的場次都拿到新值，其他欄位不變，
+   第 1 場保留其他自己的值；`recurrence` weekly 不帶 `days_of_week`：新規則生效，別的場次不變；第 3 場 span `future` 同樣（只改
+   過標題、備註、時間，沒有自己的地點或鬧鐘時）；
+   (c) 相同值：第 1 場地點 R101，span `all` 寫 R101；第 3 場 span `future`；title、notes 各一次：全部拒絕。沒有這個拒絕的 build
+   回 `updated`、別的場次沒變；
+   (d) 帶到新系列：第 3 場有自己的地點或鬧鐘，span `future` 只寫 `title`；第 1 場刪掉、第 2 場有自己的地點，span `all`：都拒絕。
+   沒有這個拒絕的 build 上新系列帶著它的地點與鬧鐘（`url`、標題、備註、時間不會帶）。第 3 場 span `future` 寫新的 `location`：
+   放行。第 1 場 span `all` 只寫 `title`：放行，地點與鬧鐘不動；
+   (e) `days_of_week`：第 1 場移到週三，寫 `[週三]` 被拒絕（沒有這個拒絕的 build 在週三留下兩場），寫 `[週一]` 放行；
+   (f) 系列 id、span `all`，第 3 場或第 1 場改過時的預期結果：別的場次都拿到新值，**單獨改過的場次保留改過的內容**：
+   `start_time` 09:00：只改結束的場次 09:00 起、保留自己的長度；+2h 的場次留在 12:00；移到週三的場次留在週三、09:00 起。
+   `end_time` 12:00：只改結束的場次不變；+2h 的場次到 14:00。`timezone`：每場位移相同，與沒有單獨改過場次的系列一樣。
+   `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
+   `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。第 1 場只改標題或結束時，系列 id 被拒絕（#428），改用
+   span `this`（系列 id 加 `occurrence_date`，或場次自己的 id），只動那一場；
+   (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、
+   `structured_location` 只動後面的場次；`all_day`、`clear_recurrence`、`calendar_name` 不是（#451），訊息不給這條路；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
-   系列 id 單獨呼叫才會被拒絕，#428）：`dry_run: true` 列出兩列、沒有拒絕，`dry_run: false` 回 2 succeeded、沒有剩下；第 1 場
-   刪掉、第 2 場只改標題的形狀同樣。之後在重啟後的 session MCP 上
-   `undo` 一次：系列與場次都回來，訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。
+   系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
+   上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
+   訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。第 1 場刪掉、第 2 場只改標題的
+   形狀同樣走一次。span `this` 帶系列 id：dry run 與實際都回 `occurrence_date` 那一句；
+7. 超出掃描範圍：開始日超過五年前的每週開放式系列，單獨改最近一場 → 用它的 id 的 `update_event` span `all`、`delete_event`
+   span `all`、`delete_events_batch`（含 dry run）：都拒絕、系列不變，訊息是「past what can be listed」；用系列 id 帶 span `all`
+   更新 `location` 與 `start_time`，再刪除：都走得通（2026-11-06，2020 年開始的系列）。
 
 結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
 （2026-11-05，空的）。

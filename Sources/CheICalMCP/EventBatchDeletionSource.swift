@@ -33,10 +33,11 @@ protocol EventBatchDeletionSource: Sendable {
     /// occurrence edited on its own. True for the `event_ids` mode, where the caller named the id;
     /// false by date range, where the listing put it in the set.
     func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult
-    /// One `event_ids` dry-run row. `namedInTheCall`: every id of the call. `goneInTheCall`: the
-    /// rows passed so far with span `all`, which the real call has deleted by the time it gets to
-    /// this row. Throws what the real row would fail with when the id does not resolve.
-    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+    /// One `event_ids` dry-run row. `span` as the real row takes it, `spanAll` for span `all`.
+    /// `namedInTheCall`: every id of the call. `goneInTheCall`: the rows passed so far with span
+    /// `all`, which the real call has deleted by the time it gets to this row. Throws what the real
+    /// row would fail with when the id does not resolve.
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow
 }
 
@@ -53,16 +54,19 @@ extension EventKitManager: EventBatchDeletionSource {
 
     /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
     /// deleted shows its first remaining occurrence, not the deleted one.
-    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
         try await ensureCalendarAccess()
-        guard let event = freshEventWithOrigin(id: identifier, goneInTheCall: goneInTheCall)?.event else {
+        guard let event = freshEventWithOrigin(
+            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
+            goneInTheCall: goneInTheCall)?.event else {
             throw notFoundError(id: identifier)
         }
         // #416: what the real call refuses is not listed as a deletion.
         if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
             return .refused(refusal)
         }
+        if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }
         return .deletes(start: event.startDate, end: event.endDate)
     }
 }

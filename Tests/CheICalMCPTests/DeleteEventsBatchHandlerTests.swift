@@ -51,7 +51,7 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
         return result
     }
 
-    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
         .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))
     }
@@ -92,10 +92,25 @@ private actor SeriesModel: EventBatchDeletionSource {
                                                           coversWholeSeries: true, namedInTheCall: named))
     }
 
-    func previewEventDeletion(identifier: String, spanAll: Bool, namedInTheCall: Set<String>,
+    func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
-        if let refusal = try judge(identifier, named: namedInTheCall, gone: goneInTheCall) { return .refused(refusal) }
+        if !spanAll {
+            if let refusal = try judgeOneRow(identifier, span: span) { return .refused(refusal) }
+        } else if let refusal = try judge(identifier, named: namedInTheCall, gone: goneInTheCall) {
+            return .refused(refusal)
+        }
         return .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 3600))
+    }
+
+    /// A row with span `this` or `future`: the edited-before refusal only with span `future`, and a
+    /// bare recurring id has no date to go with, as by `event_ids` none is passed.
+    private func judgeOneRow(_ id: String, span: EKSpan) throws -> String? {
+        guard id == series else { return nil }
+        guard FirstRemainingOccurrence.pick(occurrences, identifier: series,
+                                            refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span)) != nil else {
+            throw EventKitError.standInRefused(reason: EventKitManager.standInEditedBeforeBatchReason)
+        }
+        return EventKitManager.batchOccurrenceDateRequired
     }
 
     func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
@@ -121,7 +136,21 @@ private actor SeriesModel: EventBatchDeletionSource {
 
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult {
-        BatchDeleteResult(successCount: 0, failedCount: 0, failures: [])
+        var succeeded = 0
+        var failures: [(String, String)] = []
+        for item in items {
+            do {
+                if let reason = try judgeOneRow(item.identifier, span: span) {
+                    failures.append((item.identifier, reason))
+                    continue
+                }
+                occurrences.removeAll { $0.eventIdentifier == item.identifier }
+                succeeded += 1
+            } catch {
+                failures.append((item.identifier, "refused"))
+            }
+        }
+        return BatchDeleteResult(successCount: succeeded, failedCount: failures.count, failures: failures)
     }
 }
 
@@ -391,9 +420,9 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     private func ownId(_ days: Double) -> String { "\(series)/RID=\(Int(base.timeIntervalSince1970 + days * day))" }
 
     /// What each mode says about the same call on a fresh copy of the series.
-    private func dryRunAndRealCall(_ occurrences: [FirstRemainingOccurrence.Candidate], ids: [String]) async throws
+    private func dryRunAndRealCall(_ occurrences: [FirstRemainingOccurrence.Candidate], ids: [String], span: String = "all") async throws
         -> (dry: [[String: Any]], total: Int?, real: [String: Any], left: Int) {
-        let args: [String: Value] = ["event_ids": .array(ids.map { .string($0) }), "span": .string("all")]
+        let args: [String: Value] = ["event_ids": .array(ids.map { .string($0) }), "span": .string(span)]
         let dryServer = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(series: series, occurrences: occurrences))
         var dryArgs = args
         dryArgs["dry_run"] = .bool(true)
@@ -449,6 +478,24 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testTheDryRunRefusesTheBareIdAlone() async throws {
         let shape = [editedOccurrence(0), unedited(7), unedited(14)]
         try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 3)
+    }
+
+    /// Span `this` does not take the edited-before refusal: the first occurrence deleted, the first
+    /// left edited, a bare id. The dry run used to fail that row with the refusal of a whole-series
+    /// write. Both modes now answer what the real row answers: no date was given. The occurrence's
+    /// own id goes ahead in both, and nothing else is touched.
+    func testSpanThisPreviewsWhatTheRealRowDoes() async throws {
+        let shape = [editedOccurrence(7), unedited(14), unedited(21)]
+        let bare = try await dryRunAndRealCall(shape, ids: [series], span: "this")
+        let dryError = try XCTUnwrap(bare.dry.first?["error"] as? String, "\(bare.dry)")
+        XCTAssertEqual(dryError, EventKitManager.batchOccurrenceDateRequired)
+        let failures = try XCTUnwrap(bare.real["failures"] as? [[String: Any]])
+        XCTAssertEqual(failures.first?["error"] as? String, dryError)
+        XCTAssertEqual(bare.left, 3)
+        let own = try await dryRunAndRealCall(shape, ids: [ownId(7)], span: "this")
+        XCTAssertNil(own.dry.first?["error"], "\(own.dry)")
+        XCTAssertEqual(own.real["succeeded"] as? Int, 1)
+        XCTAssertEqual(own.left, 2)
     }
 
     /// `total` counts each id once, as the real call does.
