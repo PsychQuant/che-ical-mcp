@@ -438,7 +438,7 @@ end、notes、location、alarms。
    `title`、`notes`、`location`：第 3 場只改時間、第 4 場改標題與備註、第 5 場改地點：改過那一欄的場次留著自己的值，其他都拿到新值。
    `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
-   `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
+   `structured_location`：寫到別的場次。`all_day`：系列有單獨改過的場次時拒絕，什麼都不寫；沒有這個拒絕的 build 會多一個場次（#442）。
    **系列 id 走到第一場（#428）**：第 1 場只改標題或結束（開始時間沒動），或第 1 場刪掉、第 2 場單獨改過時，系列 id 帶 span `all` 的
    `update_event`、`delete_event`、`delete_events_batch`（`event_ids`，含 dry run，#436）改走該場次自己的 id：見 (h)。`id` 是系列 id
    （第 1 場刪掉時是新 id），回 `occurrence_id`。span `future` 在這個形狀仍被拒絕。#436 是在 Google 帳號上量到的，那裡要再跑一次
