@@ -141,7 +141,9 @@ final class UndoBatchWiringTests: XCTestCase {
             let count = SourcePins.ranges(ofPattern: #"(?<!case )\.batch\s*\("#, in: code).count
             if count > 0 { built[file.lastPathComponent, default: 0] += count }
         }
-        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 1, "Server.swift": 1, "UndoBatchRestore.swift": 1],
+        // UndoManager.swift's second is `replacingEventIdentifier` (#435): the same members, with one
+        // identifier replaced, so nothing new can run last.
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 1, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 
