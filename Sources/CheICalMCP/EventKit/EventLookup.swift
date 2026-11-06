@@ -1,3 +1,4 @@
+import CheICalMCPObjC
 import EventKit
 import Foundation
 
@@ -9,12 +10,16 @@ import Foundation
 /// first with `calendarItem(withIdentifier:)`, the lookup every reminder tool already makes, and an
 /// id that this lookup resolves to a reminder is not found without the event lookup running.
 ///
-/// Known limit: the check holds only while `calendarItem(withIdentifier:)` returns the reminder.
-/// That was checked on device with Calendar and Reminders access both granted, on iCloud, with
-/// reminder ids as the reminder tools return them. Without Reminders access it may return nil for
-/// a reminder's id, and `event(withIdentifier:)` would then still run; a reminder's id normally
-/// comes from this server's reminder tools, which need that access. The store is not refreshed
-/// here (`freshEvent` refreshes first; the freshness of the other callers is #271).
+/// The check holds only while `calendarItem(withIdentifier:)` returns the reminder. That was
+/// checked on device with Calendar and Reminders access both granted, on iCloud, with reminder ids
+/// as the reminder tools return them. Without Reminders access it may return nil for a reminder's
+/// id, so #288 wraps `event(withIdentifier:)` as well (`catchingRaise`): with the check switched
+/// off, a reminder's id raised `NSUnknownKeyException` on device, the call answered not found, and
+/// the same process went on to read and to delete an event through the same store (iCloud,
+/// 2026-11-06). What the lookup returns with Reminders access denied has not been seen. The check
+/// stays first: it answers without raising, and nothing is known about what a raised lookup leaves
+/// behind beyond that run. The store is not refreshed here (`freshEvent` refreshes first; the
+/// freshness of the other callers is #271).
 ///
 /// Not `calendarItem(withIdentifier:) as? EKEvent`: the ids this server hands out for events are
 /// `eventIdentifier`s, for which that lookup returned nil on device (one-off and recurring events
@@ -37,7 +42,18 @@ enum EventLookup {
     /// The resolver asking `store` for both lookups; tested with a fake store.
     static func event(identifier: String, in store: some EventLookupSource) -> EKEvent? {
         event(identifier: identifier, calendarItem: { store.calendarItem(withIdentifier: $0) },
-              event: { store.event(withIdentifier: $0) })
+              event: { id in catchingRaise { store.event(withIdentifier: id) } })
+    }
+
+    /// #288: the event lookup, with an Objective-C exception turned into not found, so this call
+    /// cannot end the process. The name goes to stderr; the reason is left out (#37).
+    static func catchingRaise(_ lookup: () -> EKEvent?) -> EKEvent? {
+        var exceptionName: NSString?
+        let found = CheICalCatchingException({ lookup() }, &exceptionName)
+        if let exceptionName {
+            FileHandle.standardError.write(Data("event lookup raised \(exceptionName); answered as not found\n".utf8))
+        }
+        return found as? EKEvent
     }
 }
 

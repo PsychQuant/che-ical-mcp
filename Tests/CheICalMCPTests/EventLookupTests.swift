@@ -96,6 +96,29 @@ final class EventLookupTests: XCTestCase {
         XCTAssertEqual(fake.eventCalls, ["event-id"])
     }
 
+    // MARK: - #288: a lookup that raises
+
+    /// A store that behaves as `EKEventStore` does for a reminder's id when the kind check cannot
+    /// see the reminder: the item lookup returns nil and the event lookup raises.
+    private final class RaisingStore: EventLookupSource {
+        func calendarItem(withIdentifier identifier: String) -> EKCalendarItem? { nil }
+        func event(withIdentifier identifier: String) -> EKEvent? {
+            NSException(name: .undefinedKeyException, reason: "the id \(identifier)", userInfo: nil).raise()
+            return nil
+        }
+    }
+
+    /// Before #288 this ended the process, and the test run with it.
+    func testALookupThatRaisesIsNotFound() {
+        XCTAssertNil(EventLookup.event(identifier: "reminder-id", in: RaisingStore()))
+    }
+
+    func testAFoundEventComesThroughTheCatch() {
+        let event = EKEvent(eventStore: store)
+        XCTAssertTrue(EventLookup.catchingRaise { event } === event)
+        XCTAssertNil(EventLookup.catchingRaise { nil })
+    }
+
     // MARK: - Every lookup goes through the resolver
 
     /// `file:line` of each `event(withIdentifier:` call in `text`, of each `eventWithIdentifier`
