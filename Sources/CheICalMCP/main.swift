@@ -56,11 +56,11 @@ case .skip(.disclaimIneffective):
     let message = "[che-ical-mcp] \(SelfDisclaim.disclaimedSentinel) is set but another process is still "
         + "responsible for this one (the re-exec did not take effect, or the variable was inherited); "
         + "continuing under the host's TCC attribution (#343)\n"
-    FileHandle.standardError.write(Data(message.utf8))
+    SelfDisclaim.writeStartupLine(message)
 case .skip(.responsibilityUnavailable(let reason)):
     let message = "[che-ical-mcp] responsible process unavailable "
         + "(\(EventKitErrorSanitizer.escapeForStderr(reason))); continuing under the host's TCC attribution (#343)\n"
-    FileHandle.standardError.write(Data(message.utf8))
+    SelfDisclaim.writeStartupLine(message)
 case .skip:
     break
 }

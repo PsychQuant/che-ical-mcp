@@ -259,7 +259,15 @@ enum ResponsibleProcessFormatter {
             lines.append("  \(escape(line))")
         }
         // #361: closed vocabulary or fixed text, so there is nothing to escape.
-        if let reexec { lines.append("  \(reexec.attributionLine)") }
+        // In the ineffective branch the advice above can say the process was not re-executed, so this
+        // says how the two fit: the record is what the variable claims, and another process is checked.
+        if let reexec {
+            var line = reexec.attributionLine
+            if startupDecision == .skip(.disclaimIneffective) {
+                line += " If it did, it had no effect: macOS still checks another process."
+            }
+            lines.append("  \(line)")
+        }
         return lines.joined(separator: "\n")
     }
 }

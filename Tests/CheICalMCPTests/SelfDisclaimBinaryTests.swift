@@ -183,6 +183,7 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         try checkRunBounds(run)
         XCTAssertTrue(run.stderr.contains("CHE_ICAL_MCP_DISCLAIMED is set but another process is still responsible"), run.stderr)
         XCTAssertTrue(run.stdout.contains("CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): "), run.stdout)
+        XCTAssertTrue(run.stdout.contains("If it did, it had no effect: macOS still checks another process."), run.stdout)
     }
 
     func testAnInheritedValueIsNotPrinted() throws {
@@ -244,7 +245,27 @@ final class SelfDisclaimBinaryTests: XCTestCase {
         let stdout = try String(contentsOf: output, encoding: .utf8)
         let run = Run(pid: pid, stdout: stdout, stderr: "", status: status, timedOut: timedOut, drainTimedOut: false, elapsed: 0)
         try checkRunBounds(run)
+        try skipIfThePolicyKeptTheHost(run)
         XCTAssertTrue(run.stdout.contains("says this process re-executed at start (forced)"), run.stdout)
+    }
+
+    /// SIG_IGN survives an exec, so a missing restore would leave the server ignoring SIGPIPE with no
+    /// other sign. It is put back in the same function, before any exec can run.
+    func testTheStartupLineRestoresSIGPIPE() throws {
+        let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(
+            of: "static func writeStartupLine(_ line: String) {", in: try SourcePins.source("SelfDisclaim.swift"))))
+        let ignore = try XCTUnwrap(body.range(of: "let previous = signal(SIGPIPE, SIG_IGN)"))
+        let write = try XCTUnwrap(body.range(of: "write(STDERR_FILENO,"))
+        let restore = try XCTUnwrap(body.range(of: "signal(SIGPIPE, previous)"))
+        XCTAssertTrue(ignore.lowerBound < write.lowerBound && write.lowerBound < restore.lowerBound, body)
+    }
+
+    /// Every write before the exec, and the two start-up warnings after it, are fail-open.
+    func testTheStartUpSwitchWritesThroughTheFailOpenLine() throws {
+        let source = try SourcePins.source("main.swift")
+        let from = try XCTUnwrap(source.range(of: "switch startupDecision {"))
+        let to = try XCTUnwrap(source.range(of: "// Handle command line arguments"))
+        XCTAssertFalse(source[from.lowerBound..<to.lowerBound].contains("FileHandle.standardError.write"))
     }
 
     /// The write is not conditional on a reason: every re-exec says why.
