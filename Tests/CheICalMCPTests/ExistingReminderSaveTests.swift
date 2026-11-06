@@ -80,30 +80,49 @@ final class ExistingReminderSaveTests: XCTestCase {
         let save = try XCTUnwrap(EventKitError.reminderSaveMayLand(code: "error_unknown").errorDescription)
         XCTAssertTrue(save.contains("error_unknown"), save)
         XCTAssertTrue(save.contains("may still be written by the next save"), save)
-        XCTAssertTrue(save.contains("nothing to undo"), save)
-        XCTAssertTrue(save.contains("Read the reminder back before trying again"), save)
         let removal = try XCTUnwrap(EventKitError.reminderRemovalMayLand(code: "error_unknown").errorDescription)
         XCTAssertTrue(removal.contains("may still be deleted by the next save"), removal)
-        XCTAssertTrue(removal.contains("nothing to undo"), removal)
-        XCTAssertTrue(removal.contains("Read the reminders back before trying again"), removal)
         let list = try XCTUnwrap(EventKitError.listChangeMayLand(code: "error_unknown").errorDescription)
         XCTAssertTrue(list.contains("may still be written by the next save"), list)
         let listRemoval = try XCTUnwrap(EventKitError.listRemovalMayLand(code: "error_unknown").errorDescription)
         XCTAssertTrue(listRemoval.contains("the list and every reminder in it may still be deleted"), listRemoval)
-        XCTAssertTrue(listRemoval.contains("nothing to undo"), listRemoval)
+        for message in [save, removal, listRemoval] {
+            XCTAssertTrue(message.contains("no undo record of its own"), message)
+        }
+    }
+
+    /// What a read shows before the next save was not measured, and `saveUnchecked` says a check
+    /// right away proves nothing, so none of these may send the caller to a read as the way out.
+    func testAReadBackDoesNotClearTheWarning() throws {
+        let texts = [EventKitError.reminderSaveMayLand(code: "x"), .reminderRemovalMayLand(code: "x"),
+                     .listChangeMayLand(code: "x"), .listRemovalMayLand(code: "x")].compactMap(\.errorDescription)
+            + [BatchDeleteResult.failedRowsNote]
+        XCTAssertEqual(texts.count, 5)
+        for text in texts {
+            XCTAssertTrue(text.contains("back now does not rule this out"), text)
+            XCTAssertFalse(text.contains("before trying"), text)
+            XCTAssertFalse(text.contains("nothing to undo"), text)
+        }
     }
 
     func testTheBatchNoteCoversThisCallAndUndo() {
         XCTAssertTrue(BatchDeleteResult.failedRowsNote.contains("may already be deleted by a later row of this call"))
-        XCTAssertTrue(BatchDeleteResult.failedRowsNote.contains("nothing to undo"))
+        XCTAssertTrue(BatchDeleteResult.failedRowsNote.contains("no undo record of their own"))
     }
 
-    /// A retried undo can find its own failed attempt, written later. Only reminders do that.
-    func testARetriedUndoNamesItsOwnFailedAttemptForRemindersOnly() throws {
+    /// A change an undo finds can be this server's own failed write, landed later, whichever call
+    /// made it. Only reminders do that.
+    func testAnUndoRefusalNamesThisServersFailedWriteForRemindersOnly() throws {
         let reminder = try XCTUnwrap(UndoTargetChangedError(verb: .undo, kind: .reminder, title: "t", changedFields: ["title"]).errorDescription)
-        XCTAssertTrue(reminder.contains("an earlier failed attempt at this that was written later"), reminder)
+        XCTAssertTrue(reminder.contains("by a failed write of this server that landed later"), reminder)
         let event = try XCTUnwrap(UndoTargetChangedError(verb: .undo, kind: .event, title: "t", changedFields: ["title"]).errorDescription)
-        XCTAssertFalse(event.contains("earlier failed attempt"), event)
+        XCTAssertFalse(event.contains("failed write"), event)
+    }
+
+    /// The #237 fallback catches this error, and its log keeps the code.
+    func testTheFallbackLogKeepsTheCode() {
+        XCTAssertEqual(EventKitError.reminderSaveMayLand(code: "eventkit_error_5").mayLandCode, "eventkit_error_5")
+        XCTAssertNil(EventKitError.reminderRemovalMayLand(code: "x").mayLandCode)
     }
 
     /// The closures the tests above cannot reach: each wrapper answers with its own failure, and the
@@ -118,11 +137,26 @@ final class ExistingReminderSaveTests: XCTestCase {
         }
     }
 
-    /// An event calendar goes straight through, because its failed save left nothing pending.
+    /// Each wrapper performs its own write: swapping a save and a remove goes red here.
+    func testEachWrapperPerformsItsOwnWrite() throws {
+        for (declaration, write) in [("func saveExistingReminder(_ reminder: EKReminder, handler: String) throws {", "try eventStore.save(reminder, commit: true)"),
+                                     ("func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {", "try eventStore.remove(reminder, commit: true)"),
+                                     ("func saveExistingCalendar(_ calendar: EKCalendar) throws {", "try eventStore.saveCalendar(calendar, commit: true)"),
+                                     ("func removeExistingCalendar(_ calendar: EKCalendar) throws {", "try eventStore.removeCalendar(calendar, commit: true)")] {
+            let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/ExistingReminderSave.swift")), declaration))
+            XCTAssertTrue(body.contains("write: { \(write) }"), body)
+            if declaration.contains("Calendar") {
+                XCTAssertTrue(body.contains("return \(write) }"), "the event calendar path: \(body)")
+            }
+        }
+    }
+
+    /// An event calendar goes straight through, because its failed save left nothing pending. Only
+    /// that: a calendar reporting neither kind keeps the warning.
     func testOnlyAReminderListTakesTheWarning() throws {
         for declaration in ["func saveExistingCalendar(_ calendar: EKCalendar) throws {", "func removeExistingCalendar(_ calendar: EKCalendar) throws {"] {
             let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/ExistingReminderSave.swift")), declaration))
-            XCTAssertTrue(body.contains("guard calendar.allowedEntityTypes.contains(.reminder) else { return try eventStore."), body)
+            XCTAssertTrue(body.contains("guard calendar.allowedEntityTypes != .event else { return try eventStore."), body)
         }
         let manager = SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift"))
         XCTAssertTrue(manager.contains("try saveExistingCalendar(calendar)"))

@@ -270,8 +270,8 @@ enum ReminderDateSync {
     ///   for a failure, the sanitized error code (`eventkit_error_<N>` for an EventKit error;
     ///   otherwise `error_<domain>_<N>`, or `error_unknown` for a Swift error), never the
     ///   reminder's content. A failed fallback
-    ///   save is rolled back, not thrown: the update itself is saved and recorded for undo, and the
-    ///   report then says `aligned: false`. A read-back after the fallback that fails is treated
+    ///   save is not thrown: the update itself is saved and recorded for undo, and the report then
+    ///   says `aligned: false`. `rollback` does not drop that save (#274), so it may still land. A read-back after the fallback that fails is treated
     ///   like the first one: not confirmed, `aligned: false`.
     ///
     /// Known limit: a source that never hands the due's zone back would save twice on every timed
@@ -331,7 +331,8 @@ enum ReminderDateSync {
                 // #274: this answers with `aligned: false`, not an error, and `rollback` does not
                 // drop the change, so the due date written here may still land with the next save.
                 rollback()
-                log("\(tool): saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); it may still be written by the next save\n")
+                let code = (error as? EventKitError)?.mayLandCode ?? EventKitErrorSanitizer.sanitize(error).code
+                log("\(tool): saving the due date again failed (\(code)); it may still be written by the next save\n")
             }
             confirmed.reread = reload()
             guard confirmed.reread == true, reminder.dueDateComponents != nil else {

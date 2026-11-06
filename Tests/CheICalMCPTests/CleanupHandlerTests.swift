@@ -438,7 +438,7 @@ final class CleanupHandlerTests: XCTestCase {
         let note = try XCTUnwrap(response["failed_rows_note"] as? String)
         XCTAssertTrue(note.contains("may be deleted by the next save"), note)
         XCTAssertTrue(note.contains("may already be deleted by a later row of this call"), note)
-        XCTAssertTrue(note.contains("Read the reminders back before trying them again"), note)
+        XCTAssertTrue(note.contains("back now does not rule this out"), note)
         let failures = try XCTUnwrap(response["failures"] as? [[String: String]])
         XCTAssertEqual(failures.first?["error"], "error_unknown")
     }

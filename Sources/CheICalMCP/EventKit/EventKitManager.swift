@@ -616,8 +616,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// that cannot be counted, is refused and nothing is deleted. The event check runs on this actor
     /// with no suspension; the one suspension is the reminder fetch, across which the write
     /// generation is compared, so no write by this server process lands between the check and
-    /// `removeCalendar` (PR #413 verify r1). A write by another app or a sync can still land in
-    /// between: EventKit offers no way to delete a calendar only if it is empty.
+    /// `removeCalendar` (PR #413 verify r1), except one that failed earlier and is still pending
+    /// (#274, `ExistingReminderSave`), which the check does not see and which the removal may commit
+    /// (not measured). A write by another app or a sync can still land in between: EventKit offers
+    /// no way to delete a calendar only if it is empty.
     @discardableResult
     func deleteCalendar(identifier: String, requireEmpty: Bool = false) async throws -> CalendarEmptiness.Checked? {
         try await ensureCalendarAccess()
@@ -3255,13 +3257,13 @@ enum EventKitError: LocalizedError {
         case .standInRefused(let reason):
             return reason
         case .reminderSaveMayLand(let code):
-            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes, with nothing to undo. Read the reminder back before trying again."
+            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes, and that write would have no undo record of its own. Reading the reminder back now does not rule this out: an unchanged reminder does not mean the change is gone."
         case .reminderRemovalMayLand(let code):
-            return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying again."
+            return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the reminders back now does not rule this out: seeing it does not mean it stays."
         case .listChangeMayLand(let code):
-            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Read the list back before trying again."
+            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
         case .listRemovalMayLand(let code):
-            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, with nothing to undo. Read the lists back before trying again."
+            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the lists back now does not rule this out: seeing it does not mean it stays."
         case .occurrenceAddressRefused(let reason):
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
@@ -3347,6 +3349,14 @@ enum EventKitError: LocalizedError {
 extension EventKitError: TrustedErrorMessage {}
 
 extension EventKitError {
+    /// The sanitized code a may-land error carries (#274), for a log line that outlives the error.
+    var mayLandCode: String? {
+        if case .reminderSaveMayLand(let code) = self { return code }
+        return nil
+    }
+}
+
+extension EventKitError {
     /// #269: the refusal of a move-undo whose original calendar no longer resolves, from what the
     /// `.moveEvent` record holds.
     static func moveBackCalendarMissing(fromCalendarIdentifier: String, event: String) -> EventKitError {
@@ -3398,7 +3408,7 @@ extension UndoOperation {
 struct BatchDeleteResult {
     /// #274: the response field for `mayLandCount`, shared by `delete_reminders_batch` and
     /// `cleanup_completed_reminders`, whose rows are bound to stable codes (spec R3).
-    static let failedRowsNote = "Rows that failed with a code may already be deleted by a later row of this call, or may be deleted by the next save this server makes, with nothing to undo. Read the reminders back before trying them again."
+    static let failedRowsNote = "Rows that failed with a code may already be deleted by a later row of this call, or may be deleted by the next save this server makes, with no undo record of their own. Reading the reminders back now does not rule this out: seeing one does not mean it stays."
 
     /// The field to add to a response: nothing when no row can still land.
     var failedRowsNoteField: [String: Any] {

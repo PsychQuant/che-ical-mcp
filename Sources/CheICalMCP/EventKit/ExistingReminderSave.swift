@@ -97,9 +97,10 @@ extension EventKitManager {
     }
 
     /// A rename or recolor of a reminder list. An event calendar goes straight through: its failed
-    /// save left nothing pending (`ExistingReminderSave`).
+    /// save left nothing pending (`ExistingReminderSave`). Only that one goes through, so a calendar
+    /// reporting anything else keeps the warning.
     func saveExistingCalendar(_ calendar: EKCalendar) throws {
-        guard calendar.allowedEntityTypes.contains(.reminder) else {
+        guard calendar.allowedEntityTypes != .event else {
             return try eventStore.saveCalendar(calendar, commit: true)
         }
         try ExistingReminderSave.run(
@@ -113,7 +114,7 @@ extension EventKitManager {
     }
 
     func removeExistingCalendar(_ calendar: EKCalendar) throws {
-        guard calendar.allowedEntityTypes.contains(.reminder) else {
+        guard calendar.allowedEntityTypes != .event else {
             return try eventStore.removeCalendar(calendar, commit: true)
         }
         try ExistingReminderSave.run(
