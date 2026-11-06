@@ -65,7 +65,7 @@ final class TCCDriftBannerLatencyTests: XCTestCase {
             stalePIDListLimit: 5,
             codeSignature: FakeCodeSignatureSource(evaluation: .mismatch, hasEntitlement: false),
             responsibleProcess: FakeResponsibleProcessSource(result: .resolved(ResponsibleProcess(
-                pid: 4242, path: "/Users/test/.local/share/claude/versions/2.1.206", isSelf: false))),
+                pid: 4242, path: "\(NSHomeDirectory())/.local/share/claude/versions/2.1.206", isSelf: false))),
             eventKitAccessGranted: false,
             eventKitRestricted: false
         )

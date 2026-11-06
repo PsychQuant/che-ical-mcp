@@ -27,6 +27,8 @@ macOS TCC may attribute a Calendar/Reminders access check to the **responsible p
 | **Binary layer** — CheICalMCP's own grant | `CheICalMCP` with a green `exec` icon | Created by `--setup` dialogs or Claude Desktop's first prompt |
 | **Host layer** — the responsible process | Depends on host, see table below | Created when a TCC check is attributed to the host context |
 
+`--print-tcc-path`, the banner and the access-denied message name the host as Claude Code for the native install and for the build inside Claude Desktop, both under the home directory. Another install (Homebrew, npm) is named by its app or executable; the re-exec applies all the same, because it follows the host's status, not its kind (#356).
+
 Host-layer entry names:
 
 | Host | Host-layer entry in System Settings | Notes |
