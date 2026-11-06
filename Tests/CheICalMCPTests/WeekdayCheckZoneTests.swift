@@ -40,4 +40,36 @@ final class WeekdayCheckZoneTests: XCTestCase {
                                             clearTimezone: false, stored: newYork, host: host), 1,
                        "a timed result keeps the stored zone: Sunday in New York")
     }
+
+    // MARK: - #454: every frequency uses days_of_week
+
+    /// Measured on iCloud: a start off the days left a stray first occurrence on daily, monthly and
+    /// yearly rules, and on a monthly series the store rewrote the rule's weekday.
+    func testCreateAndARuleInTheCallCheckEveryFrequency() throws {
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        let create = try XCTUnwrap(SourcePins.body(of: "func createEvent(", in: manager))
+        XCTAssertEqual(SourcePins.ranges(of: "if let rule = recurrenceRule, let days = rule.daysOfWeek, !days.isEmpty {", in: create).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "EventKitError.weekdayMismatch(", in: create).count, 1)
+        let update = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: manager))
+        XCTAssertEqual(SourcePins.ranges(of: "let daysToValidate = effectiveRule?.daysOfWeek ?? existingDays", in: update).count, 1)
+        XCTAssertTrue(SourcePins.ranges(of: "frequency == .weekly ?", in: update).isEmpty)
+        XCTAssertEqual(SourcePins.ranges(of: "WeekdayCheck.storedDaysCount(isWeekly: firstRule.frequency == .weekly, span: span)", in: update).count, 1)
+    }
+
+    /// Moving one occurrence of a daily series works and was measured, so span this stays out of it.
+    /// A weekly series refuses that move today, and this does not change it.
+    func testStoredDaysCountOnASeriesMoveAndNotOnOneOccurrence() {
+        XCTAssertTrue(WeekdayCheck.storedDaysCount(isWeekly: true, span: .thisEvent))
+        XCTAssertTrue(WeekdayCheck.storedDaysCount(isWeekly: true, span: .futureEvents))
+        XCTAssertTrue(WeekdayCheck.storedDaysCount(isWeekly: false, span: .futureEvents), "span all and span future")
+        XCTAssertFalse(WeekdayCheck.storedDaysCount(isWeekly: false, span: .thisEvent), "one occurrence")
+    }
+
+    func testTheEventSchemasSayTheStartHasToBeOnTheDays() throws {
+        let tools = CheICalMCPServer.defineTools()
+        for name in ["create_event", "update_event", "create_events_batch"] {
+            let schema = "\(String(describing: tools.first { $0.name == name }?.inputSchema))"
+            XCTAssertTrue(schema.contains("the start has to fall on one of them"), name)
+        }
+    }
 }

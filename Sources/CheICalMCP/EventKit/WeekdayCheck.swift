@@ -1,8 +1,17 @@
+import EventKit
 import Foundation
 
 /// #5 / #373 verify round 2: the zone in which `update_event` reads the weekday of the planned
-/// start when it checks a weekly recurrence's days.
+/// start when it checks a recurrence's days.
 enum WeekdayCheck {
+    /// #454: whether a series' stored `days_of_week` count when `update_event` moves its start with
+    /// no `recurrence` in the call. A move of the series (span all or future) off the days left a
+    /// stray occurrence, or on a monthly rule a rewritten weekday (measured on iCloud). Moving one
+    /// occurrence of a non-weekly series works and stays allowed; a weekly one is refused, as it was.
+    static func storedDaysCount(isWeekly: Bool, span: EKSpan) -> Bool {
+        isWeekly || span != .thisEvent
+    }
+
     /// The zone the event will have after the update; nil means the host zone.
     ///
     /// An all-day result has no zone: EventKit clears `timeZone` when `isAllDay` becomes true, and

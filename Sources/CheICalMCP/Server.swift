@@ -319,7 +319,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -390,7 +390,7 @@ class CheICalMCPServer {
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -880,7 +880,7 @@ class CheICalMCPServer {
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
                                             "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
-                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
+                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
                                         ]),

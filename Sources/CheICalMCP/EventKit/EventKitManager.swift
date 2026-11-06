@@ -867,7 +867,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Validate recurrence: start_time weekday must match days_of_week (#5)
         // Use event timezone (if provided) to determine the correct weekday near midnight
-        if let rule = recurrenceRule, rule.frequency == .weekly, let days = rule.daysOfWeek, !days.isEmpty {
+        // #454: every frequency uses the list, and a start off it is a stray first occurrence.
+        if let rule = recurrenceRule, let days = rule.daysOfWeek, !days.isEmpty {
             var cal = Calendar.current
             if let tz = timezone { cal.timeZone = tz }
             let weekday = cal.component(.weekday, from: startDate) // 1=Sun, 7=Sat
@@ -1236,24 +1237,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Validate recurrence weekday consistency (#5) — check when:
         // 1. A new recurrence rule is being set, OR
-        // 2. start_time or timezone changed on an event that already has weekly recurrence
+        // 2. start_time or timezone changed on an event that already has a rule with those days
         // Skip entirely if clearRecurrence is true (event becoming non-recurring)
         // Read from the values the event will have after this update: the planned start, in the
         // zone WeekdayCheck.zone picks (the host zone for an all-day result).
         let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
-        let existingWeeklyDays: [Int]? = {
+        let existingDays: [Int]? = {
             guard !clearRecurrence, // skip if clearing recurrence
                   recurrenceRule == nil, // only check existing rules if not replacing
                   startDate != nil || timezone != nil, // only if start/tz changed
                   let rules = event.recurrenceRules,
                   let firstRule = rules.first,
-                  firstRule.frequency == .weekly,
+                  WeekdayCheck.storedDaysCount(isWeekly: firstRule.frequency == .weekly, span: span),
                   let ekDays = firstRule.daysOfTheWeek, !ekDays.isEmpty
             else { return nil }
             return ekDays.map { $0.dayOfTheWeek.rawValue }
         }()
 
-        let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
+        let daysToValidate = effectiveRule?.daysOfWeek ?? existingDays
         if let days = daysToValidate, !days.isEmpty {
             let weekday = WeekdayCheck.weekday(
                 of: datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
