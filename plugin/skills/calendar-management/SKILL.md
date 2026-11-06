@@ -127,7 +127,7 @@ create_event({
 ### Calendar Migration
 ```
 1. list_calendars()                       → Identify source/target
-2. find_duplicate_events(calendars, date_range)  → Check for duplicates
+2. find_duplicate_events(calendar_names: [source, target], start_date, end_date)  → Check for duplicates (at least two calendars)
 3. move_events_batch(event_ids, target_calendar) → Move events
 4. delete_calendar(id, require_empty: true)      → Remove the emptied source (#328)
 ```
@@ -147,6 +147,8 @@ create_event(
 ```
 
 Available sources: "iCloud", "Google", "Exchange", "CalDAV", "Local"
+
+`find_duplicate_events` is the exception: it takes no `calendar_source`, and refuses one. A name two accounts share reads both calendars, and they count as the two compared. Each side of a pair gives `calendar` and `calendar_source`.
 
 ## Best Practices
 
