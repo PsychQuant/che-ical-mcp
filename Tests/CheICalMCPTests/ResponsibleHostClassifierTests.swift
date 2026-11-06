@@ -57,8 +57,6 @@ final class ResponsibleHostClassifierTests: XCTestCase {
 
     // MARK: - #356: anchored on the home directory, and the build inside Claude Desktop
 
-    private let home = "/Users/u"
-
     private func kind(_ path: String, home: String = "/Users/u") -> ResponsibleHostKind {
         ResponsibleHostClassifier.classify(path: path, isSelf: false, home: home)
     }
@@ -67,7 +65,9 @@ final class ResponsibleHostClassifierTests: XCTestCase {
         XCTAssertEqual(kind("/Users/u/.local/share/claude/versions/2.1.1"), .claudeCode(version: "2.1.1"))
         XCTAssertEqual(kind("/Users/u/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude"), .claudeCode(version: nil))
         XCTAssertEqual(kind("/tmp/x/.local/share/claude/versions/1"), .otherExecutable(path: "/tmp/x/.local/share/claude/versions/1"))
-        XCTAssertEqual(kind("/tmp/x/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude"), .appBundle(name: "ClaudeCode"))
+        // Not an app to enable: System Settings has no entry for it (PR #453 verify).
+        XCTAssertEqual(kind("/tmp/x/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude"),
+                       .otherExecutable(path: "/tmp/x/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude"))
         XCTAssertEqual(kind("/Users/other/.local/share/claude/versions/1"), .otherExecutable(path: "/Users/other/.local/share/claude/versions/1"))
     }
 
@@ -79,6 +79,37 @@ final class ResponsibleHostClassifierTests: XCTestCase {
                        .claudeCode(version: nil), "the version is printed into messages, so only a version token is kept")
         XCTAssertEqual(kind("/Users/other/Library/Application Support/Claude/claude-code/2.1.317/h/claude.app/Contents/MacOS/claude"),
                        .appBundle(name: "claude"))
+    }
+
+    /// PR #453 verify: the kernel reports the resolved path, and `NSHomeDirectory()` the path as
+    /// the directory service gives it, so a home that is a symlink, or root's `/var/root`, would
+    /// miss every prefix.
+    func testAHomeThatIsASymlinkMatchesThroughItsResolvedPath() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("HostHome-\(UUID().uuidString)")
+        let real = base.appendingPathComponent("real"), link = base.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let resolved = try XCTUnwrap(realpath(real.path, nil).map { pointer in
+            defer { free(pointer) }
+            return String(cString: pointer)
+        })
+        for home in [link.path, link.path + "/"] {
+            XCTAssertEqual(kind(resolved + "/.local/share/claude/versions/2.1.1", home: home), .claudeCode(version: "2.1.1"))
+            XCTAssertEqual(kind(resolved + "/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude", home: home), .claudeCode(version: nil))
+            XCTAssertEqual(kind(resolved + "/Library/Application Support/Claude/claude-code/2.1.317/h/claude.app/Contents/MacOS/claude", home: home),
+                           .claudeCode(version: "2.1.317"))
+            XCTAssertEqual(kind(link.path + "/.local/share/claude/versions/2.1.1", home: home), .claudeCode(version: "2.1.1"),
+                           "the home as given still counts")
+        }
+    }
+
+    /// `ClaudeCode.app` where `~/.local` is a symlink, or under another root, misses the prefixes,
+    /// and no wording may name it as an app to enable. Another app of that name would too.
+    func testAClaudeCodeBundleOutsideTheRootsIsNotAnAppToEnable() {
+        let path = "/Users/u/dotfiles/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude"
+        XCTAssertEqual(kind(path), .otherExecutable(path: path))
+        XCTAssertEqual(kind("/Applications/Claude.app/Contents/MacOS/Claude"), .appBundle(name: "Claude"), "only this bundle name")
     }
 
     func testAPrefixHasToEndAtADirectory() {
