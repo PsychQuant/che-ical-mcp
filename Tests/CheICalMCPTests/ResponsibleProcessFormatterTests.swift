@@ -135,7 +135,7 @@ final class ResponsibleProcessFormatterTests: XCTestCase {
     }
 
     private let claudeCodeHost = ResponsibleProcessResult.resolved(ResponsibleProcess(
-        pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+        pid: 9664, path: "\(NSHomeDirectory())/.local/share/claude/versions/2.1.309", isSelf: false))
 
     func testAttribution_hostWithFullAccess_saysTheGrantIsKept_notThatTheReexecFailed() {
         // Verify round 3 row 3: under the status-aware rule a Claude Code host with full access

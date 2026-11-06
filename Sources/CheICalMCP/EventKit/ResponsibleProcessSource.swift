@@ -38,7 +38,8 @@ enum ResponsibleProcessResult: Sendable, Equatable {
 enum ResponsibleHostKind: Sendable, Equatable {
     /// CheICalMCP itself — the grant lives on this binary.
     case selfBinary
-    /// Claude Code's native binary (`versions/<ver>` or `ClaudeCode.app`). It carries no
+    /// Claude Code: the native install (`versions/<ver>`, `ClaudeCode.app`) or the build inside
+    /// Claude Desktop (#356), under the home directory. It carries no
     /// Calendar or Reminders purpose string, so macOS never shows a prompt for it (#343).
     case claudeCode(version: String?)
     /// An ordinary app bundle (Terminal, VS Code, Ghostty, …), named as System Settings shows it.
@@ -50,9 +51,17 @@ enum ResponsibleHostKind: Sendable, Equatable {
 }
 
 enum ResponsibleHostClassifier {
-    static let claudeCodeVersionsFragment = "/.local/share/claude/versions/"
-    static let claudeCodeAppFragment = "/.local/share/claude/ClaudeCode.app/"
+    /// #356: under the home directory, so the same text elsewhere is not Claude Code. The first
+    /// two are the native install, the third Claude Desktop's bundled build
+    /// (`<prefix><version>/<hash>/claude.app/Contents/MacOS/claude`; layout and bundle id
+    /// `com.anthropic.claude-code` read from an installed Claude Desktop, 2026-11-06).
+    /// Since #343 round 3 the kind only picks the wording, so nothing here decides a re-exec; an
+    /// install it does not know (Homebrew, npm) is named by its app or executable.
+    static let claudeCodeVersionsSuffix = "/.local/share/claude/versions/"
+    static let claudeCodeAppSuffix = "/.local/share/claude/ClaudeCode.app/"
+    static let claudeDesktopBundledSuffix = "/Library/Application Support/Claude/claude-code/"
     private static let appExecutableMarker = ".app/Contents/MacOS/"
+    private static let claudeCodeBundleName = "ClaudeCode"
 
     private static let versionCharacters = CharacterSet(
         charactersIn: "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+-")
@@ -63,29 +72,45 @@ enum ResponsibleHostClassifier {
         return raw
     }
 
-    static func classify(path: String?, isSelf: Bool) -> ResponsibleHostKind {
+    static func classify(path: String?, isSelf: Bool, home: String = NSHomeDirectory()) -> ResponsibleHostKind {
         if isSelf { return .selfBinary }
         guard let path, !path.isEmpty else { return .unknown }
 
-        if let range = path.range(of: claudeCodeVersionsFragment) {
-            // The component is a name anyone can give a file, and it is printed into messages an
-            // MCP client reads: keep it only if it looks like a version.
-            let version = path[range.upperBound...].split(separator: "/").first
-                .map(String.init).flatMap(sanitizedVersion)
-            return .claudeCode(version: version)
-        }
-        if path.contains(claudeCodeAppFragment) {
-            return .claudeCode(version: nil)
+        let given = home.hasSuffix("/") ? String(home.dropLast()) : home
+        // The kernel reports the resolved path, and a home that is a symlink, or root's `/var/root`,
+        // is not given that way (PR #453 verify).
+        for root in [given] + [resolved(given)].compactMap({ $0 }).filter({ $0 != given }) {
+            if let kind = claudeCodeKind(path: path, root: root) { return kind }
         }
         // The innermost bundle is the one whose executable this is, so anchor on the last
         // `.app/Contents/MacOS/` and take the path component that ends in `.app`.
         if let marker = path.range(of: appExecutableMarker, options: .backwards) {
             let bundlePath = path[..<marker.lowerBound]
             if let name = bundlePath.split(separator: "/").last, !name.isEmpty {
+                // ClaudeCode.app that missed the roots above, where `~/.local` is a symlink for one:
+                // System Settings has no entry for it, so it is not named as an app to enable.
+                guard name != claudeCodeBundleName else { return .otherExecutable(path: path) }
                 return .appBundle(name: String(name))
             }
         }
         return .otherExecutable(path: path)
+    }
+
+    private static func claudeCodeKind(path: String, root: String) -> ResponsibleHostKind? {
+        for suffix in [claudeCodeVersionsSuffix, claudeDesktopBundledSuffix] where path.hasPrefix(root + suffix) {
+            // The component is a name anyone can give a file, and it is printed into messages an
+            // MCP client reads: keep it only if it looks like a version.
+            let version = path.dropFirst(root.count + suffix.count).split(separator: "/").first
+                .map(String.init).flatMap(sanitizedVersion)
+            return .claudeCode(version: version)
+        }
+        return path.hasPrefix(root + claudeCodeAppSuffix) ? .claudeCode(version: nil) : nil
+    }
+
+    private static func resolved(_ path: String) -> String? {
+        guard let pointer = realpath(path, nil) else { return nil }
+        defer { free(pointer) }
+        return String(cString: pointer)
     }
 }
 

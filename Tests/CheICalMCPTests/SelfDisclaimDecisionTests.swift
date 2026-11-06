@@ -21,9 +21,9 @@ final class SelfDisclaimDecisionTests: XCTestCase {
         path: "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
         isSelf: false))
     private let claudeCode = ResponsibleProcessResult.resolved(ResponsibleProcess(
-        pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+        pid: 9664, path: "\(NSHomeDirectory())/.local/share/claude/versions/2.1.309", isSelf: false))
     private let claudeCodeApp = ResponsibleProcessResult.resolved(ResponsibleProcess(
-        pid: 9665, path: "/Users/u/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude", isSelf: false))
+        pid: 9665, path: "\(NSHomeDirectory())/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude", isSelf: false))
     private let bareExecutable = ResponsibleProcessResult.resolved(ResponsibleProcess(
         pid: 1, path: "/sbin/launchd", isSelf: false))
     private let noPath = ResponsibleProcessResult.resolved(ResponsibleProcess(
