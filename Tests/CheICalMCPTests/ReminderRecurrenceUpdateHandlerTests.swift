@@ -199,11 +199,13 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     }
 
     /// PR #420 verify round 2: update_reminder's days_of_week says the same as its rule text.
+    /// PR #439 verify measured that daily rules use it too.
     func testUpdateReminderDaysOfWeekIsNotWeeklyOnly() throws {
         let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_reminder" })
         let days = tool.inputSchema.objectValue?["properties"]?.objectValue?["recurrence"]?.objectValue?["properties"]?
             .objectValue?["days_of_week"]?.objectValue?["description"]?.stringValue ?? ""
         XCTAssertFalse(days.hasPrefix("For weekly"), days)
-        XCTAssertTrue(days.contains("every frequency but daily"), days)
+        XCTAssertTrue(days.contains("used by every frequency"), days)
+        XCTAssertFalse(days.contains("but daily"), days)
     }
 }
