@@ -2084,6 +2084,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             },
             copy: { try copyOut(false) },
             split: { try copyOut(true) })
+        // #435: older records of this event follow it to its new identifier.
+        if result.eventIdentifier != identifier, !result.eventIdentifier.isEmpty, result.method == .inPlace {
+            await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier)
+        }
         if let undo { await CalendarUndoManager.shared.record(undo) }
         return (result, title)
     }
@@ -2801,7 +2805,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).
             throw UndoOperation.recurringUpdateRefusal(title: title, kind: kind)
 
-        case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
+        case .moveEvent(let movedID, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
             // event is still in the calendar it was moved to (#236). A series is resolved as the
             // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
@@ -2826,6 +2830,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 throw error
             }
             markNeedsRefresh()
+            // #435: on Google a move within one account gave a new identifier, its undo too.
+            if let restoredID = event.eventIdentifier, restoredID != movedID {
+                await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID)
+                return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar (new ID: \(restoredID))"
+            }
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
         case .createReminder(_, let title, _):
