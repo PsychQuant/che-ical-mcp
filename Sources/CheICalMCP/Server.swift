@@ -378,7 +378,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring (ISO8601 date). A bare date stops before that day's occurrence, so to keep it pass a time after its start. Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
@@ -404,7 +404,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_recurrence": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove the recurrence rule from the event. A series takes span all, which leaves one event on its first day and deletes the other occurrences. Cannot be combined with recurrence, or with span this or future on a series; to end a series at an occurrence, use delete_event with span future. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the recurrence rule from the event. A series takes span all, which leaves one event on its first day and deletes the other occurrences. Cannot be combined with recurrence, or with span this or future on a series; to end a series at an occurrence, pass recurrence with the series' whole rule and an end_date after that occurrence's start, with span all. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "structured_location": .object([
                             "type": .string("object"),
@@ -1852,7 +1852,7 @@ class CheICalMCPServer {
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
-        let recurrenceRule = try parseRecurrenceRule(from: arguments)
+        let recurrenceRule = try parseRecurrenceRule(from: arguments, forReminder: true)
         let locationTrigger = try parseLocationTrigger(from: arguments)
         // #333: refused before the store is called when the alarm could not fire as asked.
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)
@@ -1939,7 +1939,7 @@ class CheICalMCPServer {
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
         // #354: the rule; both together, or a rule with clear_due_date, are refused here.
-        let recurrenceRule = try parseRecurrenceRule(from: arguments)
+        let recurrenceRule = try parseRecurrenceRule(from: arguments, forReminder: true)
         let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
@@ -3403,21 +3403,24 @@ class CheICalMCPServer {
     /// the series open-ended, `interval` a rule of every week, a `frequency` with no `recurrence` a
     /// one-off item or, on update_event, no change), and for the read tools' names for a rule. These
     /// names are this server's own, so naming them echoes nothing the caller wrote.
-    private func rejectMisplacedRecurrenceKeys(in arguments: [String: Value]) throws {
+    private func rejectMisplacedRecurrenceKeys(in arguments: [String: Value], forReminder: Bool) throws {
         if arguments["excluded_occurrence_dates"] != nil {
             throw ToolError.invalidParameter("excluded_occurrence_dates must be inside the recurrence object (supported on create_event and create_events_batch only) — it is not a top-level parameter")
         }
         for key in RecurrenceRuleInput.inputKeys(allowsExclusions: false) where arguments[key] != nil {
-            let endOfTheEvent = key == "end_date" ? " An event's own end is end_time." : ""
-            throw ToolError.invalidParameter("\(key) must be inside the recurrence object, it is not a top-level parameter.\(endOfTheEvent) Nothing was written for this item.")
+            // A caller who meant the item's own date must not be sent into a rule, or to a key this
+            // tool ignores: a reminder has no end_time.
+            let ownDate = key != "end_date" ? "" : forReminder ? " A reminder's own date is due_date." : " An event's own end is end_time."
+            throw ToolError.invalidParameter("\(key) must be inside the recurrence object, it is not a top-level parameter.\(ownDate) Nothing was written for this item.")
         }
         for key in RecurrenceRuleInput.readKeys where arguments[key] != nil {
             throw ToolError.invalidParameter("\(key) is the name the read tools use; to write a rule, pass recurrence, one object. Nothing was written for this item.")
         }
     }
 
-    private func parseRecurrenceRule(from arguments: [String: Value], defaultTimezone: TimeZone? = nil, allowsExclusions: Bool = false) throws -> RecurrenceRuleInput? {
-        try rejectMisplacedRecurrenceKeys(in: arguments)
+    private func parseRecurrenceRule(from arguments: [String: Value], defaultTimezone: TimeZone? = nil, allowsExclusions: Bool = false,
+                                     forReminder: Bool = false) throws -> RecurrenceRuleInput? {
+        try rejectMisplacedRecurrenceKeys(in: arguments, forReminder: forReminder)
         // #184 — present-but-wrong-type must throw, not silently drop (#101 F2):
         // a string like "recurrence": "daily" used to vanish, creating a
         // NON-recurring event while the response looked successful.

@@ -3194,7 +3194,8 @@ enum EventKitError: LocalizedError {
         case .standInRefused(let reason):
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
-            let ending = "To end a series at an occurrence, call delete_event with span 'future' and occurrence_date."
+            // Not delete_event: it takes the occurrence named as well, and undo refuses it.
+            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."
             let wholeSeries = "span 'all' leaves one event on the series' first day and deletes the other occurrences"
             switch (clearing, address) {
             case (false, .seriesId):
@@ -3202,7 +3203,7 @@ enum EventKitError: LocalizedError {
             case (true, .seriesId):
                 return "clear_recurrence removes the rule of the whole series, so it cannot start from one occurrence (occurrence_date with span 'this' or 'future'): \(wholeSeries). \(ending) Nothing was written."
             case (false, .occurrenceOwnId(let series)):
-                return "This id is one occurrence edited on its own, and the recurrence rule belongs to the whole series. Call update_event with \(Self.seriesName(series)) instead: span 'all' for the whole series, or span 'future' with occurrence_date from an occurrence on. Nothing was written."
+                return "This id is one occurrence edited on its own, and the recurrence rule belongs to the whole series. Call update_event with \(Self.seriesName(series)) instead: span 'all' for the whole series, or span 'future' with the occurrence_date of an occurrence not edited on its own. Nothing was written."
             case (true, .occurrenceOwnId(let series)):
                 return "This id is one occurrence edited on its own, and clear_recurrence removes the rule of the whole series. Call update_event with \(Self.seriesName(series)) instead: \(wholeSeries). \(ending) Nothing was written."
             }

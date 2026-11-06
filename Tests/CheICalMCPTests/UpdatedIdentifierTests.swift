@@ -180,14 +180,21 @@ final class UpdatedIdentifierTests: XCTestCase {
         }
         // A bare id: both ways to change the rule, and span future only for a rule.
         XCTAssertTrue(text(clearing: false, .seriesId).contains("span 'future' with occurrence_date"))
-        // Clearing never goes through span future: it collapsed the series. Ending one is a delete.
-        for address in [EventKitManager.RecurrenceChangeAddress.seriesId, .occurrenceOwnId(series: "S:E")] {
+        // Clearing never goes through span future, which collapsed the series, and a refused caller
+        // is not sent to a delete, which would take the occurrence named too (PR #439 verify round
+        // 3). Measured on iCloud: span 'all' with end_date ends the series there and keeps its id; a
+        // bare date ends it before that day's occurrence.
+        for address in [EventKitManager.RecurrenceChangeAddress.seriesId, .occurrenceOwnId(series: "S:E"), .occurrenceOwnId(series: nil)] {
             let message = text(clearing: true, address)
-            XCTAssertTrue(message.contains("delete_event"), message)
             XCTAssertTrue(message.contains("deletes the other occurrences"), message)
             XCTAssertFalse(message.contains("Pass span 'future'"), message)
+            XCTAssertFalse(message.contains("delete_event"), message)
+            for phrase in ["span 'all'", "whole rule", "end_date", "23:59:59", "a bare date", "also one edited on its own"] {
+                XCTAssertTrue(message.contains(phrase), "\(phrase): \(message)")
+            }
         }
-        // An occurrence's own id is told the series' id, not to add a span to itself.
+        // An occurrence's own id is told the series' id, not to add a span to itself, and span
+        // future from the series' id does not find an occurrence edited on its own.
         for clearing in [false, true] {
             let message = text(clearing: clearing, .occurrenceOwnId(series: "S:E"))
             XCTAssertTrue(message.contains("the series' id, S:E,"), message)
@@ -196,6 +203,7 @@ final class UpdatedIdentifierTests: XCTestCase {
             XCTAssertTrue(unnamed.contains("the series' id"), unnamed)
             XCTAssertFalse(unnamed.contains("Pass span"), unnamed)
         }
+        XCTAssertTrue(text(clearing: false, .occurrenceOwnId(series: "S:E")).contains("an occurrence not edited on its own"))
     }
 
     func testUpdateEventRefusesARuleChangeOnOneOccurrenceBeforeAnyWrite() throws {

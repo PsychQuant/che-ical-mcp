@@ -290,15 +290,24 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
     }
 
     /// `end_date` is also what the read tools call an event's end, so the refusal must not send a
-    /// caller who meant that into a rule, which would make a one-off event repeat.
-    func testTheTopLevelEndDateRefusalNamesEndTime() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: RecurrenceEventFake(), reminderWriteSource: RecurrenceReminderFake())
-        do {
-            _ = try await server.executeToolCall(name: "update_event", arguments: ["event_id": .string("e"), "end_date": .string("2026-01-01")])
-            XCTFail("a top-level end_date was taken")
-        } catch ToolError.invalidParameter(let message) {
-            XCTAssertTrue(message.contains("end_time"), message)
+    /// caller who meant that into a rule, which would make a one-off event repeat. A reminder has no
+    /// `end_time`, so naming it there would send the caller to a key that is ignored.
+    func testTheTopLevelEndDateRefusalNamesTheItemsOwnDate() async throws {
+        for tool in Self.singleWriteTools {
+            let server = try await CheICalMCPServer(eventWriteSource: RecurrenceEventFake(), reminderWriteSource: RecurrenceReminderFake())
+            var args = arguments(tool, recurrence: .object(["frequency": .string("daily")]))
+            args["end_date"] = .string("2026-01-01")
+            do {
+                _ = try await server.executeToolCall(name: tool, arguments: args)
+                XCTFail("\(tool) took a top-level end_date")
+            } catch ToolError.invalidParameter(let message) {
+                let isReminder = tool.hasSuffix("_reminder")
+                XCTAssertEqual(message.contains("due_date"), isReminder, "\(tool): \(message)")
+                XCTAssertEqual(message.contains("end_time"), !isReminder, "\(tool): \(message)")
+            }
         }
+        let batch = try await batchError(["frequency": .string("daily")], extra: ["end_date": .string("2026-01-01")])
+        XCTAssertTrue(batch.error.contains("end_time"), batch.error)
     }
 
     func testRuleKeysAtTheTopLevelAreRefusedOnEveryTool() async throws {
