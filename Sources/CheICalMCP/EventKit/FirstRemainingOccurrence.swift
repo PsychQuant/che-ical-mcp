@@ -210,9 +210,8 @@ extension EventKitManager {
               let (listed, candidates) = seriesOccurrences(of: series, id: seriesID),
               let window = seriesScanWindow(of: series),
               let scannedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max(),
-              let slot = UndoPostState.originalSlot(eventIdentifier: id,
-                                                    externalIdentifier: occurrence.calendarItemExternalIdentifier,
-                                                    occurrenceDate: occurrence.occurrenceDate) else { return nil }
+              let slot = UndoPostState.ruleSlot(eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier,
+                                                occurrenceDate: occurrence.occurrenceDate, isAllDay: series.isAllDay) else { return nil }
         let firstStart: Date? = series.startDate
         guard let firstStart else { return nil }
         return DetachedOccurrenceSpan.neighbours(

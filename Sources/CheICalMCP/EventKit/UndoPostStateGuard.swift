@@ -179,6 +179,23 @@ enum UndoPostState {
         return occurrenceDate
     }
 
+    /// The slot the series' rule gave an edited occurrence. The `/RID=` of a timed occurrence is an
+    /// instant; the `/RID=` of an occurrence of an ALL-DAY series is a floating date, the wall-clock
+    /// date read as UTC (device, 2026-10-14: `RID=863049600` is 2028-05-08 00:00 UTC for the all-day
+    /// occurrence of 2028-05-08), while the series' slot is local midnight of that day. So an
+    /// all-day RID is reinterpreted in `zone`. With no `/RID=`, `occurrenceDate`, already local.
+    static func ruleSlot(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?,
+                         isAllDay: Bool, zone: TimeZone = .current) -> Date? {
+        guard let rid = originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier, occurrenceDate: nil) else {
+            return occurrenceDate
+        }
+        guard isAllDay else { return rid }
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        let day = utc.dateComponents([.year, .month, .day], from: rid)
+        var local = Calendar(identifier: .gregorian); local.timeZone = zone
+        return local.date(from: day) ?? rid
+    }
+
     /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
     /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {
@@ -220,16 +237,16 @@ enum UndoPostState {
     /// #416: what `occurrence` holds of its own that a new series started from it would carry.
     /// Compared with an occurrence not edited on its own, as the series object may not refresh
     /// (#326); with none listed, everything counts, the side that refuses. Title, notes, time and
-    /// URL are left out: they were measured not to carry. Coordinates count as `other`: a written
-    /// `location` replaces the text and was not shown to replace them.
+    /// URL are left out: they were measured not to carry. A place with coordinates of its own counts
+    /// as `other`: a written `location` replaces the text and was not shown to replace them. Under
+    /// the series' place name they are a geocode, not an edit (`samePlace`).
     static func ownValues(one: EventSnapshot, slot: Date, firstStart: Date, series: EventSnapshot?) -> DetachedOccurrenceSpan.OwnValues {
         let firstSlotGone = !sameInstant(slot, firstStart)
         guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true) }
         return .init(firstSlotGone: firstSlotGone,
                      location: (one.location ?? "") != (all.location ?? "") || !EventSnapshot.samePlace(recorded: all, current: one),
                      other: !sameAlarms(all.alarms, one.alarms) || one.isAllDay != all.isAllDay
-                         || one.structuredLocationLat != all.structuredLocationLat
-                         || one.structuredLocationLon != all.structuredLocationLon
+                         || (one.structuredLocationLat != nil && !EventSnapshot.samePlace(recorded: all, current: one))
                          || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
                          || !sameOccurrenceAvailability(one.availability, all.availability))
     }

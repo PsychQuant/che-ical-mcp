@@ -408,7 +408,8 @@ end、notes、location、alarms。
    回 `updated`、別的場次沒變；
    (d) 帶到新系列：第 3 場有自己的地點或鬧鐘，span `future` 只寫 `title`；第 1 場刪掉、第 2 場有自己的地點，span `all`：都拒絕。
    沒有這個拒絕的 build 上新系列帶著它的地點與鬧鐘（`url`、標題、備註、時間不會帶）。第 3 場只有自己的地點（沒有鬧鐘）時，span
-   `future` 寫新的 `location`：放行。第 1 場（含移過時間 +2h 的）span `all` 只寫 `title`：放行，地點與鬧鐘不動；
+   `future` 寫新的 `location`：放行。第 1 場（含移過時間 +2h 的，也含全天每週系列）span `all` 只寫 `title`：放行，地點與鬧鐘不動。全天系列的
+   `/RID=` 是當地日期讀成 UTC，非 UTC 主機若當瞬間比，第 1 場會被當成已刪；再用 `TZ=America/Los_Angeles` 跑一次；
    (e) `days_of_week`：第 1 場移到週三，寫 `[週三]` 被拒絕（沒有這個拒絕的 build 在週三留下兩場），寫 `[週一]` 放行；
    (f) 系列 id、span `all`，第 3 場或第 1 場改過時的預期結果：別的場次都拿到新值，**單獨改過的場次保留改過的內容**：
    `start_time` 09:00：只改結束的場次 09:00 起、保留自己的長度；+2h 的場次留在 12:00；移到週三的場次留在週三、09:00 起。
@@ -417,10 +418,10 @@ end、notes、location、alarms。
    `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
    `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
-   **已知限制**：第 1 場只改標題或結束（開始時間沒動，#428），或第 1 場刪掉、第 2 場有自己的地點或鬧鐘時，系列 id 被拒絕，
-   span `future` 也一樣。這時沒有單一呼叫能改整個系列：訊息要明說這件事並點名 #428，不得指回會被拒絕的呼叫；剩下 span `this`
-   逐場（系列 id 加 `occurrence_date`，或場次自己的 id），開放式系列做不完。第 1 場自己的 id 帶 span `all` 仍可寫新的 `title`、
-   `notes`、`location`、`recurrence`。
+   **已知限制**：第 1 場只改標題或結束（開始時間沒動，#428），或第 1 場刪掉、第 2 場單獨改過時，系列 id 被拒絕，span `future`
+   也一樣。訊息只說這個形狀還沒有測試過的路徑並點名 #428，不得指回會被拒絕的呼叫，也不做更多斷言。`move_events_batch` span `all`
+   可搬同帳號的日曆，整個系列搬走，要走一次。第 1 場自己的 id 帶 span `all` 仍可寫新的 `title`、`notes`、`location`、`recurrence`，
+   除非它有自己的值而這次呼叫沒有取代。
    **這張 PR 拿掉的呼叫**：(a) 裡的 `start_time`，從只移時間、長度與系列相同的場次，span `all`、`future`，在沒有這些拒絕的 build
    上做得到它說的事（第 4 輪的 (b)、(e-b)），隨整類一起拒絕。#428 修好後才恢復；
    (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、

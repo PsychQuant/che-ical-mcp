@@ -253,7 +253,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             XCTAssertTrue(reason.hasSuffix(suffix), reason)
             if suffix == "Nothing was written." {
                 XCTAssertTrue(reason.contains("Use the id list_events shows for an occurrence that was not edited on its own, with span 'all', for the whole series."), reason)
-                XCTAssertTrue(reason.contains("If that is refused, no single call does this today:"), reason)
+                XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet (#428)."), reason)
             } else {
                 XCTAssertTrue(reason.contains("To delete the whole series, use"), reason)
                 XCTAssertFalse(reason.contains("occurrence_date"), "a batch row cannot take one, and the delete has a way: \(reason)")
@@ -336,21 +336,26 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertNil(refusal(future: true, ["title", "notes", "location", "recurrence"]))
     }
 
-    /// Every update route ends here and not at another call: the series' id is refused with the
-    /// first occurrence edited at its original start, or deleted with the first left holding values
-    /// of its own, and an open-ended series has no end for span `this` to reach (#428).
-    private let noSingleCall = "If that id is refused, no single call does this today: only span 'this' on each occurrence, with occurrence_date when its id has no /RID=… part, which an open-ended series cannot finish (#428)."
+    /// Every update route ends here and not at another call, and says no more: each longer version
+    /// was false for some field (span `this` does not take `recurrence` or `clear_recurrence` in
+    /// these shapes, and `move_events_batch` takes a calendar).
+    private let noTestedWay = "If that id is refused, this shape has no tested way yet (#428)."
 
     func testNoRefusalPointsBackAtACallThatIsRefused() {
         for whole in [true, false] {
             for reason in [DetachedOccurrenceSpan.sameValueReason(wholeSeries: whole), DetachedOccurrenceSpan.carriedReason(wholeSeries: whole)] {
-                XCTAssertTrue(reason.contains(noSingleCall), reason)
-                XCTAssertFalse(reason.contains("use span 'this' on each occurrence"), reason)
+                XCTAssertTrue(reason.contains(noTestedWay), reason)
             }
         }
+        XCTAssertTrue(DetachedOccurrenceSpan.updateReason.contains("If that is refused, this shape has no tested way yet (#428)."), DetachedOccurrenceSpan.updateReason)
         for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
-            XCTAssertTrue(text.contains("For any other update no single call reaches this series today: only span 'this' on each occurrence, which an open-ended series cannot finish (#428)."), text)
-            XCTAssertTrue(text.contains("for a new title, notes, location or recurrence, unless the series' first occurrence was deleted and this one holds a location or alarms of its own"), text)
+            XCTAssertTrue(text.contains("Anything else has no tested way yet (#428)."), text)
+            XCTAssertTrue(text.contains("for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace"), text)
+        }
+        for reason in [DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false),
+                       DetachedOccurrenceSpan.sameValueReason(wholeSeries: true), DetachedOccurrenceSpan.carriedReason(wholeSeries: false),
+                       DetachedOccurrenceSpan.updateReason, EventKitManager.standInEditedBeforeReason] {
+            for claim in ["no single call", "open-ended"] { XCTAssertFalse(reason.contains(claim), reason) }
         }
     }
 
@@ -360,15 +365,16 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                        "any other field is refused, even one that changes nothing",
                        "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'.",
                        "Occurrences edited on their own keep what was edited, so they may need span 'this' after that.",
-                       noSingleCall,
-                       "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences."] {
+                       noTestedWay,
+                       "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences.",
+                       "For a calendar of the same account, move_events_batch with span 'all' moves the whole series."] {
             XCTAssertTrue(all.contains(phrase), all)
         }
         let future = DetachedOccurrenceSpan.fieldsReason(wholeSeries: false)
         XCTAssertTrue(future.contains("with span 'future' through it only title, notes, location and recurrence can be written"), future)
         XCTAssertTrue(future.contains("Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'."), future)
         XCTAssertTrue(future.contains("That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."), future)
-        XCTAssertTrue(future.contains(noSingleCall), future)
+        XCTAssertTrue(future.contains(noTestedWay), future)
         XCTAssertFalse(future.contains("span 'all'"), future)
         for reason in [all, future] { XCTAssertTrue(reason.hasSuffix("Nothing was written."), reason) }
     }
@@ -485,6 +491,42 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertNil(refusal(future: false, ["start_time"]), "span this")
     }
 
+    /// An all-day `/RID=` is a floating date, the wall-clock date read as UTC. Read as an instant it
+    /// never equals the series' local midnight off UTC, so the first occurrence read as deleted and
+    /// a correct call was refused, and west of UTC the day read as the one before.
+    func testAnAllDayRidIsReadAsItsDateInEveryZone() throws {
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let floating = try XCTUnwrap(utc.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+        let id = "CAL-1:SERIES-1/RID=\(Int(floating.timeIntervalSinceReferenceDate))"
+        for name in ["UTC", "Asia/Taipei", "America/Los_Angeles", "Pacific/Pago_Pago", "Pacific/Kiritimati"] {
+            let zone = try XCTUnwrap(TimeZone(identifier: name))
+            var local = Calendar(identifier: .gregorian); local.timeZone = zone
+            let midnight = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+            XCTAssertEqual(UndoPostState.ruleSlot(eventIdentifier: id, externalIdentifier: nil, occurrenceDate: nil, isAllDay: true, zone: zone), midnight, name)
+            let day = try XCTUnwrap(DetachedOccurrenceSpan.originalDay(identifier: id, isDetached: true, wholeSeries: true, futureSpan: false,
+                                                                       externalIdentifier: nil, occurrenceDate: nil, isAllDay: true, zone: zone))
+            XCTAssertEqual(local.component(.weekday, from: day), 2, "Monday in \(name)")
+            let series = UndoSnapshotFixtures.event(title: "Series", startDate: midnight, allDay: true)
+            XCTAssertFalse(UndoPostState.ownValues(one: series, slot: day, firstStart: midnight, series: series).firstSlotGone, name)
+        }
+    }
+
+    /// A timed `/RID=` is an instant, and with no `/RID=` the occurrence date is already local.
+    func testATimedRidAndAMissingRidAreLeftAlone() throws {
+        let instant = Date(timeIntervalSinceReferenceDate: 818_301_600)
+        XCTAssertEqual(UndoPostState.ruleSlot(eventIdentifier: "S/RID=818301600", externalIdentifier: nil, occurrenceDate: nil, isAllDay: false), instant)
+        XCTAssertEqual(UndoPostState.ruleSlot(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: instant, isAllDay: true), instant)
+        XCTAssertNil(UndoPostState.ruleSlot(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: nil, isAllDay: true))
+    }
+
+    /// The only occurrence left starts a new series with nothing to carry to (measured in round 1:
+    /// updated, new id), so the carried refusal does not apply.
+    func testTheOnlyOccurrenceLeftHasNothingToCarryTo() {
+        let left = DetachedOccurrenceSpan.Neighbours(earlierRemain: false, othersRemain: false,
+                                                     own: .init(firstSlotGone: true, location: true, other: true))
+        XCTAssertNil(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["title"], neighbours: left))
+    }
+
     /// Its own alarm and location, as such a source would hold them.
     func testOwnValuesOfAnOccurrenceHoldingAnAlarmAndALocation() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
@@ -510,7 +552,12 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(own(snapshot(location: "R101")).location)
         XCTAssertFalse(own(snapshot(location: "R101")).other, "text only: a written location replaces it (measured)")
         XCTAssertTrue(own(snapshot(alarm: 5)).other)
-        XCTAssertTrue(own(snapshot(latitude: 25)).other, "coordinates: not shown to be replaced by a written location")
+        XCTAssertTrue(own(snapshot(latitude: 25)).other, "coordinates of its own: not shown to be replaced by a written location")
+        func against(_ all: EventSnapshot, _ one: EventSnapshot) -> DetachedOccurrenceSpan.OwnValues {
+            UndoPostState.ownValues(one: one, slot: start, firstStart: start, series: all)
+        }
+        XCTAssertFalse(against(snapshot(location: "Hall"), snapshot(location: "Hall", latitude: 25)).other, "the series' place, geocoded: no edit")
+        XCTAssertFalse(against(snapshot(location: "Hall", latitude: 25), snapshot(location: "R101")).other, "text over a place with coordinates: none to carry")
     }
 
     /// `/RID=` is enough to name one occurrence, so it is enough for the day too: the slot is read
@@ -523,7 +570,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let id = "CAL-1:SERIES-1/RID=\(Int(monday.timeIntervalSinceReferenceDate))"
         func day(_ id: String, detached: Bool, all: Bool = true, future: Bool = false) -> Date? {
             DetachedOccurrenceSpan.originalDay(identifier: id, isDetached: detached, wholeSeries: all, futureSpan: future,
-                                               externalIdentifier: nil, occurrenceDate: wednesday)
+                                               externalIdentifier: nil, occurrenceDate: wednesday, isAllDay: false, zone: zone)
         }
         XCTAssertEqual(day(id, detached: false), monday, "/RID= with isDetached false")
         XCTAssertEqual(calendar.component(.weekday, from: try XCTUnwrap(day(id, detached: false))), 2, "Monday, not the Wednesday it shows")
@@ -574,8 +621,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(reason.contains("span 'all' through it would split the series here"), reason)
         XCTAssertTrue(reason.contains("the earlier occurrences would stay in the old series"), reason)
         XCTAssertTrue(reason.contains("To update the whole series, use \(routeToTheFirst) with span 'all'."), reason)
-        XCTAssertTrue(reason.contains("A series whose first occurrence was deleted"), reason)
-        XCTAssertTrue(reason.contains("a whole-series update is not supported (#326)"), reason)
+        XCTAssertTrue(reason.contains("If that is refused, this shape has no tested way yet (#428)."), reason)
         XCTAssertTrue(reason.contains("To update from this occurrence on, use span 'future'"), reason)
         XCTAssertTrue(reason.contains("To edit one occurrence, use span 'this'."), reason)
         XCTAssertTrue(reason.hasSuffix("Nothing was written."), reason)
@@ -628,7 +674,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     /// so the hint for a bare id says so, in words a batch caller can use too.
     func testTheEditedBeforeHintsNameTheOwnIdRoute() {
         for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
-            XCTAssertTrue(text.contains("The occurrence that comes first in the series reaches it through its own id in two ways: update_event with span 'all' for a new title, notes, location or recurrence, unless the series' first occurrence was deleted and this one holds a location or alarms of its own, and delete_event with span 'future' (which cannot be undone)."), text)
+            XCTAssertTrue(text.contains("The occurrence that comes first in the series reaches it through its own id: update_event with span 'all' for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace, and delete_event with span 'future' (which cannot be undone)."), text)
         }
     }
 
@@ -678,7 +724,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let body = try updateBody()
         XCTAssertTrue(body.contains("let rules = event.recurrenceRules,"), body)
         XCTAssertFalse(body.contains("seriesObject"), body)
-        XCTAssertTrue(body.contains("let originalDay = DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: masterEvent.calendarItemExternalIdentifier, occurrenceDate: masterEvent.occurrenceDate)"), body)
+        XCTAssertTrue(body.contains("let originalDay = DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)"), body)
         XCTAssertTrue(body.contains("of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate"), body)
         XCTAssertTrue(body.contains("if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }"), body)
         XCTAssertTrue(DetachedOccurrenceSpan.recurrenceDayReason.contains("Add that day, or leave days_of_week out."))
@@ -704,7 +750,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let rest = source[start.upperBound...]
         let end = try XCTUnwrap(rest.range(of: "func seriesDeleteRefusal("))
         let body = SourceScan.collapsingWhitespace(String(rest[..<end.lowerBound]))
-        XCTAssertTrue(body.contains("UndoPostState.originalSlot(eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier, occurrenceDate: occurrence.occurrenceDate)"), body)
+        XCTAssertTrue(body.contains("UndoPostState.ruleSlot(eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier, occurrenceDate: occurrence.occurrenceDate, isAllDay: series.isAllDay)"), body)
         XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window).map(\\.end).max()"), body)
         XCTAssertTrue(body.contains("own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart, series: listed.first { !$0.isDetached })"), body)
         XCTAssertTrue(body.contains("coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries( rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init), firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current))"), body)

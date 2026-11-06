@@ -69,8 +69,8 @@ enum DetachedOccurrenceSpan {
         var firstSlotGone = false
         /// A location or place other than the series' (carried, measured).
         var location = false
-        /// Alarms (carried, measured), or a time zone, an all-day flag or availability (not
-        /// measured) other than the series'.
+        /// Alarms (carried, measured), or a time zone, an all-day flag, availability or coordinates
+        /// of its own (not measured).
         var other = false
     }
 
@@ -184,7 +184,9 @@ enum DetachedOccurrenceSpan {
         if !refusedUpdateFields(fields).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
         if wholeSeries && known.earlierRemain { return updateReason }
         if repeatsOccurrenceValue { return sameValueReason(wholeSeries: wholeSeries) }
-        return known.startsNewSeries && carries(known.own, writesLocation: writesLocation) ? carriedReason(wholeSeries: wholeSeries) : nil
+        // With no other occurrence left there is nothing to carry to (measured: the only one left).
+        let carried = known.startsNewSeries && known.othersRemain && carries(known.own, writesLocation: writesLocation)
+        return carried ? carriedReason(wholeSeries: wholeSeries) : nil
     }
 
     /// `writesLocation`: a location is really written, not only a key with a value that is no text,
@@ -234,9 +236,10 @@ enum DetachedOccurrenceSpan {
     /// The day a new `days_of_week` is read against through one occurrence: its original one, as
     /// the rule runs from there. nil elsewhere, where the planned or shown start is read.
     static func originalDay(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool,
-                            externalIdentifier: String?, occurrenceDate: Date?) -> Date? {
+                            externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool, zone: TimeZone = .current) -> Date? {
         guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        return UndoPostState.originalSlot(eventIdentifier: identifier, externalIdentifier: externalIdentifier, occurrenceDate: occurrenceDate)
+        return UndoPostState.ruleSlot(eventIdentifier: identifier, externalIdentifier: externalIdentifier,
+                                      occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone)
     }
 
     /// The refusal of `delete_event` / `delete_events_batch` with span `all` through one occurrence:
@@ -267,7 +270,7 @@ enum DetachedOccurrenceSpan {
     /// measured. A delete takes it either way.
     private static let firstOccurrenceRoute = "the id list_events shows for the occurrence that comes first in the series (by its original date, not a time it was moved to)"
 
-    static let updateReason = "event_id names one occurrence of a recurring series, edited on its own, and span 'all' through it would split the series here: the earlier occurrences would stay in the old series, not updated. To update the whole series, use \(firstOccurrenceRoute) with span 'all'. A series whose first occurrence was deleted takes that only if its first occurrence left was edited on its own too; otherwise a whole-series update is not supported (#326). To update from this occurrence on, use span 'future', which ends the series here and starts a new one with a new identifier. To edit one occurrence, use span 'this'. Nothing was written."
+    static let updateReason = "event_id names one occurrence of a recurring series, edited on its own, and span 'all' through it would split the series here: the earlier occurrences would stay in the old series, not updated. To update the whole series, use \(firstOccurrenceRoute) with span 'all'. If that is refused, \(noTestedWay). To update from this occurrence on, use span 'future', which ends the series here and starts a new one with a new identifier. To edit one occurrence, use span 'this'. Nothing was written."
 
     private static let seriesDeleteRoute = "To delete the whole series, use \(firstOccurrenceRoute), with span 'all' when that id has no /RID=… part and span 'future' when it has one (a delete with span 'future' from an edited occurrence cannot be undone). To delete this occurrence only, use span 'this'."
 
@@ -288,15 +291,16 @@ enum DetachedOccurrenceSpan {
     /// series' id with span `all` took a location and a start and deleted the series.
     static func pastScanReason(span: String, suffix: String, deleting: Bool = false) -> String {
         let way = deleting ? seriesDeleteRoute
-            : "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all', for the whole series. If that is refused, \(noSingleCall)."
+            : "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all', for the whole series. If that is refused, \(noTestedWay)."
         return "This identifier names one occurrence of a recurring series, edited on its own, and it lies past what can be listed of the series, about five years from its start, so span \(span) cannot be shown to do what it says. \(way) \(suffix)"
     }
 
-    /// The end of every update route. It does not point back to another call: the series' id is
-    /// refused with the first occurrence edited at its original start (#428), or deleted with the
-    /// first left holding values of its own, and an open-ended series has no last occurrence to
-    /// reach with span `this`. Named as it is, until #428 gives those shapes a way.
-    private static let noSingleCall = "no single call does this today: only span 'this' on each occurrence, with occurrence_date when its id has no /RID=… part, which an open-ended series cannot finish (#428)"
+    /// The end of every update route: the series' id is refused with the first occurrence edited at
+    /// its original start, or deleted with the first left edited (`FirstRemainingOccurrence.pick`).
+    /// It says no more than that on purpose. Each longer version was false for some field: span
+    /// `this` does not take `recurrence` or `clear_recurrence` there, and `move_events_batch` takes
+    /// a calendar.
+    private static let noTestedWay = "this shape has no tested way yet (#428)"
 
     /// The way around every refusal of `update_event` below, as run on a device: with span `all` the
     /// series' id took `start_time`, `end_time`, `timezone`, `url`, alarms, `structured_location`,
@@ -308,9 +312,9 @@ enum DetachedOccurrenceSpan {
     /// was not run.
     private static func otherRoute(wholeSeries: Bool) -> String {
         if wholeSeries {
-            return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. If that id is refused, \(noSingleCall)."
+            return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. If that id is refused, \(noTestedWay)."
         }
-        return "Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'. If that id is refused, \(noSingleCall)."
+        return "Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'. If that id is refused, \(noTestedWay)."
     }
 
     private static func opening(_ wholeSeries: Bool) -> String {
@@ -320,7 +324,7 @@ enum DetachedOccurrenceSpan {
     /// Everything but `allowedUpdateFields`.
     static func fieldsReason(wholeSeries: Bool) -> String {
         let limits = wholeSeries
-            ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences."
+            ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences. For a calendar of the same account, move_events_batch with span 'all' moves the whole series."
             : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
         return "\(opening(wholeSeries)) only title, notes, location and recurrence can be written; any other field is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
     }

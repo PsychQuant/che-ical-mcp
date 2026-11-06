@@ -1045,10 +1045,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     private static let standInSplitReason = "This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new series with a new event id. Update a single occurrence after the first remaining one with occurrence_date and span 'this'."
 
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
-    /// What reaches such a series, with the conditions it holds under: without them this text
-    /// pointed back to a call that is refused in the same shape (PR #431 round 6). #428 gives the
-    /// rest a way.
-    private static let editedBeforeWays = "The occurrence that comes first in the series reaches it through its own id in two ways: update_event with span 'all' for a new title, notes, location or recurrence, unless the series' first occurrence was deleted and this one holds a location or alarms of its own, and delete_event with span 'future' (which cannot be undone). For any other update no single call reaches this series today: only span 'this' on each occurrence, which an open-ended series cannot finish (#428)."
+    /// What reaches such a series, with its condition: without one this text pointed back to a call
+    /// that is refused in the same shape (PR #431 round 6). #428 gives the rest a way.
+    private static let editedBeforeWays = "The occurrence that comes first in the series reaches it through its own id: update_event with span 'all' for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace, and delete_event with span 'future' (which cannot be undone). Anything else has no tested way yet (#428)."
 
     static let standInEditedBeforeReason = "This series' first occurrence was deleted and an occurrence of it was edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). \(editedBeforeWays)"
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
@@ -1281,8 +1280,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #416: through an occurrence's own id the rule runs from its original day, not the day it
         // shows. Dates cannot be written on this path, so nothing else moves that day.
         let originalDay = DetachedOccurrenceSpan.originalDay(
-            identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
-            externalIdentifier: masterEvent.calendarItemExternalIdentifier, occurrenceDate: masterEvent.occurrenceDate)
+            identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
+            externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)
         if let days = daysToValidate, !days.isEmpty {
             let weekday = WeekdayCheck.weekday(
                 of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
