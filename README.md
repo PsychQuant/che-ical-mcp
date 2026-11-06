@@ -542,6 +542,8 @@ As of **v1.14.0+ the startup banner surfaces this directly** — a `[drift] TCC.
 >
 > **Not verified**: CI does not cover reading the calendar through the re-exec. On 2026-10-28 v1.22.0 read the calendar through a forced re-exec with `--cli`; a re-exec that a Claude Code worker launched through `ClaudeCode.app` triggers by itself, and server mode after the re-exec, have not been observed yet.
 >
+> The wording of `--print-tcc-path`, the banner, the access-denied message and `--setup`'s WARNING line recognises Claude Code's native install and the build inside Claude Desktop, both under your home directory, with or without its symlinks resolved; another install (Homebrew, npm) is named by its app or executable, and the re-exec applies all the same (#356).
+>
 > The rest of this section applies to v1.21.0 and earlier, to a host that has full access of its own (its grant is kept), and with `CHE_ICAL_MCP_NO_DISCLAIM=1`.
 
 Under a Claude Code **native install**, the real executable lives at a **versioned path** (`~/.local/share/claude/versions/<version>`; `~/.local/bin/claude` is just a symlink), and macOS TCC keys the host-side Calendar/Reminders grant to that path. **Every Claude Code auto-update rotates the path and silently invalidates the grant** — the classic symptom is "worked yesterday, broken right after an update", with System Settings accumulating stale bare-version-number entries (`2.1.202`, `2.1.203`, …).
