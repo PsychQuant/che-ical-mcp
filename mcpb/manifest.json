@@ -61,11 +61,11 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence, to be used with span this only; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence; span all through an occurrence edited on its own is refused while an earlier occurrence remains, and with span all or future through it only title, notes, location and recurrence can be written, the rest writing nothing; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
     },
     {
       "name": "delete_event",
-      "description": "Delete a calendar event (with occurrence support for recurring)"
+      "description": "Delete a calendar event (with occurrence support for recurring; span all through an occurrence edited on its own is refused while another occurrence remains, deleting nothing)"
     },
     {
       "name": "list_reminders",
@@ -113,7 +113,7 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; by event_ids, span all through an occurrence edited on its own is refused for that row while another occurrence remains; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",

@@ -13,7 +13,7 @@ final class StandInBatchReasonTests: XCTestCase {
         for phrase in ["delete_event", "occurrence_date", "span 'this'", "calendar_name", "date range"] {
             XCTAssertTrue(text.contains(phrase), "should name '\(phrase)': \(text)")
         }
-        XCTAssertFalse(text.contains("RID"), "an occurrence's own id is not a way to the whole series")
+        XCTAssertFalse(text.contains("RID"), "the route is named in words a caller can use, not an id's shape")
         XCTAssertNotEqual(text, EventKitManager.standInEditedBeforeReason)
     }
 

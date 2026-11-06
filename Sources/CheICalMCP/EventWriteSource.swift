@@ -4,6 +4,10 @@ import Foundation
 /// The fields of an `update_event` call, as `EventKitManager.updateEvent` takes them.
 struct EventUpdateRequest: Sendable {
     let identifier: String
+    /// The keys of the call: through an occurrence's own id, `DetachedOccurrenceSpan` allows a
+    /// closed list of them (#416). The call's keys and not the values below, so that a parameter
+    /// added later is refused there until someone classifies it.
+    let fields: Set<String>
     var title: String? = nil
     var startDate: Date? = nil
     var endDate: Date? = nil
@@ -115,7 +119,7 @@ extension EventWriteValue {
 extension EventKitManager: EventWriteSource {
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
         let saved = try await updateEvent(
-            identifier: request.identifier, title: request.title,
+            identifier: request.identifier, fields: request.fields, title: request.title,
             startDate: request.startDate, endDate: request.endDate,
             notes: request.notes, location: request.location, url: request.url,
             calendarName: request.calendarName, calendarSource: request.calendarSource,
