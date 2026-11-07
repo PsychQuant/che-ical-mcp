@@ -95,7 +95,9 @@ final class MonthDayCheckTests: XCTestCase {
         // Verify round 3: the route was measured on span all only; span future meets #443.
         let future = EventKitError.monthDayMoveRefused(expectedDays: "1, 15", unwritable: false, spanAll: false).errorDescription ?? ""
         XCTAssertFalse(future.contains("pass recurrence"), future)
-        XCTAssertTrue(future.contains("Calendar"), future)
+        for phrase in ["not measured", "#443", "span all", "Calendar"] {
+            XCTAssertTrue(future.contains(phrase), future)
+        }
         let unwritable = EventKitError.monthDayMoveRefused(expectedDays: "-1", unwritable: true, spanAll: true).errorDescription ?? ""
         for phrase in ["cannot write", "Calendar", "Nothing was written"] {
             XCTAssertTrue(unwritable.contains(phrase), unwritable)
@@ -151,5 +153,7 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil,", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves)", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "unwritable: MonthDayCheck.storedUnwritable(", in: update).count, 1)
+        // Verify round 4: the span flag, so a hardcoded true fails here.
+        XCTAssertEqual(SourcePins.ranges(of: "spanAll: applyToAll)", in: update).count, 1)
     }
 }

@@ -3303,9 +3303,9 @@ enum EventKitError: LocalizedError {
                 return measured + " This series' rule has a part this tool cannot write (a day counted from the end of the month, a numbered weekday or position, or months, weeks or days of the year), so to move it, change the series in Calendar."
             }
             if !spanAll {
-                return measured + " Moving it from one occurrence on is not supported here; change the series in Calendar."
+                return measured + " From one occurrence on, the recurrence route was not measured, and with a count it can come out short (#443): to move the whole series use span all, or change the series in Calendar."
             }
-            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day) together with start_time, on span all: measured clean on iCloud for a monthly series within one month, not for yearly series, a move to another month, or a series with an occurrence edited on its own."
+            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day) together with start_time, on span all: measured clean on iCloud for a monthly series on days_of_month only, within one month; not for yearly series, a rule that also has days_of_week, a move to another month, or a series with an occurrence edited on its own."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):
