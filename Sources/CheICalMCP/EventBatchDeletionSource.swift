@@ -57,13 +57,13 @@ extension EventKitManager: EventBatchDeletionSource {
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
         try await ensureCalendarAccess()
-        guard let event = freshEventWithOrigin(
+        guard let event = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
             goneInTheCall: goneInTheCall)?.event else {
             throw notFoundError(id: identifier)
         }
         // #416: what the real call refuses is not listed as a deletion.
-        if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
+        if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
             return .refused(refusal)
         }
         if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }

@@ -52,6 +52,120 @@ final class ReminderUpdateWriteTests: XCTestCase {
             ReminderUpdateRequest(identifier: "r"), existingDue: nil))
     }
 
+    // MARK: - alarm read-back (PR #438 verify)
+
+    private func timedReminder(alarms: [EKAlarm] = []) -> EKReminder {
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
+        reminder.dueDateComponents = ReminderDateSync.timedDueComponents(for: date(10, 8, 9))
+        alarms.forEach(reminder.addAlarm)
+        return reminder
+    }
+
+    /// The date path tried the reload and it failed: nothing is confirmed, and it is not tried again.
+    func testAFailedDateReloadReportsNoAlarms() throws {
+        let reminder = timedReminder()
+        let request = ReminderUpdateRequest(identifier: "r", due: .timed(date(10, 9, 9)), alarmOffsets: [15])
+        var reloads = 0
+        let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {},
+                                                   reload: { reloads += 1; return false }, rollback: {})
+        XCTAssertEqual(report?.aligned, false)
+        XCTAssertEqual(report?.reread, false)
+        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report,
+                                                       reload: { reloads += 1; return true })
+        XCTAssertEqual(alarms, .init(stored: nil, listShowsAlarmTime: false))
+        XCTAssertEqual(reloads, 1, "a report of a failed reload is not overruled by another try")
+    }
+
+    func testAConfirmedDateReloadReportsTheAlarmsWithoutReloadingAgain() throws {
+        let reminder = timedReminder()
+        let request = ReminderUpdateRequest(identifier: "r", due: .timed(date(10, 9, 9)), alarmOffsets: [15])
+        let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { true }, rollback: {})
+        XCTAssertEqual(report?.reread, true)
+        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report, reload: {
+            XCTFail("already re-read")
+            return false
+        })
+        XCTAssertEqual(alarms, .init(stored: [15], listShowsAlarmTime: true))
+    }
+
+    /// A due change on a reminder that keeps its alarm: the note follows the reload as well.
+    func testADueOnlyUpdateJudgesTheListOnlyAfterTheReload() throws {
+        let request = ReminderUpdateRequest(identifier: "r", due: .timed(date(10, 9, 9)))
+        for (reloaded, shows) in [(true, true), (false, false)] {
+            let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+            let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { reloaded }, rollback: {})
+            let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report, reload: { true })
+            XCTAssertEqual(alarms, .init(stored: nil, listShowsAlarmTime: shows), "reloaded: \(reloaded)")
+        }
+    }
+
+    /// The leftover note counts alarms off the object, so not after a reload that failed.
+    func testTheLeftoverNoteNeedsTheReload() throws {
+        let request = ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2026, month: 10, day: 19)))
+        for (reloaded, expected) in [(true, ReminderRelativeAlarms.leftoverDateOnlyNote(1)), (false, nil)] {
+            let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+            let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { reloaded }, rollback: {})
+            XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: report), expected, "reloaded: \(reloaded)")
+        }
+        // `clear_due_date` has no reload to fail: the count stays, from the object, as documented.
+        let clear = ReminderUpdateRequest(identifier: "r", clearDueDate: true)
+        let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+        let report = try ReminderUpdateWrite.apply(clear, to: reminder, calendar: nil, save: {}, reload: { false }, rollback: {})
+        XCTAssertEqual(ReminderRelativeAlarms.leftoverNote(saved: reminder, request: clear, dateSync: report), ReminderRelativeAlarms.leftoverNoDueNote(1))
+    }
+
+    /// `clear_due_date` writes no due, so the date path does not reload; `[]` is still read back.
+    func testClearingTheDueWithAnEmptyListIsReloadedHere() throws {
+        let request = ReminderUpdateRequest(identifier: "r", clearDueDate: true, alarmOffsets: [])
+        for (reloaded, stored) in [(true, [] as [Double]?), (false, nil)] {
+            let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+            let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: {
+                XCTFail("the date path has nothing to re-read")
+                return false
+            }, rollback: {})
+            XCTAssertNotNil(report, "a date sync that did not reload")
+            XCTAssertNil(report?.reread)
+            var reloads = 0
+            let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report,
+                                                           reload: { reloads += 1; return reloaded })
+            XCTAssertEqual(alarms, .init(stored: stored, listShowsAlarmTime: false))
+            XCTAssertEqual(reloads, 1)
+        }
+    }
+
+    func testAnOffsetsOnlyUpdateReloadsHere() throws {
+        let request = ReminderUpdateRequest(identifier: "r", alarmOffsets: [15])
+        for (reloaded, expected) in [(true, ReminderUpdateWrite.AlarmReadBack(stored: [15], listShowsAlarmTime: true)),
+                                     (false, .init(stored: nil, listShowsAlarmTime: false))] {
+            let reminder = timedReminder()
+            let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { true }, rollback: {})
+            XCTAssertNil(report)
+            XCTAssertEqual(ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report, reload: { reloaded }), expected)
+        }
+    }
+
+    /// The gate of the note: a reminder with an alarm off the due time, and a call that touches
+    /// neither the alarms nor the due. No reload, nothing reported.
+    func testATitleChangeNeitherReloadsNorReports() throws {
+        for request in [ReminderUpdateRequest(identifier: "r", title: "Renamed"), ReminderUpdateRequest(identifier: "r", clearDueDate: true)] {
+            let reminder = timedReminder(alarms: [EKAlarm(relativeOffset: -900)])
+            let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: nil, reload: {
+                XCTFail("no reason to reload")
+                return false
+            })
+            XCTAssertEqual(alarms, .init(stored: nil, listShowsAlarmTime: false))
+        }
+    }
+
+    /// `[]` removes the relative alarms; an absolute alarm that stays can still set the list.
+    func testAnEmptyListWithAnEarlierAbsoluteAlarmStillReportsTheList() throws {
+        let reminder = timedReminder(alarms: [EKAlarm(absoluteDate: date(10, 8, 8))])
+        let request = ReminderUpdateRequest(identifier: "r", alarmOffsets: [])
+        let report = try ReminderUpdateWrite.apply(request, to: reminder, calendar: nil, save: {}, reload: { true }, rollback: {})
+        XCTAssertEqual(ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: report, reload: { true }),
+                       .init(stored: [], listShowsAlarmTime: true))
+    }
+
     // MARK: - plumbing
 
     func testRealignToDueAloneRealignsADivergedReminder() throws {

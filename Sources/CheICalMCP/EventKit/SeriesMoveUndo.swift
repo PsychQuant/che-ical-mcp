@@ -48,11 +48,11 @@ enum SeriesMoveUndo {
     /// write by another process (Calendar.app, a sync) landing between the two refreshes would be
     /// seen only by the second one. The window is a few lines of code long, so it is accepted
     /// rather than closed by moving the account check into the comparison.
-    static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () -> Bool,
+    static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () throws -> Bool,
                               resolved: Resolved<Event>?, original: OriginalCalendar?,
                               missingOriginal: () -> Error?) throws -> Event? {
         guard let resolved else {
-            guard stored() else { return nil }
+            guard try stored() else { return nil }
             throw UndoTargetMissingError(verb: verb, kind: expected.kind, title: expected.title,
                                          hasIdentifier: !expected.itemID.isEmpty, seriesWithoutStandIn: true)
         }
