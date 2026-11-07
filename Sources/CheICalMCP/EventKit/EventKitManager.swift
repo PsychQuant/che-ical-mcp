@@ -2012,6 +2012,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 }
             }, removeSource: {
                 try self.eventStore.remove(subject, span: .thisEvent)
+            }, copyRecord: { copy in
+                let copyID = copy.eventIdentifier ?? ""
+                return .createEvent(id: copyID, title: copy.title ?? title ?? "", created: self.postWriteSnapshot(eventID: copyID, saved: copy))
             })
             undo = outcome.undo
             return (outcome.value.eventIdentifier ?? "",

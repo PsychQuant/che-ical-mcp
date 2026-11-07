@@ -334,8 +334,8 @@ extension UndoOperation {
     /// - Otherwise, when every member left may run last (`mayRunLastAfterAFailure`: every kind a
     ///   batch records, PR #282 round 3, finding 5, and round 4, finding 2), the failing member is
     ///   kept first, so it runs last next time and the members never attempted get their turn even
-    ///   when it keeps failing. When one may not (no batch records such a kind today), the recorded
-    ///   order is kept and the failing member runs first again.
+    ///   when it keeps failing. When one may not (the copy's create record of a move by copy, #466),
+    ///   the recorded order is kept and the failing member runs first again.
     /// - When no member was restored and the record would not change (no other member waits, or the
     ///   order is kept), the record is put back whole too, through the same partial error: the
     ///   failing member may still have been written, so its text asks to check first, and the
@@ -459,8 +459,10 @@ extension UndoOperation {
     /// marker never runs (its refusal comes first). The duplicate guard (#285) only covers an occurrence
     /// record (`.deleteOccurrence`); a series delete addressed by an edited occurrence's own id
     /// can sit beside its series in one batch, which restores the occurrence twice from the rules
-    /// alone (tracked in #321). False for the kinds no batch records: two
-    /// of them can write to one item, where the order matters. Exhaustive, so a new record kind
+    /// alone (tracked in #321). False for the other kinds: two of them can write to one item, where
+    /// the order matters. The one such kind a batch records is a move by copy's `.createEvent` (#466),
+    /// beside the original's `.deleteEvent`: false keeps the original's restore ahead of the copy's
+    /// removal after a failure, so the event is never left in neither calendar. Exhaustive, so a new record kind
     /// has to be classified to compile (#196 convention).
     var mayRunLastAfterAFailure: Bool {
         switch self {
