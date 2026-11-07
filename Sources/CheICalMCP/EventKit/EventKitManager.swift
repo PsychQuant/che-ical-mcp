@@ -1055,7 +1055,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The fixed hint for a bare id of a series whose remaining occurrences were all edited on
     /// their own (#335 item 1; device, iCloud, 2026-10-26: the bare id is not found even with
     /// `occurrence_date`, while the id `list_events` gives an occurrence updates that one).
-    static let standInAllEditedReason = "This series' first occurrence was deleted or edited on its own, and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
+    static let standInAllEditedReason = "This series' first occurrence was deleted or edited on its own, and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them, except update_event and delete_event with span 'all', which go through the earliest of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
     /// The fixed reason for refusing the undo of a whole-series move whose way back goes through
@@ -1145,12 +1145,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #428: the series reaches no stand-in, and its first occurrence was edited on its own:
             // the same write through that occurrence's own id, which answers for the series.
             if applyToAll, let first = try firstEditedOccurrenceID(of: identifier) {
-                let saved = try await updateEvent(
-                    identifier: first, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
-                    location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
-                    alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
-                    structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
-                    timezone: timezone, clearTimezone: clearTimezone)
+                let saved: (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?)
+                do {
+                    saved = try await updateEvent(
+                        identifier: first, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
+                        location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
+                        alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
+                        structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
+                        timezone: timezone, clearTimezone: clearTimezone)
+                } catch EventKitError.occurrenceAddressRefused(let reason) {
+                    // verify r2: the occurrence's texts speak to a caller who named it.
+                    throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason))
+                }
                 return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier, input: identifier),
                         saved.matchedOccurrence)
             }
@@ -1167,6 +1173,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
             writesLocation: location != nil, turnsTimed: isAllDay == false,
+            datesStayOnTheDay: DetachedOccurrenceSpan.datesStayOnTheDay(
+                newStart: startDate, newEnd: endDate, start: masterEvent.startDate, end: masterEvent.endDate,
+                zone: masterEvent.timeZone ?? .current),
             neighbours: try occurrenceNeighbours(of: masterEvent, id: identifier)) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }

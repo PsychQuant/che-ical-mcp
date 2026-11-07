@@ -251,6 +251,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
         XCTAssertFalse(reason.contains("every remaining occurrence"), "the scan is bounded: it cannot claim every occurrence")
+        // #428 verify r2: span 'all' through the series' id does reach the earliest of them now
+        // (the update's ids and the delete measured on iCloud, 2026-11-08).
+        XCTAssertTrue(reason.contains("except update_event and delete_event with span 'all', which go through the earliest of them"), reason)
         XCTAssertFalse(reason.contains("move"), "no stand-in exists, so a move cannot work")
         XCTAssertFalse(reason.contains("copy"))
     }

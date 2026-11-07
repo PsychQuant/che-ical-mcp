@@ -113,5 +113,7 @@ final class EventDeletionHandlerTests: XCTestCase {
         XCTAssertNil(plain["occurrence_id"])
         XCTAssertNil(plain["undo_note"])
         XCTAssertTrue(CheICalMCPServer.seriesDeletedThroughOccurrenceNote.contains("cannot be undone"))
+        XCTAssertTrue(CheICalMCPServer.seriesDeletedThroughOccurrenceNote.hasPrefix("The occurrence that comes first in this series was edited on its own"),
+                      "verify r2: also after a deleted first occurrence")
     }
 }

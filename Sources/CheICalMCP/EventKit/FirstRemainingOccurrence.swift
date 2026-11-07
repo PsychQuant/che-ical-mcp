@@ -69,7 +69,8 @@ enum FirstRemainingOccurrence {
     /// occurrence under the identifier's `/`-part: another store's shape was not measured.
     static func earliestEdited(_ candidates: [Candidate], identifier: String) -> Int? {
         guard let first = candidates.indices.min(by: { (candidates[$0].slot ?? candidates[$0].start) < (candidates[$1].slot ?? candidates[$1].start) }),
-              candidates[first].isDetached, candidates[first].eventIdentifier?.hasPrefix(identifier + "/") == true else { return nil }
+              candidates[first].isDetached,
+              DetachedOccurrenceSpan.seriesIdentifier(of: candidates[first].eventIdentifier ?? "") == identifier else { return nil }
         return first
     }
 
@@ -250,7 +251,7 @@ extension EventKitManager {
                                          series: listed.first { !$0.isDetached }))
         known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(
             of: id, among: candidates, coversWholeSeries: covers,
-            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules))
+            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules), firstStart: firstStart)
         return known
     }
 
