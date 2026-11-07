@@ -59,6 +59,10 @@ final class WeekdayCheckZoneTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "stored: storedRule.frequency, storedInterval: storedRule.interval,", in: update).count, 1)
+        // Round 4: the stored-side arguments too, so a hardcoded nil or false fails here.
+        XCTAssertEqual(SourcePins.ranges(of: "storedDaysOfMonth: storedRule.daysOfTheMonth?.map(\\.intValue),", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "storedNumbered: storedNumbered, storedHasOtherParts: otherParts)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "[storedRule.monthsOfTheYear, storedRule.weeksOfTheYear, storedRule.daysOfTheYear]", in: update).count, 1)
     }
 
     /// Thursday 2031-12-04 in Taipei, against Monday and Tuesday, and against Thursday.
@@ -132,6 +136,9 @@ final class WeekdayCheckZoneTests: XCTestCase {
         XCTAssertTrue(keeps(.monthly, monthDays: [15, 1], stored: .monthly, storedMonthDays: [1, 15]))
         XCTAssertTrue(keeps(.monthly, monthDays: [], stored: .monthly, storedMonthDays: nil))
         XCTAssertFalse(keeps(.yearly, stored: .yearly, otherParts: true), "a yearly rule in March would lose its month")
+        // Round 4: a daily or weekly rule ignores the days_of_month it stores, and the parser refuses one there.
+        XCTAssertTrue(keeps(.daily, stored: .daily, storedMonthDays: [15]))
+        XCTAssertTrue(keeps(.weekly, stored: .weekly, storedMonthDays: [15]))
     }
 
     /// `clear_timezone` or `all_day` alone can move the day with no `start_time`.

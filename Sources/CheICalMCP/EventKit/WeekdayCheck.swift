@@ -17,9 +17,8 @@ enum WeekdayCheck {
     /// which older releases wrote, is not refused an update that leaves the day where it is: a time
     /// on the same day, a zone, or its own days again with a bound. A rule with other days is
     /// checked either way, since it is the rule that would be off. Its own days again are exempt only
-    /// when the rule keeps the stored pattern (`ruleKeepsStoredPattern`: same frequency and interval,
-    /// and a stored rule on plain weekdays); otherwise the call replaces the pattern and is checked
-    /// (PR #462 verify round 2).
+    /// when the rule keeps the stored pattern (`ruleKeepsStoredPattern`, decided by
+    /// `keepsStoredPattern`); otherwise the call replaces the pattern and is checked.
     static func daysToCheck(requested: [Int]?, ruleInCall: Bool, stored: [Int]?, storedCount: Bool,
                             ruleKeepsStoredPattern: Bool, startDayMoves: Bool) -> [Int]? {
         if ruleInCall {
@@ -32,14 +31,20 @@ enum WeekdayCheck {
 
     /// Whether a `recurrence` in the call keeps the stored rule's pattern: the same frequency,
     /// interval and `days_of_month` (as sets; nil and empty are the same), over a stored rule on plain
-    /// weekdays (`isNumberedRule` false) with no part the `recurrence` parameter cannot write
-    /// (`storedHasOtherParts`: months, weeks or days of the year). Only then can the same days be the
-    /// series' own rule with another bound (PR #462 verify rounds 2 and 3).
+    /// weekdays (`isNumberedRule` false: no week number and no position) with no part the `recurrence`
+    /// parameter cannot write (`storedHasOtherParts`: months, weeks or days of the year). Only then can
+    /// the same days be the series' own rule with another bound (PR #462 verify rounds 2 and 3).
+    /// `days_of_month` counts on monthly and yearly rules only: a daily or weekly rule stores one but
+    /// repeats as if it were not there (measured on iCloud, see `parseRecurrenceRule`), and the
+    /// parser refuses it there, so a stored one on those rules is ignored (round 4).
+    /// Known limit: the rule's week start (`firstDayOfTheWeek`, WKST) is not compared; every
+    /// `recurrence` write drops it, through this exemption or not.
     static func keepsStoredPattern(frequency: RecurrenceRuleInput.Frequency, interval: Int, daysOfMonth: [Int]?,
                                    stored: EKRecurrenceFrequency, storedInterval: Int, storedDaysOfMonth: [Int]?,
                                    storedNumbered: Bool, storedHasOtherParts: Bool) -> Bool {
+        let monthDaysCount = frequency == .monthly || frequency == .yearly
         guard !storedNumbered, !storedHasOtherParts, interval == storedInterval,
-              Set(daysOfMonth ?? []) == Set(storedDaysOfMonth ?? []) else { return false }
+              !monthDaysCount || Set(daysOfMonth ?? []) == Set(storedDaysOfMonth ?? []) else { return false }
         switch frequency {
         case .daily: return stored == .daily
         case .weekly: return stored == .weekly
