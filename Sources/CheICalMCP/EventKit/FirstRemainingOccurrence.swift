@@ -67,10 +67,15 @@ enum FirstRemainingOccurrence {
     /// series' identifier reaches no stand-in then, and a whole-series write goes through that
     /// occurrence's own identifier, as measured. By slot, with the start standing in. Only an
     /// occurrence under the identifier's `/`-part: another store's shape was not measured.
+    /// verify r3: it must not start after the next occurrence's slot; every measured row (the delete
+    /// from it with span future included) had it there, and EventKit's cut by slot or by shown start
+    /// past that was not measured.
     static func earliestEdited(_ candidates: [Candidate], identifier: String) -> Int? {
-        guard let first = candidates.indices.min(by: { (candidates[$0].slot ?? candidates[$0].start) < (candidates[$1].slot ?? candidates[$1].start) }),
+        func slot(_ index: Int) -> Date { candidates[index].slot ?? candidates[index].start }
+        guard let first = candidates.indices.min(by: { slot($0) < slot($1) }),
               candidates[first].isDetached,
               DetachedOccurrenceSpan.seriesIdentifier(of: candidates[first].eventIdentifier ?? "") == identifier else { return nil }
+        if let next = candidates.indices.filter({ $0 != first }).map(slot).min(), candidates[first].start > next { return nil }
         return first
     }
 
@@ -221,10 +226,11 @@ extension EventKitManager {
     /// #428: the identifier of the occurrence edited on its own that comes first in the series
     /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
     /// unedited occurrence first, is not this.
-    func firstEditedOccurrenceID(of id: String) throws -> String? {
+    func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool)? {
         guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
-              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id) else { return nil }
-        return candidates[index].eventIdentifier
+              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id),
+              let first = candidates[index].eventIdentifier else { return nil }
+        return (first, !candidates.contains { !$0.isDetached })
     }
 
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and

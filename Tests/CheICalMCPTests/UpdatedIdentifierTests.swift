@@ -242,7 +242,7 @@ final class UpdatedIdentifierTests: XCTestCase {
     func testTheFirstOccurrenceRouteReportsTheSeriesOfTheSavedId() {
         func fields(saved: String?) -> [String: Any] {
             UpdatedIdentifier.responseFields(input: "A", saved: saved,
-                                             seriesIdentifier: UpdatedIdentifier.seriesThroughOccurrence(saved: saved, input: "A"))
+                                             seriesIdentifier: UpdatedIdentifier.seriesThroughOccurrence(saved: saved))
         }
         let kept = fields(saved: "A/RID=5")
         XCTAssertEqual(kept["id"] as? String, "A")

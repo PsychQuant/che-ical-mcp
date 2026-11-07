@@ -59,9 +59,10 @@ enum UpdatedIdentifier {
     /// and went through its first occurrence edited on its own (`saved`, the occurrence's id after
     /// the save). Its part before /RID=, or, with no /RID=, the saved id itself, as a new series may
     /// read back without one; never the input, which may resolve to nothing after a new series
-    /// started (verify r1). nil or empty keeps the input. Measured on iCloud (2026-11-08): the
-    /// first left and the only one left both read back as `<new series>/RID=<n>`.
-    static func seriesThroughOccurrence(saved: String?, input: String) -> String {
+    /// started (verify r1). A saved event with no identifier gives "", which `responseFields` reads
+    /// as the input; a save that returned no identifier was not seen. Measured on iCloud
+    /// (2026-11-08): the first left and the only one left both read back as `<new series>/RID=<n>`.
+    static func seriesThroughOccurrence(saved: String?) -> String {
         guard let saved, !saved.isEmpty else { return "" }
         return seriesOfOccurrenceId(saved) ?? saved
     }

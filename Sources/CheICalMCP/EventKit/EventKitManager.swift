@@ -1123,7 +1123,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         occurrenceDate: Date? = nil,
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
-        clearTimezone: Bool = false
+        clearTimezone: Bool = false,
+        reachedThroughSeriesID: Bool = false
     ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {
         try await ensureCalendarAccess()
 
@@ -1138,17 +1139,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 let saved: (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?)
                 do {
                     saved = try await updateEvent(
-                        identifier: first, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
+                        identifier: first.id, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
                         location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
                         alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                         structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
-                        timezone: timezone, clearTimezone: clearTimezone)
+                        timezone: timezone, clearTimezone: clearTimezone, reachedThroughSeriesID: true)
                 } catch EventKitError.occurrenceAddressRefused(let reason) {
                     // verify r2: the occurrence's texts speak to a caller who named it.
-                    throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason))
+                    throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited))
                 }
-                return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier, input: identifier),
-                        saved.matchedOccurrence)
+                return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)
             }
             throw notFoundError(id: identifier)
         }
@@ -1162,7 +1162,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
-            writesLocation: location != nil, turnsTimed: isAllDay == false,
+            writesLocation: location != nil, turnsTimed: isAllDay == false, throughSeriesID: reachedThroughSeriesID,
             datesStayOnTheDay: DetachedOccurrenceSpan.datesStayOnTheDay(
                 newStart: startDate, newEnd: endDate, start: masterEvent.startDate, end: masterEvent.endDate,
                 zone: masterEvent.timeZone ?? .current),
@@ -1552,8 +1552,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // series and further edited occurrences included (2026-11-08), and its record cannot be
             // undone (`.followingOccurrences`): the response says so.
             if let first = try firstEditedOccurrenceID(of: identifier) {
-                try await deleteEvent(identifier: first, span: .futureEvents)
-                return .firstEditedOccurrence(id: first)
+                try await deleteEvent(identifier: first.id, span: .futureEvents)
+                return .firstEditedOccurrence(id: first.id)
             }
             throw notFoundError(id: identifier)
         }
