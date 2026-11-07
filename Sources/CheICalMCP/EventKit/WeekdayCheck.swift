@@ -16,14 +16,32 @@ enum WeekdayCheck {
     /// #454: the days the start has to fall on, nil when none apply. A series already off its days,
     /// which older releases wrote, is not refused an update that leaves the day where it is: a time
     /// on the same day, a zone, or its own days again with a bound. A rule with other days is
-    /// checked either way, since it is the rule that would be off.
-    static func daysToCheck(requested: [Int]?, ruleInCall: Bool, stored: [Int]?, storedCount: Bool, startDayMoves: Bool) -> [Int]? {
+    /// checked either way, since it is the rule that would be off. Its own days again are exempt only
+    /// when the rule keeps the stored pattern (`ruleKeepsStoredPattern`: same frequency and interval,
+    /// and a stored rule on plain weekdays); otherwise the call replaces the pattern and is checked
+    /// (PR #462 verify round 2).
+    static func daysToCheck(requested: [Int]?, ruleInCall: Bool, stored: [Int]?, storedCount: Bool,
+                            ruleKeepsStoredPattern: Bool, startDayMoves: Bool) -> [Int]? {
         if ruleInCall {
             guard let requested, !requested.isEmpty else { return nil }
-            if !startDayMoves, let stored, Set(stored) == Set(requested) { return nil }
+            if !startDayMoves, ruleKeepsStoredPattern, let stored, Set(stored) == Set(requested) { return nil }
             return requested
         }
         return startDayMoves && storedCount ? stored : nil
+    }
+
+    /// Whether a `recurrence` in the call keeps the stored rule's pattern: the same frequency and
+    /// interval, over a stored rule on plain weekdays (`isNumberedRule` false). Only then can the
+    /// same days be the series' own rule with another bound.
+    static func keepsStoredPattern(frequency: RecurrenceRuleInput.Frequency, interval: Int,
+                                   stored: EKRecurrenceFrequency, storedInterval: Int, storedNumbered: Bool) -> Bool {
+        guard !storedNumbered, interval == storedInterval else { return false }
+        switch frequency {
+        case .daily: return stored == .daily
+        case .weekly: return stored == .weekly
+        case .monthly: return stored == .monthly
+        case .yearly: return stored == .yearly
+        }
     }
 
     /// Whether the calendar day of the start differs before and after the update, each read in its

@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import CheICalMCP
 
@@ -80,13 +81,18 @@ final class WeekdayCheckZoneTests: XCTestCase {
     }
 
     func testDaysToCheck() {
-        func days(requested: [Int]? = nil, ruleInCall: Bool = false, stored: [Int]? = nil, count: Bool = true, moves: Bool) -> [Int]? {
-            WeekdayCheck.daysToCheck(requested: requested, ruleInCall: ruleInCall, stored: stored, storedCount: count, startDayMoves: moves)
+        func days(requested: [Int]? = nil, ruleInCall: Bool = false, stored: [Int]? = nil, count: Bool = true, keeps: Bool = true, moves: Bool) -> [Int]? {
+            WeekdayCheck.daysToCheck(requested: requested, ruleInCall: ruleInCall, stored: stored, storedCount: count,
+                                     ruleKeepsStoredPattern: keeps, startDayMoves: moves)
         }
         // A rule in the call.
         XCTAssertEqual(days(requested: [2], ruleInCall: true, stored: [5], moves: false), [2], "other days, the day staying: the rule would be off")
         XCTAssertEqual(days(requested: [2], ruleInCall: true, stored: [2], moves: true), [2], "the day moves")
         XCTAssertNil(days(requested: [3, 2], ruleInCall: true, stored: [2, 3], moves: false), "its own days again, as ending a series does")
+        // PR #462 verify round 2: the same days under another frequency or interval, or over a
+        // numbered stored rule, replace the pattern, so the start is checked against them.
+        XCTAssertEqual(days(requested: [2], ruleInCall: true, stored: [2], keeps: false, moves: false), [2],
+                       "same days, another frequency or interval, or a numbered stored rule")
         XCTAssertNil(days(requested: nil, ruleInCall: true, stored: [2], moves: true), "a rule with no days")
         XCTAssertNil(days(requested: [], ruleInCall: true, stored: [2], moves: true))
         // The series' own rule.
@@ -94,6 +100,20 @@ final class WeekdayCheckZoneTests: XCTestCase {
         XCTAssertNil(days(stored: [2], moves: false), "a time on the same day, or a zone, on a series already off its days")
         XCTAssertNil(days(stored: [2], count: false, moves: true), "one occurrence of a non-weekly series")
         XCTAssertNil(days(stored: nil, moves: true))
+    }
+
+    /// PR #462 verify round 2: only the stored frequency and interval, on a plain-weekday rule, keep
+    /// the pattern; then a rule with the same days is the series' own rule with another bound.
+    func testKeepsStoredPattern() {
+        XCTAssertTrue(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 1, stored: .weekly, storedInterval: 1, storedNumbered: false))
+        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 1, stored: .daily, storedInterval: 1, storedNumbered: false),
+                       "daily on Monday replaced by weekly on Monday")
+        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 2, stored: .weekly, storedInterval: 1, storedNumbered: false))
+        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .monthly, interval: 1, stored: .monthly, storedInterval: 1, storedNumbered: true),
+                       "the first Monday would become every Monday")
+        for (input, stored) in [(RecurrenceRuleInput.Frequency.daily, EKRecurrenceFrequency.daily), (.monthly, .monthly), (.yearly, .yearly)] {
+            XCTAssertTrue(WeekdayCheck.keepsStoredPattern(frequency: input, interval: 3, stored: stored, storedInterval: 3, storedNumbered: false))
+        }
     }
 
     /// `clear_timezone` or `all_day` alone can move the day with no `start_time`.

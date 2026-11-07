@@ -1277,11 +1277,20 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             from: event.startDate, in: WeekdayCheck.zone(resultIsAllDay: event.isAllDay, requested: nil, clearTimezone: false, stored: event.timeZone),
             to: plannedStart, in: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
             host: Calendar.current)
+        let storedNumbered = storedRule.map {
+            WeekdayCheck.isNumberedRule(weekNumbers: $0.daysOfTheWeek?.map(\.weekNumber) ?? [], setPositions: $0.setPositions?.map(\.intValue))
+        } ?? false
+        let ruleKeepsStoredPattern: Bool = {
+            guard let effectiveRule, let storedRule else { return false }
+            return WeekdayCheck.keepsStoredPattern(
+                frequency: effectiveRule.frequency, interval: effectiveRule.interval,
+                stored: storedRule.frequency, storedInterval: storedRule.interval, storedNumbered: storedNumbered)
+        }()
         let daysToValidate = WeekdayCheck.daysToCheck(
             requested: effectiveRule?.daysOfWeek, ruleInCall: effectiveRule != nil,
             stored: storedRule?.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue },
             storedCount: storedRule.map { WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span) } ?? false,
-            startDayMoves: startDayMoves)
+            ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
         // #416: through an occurrence's own id the rule runs from its original day, not the day it
         // shows. Dates cannot be written on this path, so nothing else moves that day.
         let originalDay = DetachedOccurrenceSpan.originalDay(
@@ -1294,8 +1303,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             if !days.contains(weekday) {
                 if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }
                 let names = WeekdayCheck.names(weekday: weekday, days: days)
-                if effectiveRule == nil, let storedRule, WeekdayCheck.isNumberedRule(
-                    weekNumbers: storedRule.daysOfTheWeek?.map(\.weekNumber) ?? [], setPositions: storedRule.setPositions?.map(\.intValue)) {
+                if effectiveRule == nil, storedNumbered {
                     throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
                 }
                 throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)

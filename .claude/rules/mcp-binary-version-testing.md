@@ -243,7 +243,11 @@ Calendar.app 建名稱含 `#454` 的拋棄式日曆與一個「每月第一個�
 1. span `all`，`start_time` 放在某個週四：要被拒絕，訊息說到行事曆 App 改，不提 `recurrence`。
 2. span `all`，`start_time` 放在同一天的另一個時間：要成功，場次還是每月第一個週一。
 3. span `all`，`start_time` 放在第二個週一：目前會放行，記下 store 怎麼處理規則。
-4. 改成「每月最後一個工作日」（`setPositions`）再做第 1 步。
+4. 改成「每月最後一個工作日」（`setPositions`），span `all`，`start_time` 放在某個週六：要被拒絕，訊息同第 1 步。
+   週一到週五的起始日都在規則的星期裡，會放行（同第 3 步），記下 store 怎麼處理規則。
+5. 第 1 步的系列，span `all` 帶 `recurrence`（`monthly`、`days_of_week: [2]`、`end_date`）、不改起始日：目前會放行，
+   規則變成每個週一（第 n 週無法用 `recurrence` 寫出），記下讀回的場次。這不是 regression，但不要在真實系列上這樣結束一個
+   第 n 週系列。
 
 結果記在 #454。結束後刪掉拋棄式日曆。
 
