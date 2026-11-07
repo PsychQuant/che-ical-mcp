@@ -36,8 +36,9 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
 
     func testHandlersDispatchToPageRequirements() async throws {
         let server = try await CheICalMCPServer(reminderReadSource: PageOnlyReminderFake())
-        for tool in ["list_reminders", "search_reminders"] {
-            let raw = try await server.executeToolCall(name: tool, arguments: ["keyword": .string("Page"), "limit": .int(1)])
+        let keyword: [String: Value] = ["keyword": .string("Page")]
+        for (tool, extra) in [("list_reminders", [:]), ("search_reminders", keyword)] as [(String, [String: Value])] {
+            let raw = try await server.executeToolCall(name: tool, arguments: extra.merging(["limit": .int(1)]) { $1 })
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
             XCTAssertEqual(json["reminder_count"] as? Int, 1)
         }

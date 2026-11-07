@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
+| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`。這個上限不保證長標題留得住：曾有一輪連 255 字元的標題也在 `list_calendars` 讀不到（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
@@ -106,9 +106,13 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **完成重複提醒後的鬧鐘（#423）：** 帶位置提醒的重複提醒在完成之後，下一個場次與完成的那筆都會多一個 0 分鐘的一般相對鬧鐘（沒有位置）（iCloud 實測；沒有位置提醒、不重複或沒有完成時都不會出現，之後再完成也不會再多，鬧鐘留著或移除之後都一樣）。完成提醒只設定完成欄位；這個鬧鐘是 EventKit 或 store 在那次存檔造成 rollover 時加上的，沒有區分是哪一個。確認 rollover 之後，`complete_reminder` 會重新讀取下一個場次，把它的相對鬧鐘回報為 `next_occurrence.alarms_minutes_offsets`，這次讀回才出現、完成之前沒有的鬧鐘用 `alarms_note` 說明（別的 app 或同步寫入的鬧鐘看起來也一樣）。讀不回下一個場次，或它在這之間變了，`next_occurrence.alarms_read_back` 會是 `false` 並附 `alarms_read_back_note`，不回報鬧鐘。`next_occurrence.status` 是其他值時沒有這些欄位。不做任何寫入（這是預設：用途不明，所以沒有選擇把它刪掉）；試過的情況下，`update_reminder` 帶 `alarms_minutes_offsets` 可以移除它。它會不會響、Reminders.app 是否顯示，都沒有驗。完成的那筆會換新的 id，不會讀取。
 
+**引數會依 schema 檢查（#448）：** 每個工具都會拒絕它不讀的鍵，以及不是宣告型別（字串、整數、數字、陣列、物件）的值，什麼都不做；字串陣列與整數陣列的元素也會檢查。訊息會列出可接受的鍵。批次的某一列出錯時只有該列失敗。已宣告的鍵帶 JSON null 時，這個檢查視同沒給，但 handler 仍可能拒絕（例如 `limit`）；沒宣告的鍵帶 null 一樣會被拒絕。
+
 **會檢查 `recurrence` 的鍵（#434）：** `create_event`、`create_events_batch`、`update_event`、`create_reminder` 與 `update_reminder` 會拒絕 `recurrence` 裡 `frequency`、`interval`、`end_date`、`occurrence_count`、`days_of_week`、`days_of_month` 以外的鍵（兩個建立事件的工具另外接受 `excluded_occurrence_dates`），該項目什麼都不寫入。以前這種鍵會被忽略，所以把 `occurrence_count` 寫成 `count` 會建立一個永遠不會結束的系列。下列情況這些工具也會拒絕，該項目什麼都不寫入：`end_date` 與 `occurrence_count` 同時給；`daily` 或 `weekly` 規則帶非空的 `days_of_month`，EventKit 會存下來但不使用（iCloud 實測；`monthly` 與 `yearly` 會用，`days_of_week` 每種頻率都會用）；`recurrence` 的任何一個鍵，或讀取工具用的 `recurrence_rules`、`event_recurrence_rules`、`reminder_recurrence_rules` 放在 `recurrence` 旁邊而不是裡面。
 
 **開始時間要落在 `days_of_week` 上（#454）：** `create_event`、`create_events_batch` 與 `update_event` 對每種頻率都會拒絕不在清單上的開始時間，不只 `weekly`，什麼都不寫入。以前在 `daily`、`monthly`、`yearly` 上會多出一個規則外的第一場（iCloud 實測）。`update_event` 涵蓋呼叫裡帶的規則，以及 span `all` 與 `future` 時系列本身的規則。系列已經偏離規則時，不改變開始日的更新會放行。非 weekly 系列用 span `this` 移動單一場次不會被拒絕。「每月第一個週一」這類第 n 週規則本工具寫不出來，所以這種系列會被告知到行事曆 App 修改。
+
+**`yearly` 事件規則帶 `days_of_week` 時的 `occurrence_count`（#444）：** 在 `interval` 為 1 且沒有 `days_of_month` 的規則上，store 算的不是場次，所以 6 得到 22 個場次（iCloud 實測）。`create_event`、`create_events_batch` 與 `update_event` 會拒絕這裡的次數，連 1 也一樣，什麼都不寫入。要這些日子，請用 `monthly` 配 `interval: 12`，次數正確，但從較後場次以 span `future` 帶入時可能變少（#443），或改用 `end_date`。要每年一次，請用不帶 `days_of_week` 的 `yearly`。帶 `days_of_week` 的 `yearly` 規則只在開始日所在的月份重複。`interval` 大於 1 或有非空 `days_of_month` 不會被拒絕：這些情況次數是對的。提醒事項工具不變：提醒事項上的次數是正確的。
 
 **重複規則屬於整個系列（PR #439）：** `update_event` 會拒絕對單一場次（`occurrence_date` 配 span `this`）帶 `recurrence` 或 `clear_recurrence`，也會拒絕 `clear_recurrence` 配 `occurrence_date` 與 span `future`，什麼都不寫入。從 v1.5.0 起的每個版本（iCloud 上實測 v1.22.0，其餘版本是讀各 tag 的程式碼），規則存在單一場次上會刪掉系列的其餘場次；`clear_recurrence` 配 span `future` 只留下系列第一天的一個事件；`clear_recurrence` 配 span `this` 則把該場次分離成單次事件，系列繼續重複。要改整個系列用 span `all`，要從某個場次起改規則用 span `future` 配 `occurrence_date`。要讓系列在某個場次結束，用 span `all` 與 `recurrence`，裡面帶系列完整的規則，以及該場次開始之後的 `end_date`，例如當天 23:59:59：只寫日期會在當天的場次之前就結束，之後的場次都會消失，單獨改過的也一樣（iCloud 實測）。`clear_recurrence` 配 span `all` 會只留下第一天的一個事件，並刪除其餘場次。`<series>/RID=<n>` 形式的 id（單獨改過的場次）會被告知系列的 id。`recurrence` 與 `clear_recurrence` 同時給也會拒絕。
 

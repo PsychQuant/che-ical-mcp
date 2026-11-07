@@ -49,6 +49,7 @@ class CheICalMCPServer {
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let calendarDeletionSource: any CalendarDeletionSource
+    private let calendarWriteSource: any CalendarWriteSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let duplicateSearchSource: any DuplicateSearchSource
@@ -86,6 +87,7 @@ class CheICalMCPServer {
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
+         calendarWriteSource: any CalendarWriteSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
@@ -103,6 +105,7 @@ class CheICalMCPServer {
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
+        self.calendarWriteSource = calendarWriteSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
         self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
@@ -147,7 +150,8 @@ class CheICalMCPServer {
                     "properties": .object([
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Filter by type: 'event' or 'reminder'. If not provided, returns all calendars.")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Filter by type: 'event' or 'reminder'; anything else is refused. If not provided, returns all calendars.")
                         ])
                     ])
                 ]),
@@ -161,11 +165,12 @@ class CheICalMCPServer {
                     "properties": .object([
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("The name of the calendar")
+                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Type of calendar: 'event' or 'reminder'")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Type of calendar: 'event' or 'reminder'; anything else is refused")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -207,7 +212,7 @@ class CheICalMCPServer {
                         ]),
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("New calendar name")
+                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -314,7 +319,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -366,6 +371,7 @@ class CheICalMCPServer {
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
                             "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count was measured to come out short: 5 from the second occurrence gave 4 (#443). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
@@ -385,7 +391,7 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
@@ -879,7 +885,7 @@ class CheICalMCPServer {
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
@@ -1191,6 +1197,7 @@ class CheICalMCPServer {
     }
 
     func executeToolCall(name: String, arguments: [String: Value]) async throws -> String {
+        try ToolArgumentCheck.check(tool: name, arguments: arguments)
         switch name {
         // Calendar Tools
         case "list_calendars":
@@ -1268,9 +1275,13 @@ class CheICalMCPServer {
     // MARK: - Calendar Handlers
 
     private func handleListCalendars(arguments: [String: Value]) async throws -> String {
-        var entityType: EKEntityType?
-        if let typeStr = arguments["type"]?.stringValue {
-            entityType = typeStr == "event" ? .event : typeStr == "reminder" ? .reminder : nil
+        let entityType: EKEntityType?
+        // PR #457 verify: any other string, `Reminder` included, used to list every calendar.
+        switch arguments["type"]?.stringValue {
+        case nil: entityType = nil
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
         }
 
         let calendars = try await eventKitManager.listCalendars(for: entityType)
@@ -1296,19 +1307,22 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("type is required")
         }
 
-        let entityType: EKEntityType = typeStr == "reminder" ? .reminder : .event
+        // #449: any other string used to make an event calendar.
+        let entityType: EKEntityType
+        switch typeStr {
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
+        }
+        try InputValidation.validateCalendarTitle(title)
         let color = arguments["color"]?.stringValue
 
-        let result = try await eventKitManager.createCalendar(
-            title: title,
-            entityType: entityType,
-            color: color
-        )
+        let result = try await calendarWriteSource.writeNewCalendar(title: title, entityType: entityType, color: color)
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
+            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.title, "id": result.identifier])
         }
-        let fields: [String: Any] = ["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier]
+        let fields: [String: Any] = ["action": "created", "calendar": result.title, "id": result.identifier]
         return try actionResult(fields.merging(NewObjectSave.responseFields(result.storeDiffers)) { $1 })
     }
 
@@ -1316,11 +1330,8 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
-        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
-        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
-            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
-        }
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so null must not fall
+        // back to the unchecked delete. A misspelled key is refused at dispatch (#448).
         if case .null? = arguments["require_empty"] {
             throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
         }
@@ -1455,7 +1466,7 @@ class CheICalMCPServer {
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
 
         let result = try await eventWriteSource.createEventValue(EventCreateRequest(
             title: title,
@@ -1535,7 +1546,7 @@ class CheICalMCPServer {
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
         }
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
         let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
@@ -1945,7 +1956,7 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = arguments["priority"]?.intValue
+        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -2090,13 +2101,11 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("At least one of 'title' or 'color' must be provided")
         }
 
-        let calendar = try await eventKitManager.updateCalendar(
-            identifier: id,
-            title: title,
-            color: color
-        )
+        if let title { try InputValidation.validateCalendarTitle(title) }
 
-        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.calendarIdentifier])
+        let calendar = try await calendarWriteSource.writeCalendarUpdate(identifier: id, title: title, color: color)
+
+        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.identifier])
     }
 
     private func handleSearchReminders(arguments: [String: Value]) async throws -> String {
@@ -2197,6 +2206,12 @@ class CheICalMCPServer {
                 let keys = Self.reminderBatchRowKeys
                 let message = "Row \(index) accepts only \(keys.dropLast().joined(separator: ", ")) and \(keys[keys.count - 1]); another key was given. For recurrence or location_trigger, use create_reminder. Nothing was written for this row."
                 results.append(["index": index, "success": false, "error": message])
+                continue
+            }
+
+            // #448: a numeric due_date or a bare-string tags read as absent.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_reminders_batch", rowsKey: "reminders", row: reminderDict, index: index, checksKeys: false) {
+                results.append(["index": index, "success": false, "error": problem])
                 continue
             }
 
@@ -2632,6 +2647,11 @@ class CheICalMCPServer {
                 results.append(["index": index, "success": false, "error": "Invalid event format"])
                 continue
             }
+            // #448: a misspelled timezone read naive times in the host zone. Only this row fails.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_events_batch", rowsKey: "events", row: eventDict, index: index, checksKeys: true) {
+                results.append(["index": index, "success": false, "error": problem])
+                continue
+            }
 
             guard let title = eventDict["title"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "title is required"])
@@ -2713,7 +2733,7 @@ class CheICalMCPServer {
                 try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
-                let batchStructuredLocation = parseStructuredLocation(from: eventDict)
+                let batchStructuredLocation = try parseStructuredLocation(from: eventDict)
 
                 let batchNotes = eventDict["notes"]?.stringValue
                 let batchLocation = eventDict["location"]?.stringValue
@@ -3581,6 +3601,10 @@ class CheICalMCPServer {
         if frequency == .daily || frequency == .weekly, daysOfMonth?.isEmpty == false {
             throw ToolError.invalidParameter("recurrence days_of_month is used by monthly and yearly rules only; a \(freqStr) rule would repeat as if it were not there. Nothing was written for this item.")
         }
+        if !forReminder, RecurrenceRuleInput.countsYearsForAnEvent(frequency: frequency, interval: interval, daysOfWeek: daysOfWeek,
+                                                                   daysOfMonth: daysOfMonth, occurrenceCount: occurrenceCount) {
+            throw ToolError.invalidParameter("recurrence occurrence_count is not taken on a yearly event rule with interval 1 and days_of_week, because the store does not count occurrences there: a count of 6 gave 22. For those days in the start's month, use frequency monthly with interval 12, or end_date; from a later occurrence with span future the count can come out short (#443). For once a year, use yearly without days_of_week. Nothing was written for this item.")
+        }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.
         // Caller gating: only create_event / create_events_batch pass
@@ -3628,14 +3652,16 @@ class CheICalMCPServer {
         )
     }
 
-    private func parseStructuredLocation(from arguments: [String: Value]) -> StructuredLocationInput? {
+    private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else { return nil }
+        guard let title = dict["title"]?.stringValue else {
+            throw ToolError.invalidParameter("structured_location.title is required")
+        }
         return StructuredLocationInput(
             title: title,
-            latitude: dict["latitude"]?.doubleValue,
-            longitude: dict["longitude"]?.doubleValue,
-            radius: dict["radius"]?.doubleValue
+            latitude: InputValidation.number(dict["latitude"]),
+            longitude: InputValidation.number(dict["longitude"]),
+            radius: InputValidation.number(dict["radius"])
         )
     }
 
@@ -3652,13 +3678,13 @@ class CheICalMCPServer {
         guard let title = dict["title"]?.stringValue else {
             throw ToolError.invalidParameter("location_trigger.title is required")
         }
-        guard let lat = dict["latitude"]?.doubleValue else {
+        guard let lat = InputValidation.number(dict["latitude"]) else {
             throw ToolError.invalidParameter("location_trigger.latitude is required")
         }
-        guard let lon = dict["longitude"]?.doubleValue else {
+        guard let lon = InputValidation.number(dict["longitude"]) else {
             throw ToolError.invalidParameter("location_trigger.longitude is required")
         }
-        let radius = dict["radius"]?.doubleValue ?? 100
+        let radius = InputValidation.number(dict["radius"]) ?? 100
         let proximityStr = dict["proximity"]?.stringValue ?? "enter"
         let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
 
