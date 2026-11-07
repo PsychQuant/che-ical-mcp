@@ -1286,10 +1286,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // unwritable pattern), so it throws.
             let series = try addressesOwnOccurrence
                 ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
-            // PR #471 verify round 6: whether a week start regroups the rule depends on the
-            // series' start weekday, read in the zone its days are read in.
+            // PR #471 verify rounds 6-7: whether a week start regroups the rule depends on the
+            // series' start weekday, read in the zone its days are read in, from the first
+            // occurrence's original slot (occurrenceDate), not where an edit moved it.
             let startWeekday = series.map {
-                Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current)).component(.weekday, from: $0.startDate)
+                Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current))
+                    .component(.weekday, from: $0.occurrenceDate ?? $0.startDate)
             }
             return (series?.recurrenceRules ?? []).map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }
         }()
