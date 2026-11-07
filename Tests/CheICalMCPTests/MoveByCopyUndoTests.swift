@@ -149,7 +149,9 @@ final class MoveByCopyUndoTests: XCTestCase {
         let text = MoveByCopyUndo.message(restore: .slotAlreadyHeld, title: "Standup", copyID: "COPY-1", copy: .keptSlotHeld)
         XCTAssertTrue(text.hasPrefix("Undone: the moved occurrence of 'Standup' was not recreated in its original calendar"), text)
         XCTAssertTrue(text.contains("an occurrence of a recurring event with its title already holds its time there"), text)
-        XCTAssertTrue(text.contains("the copy the move made (id COPY-1) was kept in the calendar it was moved to"), text)
+        // Round 4: the copy was not looked up, so the text does not say where it is.
+        XCTAssertTrue(text.contains("this undo did not look up or remove the copy the move made (id COPY-1); if it is still in the calendar it was moved to"), text)
+        XCTAssertFalse(text.contains("was kept in the calendar"), text)
         XCTAssertFalse(text.contains("nothing was written") || text.contains("removed the copy"), text)
         XCTAssertTrue(text.contains("running undo again undoes the operation before it"), text)
     }
