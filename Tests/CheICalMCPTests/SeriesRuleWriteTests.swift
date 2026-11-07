@@ -139,8 +139,9 @@ final class SeriesRuleWriteTests: XCTestCase {
                             daysOfMonth: monthDays, excludedOccurrenceDates: nil)
     }
 
-    private func refusal(_ new: RecurrenceRuleInput?, stored: [SeriesRuleWrite.StoredRule]? = nil, happened: Bool = true) -> String? {
-        SeriesRuleWrite.startedRuleRefusal(new, stored: stored ?? [weeklyTuesday], happened: happened, firstStart: first,
+    private func refusal(_ new: RecurrenceRuleInput?, stored: [SeriesRuleWrite.StoredRule]? = nil, happened: Bool = true,
+                         countBase: Date?? = .none) -> String? {
+        SeriesRuleWrite.startedRuleRefusal(new, stored: stored ?? [weeklyTuesday], happened: happened, countBase: countBase ?? first,
                                            now: first.addingTimeInterval(5 * week), calendar: utc)
     }
 
@@ -222,16 +223,92 @@ final class SeriesRuleWriteTests: XCTestCase {
 
     func testWhetherACountedSeriesStillRuns() {
         let now = first.addingTimeInterval(5 * week)
-        func runs(_ rule: SeriesRuleWrite.StoredRule) -> Bool { SeriesRuleWrite.stillRuns(rule, firstStart: first, now: now, calendar: utc) }
-        XCTAssertTrue(runs(weeklyTuesday), "ten weeks from five weeks ago")
-        XCTAssertFalse(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3], occurrenceCount: 4)))
-        XCTAssertTrue(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3], occurrenceCount: 5)), "the slot after the last is now")
-        XCTAssertTrue(runs(SeriesRuleWrite.StoredRule(frequency: .monthly, occurrenceCount: 3)))
-        XCTAssertTrue(runs(SeriesRuleWrite.StoredRule(frequency: .daily, interval: 7, occurrenceCount: 6)))
-        XCTAssertFalse(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3, 5], occurrenceCount: 50)),
-                       "several slots a week cannot be stepped: counted as finished")
-        XCTAssertTrue(runs(SeriesRuleWrite.StoredRule(frequency: .weekly)), "no bound")
-        XCTAssertTrue(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, endDate: now)), "an end at now")
+        func runs(_ rule: SeriesRuleWrite.StoredRule, base: Date? = nil) -> Bool? {
+            SeriesRuleWrite.stillRuns(rule, countBase: base ?? first, now: now, calendar: utc)
+        }
+        XCTAssertEqual(runs(weeklyTuesday), true, "ten weeks from five weeks ago")
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3], occurrenceCount: 4)), false)
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3], occurrenceCount: 5)), true, "the slot after the last is now")
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .monthly, occurrenceCount: 3)), true)
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .daily, interval: 7, occurrenceCount: 6)), true)
+        XCTAssertNil(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [3, 5], occurrenceCount: 50)),
+                     "several slots a week cannot be stepped: unknown")
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .weekly)), true, "no bound")
+        XCTAssertEqual(runs(SeriesRuleWrite.StoredRule(frequency: .weekly, endDate: now)), true, "an end at now")
+        XCTAssertNil(SeriesRuleWrite.stillRuns(weeklyTuesday, countBase: nil, now: now, calendar: utc), "a count with no base")
+        XCTAssertEqual(SeriesRuleWrite.stillRuns(SeriesRuleWrite.StoredRule(frequency: .weekly, endDate: now), countBase: nil, now: now, calendar: utc),
+                       true, "an end does not need the base")
+    }
+
+    /// PR #471 verify round 3: the stored count runs from the original first start, so only a call
+    /// over the whole series from its first slot holds it.
+    func testTheCountBaseIsTheFirstSlotOfAWholeSeriesCallOnly() {
+        let whole = SeriesRuleWrite.Reach.wholeSeries(anchor: first)
+        XCTAssertEqual(SeriesRuleWrite.countBase(reach: whole, viaStandIn: false, firstSlotGone: false), first)
+        XCTAssertNil(SeriesRuleWrite.countBase(reach: .fromLaterOccurrence(anchor: first.addingTimeInterval(6 * week)), viaStandIn: false, firstSlotGone: false))
+        XCTAssertNil(SeriesRuleWrite.countBase(reach: whole, viaStandIn: true, firstSlotGone: false), "the stand-in of a deleted first occurrence")
+        XCTAssertNil(SeriesRuleWrite.countBase(reach: whole, viaStandIn: false, firstSlotGone: true), "an own id after the first slot was deleted")
+        XCTAssertNil(SeriesRuleWrite.countBase(reach: .oneOccurrence, viaStandIn: false, firstSlotGone: false))
+    }
+
+    /// Round 3 HIGH: a weekly series of 10 that ended three weeks ago, changed from its 7th
+    /// occurrence (happened, six weeks ago) to an end_date tomorrow or no bound. Counted from the 7th
+    /// it read as still running and brought back occurrences in the past.
+    func testAFinishedCountedSeriesChangedFromALaterOccurrenceIsRefused() {
+        let now = first.addingTimeInterval(12 * week)
+        let seventh = first.addingTimeInterval(6 * week)
+        let later = SeriesRuleWrite.Reach.fromLaterOccurrence(anchor: seventh)
+        let base = SeriesRuleWrite.countBase(reach: later, viaStandIn: false, firstSlotGone: false)
+        func refused(_ new: RecurrenceRuleInput) -> String? {
+            SeriesRuleWrite.startedRuleRefusal(new, stored: [weeklyTuesday], happened: true, countBase: base, now: now, calendar: utc)
+        }
+        XCTAssertEqual(refused(rule(end: now.addingTimeInterval(day))), SeriesRuleWrite.countedSeriesReason)
+        XCTAssertEqual(refused(rule()), SeriesRuleWrite.countedSeriesReason)
+        XCTAssertEqual(refused(rule(count: 12)), SeriesRuleWrite.countedSeriesReason)
+        XCTAssertNil(refused(rule(count: 10)), "its own bound")
+        XCTAssertEqual(SeriesRuleWrite.stillRuns(weeklyTuesday, countBase: seventh, now: now, calendar: utc), true,
+                       "the round-2 reading, counted from the 7th: what this guards against")
+        XCTAssertEqual(SeriesRuleWrite.startedRuleRefusal(rule(end: now.addingTimeInterval(day)), stored: [weeklyTuesday], happened: true,
+                                                          countBase: first, now: now, calendar: utc),
+                       SeriesRuleWrite.startedRuleReason, "from its first slot: finished, refused as such")
+    }
+
+    /// Round 3 MEDIUM: with the first occurrence deleted, the stand-in starts a week late, and a
+    /// series that ended reads as running from it. No base: refused.
+    func testAFinishedCountedSeriesThroughAStandInIsRefused() {
+        let now = first.addingTimeInterval(10 * week + 3 * day)
+        let standIn = first.addingTimeInterval(week)
+        XCTAssertEqual(SeriesRuleWrite.stillRuns(weeklyTuesday, countBase: standIn, now: now, calendar: utc), true, "the wrong reading")
+        for (viaStandIn, firstSlotGone) in [(true, false), (false, true)] {
+            let base = SeriesRuleWrite.countBase(reach: .wholeSeries(anchor: standIn), viaStandIn: viaStandIn, firstSlotGone: firstSlotGone)
+            XCTAssertEqual(SeriesRuleWrite.startedRuleRefusal(rule(), stored: [weeklyTuesday], happened: true, countBase: base, now: now, calendar: utc),
+                           SeriesRuleWrite.countedSeriesReason)
+        }
+    }
+
+    /// Round 3 LOW: a counted rule with several days a week gets the count text, not the one whose
+    /// route was just refused.
+    func testSeveralDaysAPeriodOnACountedSeriesGetTheCountText() {
+        let mwf = SeriesRuleWrite.StoredRule(frequency: .weekly, daysOfWeek: [2, 4, 6], occurrenceCount: 30)
+        XCTAssertEqual(refusal(rule(days: [2, 4, 6], end: first.addingTimeInterval(9 * week)), stored: [mwf]), SeriesRuleWrite.countedSeriesReason)
+        XCTAssertNil(refusal(rule(days: [2, 4, 6], count: 30), stored: [mwf]), "its own count")
+        for phrase in ["occurrence_count", "has not happened yet", "end_date", "leaving recurrence out", "Nothing was written."] {
+            XCTAssertTrue(SeriesRuleWrite.countedSeriesReason.contains(phrase), phrase)
+        }
+    }
+
+    /// Round 3 LOW: an echo of the stored rule may change nothing, leaving calendar_name to move
+    /// every occurrence; the measured rows all changed the bound.
+    func testAnEchoedRuleWithACalendarFromALaterOccurrenceIsRefused() {
+        XCTAssertTrue(SeriesRuleWrite.isStoredRule(rule(count: 10), stored: [weeklyTuesday]))
+        XCTAssertFalse(SeriesRuleWrite.isStoredRule(rule(end: first), stored: [weeklyTuesday]))
+        XCTAssertFalse(SeriesRuleWrite.isStoredRule(rule(interval: 2, count: 10), stored: [weeklyTuesday]))
+        XCTAssertEqual(SeriesRuleWrite.laterOccurrenceRefusal(fromLaterOccurrence: true, changesAllDay: false, changesCalendar: true,
+                                                              hasRecurrence: true, occurrenceCount: nil, recurrenceIsStored: true),
+                       SeriesRuleWrite.calendarReason)
+        XCTAssertNil(SeriesRuleWrite.laterOccurrenceRefusal(fromLaterOccurrence: true, changesAllDay: false, changesCalendar: true,
+                                                            hasRecurrence: true, occurrenceCount: nil, recurrenceIsStored: false))
+        XCTAssertTrue(SeriesRuleWrite.calendarReason.contains("a bound other than the series' own"))
     }
 
     /// Round-2 LOW: a pattern recurrence cannot write has no rule change here, and the text says so.
@@ -258,6 +335,7 @@ final class SeriesRuleWriteTests: XCTestCase {
         for address in [EventKitManager.RecurrenceChangeAddress.seriesId, .occurrenceOwnId(series: nil)] {
             let text = EventKitError.recurrenceChangeOnOccurrenceRefused(clearing: true, address: address).errorDescription ?? ""
             XCTAssertTrue(text.contains("an end_date before now is refused"), text)
+            XCTAssertTrue(text.contains("on a series with an occurrence_count"), text)
         }
     }
 
@@ -308,7 +386,7 @@ final class SeriesRuleWriteTests: XCTestCase {
         for reason in [SeriesRuleWrite.countReason, SeriesRuleWrite.calendarReason, SeriesRuleWrite.allDayReason,
                        SeriesRuleWrite.startPassesOccurrencesReason, SeriesRuleWrite.laterStartReason,
                        SeriesRuleWrite.clearStartReason, SeriesRuleWrite.startedRuleReason, SeriesRuleWrite.pastStartReason,
-                       SeriesRuleWrite.unwritableRuleReason, SeriesRuleWrite.countAfterDeletedFirstReason] {
+                       SeriesRuleWrite.unwritableRuleReason, SeriesRuleWrite.countAfterDeletedFirstReason, SeriesRuleWrite.countedSeriesReason] {
             XCTAssertTrue(reason.hasSuffix("Nothing was written."), reason)
         }
     }
@@ -321,7 +399,8 @@ final class SeriesRuleWriteTests: XCTestCase {
         let firstWrite = try XCTUnwrap(flat.range(of: "if let t = title { event.title = t }"))
         for pin in ["SeriesRuleWrite.laterOccurrenceRefusal( fromLaterOccurrence: reach.isFromLaterOccurrence,",
                     "if let reason = SeriesRuleWrite.startRefusal( reach: reach, plannedStart: datePlan.datesToWrite?.start, happened: happened, now: now, dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {",
-                    "if let anchor = reach.anchor, let reason = SeriesRuleWrite.startedRuleRefusal( recurrenceRule, stored: seriesRules, happened: happened, firstStart: anchor, now: now,"] {
+                    "if let reason = SeriesRuleWrite.startedRuleRefusal( recurrenceRule, stored: seriesRules, happened: happened, countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn, firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),",
+                    "recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {"] {
             let range = try XCTUnwrap(flat.range(of: pin), pin)
             XCTAssertLessThan(range.lowerBound, firstWrite.lowerBound, pin)
         }
@@ -335,7 +414,7 @@ final class SeriesRuleWriteTests: XCTestCase {
                     "ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },",
                     "DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { storedEvent(id: $0) } : masterEvent",
                     "let dayCalendar = Calendar.gregorian(in: datePlan.isAllDay || event.isAllDay ? .current : (event.timeZone ?? .current))",
-                    "wholeSeriesCall: applyToAll) {",
+                    "wholeSeriesCall: applyToAll,",
                     "$0.calendarIdentifier != event.calendar?.calendarIdentifier"] {
             XCTAssertTrue(flat.contains(pin), pin)
         }

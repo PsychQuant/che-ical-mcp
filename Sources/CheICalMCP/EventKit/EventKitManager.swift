@@ -1310,7 +1310,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             changesAllDay: datePlan.isAllDay != event.isAllDay,
             changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
             hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount,
-            wholeSeriesCall: applyToAll) {
+            wholeSeriesCall: applyToAll,
+            recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
         // #451 (PR #471 verify round 2): from an occurrence that happened, start_time keeps that
@@ -1324,9 +1325,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.
-        if let anchor = reach.anchor, let reason = SeriesRuleWrite.startedRuleRefusal(
-            recurrenceRule, stored: seriesRules, happened: happened, firstStart: anchor, now: now,
-            calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
+        // The stored count runs from the original first start, which only a call over the whole
+        // series from its first slot holds (PR #471 verify round 3).
+        if let reason = SeriesRuleWrite.startedRuleRefusal(
+            recurrenceRule, stored: seriesRules, happened: happened,
+            countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn,
+                                                 firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),
+            now: now, calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
 
@@ -3303,7 +3308,7 @@ enum EventKitError: LocalizedError {
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
-            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own. On a series that has started, an end_date before now is refused, as it deletes occurrences that happened (#451)."
+            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own. On a series that has started, an end_date before now is refused, as one before an occurrence that happened deletes it; on a series with an occurrence_count, only a call with the series' id and span 'all' can tell whether it still has occurrences to come, and other calls pass only the series' own bound (#451)."
             let wholeSeries = "span 'all' leaves one event on the series' first day and deletes the other occurrences"
             switch (clearing, address) {
             case (false, .seriesId):
