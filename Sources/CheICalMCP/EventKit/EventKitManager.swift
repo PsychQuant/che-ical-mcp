@@ -1523,6 +1523,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) {
             throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason)
         }
+        // verify r6: from the first occurrence by slot, moved to start after another, not measured.
+        if span == .futureEvents, let refusal = try movedFirstDeleteRefusal(masterEvent, id: identifier) {
+            throw EventKitError.occurrenceAddressRefused(reason: refusal)
+        }
         let hadRules = masterEvent.hasRecurrenceRules
 
         // For recurring events, always resolve the specific occurrence (this/future both need it).

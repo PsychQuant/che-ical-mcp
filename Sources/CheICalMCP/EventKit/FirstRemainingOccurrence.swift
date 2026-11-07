@@ -31,6 +31,21 @@ enum FirstRemainingOccurrence {
         var slot: Date? = nil
         /// Another store's edited occurrence: an unrelated identifier, the same iCalendar UID.
         var sameSeriesByExternalID: Bool = false
+        /// `slot` was read from a `/RID=` (on either identifier, `slotIsFromRID`), so on an all-day
+        /// series it is the wall-clock date read as UTC (`UndoPostState.ruleSlot(of:)`, verify r6).
+        var slotFromRID: Bool = false
+    }
+
+    /// Whether `UndoPostState.originalSlot` reads the slot from a `/RID=` of either identifier.
+    static func slotIsFromRID(eventIdentifier: String?, externalIdentifier: String?) -> Bool {
+        UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier, occurrenceDate: nil) != nil
+    }
+
+    /// verify r5/r6: whether the series' first slot is gone, read as a rule slot: an all-day
+    /// series' raw `/RID=` is not local midnight outside UTC.
+    static func firstSlotDeleted(_ candidate: Candidate, firstStart: Date?, isAllDay: Bool, zone: TimeZone = .current) -> Bool {
+        guard let firstStart else { return true }
+        return !UndoPostState.sameInstant(UndoPostState.ruleSlot(of: candidate, isAllDay: isAllDay, zone: zone), firstStart)
     }
 
     /// The index of the earliest qualifying candidate (the first listed on a tie), or nil, also
@@ -70,8 +85,9 @@ enum FirstRemainingOccurrence {
     /// verify r3: it must not start after the next occurrence's slot; every measured row (the delete
     /// from it with span future included) had it there, and EventKit's cut by slot or by shown start
     /// past that was not measured.
-    static func earliestEdited(_ candidates: [Candidate], identifier: String) -> Int? {
-        func slot(_ index: Int) -> Date { candidates[index].slot ?? candidates[index].start }
+    static func earliestEdited(_ candidates: [Candidate], identifier: String, isAllDay: Bool = false, zone: TimeZone = .current) -> Int? {
+        // verify r6: rule slots, as the shown starts are local.
+        func slot(_ index: Int) -> Date { UndoPostState.ruleSlot(of: candidates[index], isAllDay: isAllDay, zone: zone) }
         guard let first = candidates.indices.min(by: { slot($0) < slot($1) }),
               candidates[first].isDetached,
               DetachedOccurrenceSpan.seriesIdentifier(of: candidates[first].eventIdentifier ?? "") == identifier else { return nil }
@@ -206,7 +222,9 @@ extension EventKitManager {
                 slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
                                                  externalIdentifier: event.calendarItemExternalIdentifier,
                                                  occurrenceDate: event.occurrenceDate),
-                sameSeriesByExternalID: external)
+                sameSeriesByExternalID: external,
+                slotFromRID: FirstRemainingOccurrence.slotIsFromRID(eventIdentifier: event.eventIdentifier,
+                                                                    externalIdentifier: event.calendarItemExternalIdentifier))
         }
         return (listed, candidates)
     }
@@ -231,12 +249,11 @@ extension EventKitManager {
     /// unedited occurrence first, is not this.
     func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool, firstDeleted: Bool)? {
         guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
-              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id),
+              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id, isAllDay: stored.isAllDay),
               let first = candidates[index].eventIdentifier else { return nil }
         let firstStart: Date? = stored.startDate
-        // verify r5: as a rule slot, so an all-day /RID= is not taken for a deleted first slot.
-        let slot = UndoPostState.ruleSlot(of: candidates[index], isAllDay: stored.isAllDay)
-        return (first, !candidates.contains { !$0.isDetached }, !(firstStart.map { UndoPostState.sameInstant(slot, $0) } ?? false))
+        return (first, !candidates.contains { !$0.isDetached },
+                FirstRemainingOccurrence.firstSlotDeleted(candidates[index], firstStart: firstStart, isAllDay: stored.isAllDay))
     }
 
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and
@@ -260,7 +277,8 @@ extension EventKitManager {
         var known = DetachedOccurrenceSpan.neighbours(
             of: id, slot: slot, among: candidates, coversWholeSeries: covers, namedInTheCall: namedInTheCall,
             own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart,
-                                         series: listed.first { !$0.isDetached }))
+                                         series: listed.first { !$0.isDetached }),
+            isAllDay: series.isAllDay)
         known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(
             of: id, among: candidates, coversWholeSeries: covers,
             measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules),
@@ -270,6 +288,13 @@ extension EventKitManager {
     }
 
     /// #416: the refusal of a span `all` delete of `event`, resolved from `id`, or nil.
+    /// verify r6: the refusal of `delete_event` span `future` through the first occurrence by slot
+    /// when it was edited to start after another occurrence, or nil.
+    func movedFirstDeleteRefusal(_ event: EKEvent, id: String) throws -> String? {
+        try DetachedOccurrenceSpan.movedFirstDeleteRefusal(identifier: id, isDetached: event.isDetached,
+                                                           neighbours: try occurrenceNeighbours(of: event, id: id))
+    }
+
     func seriesDeleteRefusal(_ event: EKEvent, id: String, namedInTheCall: Set<String> = [], batch: Bool = false) throws -> String? {
         try DetachedOccurrenceSpan.seriesDeleteRefusal(identifier: id, isDetached: event.isDetached, batch: batch,
                                                        neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))

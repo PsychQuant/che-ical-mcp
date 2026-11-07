@@ -543,7 +543,8 @@ end、notes、location、alarms。
    都要量：換星期、interval 2），才放寬這條拒絕。經場次自己的 id 對已開始系列寫日期、`recurrence`、鬧鐘、`url`、`structured_location`
    也都沒量過（verify r5 選擇列為待量，不拒絕），#471 合併後一起量。全天系列在 `TZ=America/Los_Angeles` 下，第 1 場改過時經它自己的 id
    與經系列 id 寫 `recurrence`：2026-11-08 量過（修正前被誤判成第 1 場已刪而拒絕，修正後套用）。`timezone`、`url`、`structured_location` 與 span `future` 的日期只在以次數結束
-   的 5 場系列量過，以 end_date 結束的系列沒量（拒絕）。另一個場次顯示的開始時間早於最早那一場時，系列 id 不走這條路（沒量）。
+   的 5 場系列量過，以 end_date 結束的系列沒量（拒絕）。另一個場次顯示的開始時間早於最早那一場時，系列 id 不走這條路（沒量）。verify r6：在這兩種「最早那一場被移到別場之後」的形狀下，
+   經它自己的 id 的 span `all`／`future` 寫入與 span `future` 刪除也拒絕（同樣沒量），2026-11-08 實機確認拒絕、什麼都沒動。
    **打 tag 前必做（verify r4 的 MEDIUM，仍欠）**：在重啟後的 session MCP 上，先做一筆可 undo 的操作，再做這條經系列 id 的刪除，
    第一次 `undo` 要被拒絕並丟棄刪除紀錄，第二次 `undo` 要還原先前那筆（`--cli` 走不到）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時

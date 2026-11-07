@@ -131,6 +131,10 @@ enum DetachedOccurrenceSpan {
         var own = OwnValues()
         /// Set apart from the slots, as `neighbours(of:)` reads only those (`seriesTimeFacts`).
         var seriesTime = SeriesTimeFacts()
+        /// verify r6: with no earlier occurrence left, it starts after another occurrence's slot, or
+        /// another shows a start before its start. Then a write from it with span 'all' or 'future' was
+        /// not measured then; `earliestEdited` takes the series' id there neither.
+        var movedPastOthers = false
 
         /// Whether a save from this occurrence starts a new series.
         var startsNewSeries: Bool { earlierRemain || own.firstSlotGone }
@@ -211,12 +215,18 @@ enum DetachedOccurrenceSpan {
     /// what is around it. `namedInTheCall`: identifiers the same `event_ids` call also deletes,
     /// which do not count as left behind.
     static func neighbours(of identifier: String, slot: Date, among candidates: [FirstRemainingOccurrence.Candidate],
-                           coversWholeSeries: Bool, namedInTheCall: Set<String> = [], own: OwnValues = OwnValues()) -> Neighbours? {
-        guard candidates.contains(where: { $0.eventIdentifier == identifier }) else { return nil }
+                           coversWholeSeries: Bool, namedInTheCall: Set<String> = [], own: OwnValues = OwnValues(),
+                           isAllDay: Bool = false, zone: TimeZone = .current) -> Neighbours? {
+        guard let this = candidates.first(where: { $0.eventIdentifier == identifier }) else { return nil }
         let others = candidates.filter { $0.eventIdentifier != identifier }
         let unnamed = others.filter { !namedInTheCall.contains($0.eventIdentifier ?? "") }
-        return Neighbours(earlierRemain: others.contains { ($0.slot ?? $0.start) < slot },
-                          othersRemain: !unnamed.isEmpty || !coversWholeSeries, own: own)
+        // verify r6: rule slots, as `slot` is one.
+        let otherSlots = others.map { UndoPostState.ruleSlot(of: $0, isAllDay: isAllDay, zone: zone) }
+        var known = Neighbours(earlierRemain: otherSlots.contains { $0 < slot },
+                               othersRemain: !unnamed.isEmpty || !coversWholeSeries, own: own)
+        known.movedPastOthers = !known.earlierRemain
+            && ((otherSlots.min().map { this.start > $0 } ?? false) || others.contains { $0.start < this.start })
+        return known
     }
 
     /// The refusal of `update_event` with span `all` or `future` through one occurrence, or nil
@@ -230,6 +240,11 @@ enum DetachedOccurrenceSpan {
         guard let known = try neighbours() else {
             return unknownReason(identifier: identifier, span: wholeSeries ? "'all'" : "'future'", suffix: "Nothing was written.")
         }
+        // verify r6: the first by slot, moved to start after another occurrence: not measured
+        // (`earliestEdited` refuses the series' id there too). A split comes before the fields, so
+        // the fields text does not offer what `updateReason` then refuses.
+        if !known.earlierRemain, known.movedPastOthers { return movedFirstReason }
+        if wholeSeries && known.earlierRemain { return updateReason }
         // verify r4: on a series that has started, no date row was run through the series' id.
         if throughSeriesID, known.seriesTime.started, !fields.isDisjoint(with: startedSeriesFields) { return startedSeriesReason }
         // verify r5: after a deleted first occurrence, span all takes no rule (below), and the text says so.
@@ -244,7 +259,6 @@ enum DetachedOccurrenceSpan {
         if firstDeleted, fields.contains("recurrence") {
             return firstLeftRecurrenceReason
         }
-        if wholeSeries && known.earlierRemain { return updateReason }
         if repeatsOccurrenceValue { return sameValueReason(wholeSeries: wholeSeries) }
         // With no other occurrence left there is nothing to carry to (measured: the only one left).
         let carried = known.startsNewSeries && known.othersRemain && carries(known.own, writesLocation: writesLocation)
@@ -350,6 +364,18 @@ enum DetachedOccurrenceSpan {
     /// verify r4: through the series' id on a series that has started. Reported through
     /// `throughSeriesID`.
     static let startedSeriesReason = "A date, time zone or new recurrence through the series' identifier is refused once the series has started: every row measured was on a series still to come. Nothing was written."
+
+    /// verify r6: `update_event` span 'all' or 'future' through the first occurrence by slot that was
+    /// edited to start after another occurrence.
+    static let movedFirstReason = "event_id names the occurrence that comes first in its recurring series by its original date, edited on its own to start after another occurrence, and a write from it with span 'all' or 'future' was not measured in that shape, so it is refused. Use span 'this' with occurrence_date for single occurrences. Nothing was written."
+
+    /// verify r6: `delete_event` span 'future' there.
+    static let movedFirstDeleteReason = "event_id names the occurrence that comes first in its recurring series by its original date, edited on its own to start after another occurrence, and a delete from it with span 'future' was not measured in that shape, so it is refused. Use span 'this' with occurrence_date for single occurrences. Nothing was deleted."
+
+    static func movedFirstDeleteRefusal(identifier: String, isDetached: Bool, neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
+        guard addressesOneOccurrence(identifier: identifier, isDetached: isDetached), let known = try neighbours() else { return nil }
+        return !known.earlierRemain && known.movedPastOthers ? movedFirstDeleteReason : nil
+    }
 
     /// verify r4 (#454 merge): a new days_of_week through an occurrence's own id is read against
     /// its original day, before the exemptions that read the series' stored rule.
