@@ -2010,7 +2010,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     try self.eventStore.save(copy, span: .thisEvent)
                     return copy
                 }
-            }, removeSource: {
+            }, sourceIsOccurrence: isSplit, sourceNotCarriedOver: planned.notCarriedOver, removeSource: {
                 try self.eventStore.remove(subject, span: .thisEvent)
             }, copyRecord: { copy in
                 // An empty identifier is recorded as such; its undo restores the source and says the
@@ -2798,18 +2798,30 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
-        case .moveByCopy(let original, let copyID, let copy):
+        case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
             // #466: the source first, through the delete-undo's own code (its calendar check, its
             // refusals, its new ID in the text); its error is thrown and nothing of the copy touched.
+            // A split's source is one occurrence and goes through the occurrence undo, so #285's slot
+            // check writes nothing when the series holds the slot again; a fallback copy's one-off
+            // through the event undo. A missing calendar is refused in a move's words (round 2).
             // Then the copy, checked as the undo of a created event checks it (#236), and removed
             // only when found unchanged; otherwise it stays. Nothing after the restore throws
-            // (`MoveByCopyUndo.run`), so the record is used up once the source is back. The check
-            // and the removal run with no suspension between them, as in the create-undo arm.
+            // (`MoveByCopyUndo.run`), so the record is used up once the source is back.
+            // PR #474 round 2: `run` is nonisolated, so the check and the removal are one async
+            // closure formed here: it runs on this actor, and nothing suspends between the check
+            // and the removal (the create-undo arm's order). A synchronous removal closure called
+            // from `run` after the check ran off the actor.
             let undone = try await MoveByCopyUndo.run(
                 copyID: copyID,
-                restoreOriginal: { try await self.undoDeletedEvent(original).text },
-                checkCopy: { try await self.verifiedEvent(of: .createEvent(id: copyID, title: copy.title, created: copy), verb: .undo) },
-                removeCopy: { try self.removeMoveCopy($0) },
+                restoreOriginal: {
+                    isSplit
+                        ? try await self.undoDeletedOccurrence(original, notCarriedOver: notCarriedOver, kind: .undoMoveByCopy).text
+                        : try await self.undoDeletedEvent(original, kind: .undoMoveByCopy).text
+                },
+                checkAndRemove: {
+                    let event = try await self.verifiedEvent(of: .createEvent(id: copyID, title: copy.title, created: copy), verb: .undo)
+                    try MoveByCopyUndo.removing { try self.removeMoveCopy(event) }
+                },
                 describeRemovalFailure: { EventKitErrorSanitizer.writeFailureLog(handler: "undo.moveByCopy", identifier: copyID, error: $0) })
             markNeedsRefresh()
             return MoveByCopyUndo.message(restored: undone.restored, copyID: copyID, copy: undone.copy)
@@ -3370,6 +3382,9 @@ enum EventKitError: LocalizedError {
             case .moveBack:
                 which = "the move of an event\(named): the calendar it was moved from"
                 loss = "Giving up this undo cannot be reversed; the event stays in the calendar it was moved to"
+            case .undoMoveByCopy:
+                which = "the move of an event\(named): the calendar it was moved from"
+                loss = "Giving up this undo cannot be reversed; the copy the move made stays in the calendar it was moved to, if it is still there"
             }
             let state = hasIdentifier
                 ? "is not available (deleted, or its account turned off or still syncing); it was not found under its recorded identifier"

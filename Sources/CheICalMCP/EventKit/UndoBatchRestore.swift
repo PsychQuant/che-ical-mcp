@@ -125,7 +125,7 @@ extension UndoOperation {
             return .eventCalendar(snapshot)
         case .deleteReminder(let snapshot):
             return .reminderList(snapshot)
-        case .moveByCopy(let original, _, _):
+        case .moveByCopy(let original, _, _, _, _):
             // #466: the source is recreated in its recorded calendar. No batch records this kind.
             return .eventCalendar(original)
         case .deleteFollowingOccurrences:
@@ -416,7 +416,7 @@ extension UndoOperation {
     var restoredItemTitle: String? {
         switch self {
         case .deleteEvent(let snapshot): return snapshot.title
-        case .moveByCopy(let original, _, _): return original.title
+        case .moveByCopy(let original, _, _, _, _): return original.title
         case .deleteOccurrence(let snapshot, _): return snapshot.title
         case .deleteReminder(let snapshot): return snapshot.title
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
@@ -433,7 +433,7 @@ extension UndoOperation {
     /// list or account name (#37).
     var restoredItemWhen: String? {
         switch self {
-        case .deleteEvent(let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _):
+        case .deleteEvent(let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _, _, _):
             let format = snapshot.isAllDay ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm:ssXXXXX"
             let zone = snapshot.isAllDay ? TimeZone.current : (snapshot.timeZone ?? TimeZone.current)
             return "starting " + DateFormatter.machineReadable(format, zone: zone).string(from: snapshot.startDate)

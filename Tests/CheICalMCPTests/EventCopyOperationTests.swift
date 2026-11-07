@@ -32,25 +32,29 @@ final class EventCopyOperationTests: XCTestCase {
     func testMoveReturnsSourceUndoOnlyAfterSuccessfulDeletion() throws {
         var calls: [String] = []
         let outcome = try EventCopyOperation.execute(source: snapshot(), saveCopy: { calls.append("save"); return "new" },
-                                                     removeSource: { calls.append("remove") }, copyRecord: copyRecord)
+                                                     sourceIsOccurrence: false, sourceNotCarriedOver: [], removeSource: { calls.append("remove") }, copyRecord: copyRecord)
         XCTAssertEqual(calls, ["save", "remove"])
         XCTAssertEqual(outcome.value, "new")
-        guard case .moveByCopy(let saved, let copyID, _)? = outcome.undo else { return XCTFail("\(String(describing: outcome.undo))") }
+        guard case .moveByCopy(let saved, false, [], let copyID, _)? = outcome.undo else { return XCTFail("\(String(describing: outcome.undo))") }
         XCTAssertEqual(copyID, "new", "the copy's own identifier, from the saved copy")
         XCTAssertEqual(saved.title, "Source")
         XCTAssertNil(saved.recurrenceRules, "a single removed occurrence must not restore a duplicate series")
+        // Round 2, LOW 2: a split records that its source is one occurrence, with what it did not carry over.
+        let split = try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, sourceIsOccurrence: true,
+                                                   sourceNotCarriedOver: ["absolute_alarms"], removeSource: {}, copyRecord: copyRecord)
+        guard case .moveByCopy(_, true, ["absolute_alarms"], "new", _)? = split.undo else { return XCTFail("\(String(describing: split.undo))") }
     }
     func testCopyDoesNotDeleteOrRecordSourceUndo() throws {
-        let outcome = try EventCopyOperation.execute(source: nil, saveCopy: { "new" }, removeSource: { XCTFail("must not remove") },
+        let outcome = try EventCopyOperation.execute(source: nil, saveCopy: { "new" }, sourceIsOccurrence: false, sourceNotCarriedOver: [], removeSource: { XCTFail("must not remove") },
                                                      copyRecord: copyRecord)
         XCTAssertNil(outcome.undo)
     }
     func testFailedSaveDoesNotDeleteSource() {
         XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { () throws -> String in throw Failure.save },
-                                                            removeSource: { XCTFail("must not remove") }, copyRecord: copyRecord))
+                                                            sourceIsOccurrence: false, sourceNotCarriedOver: [], removeSource: { XCTFail("must not remove") }, copyRecord: copyRecord))
     }
     func testFailedDeletionDoesNotProduceUndoOutcome() {
-        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, removeSource: { throw Failure.remove },
+        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, sourceIsOccurrence: false, sourceNotCarriedOver: [], removeSource: { throw Failure.remove },
                                                             copyRecord: copyRecord))
     }
 
@@ -62,6 +66,7 @@ final class EventCopyOperationTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "copyRecord: { copy in", in: move).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "let copyID = copy.eventIdentifier ??", in: move).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "return (copyID, self.postWriteSnapshot(eventID: copyID, saved: copy))", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "sourceIsOccurrence: isSplit, sourceNotCarriedOver: planned.notCarriedOver", in: move).count, 1)
     }
 
     // MARK: - refused copy (#253 verify round 2, D1)

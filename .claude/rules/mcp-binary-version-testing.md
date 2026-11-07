@@ -373,7 +373,8 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 ## Release gate：move by copy 的 undo（#466）
 
 #466 的 undo（先還原原事件、副本找得到又沒被改過才移除）只有純函式與原始碼結構測試，加上單一 stdio process
-的裝置檢查（iCloud）。undo 是 stateful，`--cli` 走不到。**出 #466 的那個版本打 tag 之前**，在重啟後的 session
+的裝置檢查（iCloud）。undo 是 stateful，`--cli` 走不到。這一節是 tag 之前**必須**做完的步驟（PR #474 round 2 的
+verify 把 session MCP 端到端檢查列為缺口），沒做完不能 tag。**出 #466 的那個版本打 tag 之前**，在重啟後的 session
 MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#466` 的拋棄式日曆 A、B，系列用 `--cli` 建：
 
 1. 每週 3 次的系列在 A → session：`move_events_batch` span `this` 把第二個場次搬到 B（`method: split`）→ `undo`：
@@ -383,6 +384,11 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#466` 的
 3. 搬移後用 `--cli` 改副本的標題 → `undo`：原事件回來，副本留在 B，訊息列出 `title`；
 4. 搬移後用 `--cli` 刪掉副本 → `undo`：原事件回來，訊息說副本找不到；
 5. 有第二個帳號時，把 B 換成另一個帳號的拋棄式日曆，重做第 1、2 步。
+6. 搬移後用 `--cli` 把副本改到第三個拋棄式日曆 C → `undo`：原事件回來，訊息列出 `calendar`，不說副本在 B；
+   搬移後刪掉 A → `undo`：以「the move of an event」與「the copy the move made stays in the calendar it was moved to,
+   if it is still there」拒絕，什麼都沒寫，`discard_id` 移除。
+系列已經重新佔了那個時段（#285 的 `seriesHoldsSlot`）時 split 的還原什麼都不寫，這個形狀要 `delete_event` span `all`
+的 capture 失敗才造得出來，沒有量。
 fallback copy（in-place 失敗後的複製）在裝置上誘發不了，沒有量；它與 split 走同一個紀錄與同一個 undo arm。
 
 結果記在 #466。結束後刪掉拋棄式日曆，用 `list_calendars` 確認。

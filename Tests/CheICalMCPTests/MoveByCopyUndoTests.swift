@@ -11,7 +11,14 @@ final class MoveByCopyUndoTests: XCTestCase {
     private static let copyFixture = UndoSnapshotFixtures.event(title: "Standup")
     private var original: EventSnapshot { Self.originalFixture }
     private var copy: EventSnapshot { Self.copyFixture }
-    private var record: UndoOperation { .moveByCopy(original: original, copyID: "COPY-1", copy: copy) }
+    /// A fallback copy of a one-off event.
+    private var record: UndoOperation {
+        .moveByCopy(original: original, isSplit: false, notCarriedOver: [], copyID: "COPY-1", copy: copy)
+    }
+    /// One occurrence split out of a series (PR #474 round 2, LOW 2).
+    private var split: UndoOperation {
+        .moveByCopy(original: original, isSplit: true, notCarriedOver: ["absolute_alarms"], copyID: "COPY-1", copy: copy)
+    }
 
     enum Failure: Error { case restore, remove, lookup }
     private let restored = "Undone: restored event 'Standup' (new ID: NEW-1)"
@@ -23,10 +30,28 @@ final class MoveByCopyUndoTests: XCTestCase {
         let result = try await MoveByCopyUndo.run(
             copyID: copyID,
             restoreOriginal: { calls.append("restore"); return try restore() },
-            checkCopy: { calls.append("check"); return try check() },
-            removeCopy: { calls.append("remove"); try remove($0) },
+            checkAndRemove: {
+                calls.append("check")
+                let item = try check()
+                try MoveByCopyUndo.removing { calls.append("remove"); try remove(item) }
+            },
             describeRemovalFailure: { _ in "error_code_1" })
         return (calls, result)
+    }
+
+    // MARK: - isolation (PR #474 round 2, MEDIUM)
+
+    /// Round 2: `run` is a nonisolated async function, so a synchronous removal closure it called
+    /// after awaiting the check ran off the actor, and the actor was released between the #236 check
+    /// and the removal. The check and the removal now run in one async closure formed on the actor,
+    /// so both run on it with no suspension between them; the probe traps (`assertIsolated`) if the
+    /// removal runs anywhere else.
+    func testTheCheckAndTheRemovalRunOnTheCallersActor() async throws {
+        let probe = IsolationProbe()
+        let copy = try await probe.undo()
+        XCTAssertEqual(copy, .removed)
+        let steps = await probe.steps
+        XCTAssertEqual(steps, ["restore", "check", "remove (isolated)"])
     }
 
     // MARK: - order
@@ -94,6 +119,10 @@ final class MoveByCopyUndoTests: XCTestCase {
         let outcome = try await run(restore: { self.restored }, remove: { _ in throw Failure.remove })
         XCTAssertEqual(outcome.calls, ["restore", "check", "remove"])
         XCTAssertEqual(outcome.result.copy, .removalFailed("error_code_1"))
+        // Only an error from inside `removing` is a removal failure; one thrown around it is the check's.
+        let other = try await MoveByCopyUndo.run(copyID: "COPY-1", restoreOriginal: { self.restored },
+                                                 checkAndRemove: { throw Failure.remove }, describeRemovalFailure: { _ in "x" })
+        XCTAssertEqual(other.copy, .unchecked)
     }
 
     // MARK: - texts
@@ -104,7 +133,8 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertTrue(removed.contains("removed the copy the move made in the calendar it was moved to"), removed)
         XCTAssertFalse(removed.contains("both calendars"), removed)
 
-        let left: [MoveByCopyUndo.Copy] = [.noIdentifier, .notFound, .changed(["title"]), .unchecked, .removalFailed("error_code_1")]
+        let left: [MoveByCopyUndo.Copy] = [.noIdentifier, .notFound, .changed(["title"]), .changed(["calendar", "title"]),
+                                           .unchecked, .removalFailed("error_code_1")]
         for state in left {
             let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
             XCTAssertTrue(text.hasPrefix(restored), "the original's restore and its new ID come first: \(text)")
@@ -114,14 +144,42 @@ final class MoveByCopyUndoTests: XCTestCase {
             XCTAssertFalse(text.contains("discard_id"), "the entry is used up, nothing to give up: \(text)")
             XCTAssertFalse(text.contains("delete_event"), "removing the copy is the user's call, no tool named: \(text)")
         }
+        // Where the copy is known to be: found unchanged but not removed, or found changed in fields
+        // that do not include its calendar.
+        for state: MoveByCopyUndo.Copy in [.changed(["title"]), .removalFailed("error_code_1")] {
+            let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
+            XCTAssertTrue(text.contains("the event is now in both calendars"), text)
+        }
+        // Round 2, LOW 1: where it is not known, the text does not say where it is.
+        for state: MoveByCopyUndo.Copy in [.noIdentifier, .notFound, .changed(["calendar", "title"]), .unchecked] {
+            let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
+            XCTAssertFalse(text.contains("is now in both calendars"), text)
+            XCTAssertFalse(text.contains("left in the calendar it was moved to"), text)
+            XCTAssertTrue(text.contains("if it is still in the calendar it was moved to, the event is in both calendars")
+                          || text.contains("check where it is"), text)
+        }
         let changed = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .changed(["title", "alarms"]))
         XCTAssertTrue(changed.contains("was changed after the move (title, alarms)") && changed.contains("COPY-1"), changed)
+        let moved = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .changed(["calendar", "title"]))
+        XCTAssertTrue(moved.contains("was changed after the move (calendar, title)") && moved.contains("it may be in another calendar now"), moved)
         let missing = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .notFound)
         XCTAssertTrue(missing.contains("was not found under its recorded identifier"), missing)
+        let unchecked = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .unchecked)
+        XCTAssertTrue(unchecked.contains("could not be checked, so it was not removed"), unchecked)
         let noID = MoveByCopyUndo.message(restored: restored, copyID: "", copy: .noIdentifier)
         XCTAssertTrue(noID.contains("did not record the copy's identifier"), noID)
         let failed = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .removalFailed("error_code_1"))
         XCTAssertTrue(failed.contains("removing the copy the move made failed (error_code_1)"), failed)
+    }
+
+    /// Round 2, INFO: the original's calendar missing is refused in the words of a move, not of a
+    /// delete: giving up loses nothing the move did not already do, since the copy is in the target.
+    func testAMissingOriginalCalendarIsRefusedInTheWordsOfAMove() throws {
+        let text = try XCTUnwrap(EventKitError.undoCalendarMissing(event: "Standup", hasIdentifier: true, kind: .undoMoveByCopy).errorDescription)
+        XCTAssertTrue(text.hasPrefix("Cannot undo the move of an event (event 'Standup'): the calendar it was moved from is not available"), text)
+        XCTAssertTrue(text.contains("the copy the move made stays in the calendar it was moved to, if it is still there"), text)
+        XCTAssertFalse(text.contains("cannot recover the deleted"), text)
+        XCTAssertTrue(UndoOperation.failsBeforeAnyWrite(EventKitError.undoCalendarMissing(event: "Standup", hasIdentifier: true, kind: .undoMoveByCopy)))
     }
 
     /// Round 1 LOW: the listing read `Batch (2 operations)`, which the refusal's way on could not
@@ -129,6 +187,8 @@ final class MoveByCopyUndoTests: XCTestCase {
     func testTheListingNamesTheMoveAndItsTitle() {
         XCTAssertEqual(record.description,
                        "Moved event: Standup (by copy: undo restores it in its original calendar and removes the copy if unchanged)")
+        XCTAssertEqual(split.description,
+                       "Moved occurrence of event: Standup (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged)")
     }
 
     /// Round 1 LOW: redo answered the generic batch line, which points at create_event and
@@ -162,5 +222,33 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertNil(record.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: true))
         XCTAssertEqual(record.seriesRecreatedFromRules, 0)
         XCTAssertNil(record.completionWrite(undo: true, now: Date()))
+        for operation in [record, split] {
+            XCTAssertFalse(operation.redoWrites)
+            XCTAssertEqual(operation.restoredItemTitle, "Standup")
+        }
+    }
+}
+
+/// An actor that runs `MoveByCopyUndo.run` the way `EventKitManager.executeUndo` does, with closures
+/// formed on it, and records whether the removal ran on it.
+private actor IsolationProbe {
+    private(set) var steps: [String] = []
+
+    private func restore() async -> String { steps.append("restore"); return "restored" }
+    private func check() async throws -> Int { steps.append("check"); return 1 }
+    private func remove(_ item: Int) {
+        assertIsolated("the removal must run on the actor that made the check")
+        steps.append("remove (isolated)")
+    }
+
+    func undo() async throws -> MoveByCopyUndo.Copy {
+        try await MoveByCopyUndo.run(
+            copyID: "COPY-1",
+            restoreOriginal: { await self.restore() },
+            checkAndRemove: {
+                let item = try await self.check()
+                try MoveByCopyUndo.removing { self.remove(item) }
+            },
+            describeRemovalFailure: { _ in "" }).copy
     }
 }

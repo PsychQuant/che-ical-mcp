@@ -32,7 +32,7 @@ final class UndoRedoClassificationTests: XCTestCase {
             .createReminder(id: "REM-1", title: "Pay rent", created: reminder),
             .deleteReminder(snapshot: reminder),
             .updateReminder(id: "REM-1", oldSnapshot: reminder, saved: reminder),
-            .moveByCopy(original: event, copyID: "EVT-1", copy: event),
+            .moveByCopy(original: event, isSplit: false, notCarriedOver: [], copyID: "EVT-1", copy: event),
         ]
     }
 
