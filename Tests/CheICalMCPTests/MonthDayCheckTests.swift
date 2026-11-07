@@ -85,10 +85,18 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertFalse(refused(stored: nil))
         XCTAssertFalse(refused(stored: []))
         XCTAssertFalse(refused(ruleInCall: true), "a rule in the call is checked by daysToCheck")
-        let message = EventKitError.monthDayMoveRefused(expectedDays: "1, 15").errorDescription ?? ""
-        for phrase in ["days_of_month [1, 15]", "two occurrences", "same day", "Calendar", "Nothing was written"] {
+        // Verify round 2, measured on iCloud: with the series' rule in the call, the same moves were
+        // clean ([1, 15] resent with the start on the 15th; [1, 4, 15] with the start on the 4th), so
+        // the message names that route, unless the stored rule has a part recurrence cannot write.
+        let message = EventKitError.monthDayMoveRefused(expectedDays: "1, 15", unwritable: false).errorDescription ?? ""
+        for phrase in ["days_of_month [1, 15]", "two occurrences", "same day", "recurrence", "Nothing was written"] {
             XCTAssertTrue(message.contains(phrase), message)
         }
+        let unwritable = EventKitError.monthDayMoveRefused(expectedDays: "-1", unwritable: true).errorDescription ?? ""
+        for phrase in ["cannot write", "Calendar", "Nothing was written"] {
+            XCTAssertTrue(unwritable.contains(phrase), unwritable)
+        }
+        XCTAssertFalse(unwritable.contains("pass recurrence"), unwritable)
     }
 
     /// Verify round 1: a day counted from the end of the month, months, weeks or days of the year, or
@@ -99,11 +107,6 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertTrue(MonthDayCheck.storedUnwritable(days: [15], numbered: false, otherParts: true))
         XCTAssertFalse(MonthDayCheck.storedUnwritable(days: [1, 15], numbered: false, otherParts: false))
         XCTAssertFalse(MonthDayCheck.storedUnwritable(days: nil, numbered: false, otherParts: false))
-        let message = EventKitError.dayOfMonthOffUnwritableRule(startDay: 30).errorDescription ?? ""
-        for phrase in ["day 30", "cannot write", "Calendar", "Nothing was written"] {
-            XCTAssertTrue(message.contains(phrase), message)
-        }
-        XCTAssertFalse(message.contains("recurrence"), message)
     }
 
     /// Verify round 1: the day is read in the Gregorian calendar, as the rules this tool writes,
@@ -138,6 +141,11 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "if MonthDayCheck.refusesStoredMove(", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "of: originalDay ?? plannedStart,", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason)", in: update).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "EventKitError.dayOfMonthOffUnwritableRule(", in: update).count, 1)
+        // Verify round 2: the refusal on the rule-in-call path is dayOfMonthMismatch only; the
+        // "cannot write" wording belongs to the stored move.
+        XCTAssertEqual(SourcePins.ranges(of: "dayOfMonthOffUnwritableRule", in: update).count, 0)
+        XCTAssertEqual(SourcePins.ranges(of: "if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil,", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "unwritable: MonthDayCheck.storedUnwritable(", in: update).count, 1)
     }
 }
