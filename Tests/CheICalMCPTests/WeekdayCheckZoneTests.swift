@@ -55,6 +55,10 @@ final class WeekdayCheckZoneTests: XCTestCase {
         XCTAssertTrue(SourcePins.ranges(of: "frequency == .weekly ?", in: update).isEmpty)
         XCTAssertEqual(SourcePins.ranges(of: "WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span)", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "EventKitError.weekdayOffNumberedRule(", in: update).count, 1)
+        // PR #462 verify round 3: the pattern check reaches daysToCheck, call side first.
+        XCTAssertEqual(SourcePins.ranges(of: "ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "stored: storedRule.frequency, storedInterval: storedRule.interval,", in: update).count, 1)
     }
 
     /// Thursday 2031-12-04 in Taipei, against Monday and Tuesday, and against Thursday.
@@ -105,15 +109,29 @@ final class WeekdayCheckZoneTests: XCTestCase {
     /// PR #462 verify round 2: only the stored frequency and interval, on a plain-weekday rule, keep
     /// the pattern; then a rule with the same days is the series' own rule with another bound.
     func testKeepsStoredPattern() {
-        XCTAssertTrue(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 1, stored: .weekly, storedInterval: 1, storedNumbered: false))
-        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 1, stored: .daily, storedInterval: 1, storedNumbered: false),
-                       "daily on Monday replaced by weekly on Monday")
-        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .weekly, interval: 2, stored: .weekly, storedInterval: 1, storedNumbered: false))
-        XCTAssertFalse(WeekdayCheck.keepsStoredPattern(frequency: .monthly, interval: 1, stored: .monthly, storedInterval: 1, storedNumbered: true),
-                       "the first Monday would become every Monday")
-        for (input, stored) in [(RecurrenceRuleInput.Frequency.daily, EKRecurrenceFrequency.daily), (.monthly, .monthly), (.yearly, .yearly)] {
-            XCTAssertTrue(WeekdayCheck.keepsStoredPattern(frequency: input, interval: 3, stored: stored, storedInterval: 3, storedNumbered: false))
+        func keeps(_ frequency: RecurrenceRuleInput.Frequency = .weekly, interval: Int = 1, monthDays: [Int]? = nil,
+                   stored: EKRecurrenceFrequency = .weekly, storedInterval: Int = 1, storedMonthDays: [Int]? = nil,
+                   numbered: Bool = false, otherParts: Bool = false) -> Bool {
+            WeekdayCheck.keepsStoredPattern(frequency: frequency, interval: interval, daysOfMonth: monthDays,
+                                            stored: stored, storedInterval: storedInterval, storedDaysOfMonth: storedMonthDays,
+                                            storedNumbered: numbered, storedHasOtherParts: otherParts)
         }
+        XCTAssertTrue(keeps())
+        XCTAssertFalse(keeps(stored: .daily), "daily on Monday replaced by weekly on Monday")
+        XCTAssertFalse(keeps(interval: 2))
+        XCTAssertFalse(keeps(.monthly, stored: .monthly, numbered: true), "the first Monday would become every Monday")
+        for (input, stored) in [(RecurrenceRuleInput.Frequency.daily, EKRecurrenceFrequency.daily), (.monthly, .monthly), (.yearly, .yearly)] {
+            XCTAssertTrue(keeps(input, interval: 3, stored: stored, storedInterval: 3))
+        }
+        // PR #462 verify round 3: days_of_month is part of the pattern, nil and empty alike, and a
+        // stored rule with parts the recurrence parameter cannot write (months, weeks or days of the
+        // year) is never kept.
+        XCTAssertFalse(keeps(.monthly, monthDays: [15], stored: .monthly), "adds days_of_month")
+        XCTAssertFalse(keeps(.monthly, stored: .monthly, storedMonthDays: [15]), "drops days_of_month")
+        XCTAssertFalse(keeps(.monthly, monthDays: [1], stored: .monthly, storedMonthDays: [15]))
+        XCTAssertTrue(keeps(.monthly, monthDays: [15, 1], stored: .monthly, storedMonthDays: [1, 15]))
+        XCTAssertTrue(keeps(.monthly, monthDays: [], stored: .monthly, storedMonthDays: nil))
+        XCTAssertFalse(keeps(.yearly, stored: .yearly, otherParts: true), "a yearly rule in March would lose its month")
     }
 
     /// `clear_timezone` or `all_day` alone can move the day with no `start_time`.

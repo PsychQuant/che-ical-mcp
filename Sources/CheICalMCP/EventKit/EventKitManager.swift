@@ -1284,9 +1284,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         } ?? false
         let ruleKeepsStoredPattern: Bool = {
             guard let effectiveRule, let storedRule else { return false }
+            let otherParts = [storedRule.monthsOfTheYear, storedRule.weeksOfTheYear, storedRule.daysOfTheYear]
+                .contains { $0?.isEmpty == false }
             return WeekdayCheck.keepsStoredPattern(
-                frequency: effectiveRule.frequency, interval: effectiveRule.interval,
-                stored: storedRule.frequency, storedInterval: storedRule.interval, storedNumbered: storedNumbered)
+                frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,
+                stored: storedRule.frequency, storedInterval: storedRule.interval,
+                storedDaysOfMonth: storedRule.daysOfTheMonth?.map(\.intValue),
+                storedNumbered: storedNumbered, storedHasOtherParts: otherParts)
         }()
         let daysToValidate = WeekdayCheck.daysToCheck(
             requested: effectiveRule?.daysOfWeek, ruleInCall: effectiveRule != nil,

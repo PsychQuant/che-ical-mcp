@@ -30,12 +30,16 @@ enum WeekdayCheck {
         return startDayMoves && storedCount ? stored : nil
     }
 
-    /// Whether a `recurrence` in the call keeps the stored rule's pattern: the same frequency and
-    /// interval, over a stored rule on plain weekdays (`isNumberedRule` false). Only then can the
-    /// same days be the series' own rule with another bound.
-    static func keepsStoredPattern(frequency: RecurrenceRuleInput.Frequency, interval: Int,
-                                   stored: EKRecurrenceFrequency, storedInterval: Int, storedNumbered: Bool) -> Bool {
-        guard !storedNumbered, interval == storedInterval else { return false }
+    /// Whether a `recurrence` in the call keeps the stored rule's pattern: the same frequency,
+    /// interval and `days_of_month` (as sets; nil and empty are the same), over a stored rule on plain
+    /// weekdays (`isNumberedRule` false) with no part the `recurrence` parameter cannot write
+    /// (`storedHasOtherParts`: months, weeks or days of the year). Only then can the same days be the
+    /// series' own rule with another bound (PR #462 verify rounds 2 and 3).
+    static func keepsStoredPattern(frequency: RecurrenceRuleInput.Frequency, interval: Int, daysOfMonth: [Int]?,
+                                   stored: EKRecurrenceFrequency, storedInterval: Int, storedDaysOfMonth: [Int]?,
+                                   storedNumbered: Bool, storedHasOtherParts: Bool) -> Bool {
+        guard !storedNumbered, !storedHasOtherParts, interval == storedInterval,
+              Set(daysOfMonth ?? []) == Set(storedDaysOfMonth ?? []) else { return false }
         switch frequency {
         case .daily: return stored == .daily
         case .weekly: return stored == .weekly
