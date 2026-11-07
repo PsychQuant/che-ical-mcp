@@ -503,13 +503,19 @@ end、notes、location、alarms。
    系列搬走，要走一次；
    (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、
    `structured_location` 只動後面的場次；`all_day`、`clear_recurrence`、`calendar_name` 不是（#451），訊息不給這條路；
-   (h) 場次仍是系列的時間、長度、星期（只改標題、備註、地點或鬧鐘，2026-11-06，#428）：第 1 場 span `all`、第 1 場刪掉時第 2 場
-   span `all`、第 3 場 span `future`，`start_time`、`end_time`、`all_day: true`、`timezone`、`url`、鬧鐘、`structured_location`：放行，
-   別的場次都拿到新值，也跑開放式系列與另有場次改過的系列（改過的場次保留改過的內容，`all_day` 不多出場次）。第 1 場有自己的
-   地點或鬧鐘時 span `all` 放行、地點與鬧鐘留在第 1 場；會另起新系列時拒絕，同 (d)。`clear_timezone`、`clear_recurrence`、
-   `calendar_name`、全天系列的 `all_day: false` 拒絕：在沒有這些拒絕的 build 上，分別是別的場次移位且少一場、回 `updated` 沒改、
-   span `future` 搬走全部 5 場、別的場次時間不對且多一場。日期與新 `recurrence` 一起帶：拒絕（沒量）。`days_of_week` 系列，第 1 場
-   的 id 帶別的星期的 `start_time`：weekday 拒絕；
+   (h) 封閉清單（#428，iCloud，2026-11-06 量測，2026-11-08 verify r1 收窄成量過的格子）：有時間的系列、每週重複、每週至多一天，
+   場次在原本的開始時間、和沒改過的場次只差在標題、備註、地點或鬧鐘，每次呼叫只帶一個欄位（或 `start_time` 加 `end_time`）。
+   量過、放行的格子：`start_time`、`end_time`、`all_day: true`、鬧鐘，在第 1 場 span `all`、第 1 場刪掉時第 2 場 span `all`、
+   第 3 場 span `future`、開放式系列、另有場次改過的系列（改過的場次保留改過的內容，`all_day` 不多出場次）；`timezone`、`url`、
+   `structured_location` 只在第 1 場 span `all` 與第 3 場 span `future`，5 場、沒有其他改過的場次。鬧鐘只在場次的鬧鐘與系列相同時。
+   **沒量、拒絕**：其他規則（M/W/F、每月、隔週）、全天系列、其他欄位組合、日期加 `title` 或 `recurrence`、上面沒列的格子。
+   第 1 場有自己的地點或鬧鐘時 span `all` 放行、地點與鬧鐘留在第 1 場；會另起新系列時拒絕，同 (d)。`clear_timezone`、
+   `clear_recurrence`、`calendar_name`、全天系列的 `all_day: false` 拒絕：在沒有這些拒絕的 build 上，分別是別的場次移位且少一場、
+   回 `updated` 沒改、span `future` 搬走全部 5 場、別的場次時間不對且多一場；所以經場次 id 的 `all_day: true` 沒有路改回。
+   `days_of_week` 系列，第 1 場的 id 帶別的星期的 `start_time`：weekday 拒絕。經系列 id 寫過 `start_time` 後，第 1 場的 `/RID=`
+   留在原本時段（2026-11-08），之後經它的日期寫入被拒絕、`title` 照常（量過）。經系列 id 的 `delete_event` span `all`：5 場、
+   開放式、第 1 場刪掉加第 2、4 場改過的開放式，刪完列七年都是 0（2026-11-08）；span `this` 只刪一場、span `future` 拒絕。
+   **出版前在重啟後的 session MCP 上仍欠**：這條刪除之後 `undo` 回拒絕並丟棄紀錄（`--cli` 走不到）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，

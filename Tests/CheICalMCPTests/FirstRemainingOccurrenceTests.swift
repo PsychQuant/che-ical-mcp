@@ -260,9 +260,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
-        // #416 measured it: the occurrence that comes first reaches the series through its own id.
-        // A later edited occurrence does not, so the hint names that one only.
-        XCTAssertTrue(reason.contains("The occurrence that comes first in the series reaches it through its own id"), reason)
+        // #416 measured it: the occurrence that comes first reaches the series; #428 goes there
+        // through the series' id. A later edited occurrence does not reach the series.
+        XCTAssertTrue(reason.contains("When the occurrence that comes first in the series was edited on its own, update_event and delete_event with span 'all' through the series' id go through it"), reason)
         XCTAssertFalse(reason.contains("RID"))
     }
 

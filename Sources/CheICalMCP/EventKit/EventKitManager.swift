@@ -1025,9 +1025,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The fixed hint for a bare id that is listed but cannot be acted on as a whole series (#335).
     /// What reaches such a series, with its condition: without one this text pointed back to a call
     /// that is refused in the same shape (PR #431 round 6). `update_event` and `delete_event` with
-    /// span `all` get here no more (#428): they go through that occurrence. Span `future` and the
-    /// batch do.
-    private static let editedBeforeWays = "The occurrence that comes first in the series reaches it through its own id: update_event with span 'all' for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace, and delete_event with span 'future' (which cannot be undone). Anything else has no tested way yet."
+    /// span `all` get here no more when the first occurrence was edited (#428): they go through
+    /// that occurrence. Span `future` and the batch do, and so does a series whose first left is
+    /// not edited, which the text's condition leaves out (verify r1: it named only the old routes).
+    private static let editedBeforeWays = "When the occurrence that comes first in the series was edited on its own, update_event and delete_event with span 'all' through the series' id go through it: update_event writes the fields its description lists for such an occurrence, and delete_event deletes every occurrence, which cannot be undone. A write from a date on through the series' id has no tested way yet; span 'future' through the id of a later occurrence edited on its own takes the same fields."
 
     static let standInEditedBeforeReason = "This series' first occurrence was deleted or edited on its own, with an occurrence edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). \(editedBeforeWays)"
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
@@ -1054,7 +1055,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The fixed hint for a bare id of a series whose remaining occurrences were all edited on
     /// their own (#335 item 1; device, iCloud, 2026-10-26: the bare id is not found even with
     /// `occurrence_date`, while the id `list_events` gives an occurrence updates that one).
-    static let standInAllEditedReason = "This series' first occurrence was deleted and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
+    static let standInAllEditedReason = "This series' first occurrence was deleted or edited on its own, and the occurrences found for it (within about four years of its start) were all edited on their own, so the series id reaches none of them. Use the id that list_events shows for an occurrence (it ends in /RID=...) to update or delete that one occurrence."
     /// The fixed reason for refusing a change of account through the stand-in (#326).
     private static let standInAccountReason = "This series' first occurrence was deleted, so moving the whole series to a calendar of another account (a create plus a delete from its first remaining occurrence) is not supported. Move it within the same account, or move a single occurrence with its occurrence date and span 'this'."
     /// The fixed reason for refusing the undo of a whole-series move whose way back goes through
@@ -1063,7 +1064,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     static let standInUndoAccountReason = "Cannot undo the move: this series' first occurrence was deleted, so moving the whole series back to its original calendar in another account (a create plus a delete from its first remaining occurrence) is not supported. Nothing was written and this history entry was kept. Move the series back in Calendar, or move single occurrences with their occurrence date and span 'this'; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     /// The fixed reason for refusing a series-level update (calendar of another account,
     /// recurrence rules) through the stand-in (#326).
-    private static let standInSeriesPropertyReason = "This series' first occurrence was deleted, so changing its calendar to one of another account, or its recurrence, from its first remaining occurrence is not supported."
+    private static let standInSeriesPropertyReason = "This series' first occurrence was deleted or edited on its own, so changing its calendar to one of another account, or its recurrence, from the occurrence that stands in for the series is not supported."
 
     /// #268 (PR #387 verify round 4): an edit of one occurrence (span this) with a calendar of
     /// another account. A new calendar moves the whole series even with span this (device), and a
@@ -1150,7 +1151,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                     structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
                     timezone: timezone, clearTimezone: clearTimezone)
-                return (saved.event, DetachedOccurrenceSpan.seriesIdentifier(of: saved.event.eventIdentifier ?? "") ?? identifier, saved.matchedOccurrence)
+                return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier, input: identifier),
+                        saved.matchedOccurrence)
             }
             throw notFoundError(id: identifier)
         }
@@ -1530,15 +1532,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Delete an entire recurring event series by removing from the earliest occurrence.
     /// Uses .futureEvents on the master event to delete all occurrences.
-    func deleteEventSeries(identifier: String) async throws {
+    @discardableResult
+    func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {
         try await ensureCalendarAccess()
 
         guard let event = try freshEvent(id: identifier) else {
-            // #428: as in updateEvent. From the occurrence that comes first, span future is the whole
-            // series (device), and it cannot be undone, as through that id.
+            // #428: as in updateEvent. Only span 'all' gets here (`handleDeleteEvent`). From the
+            // occurrence that comes first, span future removed every occurrence on iCloud, open-ended
+            // series and further edited occurrences included (2026-11-08), and its record cannot be
+            // undone (`.followingOccurrences`): the response says so.
             if let first = try firstEditedOccurrenceID(of: identifier) {
                 try await deleteEvent(identifier: first, span: .futureEvents)
-                return
+                return .firstEditedOccurrence(id: first)
             }
             throw notFoundError(id: identifier)
         }
@@ -1563,6 +1568,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         markNeedsRefresh()
         await CalendarUndoManager.shared.record(.deleteEvent(snapshot: snapshot))
+        return .series
     }
 
     /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no

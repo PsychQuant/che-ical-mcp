@@ -16,9 +16,10 @@ import Foundation
 ///
 /// One more refusal (verify round 1): an occurrence edited on its own whose slot is before the
 /// stand-in. A write from the stand-in with `.futureEvents` covers its slot onward, so that
-/// occurrence would stay behind while the call reported success. The series then stays not found,
-/// and single occurrences can still be deleted or updated with span `this`. (The edited
-/// occurrence's own id is a way to the whole series only when it is the earliest one left, #416.)
+/// occurrence would stay behind while the call reported success. The stand-in is then refused, and
+/// single occurrences can still be deleted or updated with span `this`. When that edited occurrence
+/// is the earliest one left, `update_event` and `delete_event` with span `all` through the series'
+/// id go through its own id instead (`earliestEdited`, #428), the way #416 left open.
 enum FirstRemainingOccurrence {
     struct Candidate: Equatable {
         let eventIdentifier: String?
@@ -239,14 +240,18 @@ extension EventKitManager {
                                                 occurrenceDate: occurrence.occurrenceDate, isAllDay: series.isAllDay) else { return nil }
         let firstStart: Date? = series.startDate
         guard let firstStart else { return nil }
-        return DetachedOccurrenceSpan.neighbours(
-            of: id, slot: slot, among: candidates,
-            coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries(
-                rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-                firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current)),
-            namedInTheCall: namedInTheCall,
+        let rules = series.recurrenceRules ?? []
+        let covers = DetachedOccurrenceSpan.coversWholeSeries(
+            rules: rules.map(DetachedOccurrenceSpan.RuleExtent.init),
+            firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current))
+        var known = DetachedOccurrenceSpan.neighbours(
+            of: id, slot: slot, among: candidates, coversWholeSeries: covers, namedInTheCall: namedInTheCall,
             own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart,
                                          series: listed.first { !$0.isDetached }))
+        known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(
+            of: id, among: candidates, coversWholeSeries: covers,
+            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules))
+        return known
     }
 
     /// #416: the refusal of a span `all` delete of `event`, resolved from `id`, or nil.

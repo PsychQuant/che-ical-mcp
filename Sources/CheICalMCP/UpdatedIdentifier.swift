@@ -55,6 +55,17 @@ enum UpdatedIdentifier {
         return ""
     }
 
+    /// #428: the series' identifier answered for an `update_event` span `all` that named the series
+    /// and went through its first occurrence edited on its own (`saved`, the occurrence's id after
+    /// the save). Its part before /RID=, or, with no /RID=, the saved id itself, as a new series may
+    /// read back without one; never the input, which may resolve to nothing after a new series
+    /// started (verify r1). nil or empty keeps the input. Measured on iCloud (2026-11-08): the
+    /// first left and the only one left both read back as `<new series>/RID=<n>`.
+    static func seriesThroughOccurrence(saved: String?, input: String) -> String {
+        guard let saved, !saved.isEmpty else { return "" }
+        return seriesOfOccurrenceId(saved) ?? saved
+    }
+
     private static let occurrenceMarker = "/RID="
 
     /// The series part of an id that is itself one occurrence (`<series>/RID=<n>`, iCloud's shape);

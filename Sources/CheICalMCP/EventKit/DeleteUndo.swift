@@ -129,7 +129,7 @@ extension UndoOperation {
     /// discard (D2), because a kept entry would refuse every time and block the stack until
     /// `discard_id`. Author-controlled text; the store-derived title passes `undoShownTitle`.
     static func followingOccurrencesDeleteRefusal(title: String) -> UnrecoverableUndoError {
-        UnrecoverableUndoError(message: "Cannot undo the delete of the recurring event '\(undoShownTitle(title))': it deleted an occurrence and the following occurrences of the series. Undo does not restore them, because EventKit cannot put occurrences back into a series, and recreating them would add a second series beside the one that is left. Nothing was written. This history entry was discarded so earlier operations remain undoable. If they should come back, restore them in Calendar (for example by moving the end of the series' repetition back).")
+        UnrecoverableUndoError(message: "Cannot undo the delete of the recurring event '\(undoShownTitle(title))': it deleted an occurrence and the following occurrences of the series (from its first occurrence, every occurrence). Undo does not restore them, because EventKit cannot put occurrences back into a series, and recreating them would add a second series beside any part of it that is left. Nothing was written. This history entry was discarded so earlier operations remain undoable. If they should come back, restore them in Calendar (where part of the series is left, for example by moving the end of its repetition back).")
     }
 
     /// D3: a member that can never be restored refuses the whole batch before any member writes,
