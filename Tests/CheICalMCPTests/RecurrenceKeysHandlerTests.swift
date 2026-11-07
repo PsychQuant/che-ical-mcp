@@ -378,6 +378,14 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         }
     }
 
+    /// #448: through the handler, a row with an unknown key fails and the others are written.
+    func testABatchRowWithAKeyNothingReadsFailsAlone() async throws {
+        let batch = try await batchError(["frequency": .string("daily")], extra: ["timzone": .string("Asia/Taipei")])
+        XCTAssertTrue(batch.error.contains("does not read"), batch.error)
+        XCTAssertFalse(batch.error.contains("timzone"), "#37: \(batch.error)")
+        XCTAssertEqual(batch.written, ["good"])
+    }
+
     // MARK: - #444: occurrence_count on a yearly event rule with days_of_week
 
     private static let yearlyByWeekday: [String: Value] = ["frequency": .string("yearly"), "days_of_week": .array([.int(3)]), "occurrence_count": .int(6)]

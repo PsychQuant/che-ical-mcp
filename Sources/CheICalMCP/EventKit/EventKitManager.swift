@@ -869,19 +869,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // Validate recurrence: start_time weekday must match days_of_week (#5)
         // Use event timezone (if provided) to determine the correct weekday near midnight
-        if let rule = recurrenceRule, rule.frequency == .weekly, let days = rule.daysOfWeek, !days.isEmpty {
-            var cal = Calendar.current
-            if let tz = timezone { cal.timeZone = tz }
-            let weekday = cal.component(.weekday, from: startDate) // 1=Sun, 7=Sat
-            if !days.contains(weekday) {
-                let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                let startDay = dayNames[weekday]
-                let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
-                throw EventKitError.weekdayMismatch(
-                    startDay: startDay,
-                    expectedDays: expectedDays
-                )
-            }
+        // #454: every frequency uses the list, and a start off it is a stray first occurrence.
+        if let refusal = WeekdayCheck.createRefusal(rule: recurrenceRule, start: startDate, timezone: timezone, host: Calendar.current) {
+            throw refusal
         }
 
         // Add recurrence rule
@@ -1304,30 +1294,40 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.allDayTimezoneConflict
         }
 
-        // Validate recurrence weekday consistency (#5) — check when:
-        // 1. A new recurrence rule is being set, OR
-        // 2. start_time or timezone changed on an event that already has weekly recurrence
+        // Validate recurrence weekday consistency (#5, #454): which days apply is `WeekdayCheck.daysToCheck`.
         // Skip entirely if clearRecurrence is true (event becoming non-recurring)
         // Read from the values the event will have after this update: the planned start, in the
         // zone WeekdayCheck.zone picks (the host zone for an all-day result).
         let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
+        // #428: the detached object has no rules of its own; a new start over the series still has
+        // to fit the series' rule.
         let detachedWrite = (applyToAll || span != .thisEvent)
             && DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: event.isDetached)
-        let existingWeeklyDays: [Int]? = try {
-            guard !clearRecurrence, // skip if clearing recurrence
-                  recurrenceRule == nil, // only check existing rules if not replacing
-                  startDate != nil || timezone != nil, // only if start/tz changed
-                  // #428: the detached object has no rules of its own; a new start over the series
-                  // still has to fit the series' rule.
-                  let rules = detachedWrite ? try seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules,
-                  let firstRule = rules.first,
-                  firstRule.frequency == .weekly,
-                  let ekDays = firstRule.daysOfTheWeek, !ekDays.isEmpty
-            else { return nil }
-            return ekDays.map { $0.dayOfTheWeek.rawValue }
+        let storedRule = clearRecurrence ? nil
+            : (detachedWrite ? try seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules)?.first
+        let plannedStart: Date = datePlan.datesToWrite?.start ?? event.startDate
+        let startDayMoves = WeekdayCheck.dayChanges(
+            from: event.startDate, in: WeekdayCheck.zone(resultIsAllDay: event.isAllDay, requested: nil, clearTimezone: false, stored: event.timeZone),
+            to: plannedStart, in: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+            host: Calendar.current)
+        let storedNumbered = storedRule.map {
+            WeekdayCheck.isNumberedRule(weekNumbers: $0.daysOfTheWeek?.map(\.weekNumber) ?? [], setPositions: $0.setPositions?.map(\.intValue))
+        } ?? false
+        let ruleKeepsStoredPattern: Bool = {
+            guard let effectiveRule, let storedRule else { return false }
+            let otherParts = [storedRule.monthsOfTheYear, storedRule.weeksOfTheYear, storedRule.daysOfTheYear]
+                .contains { $0?.isEmpty == false }
+            return WeekdayCheck.keepsStoredPattern(
+                frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,
+                stored: storedRule.frequency, storedInterval: storedRule.interval,
+                storedDaysOfMonth: storedRule.daysOfTheMonth?.map(\.intValue),
+                storedNumbered: storedNumbered, storedHasOtherParts: otherParts)
         }()
-
-        let daysToValidate = effectiveRule.flatMap({ $0.frequency == .weekly ? $0.daysOfWeek : nil }) ?? existingWeeklyDays
+        let daysToValidate = WeekdayCheck.daysToCheck(
+            requested: effectiveRule?.daysOfWeek, ruleInCall: effectiveRule != nil,
+            stored: storedRule?.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue },
+            storedCount: storedRule.map { WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span) } ?? false,
+            ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
         // #416: through an occurrence's own id the rule runs from its original day, not the day it
         // shows. A new start moves that day, and `recurrence` is not written with one here.
         let originalDay = startDate != nil ? nil : DetachedOccurrenceSpan.originalDay(
@@ -1339,10 +1339,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
             if !days.contains(weekday) {
                 if originalDay != nil, effectiveRule != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }
-                let dayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                let startDay = dayNames[weekday]
-                let expectedDays = days.compactMap { ($0 >= 1 && $0 <= 7) ? dayNames[$0] : nil }.joined(separator: ", ")
-                throw EventKitError.weekdayMismatch(startDay: startDay, expectedDays: expectedDays)
+                let names = WeekdayCheck.names(weekday: weekday, days: days)
+                if effectiveRule == nil, storedNumbered {
+                    throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
+                }
+                throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)
             }
         }
 
@@ -3137,6 +3138,8 @@ enum EventKitError: LocalizedError {
     case calendarNameRequired(forType: String)
     case invalidTimeRange(message: String)
     case weekdayMismatch(startDay: String, expectedDays: String)
+    /// #454 verify: a stored rule on a numbered weekday, which `recurrence` cannot write.
+    case weekdayOffNumberedRule(startDay: String)
     /// #182 — an excluded date lies outside the recurrence window (before the first
     /// occurrence day, or after end_date). Rejected pre-save: nothing was created.
     case exclusionOutOfWindow(date: String)
@@ -3294,7 +3297,9 @@ enum EventKitError: LocalizedError {
         case .invalidTimeRange(let message):
             return "Invalid time range: \(message)"
         case .weekdayMismatch(let startDay, let expectedDays):
-            return "start_time falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Adjust start_time to a matching day."
+            return "The start falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_week that include that day."
+        case .weekdayOffNumberedRule(let startDay):
+            return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):
             return "excluded_occurrence_dates: \(date) is outside the recurrence window (before the first occurrence day or after end_date). Nothing was created."
         case .exclusionNoOccurrence(let date):

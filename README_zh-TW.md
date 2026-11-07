@@ -106,7 +106,11 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **完成重複提醒後的鬧鐘（#423）：** 帶位置提醒的重複提醒在完成之後，下一個場次與完成的那筆都會多一個 0 分鐘的一般相對鬧鐘（沒有位置）（iCloud 實測；沒有位置提醒、不重複或沒有完成時都不會出現，之後再完成也不會再多，鬧鐘留著或移除之後都一樣）。完成提醒只設定完成欄位；這個鬧鐘是 EventKit 或 store 在那次存檔造成 rollover 時加上的，沒有區分是哪一個。確認 rollover 之後，`complete_reminder` 會重新讀取下一個場次，把它的相對鬧鐘回報為 `next_occurrence.alarms_minutes_offsets`，這次讀回才出現、完成之前沒有的鬧鐘用 `alarms_note` 說明（別的 app 或同步寫入的鬧鐘看起來也一樣）。讀不回下一個場次，或它在這之間變了，`next_occurrence.alarms_read_back` 會是 `false` 並附 `alarms_read_back_note`，不回報鬧鐘。`next_occurrence.status` 是其他值時沒有這些欄位。不做任何寫入（這是預設：用途不明，所以沒有選擇把它刪掉）；試過的情況下，`update_reminder` 帶 `alarms_minutes_offsets` 可以移除它。它會不會響、Reminders.app 是否顯示，都沒有驗。完成的那筆會換新的 id，不會讀取。
 
+**引數會依 schema 檢查（#448）：** 每個工具都會拒絕它不讀的鍵，以及不是宣告型別（字串、整數、數字、陣列、物件）的值，什麼都不做；字串陣列與整數陣列的元素也會檢查。訊息會列出可接受的鍵。批次的某一列出錯時只有該列失敗。已宣告的鍵帶 JSON null 時，這個檢查視同沒給，但 handler 仍可能拒絕（例如 `limit`）；沒宣告的鍵帶 null 一樣會被拒絕。
+
 **會檢查 `recurrence` 的鍵（#434）：** `create_event`、`create_events_batch`、`update_event`、`create_reminder` 與 `update_reminder` 會拒絕 `recurrence` 裡 `frequency`、`interval`、`end_date`、`occurrence_count`、`days_of_week`、`days_of_month` 以外的鍵（兩個建立事件的工具另外接受 `excluded_occurrence_dates`），該項目什麼都不寫入。以前這種鍵會被忽略，所以把 `occurrence_count` 寫成 `count` 會建立一個永遠不會結束的系列。下列情況這些工具也會拒絕，該項目什麼都不寫入：`end_date` 與 `occurrence_count` 同時給；`daily` 或 `weekly` 規則帶非空的 `days_of_month`，EventKit 會存下來但不使用（iCloud 實測；`monthly` 與 `yearly` 會用，`days_of_week` 每種頻率都會用）；`recurrence` 的任何一個鍵，或讀取工具用的 `recurrence_rules`、`event_recurrence_rules`、`reminder_recurrence_rules` 放在 `recurrence` 旁邊而不是裡面。
+
+**開始時間要落在 `days_of_week` 上（#454）：** `create_event`、`create_events_batch` 與 `update_event` 對每種頻率都會拒絕不在清單上的開始時間，不只 `weekly`，什麼都不寫入。以前在 `daily`、`monthly`、`yearly` 上會多出一個規則外的第一場（iCloud 實測）。`update_event` 涵蓋呼叫裡帶的規則，以及 span `all` 與 `future` 時系列本身的規則。系列已經偏離規則時，不改變開始日的更新會放行。非 weekly 系列用 span `this` 移動單一場次不會被拒絕。「每月第一個週一」這類第 n 週規則本工具寫不出來，所以這種系列會被告知到行事曆 App 修改。
 
 **`yearly` 事件規則帶 `days_of_week` 時的 `occurrence_count`（#444）：** 在 `interval` 為 1 且沒有 `days_of_month` 的規則上，store 算的不是場次，所以 6 得到 22 個場次（iCloud 實測）。`create_event`、`create_events_batch` 與 `update_event` 會拒絕這裡的次數，連 1 也一樣，什麼都不寫入。要這些日子，請用 `monthly` 配 `interval: 12`，次數正確，但從較後場次以 span `future` 帶入時可能變少（#443），或改用 `end_date`。要每年一次，請用不帶 `days_of_week` 的 `yearly`。帶 `days_of_week` 的 `yearly` 規則只在開始日所在的月份重複。`interval` 大於 1 或有非空 `days_of_month` 不會被拒絕：這些情況次數是對的。提醒事項工具不變：提醒事項上的次數是正確的。
 
