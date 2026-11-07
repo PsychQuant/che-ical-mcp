@@ -75,7 +75,10 @@ enum FirstRemainingOccurrence {
         guard let first = candidates.indices.min(by: { slot($0) < slot($1) }),
               candidates[first].isDetached,
               DetachedOccurrenceSpan.seriesIdentifier(of: candidates[first].eventIdentifier ?? "") == identifier else { return nil }
-        if let next = candidates.indices.filter({ $0 != first }).map(slot).min(), candidates[first].start > next { return nil }
+        let others = candidates.indices.filter { $0 != first }
+        if let next = others.map(slot).min(), candidates[first].start > next { return nil }
+        // verify r4: nor may another occurrence show a start before its start.
+        if others.contains(where: { candidates[$0].start < candidates[first].start }) { return nil }
         return first
     }
 
@@ -226,11 +229,13 @@ extension EventKitManager {
     /// #428: the identifier of the occurrence edited on its own that comes first in the series
     /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
     /// unedited occurrence first, is not this.
-    func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool)? {
+    func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool, firstDeleted: Bool)? {
         guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
               let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id),
               let first = candidates[index].eventIdentifier else { return nil }
-        return (first, !candidates.contains { !$0.isDetached })
+        let firstStart: Date? = stored.startDate
+        let slot = candidates[index].slot ?? candidates[index].start
+        return (first, !candidates.contains { !$0.isDetached }, !(firstStart.map { UndoPostState.sameInstant(slot, $0) } ?? false))
     }
 
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and
@@ -257,7 +262,9 @@ extension EventKitManager {
                                          series: listed.first { !$0.isDetached }))
         known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(
             of: id, among: candidates, coversWholeSeries: covers,
-            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules), firstStart: firstStart)
+            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules),
+            countBounded: !rules.isEmpty && rules.allSatisfy { ($0.recurrenceEnd?.occurrenceCount ?? 0) > 0 },
+            firstStart: firstStart, now: Date())
         return known
     }
 

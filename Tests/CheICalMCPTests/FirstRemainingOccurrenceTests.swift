@@ -265,7 +265,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         }
         // #416 measured it: the occurrence that comes first reaches the series; #428 goes there
         // through the series' id. A later edited occurrence does not reach the series.
-        XCTAssertTrue(reason.contains("When the occurrence that comes first in the series was edited on its own, update_event and delete_event with span 'all' through the series' id go through it"), reason)
+        XCTAssertTrue(reason.contains("When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it"), reason)
         XCTAssertFalse(reason.contains("RID"))
     }
 

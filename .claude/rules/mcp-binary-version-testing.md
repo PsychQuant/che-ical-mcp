@@ -537,9 +537,12 @@ end、notes、location、alarms。
    第 1 場刪掉、第 2 場改過時，經系列 id 的 `title`、`notes`（2026-11-08）與 `location`（#416 第 4 步）放行、新 id；`recurrence`
    拒絕（verify r3：會從較後的時段另起新系列，#443 量到 count 會少）。最早改過的場次開始時間晚於下一場的時段時，系列 id 不走這條路
    （2026-11-08：第 2 場移到第 3 場之後，update 與 delete 都回 edited-before 的拒絕，什麼都沒動）。
-   **已經開始的系列沒有量過**（verify r3）：(h) 的每一列都是未來的系列。#471 合併後，確認它的拒絕也在經系列 id 轉進的內層
-   `updateEvent` 呼叫裡、在任何欄位寫入之前執行，並量一列已開始的系列（或在那之前經這條路拒絕已開始系列的日期）。
-   **出版前在重啟後的 session MCP 上仍欠**：這條刪除之後 `undo` 回拒絕並丟棄紀錄、較早的紀錄仍可 undo（`--cli` 走不到）；
+   **已經開始的系列沒有量過**（verify r3）：(h) 的每一列都是未來的系列。verify r4 起，經系列 id 時系列一旦開始（任一場次的原本時段
+   早於現在），日期與時區寫入一律拒絕。#471 合併後，確認它的拒絕也在經系列 id 轉進的內層 `updateEvent` 呼叫裡、在任何欄位寫入
+   之前執行，再量一列已開始的系列，才放寬這條拒絕。`timezone`、`url`、`structured_location` 與 span `future` 的日期只在以次數結束
+   的 5 場系列量過，以 end_date 結束的系列沒量（拒絕）。另一個場次顯示的開始時間早於最早那一場時，系列 id 不走這條路（沒量）。
+   **打 tag 前必做（verify r4 的 MEDIUM，仍欠）**：在重啟後的 session MCP 上，先做一筆可 undo 的操作，再做這條經系列 id 的刪除，
+   第一次 `undo` 要被拒絕並丟棄刪除紀錄，第二次 `undo` 要還原先前那筆（`--cli` 走不到）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
