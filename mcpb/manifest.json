@@ -45,7 +45,7 @@
     },
     {
       "name": "create_calendar",
-      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title` and `account`, and creating it again with the same parameters may make a second copy)"
+      "description": "Create a new calendar or reminder list (if saving a reminder list reports an error but the list was saved, the call succeeds and store_differs and note name any fields the store holds differently: store_differs lists their keys, from `title` and `account`, and creating it again with the same parameters may make a second copy); a title is 1 to 255 characters and not only whitespace, which does not promise that a long title stays, and type is event or reminder"
     },
     {
       "name": "delete_calendar",
@@ -61,11 +61,11 @@
     },
     {
       "name": "update_event",
-      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence; span all through an occurrence edited on its own is refused while an earlier occurrence remains, and with span all or future through it only title, notes, location and recurrence can be written, the rest writing nothing; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
+      "description": "Update an existing calendar event (including timezone, recurrence span for recurring; the response's id is the identifier after the save, with id_changed and previous_id when a move to another account or a split of the series changed it, and occurrence_id for an edit of one occurrence; span all through an occurrence edited on its own is refused while an earlier occurrence remains, and with span all or future through it title, notes, location and recurrence can be written, dates and a few others only in the measured shapes the refusal lists, the rest writing nothing; span all through the series' id goes through its first occurrence when that one was edited on its own, with occurrence_id; occurrence_start for the occurrence occurrence_date matched; warnings for an all-day date whose offset moves the day) (annotated destructive: updates can replace or clear existing values; an update that touches a recurring event cannot be undone); unknown recurrence keys are refused, and so is a rule change on one occurrence (span this)"
     },
     {
       "name": "delete_event",
-      "description": "Delete a calendar event (with occurrence support for recurring; span all through an occurrence edited on its own is refused while another occurrence remains, deleting nothing)"
+      "description": "Delete a calendar event (with occurrence support for recurring; span all through an occurrence edited on its own is refused while another occurrence remains, deleting nothing; span all through the series' id deletes from its first occurrence when that one was edited on its own, which cannot be undone, with occurrence_id and undo_note)"
     },
     {
       "name": "list_reminders",
@@ -121,7 +121,7 @@
     },
     {
       "name": "update_calendar",
-      "description": "A failed save of a reminder list may still land with the next save. Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values)"
+      "description": "A failed save of a reminder list may still land with the next save. Update a calendar's properties (rename or change color) (annotated destructive: updates can replace or clear existing values); a title is 1 to 255 characters and not only whitespace, which does not promise that a long title stays"
     },
     {
       "name": "search_reminders",

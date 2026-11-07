@@ -49,6 +49,7 @@ class CheICalMCPServer {
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let calendarDeletionSource: any CalendarDeletionSource
+    private let calendarWriteSource: any CalendarWriteSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let duplicateSearchSource: any DuplicateSearchSource
@@ -86,6 +87,7 @@ class CheICalMCPServer {
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
+         calendarWriteSource: any CalendarWriteSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
@@ -103,6 +105,7 @@ class CheICalMCPServer {
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
+        self.calendarWriteSource = calendarWriteSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
         self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
@@ -147,7 +150,8 @@ class CheICalMCPServer {
                     "properties": .object([
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Filter by type: 'event' or 'reminder'. If not provided, returns all calendars.")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Filter by type: 'event' or 'reminder'; anything else is refused. If not provided, returns all calendars.")
                         ])
                     ])
                 ]),
@@ -161,11 +165,12 @@ class CheICalMCPServer {
                     "properties": .object([
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("The name of the calendar")
+                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Type of calendar: 'event' or 'reminder'")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Type of calendar: 'event' or 'reminder'; anything else is refused")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -207,7 +212,7 @@ class CheICalMCPServer {
                         ]),
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("New calendar name")
+                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -314,17 +319,17 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")
                                 ]),
                                 "excluded_occurrence_dates": .object([
                                     "type": .string("array"),
@@ -353,22 +358,23 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_event",
-                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in three cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is, also when event_id is the identifier of an occurrence edited on its own; span 'all' or 'future' with the identifier of an occurrence edited on its own that is the first occurrence left, after the first was deleted, gives what remains a new identifier. Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id with span 'this' to edit that occurrence, or span 'future' to update from it on, within the limits below. span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416); use the id list_events shows for the occurrence that comes first in the series. A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326). With span 'all' or 'future' through such an identifier, only title, notes, location and recurrence can be written; for anything else use span 'this', or the id of an occurrence not edited on its own. A value the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms. With span 'this' or 'future' occurrence_date must be that occurrence's day. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
+                description: "Update an existing calendar event. When changing the event date, providing only start_time keeps the original duration of a timed event; an event that is all-day after the update keeps its number of days instead (see start_time), and turning an all-day event into a timed one needs both start_time and end_time. For recurring events, use 'span' to control whether changes apply to this occurrence, future occurrences, or all. An update that touches a recurring event (any span, or adding or removing recurrence) cannot be undone with undo. The response's id is the event's identifier after the save. It changes (id_changed true, previous_id repeating the event_id you passed) in four cases only: calendar_name moves the event to a calendar in another account (an edit of one occurrence, occurrence_date with span 'this', with a calendar of another account is refused and writes nothing, since a new calendar moves the whole series; a calendar whose account cannot be read counts as another account); span 'future' from a later occurrence ends the series there and starts a new one, whose identifier id then is, also when event_id is the identifier of an occurrence edited on its own; span 'all' or 'future' with the identifier of an occurrence edited on its own that is the first occurrence left, after the first was deleted, gives what remains a new identifier; span 'all' through the series' identifier, when the series' first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, goes through that occurrence's identifier and answers it after the save as occurrence_id, and id changes when a new series starts there (after a deleted first occurrence). Otherwise id is event_id and id_changed is false. An edit of one occurrence (occurrence_date with span 'this') answers the series' identifier as id and adds occurrence_id, the identifier of that occurrence alone (on iCloud, the series identifier followed by /RID= and a number). Use occurrence_id with span 'this' to edit that occurrence, or span 'future' to update from it on, within the limits below. span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416); use the id list_events shows for the occurrence that comes first in the series. A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326). With span 'all' or 'future' through such an identifier, and with span 'all' through the series' identifier in the shape just named, title, notes, location and recurrence can be written (not recurrence with span 'all' after the series' first occurrence was deleted, through either identifier); start_time, end_time, all_day true, alarms, timezone, url and structured_location only in the shapes that were measured, which the refusal lists (among them: one field per call, or start_time with end_time, as a new time of day on the same date; a timed series repeating weekly on at most one day; the occurrence at its original start, edited only in title, notes, location or alarms; structured_location only while it has the series' location). all_day true there cannot be turned back through that identifier. On a series that has started, these routes take the started-series rules below (#451), as the series' identifier goes through that occurrence's own; timezone among them (#478). For anything else use span 'this', or the id of an occurrence not edited on its own. A title, notes or location the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms. With span 'this' or 'future' occurrence_date must be that occurrence's day. When occurrence_date picked one occurrence (span 'this' or 'future'), the response adds occurrence_start, the start of the occurrence occurrence_date matched, before the update, as ISO 8601 with the offset of the event's time zone, so you can check which day was edited.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "event_id": .object(["type": .string("string"), "description": .string("The event identifier")]),
                         "title": .object(["type": .string("string"), "description": .string("New title")]),
-                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). If only start_time is provided, a timed event keeps its duration (an event that is all-day after the update keeps the number of days its range touches, an end at exactly midnight not counting that day (the same rule as end_time), counted in this Mac's time zone; turning an all-day event into a timed one needs both start_time and end_time and is refused with only one of them). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day; when it does, the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing)).")]),
+                        "start_time": .object(["type": .string("string"), "description": .string("New start time in ISO8601 format (e.g., 2026-01-31T14:00:00+08:00). On a recurring series that has started, with span all or span future from an occurrence that has already happened, only the time of day on that occurrence's own date may change, and from an occurrence still to come the start may not be before now; anything else is refused (#451). If only start_time is provided, a timed event keeps its duration (an event that is all-day after the update keeps the number of days its range touches, an end at exactly midnight not counting that day (the same rule as end_time), counted in this Mac's time zone; turning an all-day event into a timed one needs both start_time and end_time and is refused with only one of them). For an all-day event (all_day true) only the day counts, read in this Mac's time zone: send a date without an offset (a value with another offset is converted to this Mac's zone first, which can move it to another day; when it does, the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing)).")]),
                         "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration; turning an all-day event into a timed one needs both start_time and end_time. For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing). The same rule applies whether the event is already all-day or becomes all-day in this call.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
-                            "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count was measured to come out short: 5 from the second occurrence gave 4 (#443). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
+                            "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count is refused, as the store counts from the start of the original series: use end_date (#451). On a series that has started, a rule from an occurrence that has already happened must keep the series' pattern (frequency, interval, days_of_week, days_of_month) with its own bound or, while the series has occurrences to come, no bound, an end_date not in the past, or an occurrence_count no smaller than the series' own (#451). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
                             "properties": .object([
                                 "frequency": .object([
                                     "type": .string("string"),
@@ -385,17 +391,17 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")
                                 ])
                             ]),
                             "required": .array([.string("frequency")])
@@ -420,10 +426,10 @@ class CheICalMCPServer {
                             ]),
                             "required": .array([.string("title")])
                         ]),
-                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
+                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone. On a recurring series that has started, with span all or span future from an occurrence that has already happened, any identifier other than the event's own (item_timezone) is refused: another spelling of the same zone counts as a change, and so does any zone, this Mac's included, on an event with no zone of its own (item_timezone null). The occurrences repeat at the new zone's wall-clock time, which moved happened ones and lost the last one of a counted series (#478). From an occurrence that has already happened, the event's own identifier is not written again.")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default. Refused like timezone on a recurring series that has started, whatever the zone, as a counted series lost its last occurrence (#455, #478); on a started series with no zone, from an occurrence that has already happened, it writes nothing.")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -441,7 +447,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_event",
-                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence. Span 'all' through the identifier of an occurrence edited on its own would delete that occurrence only, so it is refused and deletes nothing while another occurrence remains (#416); when the series can be listed, the refusal says which id and span delete it. With span 'this' or 'future' through such an identifier occurrence_date must be that occurrence's day. Undo of a deleted occurrence (span 'this') restores it as a one-off event, because an occurrence cannot be put back into its series; an absolute-date alarm of the series becomes an alarm at its start. Undo of span 'future' recreates the series only when the delete started at the series' first occurrence and removed all of it; otherwise (it started at a later occurrence, the last one included, or event_id named an edited occurrence) that undo is refused and its history entry discarded, writing nothing. Undo of a whole-series delete (that case, or span 'all') recreates the series from its rules and then restores its exceptions inside the scan window (from one day before the first occurrence to the end of the rule, at most four years): an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event that no longer belongs to the series; the undo text says how many of each. Not restored as exceptions, and said in the text: a first occurrence edited or deleted on its own (kept from the rule, so its edit is lost or its deleted occurrence comes back), an edited occurrence moved more than a year outside the window (its slot counts as deleted), a series whose exceptions could not be listed, and a record that does not match the recreated series (none is applied); exceptions outside that window come back from the rules alone. If restoring them fails the recreated series and the one-off events are deleted again and the entry is kept for a retry; if that delete fails too, the error says so and the entry (in a batch, that member) is dropped. Undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so.",
+                description: "Delete a calendar event. For recurring events, use the 'span' parameter (not 'delete_scope') to control scope. When span is 'this' or 'future' on a recurring event, occurrence_date is required to identify the specific occurrence. Span 'all' through the identifier of an occurrence edited on its own would delete that occurrence only, so it is refused and deletes nothing while another occurrence remains (#416); when the series can be listed, the refusal says which id and span delete it. With span 'this' or 'future' through such an identifier occurrence_date must be that occurrence's day. Span 'all' through the series' identifier, when the series' first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, deletes the series with span 'future' from that occurrence, which removed every occurrence (measured on iCloud, open-ended series included); the response adds occurrence_id and undo_note, as that delete cannot be undone. Undo of a deleted occurrence (span 'this') restores it as a one-off event, because an occurrence cannot be put back into its series; an absolute-date alarm of the series becomes an alarm at its start. Undo of span 'future' recreates the series only when the delete started at the series' first occurrence and removed all of it; otherwise (it started at a later occurrence, the last one included, or event_id named an edited occurrence) that undo is refused and its history entry discarded, writing nothing. Undo of a whole-series delete (that case, or span 'all' outside the shape named above) recreates the series from its rules and then restores its exceptions inside the scan window (from one day before the first occurrence to the end of the rule, at most four years): an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event that no longer belongs to the series; the undo text says how many of each. Not restored as exceptions, and said in the text: a first occurrence edited or deleted on its own (kept from the rule, so its edit is lost or its deleted occurrence comes back), an edited occurrence moved more than a year outside the window (its slot counts as deleted), a series whose exceptions could not be listed, and a record that does not match the recreated series (none is applied); exceptions outside that window come back from the rules alone. If restoring them fails the recreated series and the one-off events are deleted again and the entry is kept for a retry; if that delete fails too, the error says so and the entry (in a batch, that member) is dropped. Undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -879,9 +885,9 @@ class CheICalMCPServer {
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
-                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
-                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")]),
+                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
+                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
                                         ]),
                                         "required": .array([.string("frequency")])
@@ -1191,6 +1197,7 @@ class CheICalMCPServer {
     }
 
     func executeToolCall(name: String, arguments: [String: Value]) async throws -> String {
+        try ToolArgumentCheck.check(tool: name, arguments: arguments)
         switch name {
         // Calendar Tools
         case "list_calendars":
@@ -1268,9 +1275,13 @@ class CheICalMCPServer {
     // MARK: - Calendar Handlers
 
     private func handleListCalendars(arguments: [String: Value]) async throws -> String {
-        var entityType: EKEntityType?
-        if let typeStr = arguments["type"]?.stringValue {
-            entityType = typeStr == "event" ? .event : typeStr == "reminder" ? .reminder : nil
+        let entityType: EKEntityType?
+        // PR #457 verify: any other string, `Reminder` included, used to list every calendar.
+        switch arguments["type"]?.stringValue {
+        case nil: entityType = nil
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
         }
 
         let calendars = try await eventKitManager.listCalendars(for: entityType)
@@ -1296,19 +1307,22 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("type is required")
         }
 
-        let entityType: EKEntityType = typeStr == "reminder" ? .reminder : .event
+        // #449: any other string used to make an event calendar.
+        let entityType: EKEntityType
+        switch typeStr {
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
+        }
+        try InputValidation.validateCalendarTitle(title)
         let color = arguments["color"]?.stringValue
 
-        let result = try await eventKitManager.createCalendar(
-            title: title,
-            entityType: entityType,
-            color: color
-        )
+        let result = try await calendarWriteSource.writeNewCalendar(title: title, entityType: entityType, color: color)
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
+            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.title, "id": result.identifier])
         }
-        let fields: [String: Any] = ["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier]
+        let fields: [String: Any] = ["action": "created", "calendar": result.title, "id": result.identifier]
         return try actionResult(fields.merging(NewObjectSave.responseFields(result.storeDiffers)) { $1 })
     }
 
@@ -1316,11 +1330,8 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
-        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
-        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
-            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
-        }
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so null must not fall
+        // back to the unchecked delete. A misspelled key is refused at dispatch (#448).
         if case .null? = arguments["require_empty"] {
             throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
         }
@@ -1455,7 +1466,7 @@ class CheICalMCPServer {
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
 
         let result = try await eventWriteSource.createEventValue(EventCreateRequest(
             title: title,
@@ -1535,7 +1546,7 @@ class CheICalMCPServer {
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
         }
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
         let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
@@ -1592,6 +1603,10 @@ class CheICalMCPServer {
         return try actionResult(response)
     }
 
+    /// #428 verify r1: what `delete_event` span 'all' adds when it went through the series' first
+    /// occurrence edited on its own (`SeriesDeleteRoute.firstEditedOccurrence`).
+    static let seriesDeletedThroughOccurrenceNote = "The occurrence that comes first in this series was edited on its own, so the series was deleted from that occurrence (occurrence_id) with span 'future', which removes every occurrence. That delete cannot be undone: undo refuses it and drops its record."
+
     private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {
         guard let eventId = arguments["event_id"]?.stringValue else {
             throw ToolError.invalidParameter("event_id is required")
@@ -1606,8 +1621,12 @@ class CheICalMCPServer {
             zoneLookup: { try await self.eventDeletionSource.occurrenceDateTimeZone(identifier: eventId) })
 
         if spanStr == "all" {
-            try await eventDeletionSource.deleteEventSeries(identifier: eventId)
-            return try actionResult(["action": "deleted", "id": eventId, "span": "all"])
+            var response: [String: Any] = ["action": "deleted", "id": eventId, "span": "all"]
+            if case .firstEditedOccurrence(let occurrence) = try await eventDeletionSource.deleteEventSeries(identifier: eventId) {
+                response["occurrence_id"] = occurrence
+                response["undo_note"] = Self.seriesDeletedThroughOccurrenceNote
+            }
+            return try actionResult(response)
         }
 
         let span: EKSpan = spanStr == "future" ? .futureEvents : .thisEvent
@@ -1945,7 +1964,7 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = arguments["priority"]?.intValue
+        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -2090,13 +2109,11 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("At least one of 'title' or 'color' must be provided")
         }
 
-        let calendar = try await eventKitManager.updateCalendar(
-            identifier: id,
-            title: title,
-            color: color
-        )
+        if let title { try InputValidation.validateCalendarTitle(title) }
 
-        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.calendarIdentifier])
+        let calendar = try await calendarWriteSource.writeCalendarUpdate(identifier: id, title: title, color: color)
+
+        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.identifier])
     }
 
     private func handleSearchReminders(arguments: [String: Value]) async throws -> String {
@@ -2197,6 +2214,12 @@ class CheICalMCPServer {
                 let keys = Self.reminderBatchRowKeys
                 let message = "Row \(index) accepts only \(keys.dropLast().joined(separator: ", ")) and \(keys[keys.count - 1]); another key was given. For recurrence or location_trigger, use create_reminder. Nothing was written for this row."
                 results.append(["index": index, "success": false, "error": message])
+                continue
+            }
+
+            // #448: a numeric due_date or a bare-string tags read as absent.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_reminders_batch", rowsKey: "reminders", row: reminderDict, index: index, checksKeys: false) {
+                results.append(["index": index, "success": false, "error": problem])
                 continue
             }
 
@@ -2632,6 +2655,11 @@ class CheICalMCPServer {
                 results.append(["index": index, "success": false, "error": "Invalid event format"])
                 continue
             }
+            // #448: a misspelled timezone read naive times in the host zone. Only this row fails.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_events_batch", rowsKey: "events", row: eventDict, index: index, checksKeys: true) {
+                results.append(["index": index, "success": false, "error": problem])
+                continue
+            }
 
             guard let title = eventDict["title"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "title is required"])
@@ -2713,7 +2741,7 @@ class CheICalMCPServer {
                 try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
-                let batchStructuredLocation = parseStructuredLocation(from: eventDict)
+                let batchStructuredLocation = try parseStructuredLocation(from: eventDict)
 
                 let batchNotes = eventDict["notes"]?.stringValue
                 let batchLocation = eventDict["location"]?.stringValue
@@ -3581,6 +3609,10 @@ class CheICalMCPServer {
         if frequency == .daily || frequency == .weekly, daysOfMonth?.isEmpty == false {
             throw ToolError.invalidParameter("recurrence days_of_month is used by monthly and yearly rules only; a \(freqStr) rule would repeat as if it were not there. Nothing was written for this item.")
         }
+        if !forReminder, RecurrenceRuleInput.countsYearsForAnEvent(frequency: frequency, interval: interval, daysOfWeek: daysOfWeek,
+                                                                   daysOfMonth: daysOfMonth, occurrenceCount: occurrenceCount) {
+            throw ToolError.invalidParameter("recurrence occurrence_count is not taken on a yearly event rule with interval 1 and days_of_week, because the store does not count occurrences there: a count of 6 gave 22. For those days in the start's month, use frequency monthly with interval 12, or end_date; from a later occurrence with span future a count is refused (#443). For once a year, use yearly without days_of_week. Nothing was written for this item.")
+        }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.
         // Caller gating: only create_event / create_events_batch pass
@@ -3628,14 +3660,16 @@ class CheICalMCPServer {
         )
     }
 
-    private func parseStructuredLocation(from arguments: [String: Value]) -> StructuredLocationInput? {
+    private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else { return nil }
+        guard let title = dict["title"]?.stringValue else {
+            throw ToolError.invalidParameter("structured_location.title is required")
+        }
         return StructuredLocationInput(
             title: title,
-            latitude: dict["latitude"]?.doubleValue,
-            longitude: dict["longitude"]?.doubleValue,
-            radius: dict["radius"]?.doubleValue
+            latitude: InputValidation.number(dict["latitude"]),
+            longitude: InputValidation.number(dict["longitude"]),
+            radius: InputValidation.number(dict["radius"])
         )
     }
 
@@ -3652,13 +3686,13 @@ class CheICalMCPServer {
         guard let title = dict["title"]?.stringValue else {
             throw ToolError.invalidParameter("location_trigger.title is required")
         }
-        guard let lat = dict["latitude"]?.doubleValue else {
+        guard let lat = InputValidation.number(dict["latitude"]) else {
             throw ToolError.invalidParameter("location_trigger.latitude is required")
         }
-        guard let lon = dict["longitude"]?.doubleValue else {
+        guard let lon = InputValidation.number(dict["longitude"]) else {
             throw ToolError.invalidParameter("location_trigger.longitude is required")
         }
-        let radius = dict["radius"]?.doubleValue ?? 100
+        let radius = InputValidation.number(dict["radius"]) ?? 100
         let proximityStr = dict["proximity"]?.stringValue ?? "enter"
         let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
 

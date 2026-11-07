@@ -17,6 +17,19 @@ enum InputValidation {
         }
     }
 
+    /// #449: a calendar's title, on `create_calendar` and `update_calendar`. An empty title is not
+    /// always kept as empty (iCloud renamed one `Untitled`), and a blank one cannot be told from it
+    /// in a listing. In one run seven long titles, 255 characters among them, could no longer be
+    /// read by `list_calendars` about two minutes after `created`, which no read right after the
+    /// save can see. No measurement found a safe length, so this is the limit event and reminder
+    /// titles have, not a promise that a title within it stays.
+    static func validateCalendarTitle(_ title: String) throws {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolError.invalidParameter("title must not be empty or only whitespace")
+        }
+        try validateLength(title, field: "title", max: maxTitleLength)
+    }
+
     /// Allowlist http and https via URLComponents scheme parse.
     ///
     /// Using `URLComponents(string:)?.scheme` (rather than `hasPrefix`) rejects
@@ -209,6 +222,19 @@ enum InputValidation {
             return n
         }
         throw ToolError.invalidParameter("\(key) must be an integer")
+    }
+
+    /// `requireOptionalInt` where JSON `null` counts as omitted.
+    static func requireOptionalIntOrNull(_ arguments: [String: Value], key: String) throws -> Int? {
+        if case .null? = arguments[key] { return nil }
+        return try requireOptionalInt(arguments, key: key)
+    }
+
+    /// A number, for a key the schema declares `number`. `Value` decodes any JSON number it can as
+    /// an Int first, so `500`, `500.0` and `1e2` are `.int`, and `doubleValue` alone reads them as
+    /// nil: a whole `radius` silently became the default (PR #463 verify).
+    static func number(_ value: Value?) -> Double? {
+        value?.doubleValue ?? value?.intValue.map(Double.init)
     }
 
     /// A boolean argument that may be omitted; JSON `null` counts as omitted.

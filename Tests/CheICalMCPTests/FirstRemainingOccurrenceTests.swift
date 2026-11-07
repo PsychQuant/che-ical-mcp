@@ -251,8 +251,24 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
         XCTAssertFalse(reason.contains("every remaining occurrence"), "the scan is bounded: it cannot claim every occurrence")
+        // #428 verify r2: span 'all' through the series' id does reach the earliest of them now
+        // (the update's ids and the delete measured on iCloud, 2026-11-08).
+        XCTAssertTrue(reason.contains("except update_event and delete_event with span 'all', which go through the earliest of them"), reason)
         XCTAssertFalse(reason.contains("move"), "no stand-in exists, so a move cannot work")
         XCTAssertFalse(reason.contains("copy"))
+    }
+
+    /// verify r5 (LOW): the "otherwise" case does not contradict the move the hint offers, covers an
+    /// id with no /RID= part, and span future names only what it takes in these shapes.
+    func testTheOtherwiseCaseAndTheSpanFutureFieldsAreStated() {
+        for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
+            XCTAssertTrue(text.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) nothing else updates or deletes the series as a whole yet."), text)
+            XCTAssertFalse(text.contains("nothing reaches the series as a whole"), text)
+            XCTAssertTrue(text.contains("span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."), text)
+            XCTAssertFalse(text.contains("takes the same fields"), text)
+        }
+        let all = EventKitManager.standInAllEditedReason
+        XCTAssertTrue(all.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) only single occurrences can be updated or deleted."), all)
     }
 
     func testTheHintNamesWhatWorksAndIsFixedText() throws {
@@ -260,9 +276,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
-        // #416 measured it: the occurrence that comes first reaches the series through its own id.
-        // A later edited occurrence does not, so the hint names that one only.
-        XCTAssertTrue(reason.contains("The occurrence that comes first in the series reaches it through its own id"), reason)
+        // #416 measured it: the occurrence that comes first reaches the series; #428 goes there
+        // through the series' id. A later edited occurrence does not reach the series.
+        XCTAssertTrue(reason.contains("When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it"), reason)
         XCTAssertFalse(reason.contains("RID"))
     }
 

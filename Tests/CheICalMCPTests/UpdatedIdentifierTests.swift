@@ -233,4 +233,30 @@ final class UpdatedIdentifierTests: XCTestCase {
         let seriesCall = try XCTUnwrap(flat.range(of: "UpdatedIdentifier.savedOccurrenceSeries("))
         XCTAssertLessThan(save.lowerBound, seriesCall.lowerBound, "read after the save")
     }
+
+    // MARK: - The series' id through its first edited occurrence (#428 verify r1)
+
+    /// The saved object is the occurrence: its id's part before /RID= is the series. With no /RID=
+    /// the saved id itself is the series' id after the save, never the input, which may resolve to
+    /// nothing now.
+    func testTheFirstOccurrenceRouteReportsTheSeriesOfTheSavedId() {
+        func fields(saved: String?) -> [String: Any] {
+            UpdatedIdentifier.responseFields(input: "A", saved: saved,
+                                             seriesIdentifier: UpdatedIdentifier.seriesThroughOccurrence(saved: saved))
+        }
+        let kept = fields(saved: "A/RID=5")
+        XCTAssertEqual(kept["id"] as? String, "A")
+        XCTAssertEqual(kept["id_changed"] as? Bool, false)
+        XCTAssertEqual(kept["occurrence_id"] as? String, "A/RID=5")
+        let split = fields(saved: "B/RID=5")
+        XCTAssertEqual(split["id"] as? String, "B")
+        XCTAssertEqual(split["id_changed"] as? Bool, true)
+        XCTAssertEqual(split["previous_id"] as? String, "A")
+        let plain = fields(saved: "B")
+        XCTAssertEqual(plain["id"] as? String, "B", "not the input")
+        XCTAssertEqual(plain["id_changed"] as? Bool, true)
+        XCTAssertEqual(plain["previous_id"] as? String, "A")
+        XCTAssertEqual(fields(saved: nil)["id"] as? String, "A")
+        XCTAssertEqual(fields(saved: "")["id_changed"] as? Bool, false)
+    }
 }
