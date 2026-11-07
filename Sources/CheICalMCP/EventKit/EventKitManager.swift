@@ -1331,6 +1331,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
+        // #478: from an occurrence that happened, a zone change moved happened occurrences and lost
+        // the last one, and undo refuses.
+        if let reason = SeriesRuleWrite.zoneRefusal(
+            reach: reach, happened: happened,
+            changesZone: SeriesRuleWrite.changesZone(requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+            isAllDay: datePlan.isAllDay || event.isAllDay) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.
         // The stored count runs from the original first start, which only a call over the whole

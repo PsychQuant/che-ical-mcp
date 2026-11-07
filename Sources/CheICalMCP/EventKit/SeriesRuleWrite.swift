@@ -142,6 +142,29 @@ enum SeriesRuleWrite {
         return planned < now ? pastStartReason : nil
     }
 
+    // MARK: a time zone change (#478)
+
+    /// Whether the call changes the event's zone: a zone other than the stored one (by identifier,
+    /// so an alias of the same zone counts as a change, the side that refuses), or clear_timezone
+    /// on an event that has one.
+    static func changesZone(requested: TimeZone?, clearTimezone: Bool, stored: TimeZone?) -> Bool {
+        if clearTimezone { return stored != nil }
+        guard let requested else { return false }
+        return requested.identifier != stored?.identifier
+    }
+
+    /// #478, measured on iCloud: a weekly series of 10 from 2026-09-07 07:30 Asia/Taipei given
+    /// Europe/London with span `all` moved the happened occurrences past the daylight-saving change
+    /// by an hour and lost its last one (10 became 9). The store keeps the first occurrence's instant
+    /// and repeats the rule at that wall-clock time in the new zone. A series still to come kept all
+    /// 6, and span `future` from an occurrence still to come left the earlier ones as they were (both
+    /// keep the new zone's wall-clock time across its daylight-saving change). So from an occurrence
+    /// that has happened a zone change is refused; an all-day event has no zone.
+    static func zoneRefusal(reach: Reach, happened: Bool, changesZone: Bool, isAllDay: Bool) -> String? {
+        guard reach.anchor != nil, happened, changesZone, !isAllDay else { return nil }
+        return zoneChangeReason
+    }
+
     // MARK: a rule from an occurrence that has happened
 
     /// PR #471 verify item 4, measured on a started weekly series of 10: span `all` with
@@ -278,4 +301,5 @@ enum SeriesRuleWrite {
     static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series. Nothing was written."
     static let countReason = "occurrence_count cannot be used with span 'future' from a later occurrence: the store counts from the start of the original series, so 4 from the seventh occurrence gave 1, and the occurrences after it were gone. Use end_date. Nothing was written."
     static let calendarReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too, unless the call also changes the rule. Pass span 'all' to move the whole series. To move the occurrences from one that has not happened yet on, pass recurrence with span 'future' from it and a bound other than the series' own: on a series with an occurrence_count, an end_date or no bound moved only those (measured). Nothing was written."
+    static let zoneChangeReason = "This series has started, and timezone and clear_timezone cannot change from an occurrence that has already happened: the store keeps the first occurrence's time and repeats the others at that wall-clock time in the new zone, so occurrences that happened move, by an hour across a daylight-saving change or to another day, and a series with an occurrence_count can lose its last one (a weekly series of 10 became 9). To keep the series as it is, leave timezone and clear_timezone out. To change the zone from an occurrence that has not happened yet on, pass span 'future' with its occurrence_date: the earlier occurrences stayed as they were (measured on iCloud). Nothing was written."
 }

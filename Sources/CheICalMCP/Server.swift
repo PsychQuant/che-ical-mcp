@@ -426,10 +426,10 @@ class CheICalMCPServer {
                             ]),
                             "required": .array([.string("title")])
                         ]),
-                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone.")]),
+                        "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone. On a recurring series that has started, a zone other than the event's is refused with span all, or span future from an occurrence that has already happened: the occurrences repeat at the new zone's wall-clock time, which moved happened ones and lost the last one of a counted series (#478).")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default. Refused like timezone on a recurring series that has started (#478).")
                         ]),
                         "span": .object([
                             "type": .string("string"),
