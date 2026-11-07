@@ -1309,23 +1309,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             fromLaterOccurrence: reach.isFromLaterOccurrence,
             changesAllDay: datePlan.isAllDay != event.isAllDay,
             changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
-            hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount) {
+            hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount,
+            wholeSeriesCall: applyToAll) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
-        // #451: a start moved past the next slot, from an occurrence that happened, takes the
-        // occurrences before the new start with it, and undo refuses. Decided from the rule, so a
-        // deleted occurrence there does not let it through (PR #471 verify).
-        if let anchor = reach.anchor, let planned = datePlan.datesToWrite?.start,
-           SeriesRuleWrite.needsPassedOccurrenceCheck(repeats: !seriesRules.isEmpty, anchorStart: anchor, plannedStart: planned, happened: happened),
-           SeriesRuleWrite.passesNextSlot(
-               plannedStart: planned,
-               nextSlot: SeriesRuleWrite.nextSlotLowerBound(after: anchor, rules: seriesRules, calendar: Calendar.gregorian(in: event.timeZone ?? .current)),
-               dayCalendar: datePlan.isAllDay || event.isAllDay ? Calendar.gregorian(in: .current) : nil) {
-            throw EventKitError.seriesWriteRefused(reason: SeriesRuleWrite.startReason(reach: reach, clearingRecurrence: clearRecurrence))
+        // #451 (PR #471 verify round 2): from an occurrence that happened, start_time keeps that
+        // occurrence's date; from one still to come, it is not before now. Any other date moved
+        // or dropped occurrences that happened, and undo refuses.
+        let dayCalendar = Calendar.gregorian(in: datePlan.isAllDay || event.isAllDay ? .current : (event.timeZone ?? .current))
+        if let reason = SeriesRuleWrite.startRefusal(
+            reach: reach, plannedStart: datePlan.datesToWrite?.start, happened: happened, now: now,
+            dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
         }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.
-        if let reason = SeriesRuleWrite.startedRuleRefusal(recurrenceRule, stored: seriesRules, happened: happened, now: now) {
+        if let anchor = reach.anchor, let reason = SeriesRuleWrite.startedRuleRefusal(
+            recurrenceRule, stored: seriesRules, happened: happened, firstStart: anchor, now: now,
+            calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
 

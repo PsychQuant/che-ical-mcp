@@ -95,49 +95,26 @@ enum SeriesRuleWrite {
 
     // MARK: moving the start
 
-    /// A move later from an occurrence that has happened. A series that has not started loses
-    /// nothing that happened. A move earlier was measured on a series with no edited occurrence:
-    /// every occurrence moved, and on a series with a count the count stayed, so it ends earlier.
-    static func needsPassedOccurrenceCheck(repeats: Bool, anchorStart: Date, plannedStart: Date, happened: Bool) -> Bool {
-        repeats && plannedStart > anchorStart && happened
-    }
-
-    /// The earliest the rule's next slot after `anchor` can be, from the rule alone, so a deleted
-    /// occurrence there does not let a move past its slot through. Exact for a rule with one slot
-    /// a period that `anchor` lies on; for any other rule (several slots a period, a filter the
-    /// input cannot write, several rules) the start of the next day, as each slot is on its own day.
-    static func nextSlotLowerBound(after anchor: Date, rules: [StoredRule], calendar: Calendar) -> Date {
-        let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: anchor)) ?? anchor
-        guard rules.count == 1, let rule = rules.first, !rule.hasOtherParts, let frequency = rule.frequency, rule.interval >= 1 else {
-            return nextDay
+    /// The refusal of a new start, or nil. A closed rule (PR #471 verify round 2), decided before
+    /// anything is written:
+    /// - from an occurrence that has happened (`happened`), `start_time` may change only the time of
+    ///   day, on that occurrence's own date (`anchor`, in `dayCalendar`): any other date, earlier or
+    ///   later, by a week or by two days, moves the series' days, so occurrences that happened go or
+    ///   land on days they never had (measured for a week later and two days later on #451; a week
+    ///   earlier, the next slot's day an hour earlier and a monthly series on the 6th moved to the
+    ///   26th are the same move of the series' days, read from the code in round 2);
+    /// - from an occurrence still to come, the new start may not be before now, where occurrences
+    ///   that never happened would appear.
+    /// `dayCalendar` is the event's zone for a timed result, the host's for an all-day one.
+    static func startRefusal(reach: Reach, plannedStart: Date?, happened: Bool, now: Date,
+                             dayCalendar: Calendar, clearingRecurrence: Bool) -> String? {
+        guard let anchor = reach.anchor, let planned = plannedStart else { return nil }
+        if happened {
+            if dayCalendar.isDate(planned, inSameDayAs: anchor) { return nil }
+            if clearingRecurrence { return clearStartReason }
+            return reach.isFromLaterOccurrence ? laterStartReason : startPassesOccurrencesReason
         }
-        let weekday = calendar.component(.weekday, from: anchor), day = calendar.component(.day, from: anchor)
-        let onlyWeekday = rule.daysOfWeek.isEmpty || rule.daysOfWeek == [weekday]
-        let onlyDay = rule.daysOfMonth.isEmpty || rule.daysOfMonth == [day]
-        let step: (Calendar.Component, Int)?
-        switch frequency {
-        case .daily: step = rule.daysOfWeek.isEmpty && rule.daysOfMonth.isEmpty ? (.day, rule.interval) : nil
-        case .weekly: step = onlyWeekday && rule.daysOfMonth.isEmpty ? (.day, 7 * rule.interval) : nil
-        case .monthly: step = rule.daysOfWeek.isEmpty && onlyDay ? (.month, rule.interval) : nil
-        case .yearly: step = rule.daysOfWeek.isEmpty && rule.daysOfMonth.isEmpty ? (.year, rule.interval) : nil
-        }
-        // Adding months clamps to a short month's last day, which is no later than the real slot.
-        guard let step, let next = calendar.date(byAdding: step.0, value: step.1, to: anchor) else { return nextDay }
-        return next
-    }
-
-    /// Whether the new start reaches the next slot. A move of a week took the first occurrence; two
-    /// days later, before the second, moved every occurrence and lost none. `dayCalendar`: compare
-    /// by day, for an all-day result or series, whose start is the day's midnight.
-    static func passesNextSlot(plannedStart: Date, nextSlot: Date, dayCalendar: Calendar?) -> Bool {
-        guard let dayCalendar else { return plannedStart >= nextSlot }
-        return dayCalendar.startOfDay(for: plannedStart) >= dayCalendar.startOfDay(for: nextSlot)
-    }
-
-    /// The refusal of a start that reaches the next slot, by what the call covers.
-    static func startReason(reach: Reach, clearingRecurrence: Bool) -> String {
-        if clearingRecurrence { return clearStartReason }
-        return reach.isFromLaterOccurrence ? laterStartReason : startPassesOccurrencesReason
+        return planned < now ? pastStartReason : nil
     }
 
     // MARK: a rule from an occurrence that has happened
@@ -148,24 +125,75 @@ enum SeriesRuleWrite {
     /// did; the same pattern with an `end_date` after today, a count above the stored one, or no
     /// bound kept every one. A closed list: only the stored pattern, with one of those bounds.
     static func keepsStoredPattern(_ new: RecurrenceRuleInput, stored: [StoredRule]) -> Bool {
-        guard stored.count == 1, let rule = stored.first, !rule.hasOtherParts, let frequency = rule.frequency else { return false }
-        return new.frequency == frequency && new.interval == rule.interval
+        guard let rule = writableRule(stored) else { return false }
+        return new.frequency == rule.frequency && new.interval == rule.interval
             && Set(new.daysOfWeek ?? []) == rule.daysOfWeek && Set(new.daysOfMonth ?? []) == rule.daysOfMonth
     }
 
-    /// No bound, an end at or after now, or a count at least the stored one (the stored rule has a count).
-    static func boundKeepsHappened(_ new: RecurrenceRuleInput, stored: StoredRule, now: Date) -> Bool {
+    /// The one stored rule, when `recurrence` can write its pattern; nil otherwise.
+    static func writableRule(_ stored: [StoredRule]) -> StoredRule? {
+        guard stored.count == 1, let rule = stored.first, !rule.hasOtherParts, rule.frequency != nil else { return nil }
+        return rule
+    }
+
+    /// Whether the new bound keeps every occurrence that happened and adds none in the past.
+    /// The stored bound echoed unchanged always does (a finished series echoing its own past
+    /// end_date, PR #471 verify round 2). Otherwise: a series that has finished gains occurrences
+    /// after its last one, which may be in the past, so only the unchanged bound passes it; on a
+    /// series still running, no bound, an end at or after now, or a count at least the stored one
+    /// (measured).
+    static func boundKeepsHappened(_ new: RecurrenceRuleInput, stored: StoredRule, firstStart: Date, now: Date, calendar: Calendar) -> Bool {
+        if sameBound(new, stored) { return true }
+        guard stillRuns(stored, firstStart: firstStart, now: now, calendar: calendar) else { return false }
         if let end = new.endDate { return end >= now }
         if let count = new.occurrenceCount { return stored.occurrenceCount.map { count >= $0 } ?? false }
         return true
     }
 
+    static func sameBound(_ new: RecurrenceRuleInput, _ stored: StoredRule) -> Bool {
+        switch (new.endDate, new.occurrenceCount) {
+        case (let end?, nil): return stored.endDate.map { abs($0.timeIntervalSince(end)) < 1 } ?? false
+        case (nil, let count?): return stored.occurrenceCount == count
+        case (nil, nil): return stored.endDate == nil && stored.occurrenceCount == nil
+        default: return false
+        }
+    }
+
+    /// Whether the stored series may still have occurrences at or after now, so a bound moved later
+    /// adds none in the past. An end at or after now; with a count, the slot after the last one at
+    /// or after now, worked out only for a rule with one slot a period on the first start's day
+    /// (adding months clamps to a short month, which is no later than the real slot); a count on
+    /// any other rule counts as finished, the side that refuses.
+    static func stillRuns(_ stored: StoredRule, firstStart: Date, now: Date, calendar: Calendar) -> Bool {
+        if let end = stored.endDate { return end >= now }
+        guard let count = stored.occurrenceCount else { return true }
+        guard let step = periodStep(stored, firstStart: firstStart, calendar: calendar),
+              let afterLast = calendar.date(byAdding: step.component, value: step.value * count, to: firstStart) else { return false }
+        return afterLast >= now
+    }
+
+    /// One period of a rule with one slot a period that `firstStart` lies on, or nil.
+    static func periodStep(_ rule: StoredRule, firstStart: Date, calendar: Calendar) -> (component: Calendar.Component, value: Int)? {
+        guard !rule.hasOtherParts, let frequency = rule.frequency, rule.interval >= 1 else { return nil }
+        let onlyWeekday = rule.daysOfWeek.isEmpty || rule.daysOfWeek == [calendar.component(.weekday, from: firstStart)]
+        let onlyDay = rule.daysOfMonth.isEmpty || rule.daysOfMonth == [calendar.component(.day, from: firstStart)]
+        switch frequency {
+        case .daily: return rule.daysOfWeek.isEmpty && rule.daysOfMonth.isEmpty ? (.day, rule.interval) : nil
+        case .weekly: return onlyWeekday && rule.daysOfMonth.isEmpty ? (.day, 7 * rule.interval) : nil
+        case .monthly: return rule.daysOfWeek.isEmpty && onlyDay ? (.month, rule.interval) : nil
+        case .yearly: return rule.daysOfWeek.isEmpty && rule.daysOfMonth.isEmpty ? (.year, rule.interval) : nil
+        }
+    }
+
     /// The refusal of `recurrence` from an occurrence that has happened, or nil. `happened` false
     /// (a series that has not started, or from an occurrence still to come) checks nothing:
-    /// measured clean from a later occurrence.
-    static func startedRuleRefusal(_ new: RecurrenceRuleInput?, stored: [StoredRule], happened: Bool, now: Date) -> String? {
+    /// measured clean from a later occurrence. `firstStart`: the start the rule counts from.
+    static func startedRuleRefusal(_ new: RecurrenceRuleInput?, stored: [StoredRule], happened: Bool,
+                                   firstStart: Date, now: Date, calendar: Calendar) -> String? {
         guard let new, happened else { return nil }
-        guard keepsStoredPattern(new, stored: stored), let rule = stored.first, boundKeepsHappened(new, stored: rule, now: now) else {
+        guard let rule = writableRule(stored) else { return unwritableRuleReason }
+        guard keepsStoredPattern(new, stored: stored),
+              boundKeepsHappened(new, stored: rule, firstStart: firstStart, now: now, calendar: calendar) else {
             return startedRuleReason
         }
         return nil
@@ -176,21 +204,26 @@ enum SeriesRuleWrite {
     /// Span future from an occurrence after the first. A rule with `end_date` or no bound stayed
     /// within the later occurrences, also with `start_time`, and a rule with no bound with
     /// `calendar_name`.
+    /// `wholeSeriesCall`: span `all`, which reaches here only through an occurrence's own id after
+    /// a deleted first slot (PR #471 verify round 2); its count text does not name span `future`.
     static func laterOccurrenceRefusal(fromLaterOccurrence: Bool, changesAllDay: Bool, changesCalendar: Bool,
-                                       hasRecurrence: Bool, occurrenceCount: Int?) -> String? {
+                                       hasRecurrence: Bool, occurrenceCount: Int?, wholeSeriesCall: Bool = false) -> String? {
         guard fromLaterOccurrence else { return nil }
         if changesAllDay { return allDayReason }
-        if occurrenceCount != nil { return countReason }
+        if occurrenceCount != nil { return wholeSeriesCall ? countAfterDeletedFirstReason : countReason }
         if changesCalendar, !hasRecurrence { return calendarReason }
         return nil
     }
 
     // MARK: messages (fixed strings; they name only routes that were measured)
 
-    static let startPassesOccurrencesReason = "This would move the series' start past occurrences that have already happened, and every occurrence before the new start would be gone. To change other fields of the series, leave start_time out. To move the whole series to another time of day, give start_time on the first occurrence's own date. To move the occurrences from one that has not happened yet, pass span 'future' with that occurrence's occurrence_date and start_time; give a new rule end_date, not occurrence_count. Nothing was written."
-    static let laterStartReason = "This occurrence has already happened, and moving its start past the series' next occurrence would take the occurrences between them with it. To change other fields from this occurrence on, leave start_time out. To move the occurrences from one that has not happened yet, pass span 'future' with that occurrence's occurrence_date and start_time. Nothing was written."
-    static let clearStartReason = "clear_recurrence with a start_time past the series' next occurrence, on a series that has started, would leave its one event after occurrences that happened. Leave start_time out: clear_recurrence with span 'all' leaves one event on the series' first day and deletes the other occurrences. Nothing was written."
-    static let startedRuleReason = "On a series that has started, a rule from an occurrence that has already happened may only keep the series' pattern (frequency, interval, days_of_week and days_of_month as list_events shows them) with no bound, an end_date that is not in the past, or an occurrence_count no smaller than the series' own: other rules removed occurrences that happened, or added ones in the past that never did. To end the series, give that rule an end_date after now. To change the pattern, pass span 'future' with the occurrence_date of an occurrence that has not happened yet, and end_date or no bound. Nothing was written."
+    static let startPassesOccurrencesReason = "On a series that has started, start_time may change only the time of day of its first occurrence, on that occurrence's own date: another date, earlier or later, moves the series' days, so occurrences that have already happened would be gone or land on days they never had. To change other fields of the series, leave start_time out. To move the occurrences from one that has not happened yet, pass span 'future' with that occurrence's occurrence_date and a start_time that is not in the past; give a new rule end_date, not occurrence_count. Nothing was written."
+    static let laterStartReason = "This occurrence has already happened, so start_time may change only its time of day, on its own date: another date would take occurrences that happened with it. To change other fields from this occurrence on, leave start_time out. To move the occurrences from one that has not happened yet, pass span 'future' with that occurrence's occurrence_date and a start_time that is not in the past. Nothing was written."
+    static let pastStartReason = "This start_time is before now: the occurrences from it would start in the past, on days where none happened. Give a start_time that is not in the past, or leave start_time out. Nothing was written."
+    static let clearStartReason = "clear_recurrence with a start_time on another date than the series' first occurrence, on a series that has started, would leave its one event on a day where it did not happen. Leave start_time out: clear_recurrence with span 'all' leaves one event on the series' first day and deletes the other occurrences. Nothing was written."
+    static let startedRuleReason = "On a series that has started, a rule from an occurrence that has already happened may only keep the series' pattern (frequency, interval, days_of_week and days_of_month as list_events shows them) with its own bound, or, while the series still has occurrences to come, no bound, an end_date that is not in the past, or an occurrence_count no smaller than the series' own: other rules removed occurrences that happened, or added ones in the past that never did. To keep the series' rule, leave recurrence out. To end the series, give that rule an end_date after now. To change the pattern, pass span 'future' with the occurrence_date of an occurrence that has not happened yet, and end_date or no bound. Nothing was written."
+    static let unwritableRuleReason = "This series' rule has parts recurrence cannot write (a numbered weekday such as the second Tuesday, set positions, months, weeks or days of the year, or more than one rule), so on a series that has started its rule cannot be changed from an occurrence that has already happened. Leave recurrence out to keep the rule. Nothing was written."
+    static let countAfterDeletedFirstReason = "occurrence_count cannot be used here: the series' first occurrence was deleted, and the store counts from the start of the original series (from a later occurrence with span 'future', 4 from the seventh occurrence gave 1). This route was not measured. Use end_date. Nothing was written."
     static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series. Nothing was written."
     static let countReason = "occurrence_count cannot be used with span 'future' from a later occurrence: the store counts from the start of the original series, so 4 from the seventh occurrence gave 1, and the occurrences after it were gone. Use end_date. Nothing was written."
     static let calendarReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too. Pass span 'all' to move the whole series, or recurrence with span 'future' to move the occurrences from that one on. Nothing was written."
