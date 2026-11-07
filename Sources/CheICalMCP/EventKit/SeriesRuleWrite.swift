@@ -28,7 +28,9 @@ enum SeriesRuleWrite {
             self.endDate = endDate
         }
 
-        init(_ rule: EKRecurrenceRule) {
+        /// `startWeekday`: the series' first start as a weekday (Sunday 1), in the zone its days are
+        /// read in; nil when unknown, which counts a week start that could matter as one that does.
+        init(_ rule: EKRecurrenceRule, startWeekday: Int?) {
             switch rule.frequency {
             case .daily: frequency = .daily
             case .weekly: frequency = .weekly
@@ -43,24 +45,32 @@ enum SeriesRuleWrite {
             hasOtherParts = days.contains { $0.weekNumber != 0 } || rule.setPositions != nil || rule.monthsOfTheYear != nil
                 || rule.weeksOfTheYear != nil || rule.daysOfTheYear != nil
                 || SeriesRuleWrite.weekStartMatters(frequency: frequency, firstDayOfTheWeek: rule.firstDayOfTheWeek,
-                                                    interval: rule.interval, dayCount: Set(days.map(\.dayOfTheWeek)).count)
+                                                    interval: rule.interval, days: daysOfWeek, startWeekday: startWeekday)
             let count = rule.recurrenceEnd?.occurrenceCount ?? 0
             occurrenceCount = count > 0 ? count : nil
             endDate = rule.recurrenceEnd?.endDate
         }
     }
 
-    /// PR #471 verify rounds 4-5: the week start (WKST, RFC 5545) decides which days share a period
-    /// only on a weekly rule repeating every two weeks or more with more than one day (a yearly rule
-    /// by week number is already a part `recurrence` cannot write). A rule `recurrence` writes gets
-    /// EventKit's default, 2 (Monday; checked on this host, 2026-11-08), so on such a rule a stored
-    /// week start other than that (or 0, unset) cannot be written back, and a rewrite could regroup
-    /// the days and move happened occurrences. One day a week, interval 1, or another frequency is
-    /// not regrouped, so Google's WKST=SU on a biweekly Tuesday series is no reason to refuse.
+    /// PR #471 verify rounds 4-6: on a weekly rule repeating every two weeks or more, the week start
+    /// (WKST, RFC 5545) decides which week each day falls in, so which period it belongs to. A rule
+    /// `recurrence` writes gets EventKit's default, 2 (Monday; checked on this host, 2026-11-08), and
+    /// rewriting a rule stored with week start s moves an occurrence by a week exactly when its day
+    /// and the series' start weekday fall on different sides of the split between the circular range
+    /// [s, Monday) and the rest (the week start of each side moves by a different amount). So the
+    /// week start matters when the rule's days plus the start weekday are not all on one side; then
+    /// it is a part `recurrence` cannot write, and a rewrite of a started series is refused. Google's
+    /// WKST=SU on a biweekly Tuesday (or Tuesday and Thursday) series from a Tuesday start has every
+    /// day on one side, so it is not. An unknown start weekday counts as mattering: the side that
+    /// refuses. 0 (unset) is read as the default. Other frequencies are not grouped by week.
     static let writtenWeekStart = 2
-    static func weekStartMatters(frequency: RecurrenceRuleInput.Frequency?, firstDayOfTheWeek: Int, interval: Int, dayCount: Int) -> Bool {
-        frequency == .weekly && interval > 1 && dayCount > 1
-            && firstDayOfTheWeek != 0 && firstDayOfTheWeek != writtenWeekStart
+    static func weekStartMatters(frequency: RecurrenceRuleInput.Frequency?, firstDayOfTheWeek: Int, interval: Int,
+                                 days: Set<Int>, startWeekday: Int?) -> Bool {
+        guard frequency == .weekly, interval > 1, firstDayOfTheWeek != 0, firstDayOfTheWeek != writtenWeekStart else { return false }
+        guard let startWeekday else { return true }
+        let split = (writtenWeekStart - firstDayOfTheWeek + 7) % 7
+        let sides = Set(days.union([startWeekday]).map { (($0 - firstDayOfTheWeek) % 7 + 7) % 7 < split })
+        return sides.count > 1
     }
 
     /// What part of the series a write covers, and the slot it starts from.
@@ -225,9 +235,10 @@ enum SeriesRuleWrite {
 
     /// Whether `new` is the stored rule itself, pattern and bound.
     static func isStoredRule(_ new: RecurrenceRuleInput, stored: [StoredRule]) -> Bool {
-        // PR #471 verify round 5: over a rule recurrence cannot write, a rule in the call may write
-        // nothing new, so it counts as possibly the stored one: the side that refuses.
-        guard let rule = writableRule(stored) else { return !stored.isEmpty }
+        // PR #471 verify rounds 5-6: over a rule recurrence cannot write, or rules that could not be
+        // read, a rule in the call may write nothing new, so it counts as possibly the stored one:
+        // the side that refuses.
+        guard let rule = writableRule(stored) else { return true }
         return keepsStoredPattern(new, stored: stored) && sameBound(new, rule)
     }
 
@@ -240,12 +251,15 @@ enum SeriesRuleWrite {
     /// a deleted first slot (PR #471 verify round 2); its count text does not name span `future`.
     static func laterOccurrenceRefusal(fromLaterOccurrence: Bool, changesAllDay: Bool, changesCalendar: Bool,
                                        hasRecurrence: Bool, occurrenceCount: Int?, wholeSeriesCall: Bool = false,
-                                       recurrenceIsStored: Bool = false) -> String? {
+                                       storedRuleUnwritable: Bool = false, recurrenceIsStored: Bool = false) -> String? {
         guard fromLaterOccurrence else { return nil }
         if changesAllDay { return allDayReason }
         if occurrenceCount != nil { return wholeSeriesCall ? countAfterDeletedFirstReason : countReason }
         // An echo of the stored rule may change nothing and leave the move to every occurrence; only
         // a rule with another bound was measured to split the series there (round 3).
+        // Over a rule that cannot be written back (or read), no rule in the call is known to split
+        // the series, so the text does not offer one (PR #471 verify round 6).
+        if changesCalendar, storedRuleUnwritable { return calendarUnwritableReason }
         if changesCalendar, !hasRecurrence || recurrenceIsStored { return calendarReason }
         return nil
     }
@@ -258,7 +272,8 @@ enum SeriesRuleWrite {
     static let clearStartReason = "clear_recurrence with a start_time on another date than the series' first occurrence, on a series that has started, would leave its one event on a day where it did not happen. Leave start_time out: clear_recurrence with span 'all' leaves one event on the series' first day and deletes the other occurrences. Nothing was written."
     static let startedRuleReason = "On a series that has started, a rule from an occurrence that has already happened may only keep the series' pattern (frequency, interval, days_of_week and days_of_month as list_events shows them) with its own bound, or, while the series still has occurrences to come, no bound, an end_date that is not in the past, or an occurrence_count no smaller than the series' own: other rules removed occurrences that happened, or added ones in the past that never did. An end_date before now is refused even when it falls after the last occurrence that happened. To keep the series' rule, leave recurrence out. To end the series, give that rule an end_date after now (on a series with an occurrence_count, only from its first occurrence over the whole series). To change the pattern, pass span 'future' with the occurrence_date of an occurrence that has not happened yet, and end_date or no bound. Nothing was written."
     static let countedSeriesReason = "This series ends after a number of occurrences (occurrence_count), counted from its first occurrence, and this call cannot tell whether any are still to come: it starts after the first occurrence, the first occurrence was deleted, or the rule is not one with a single slot on the first start's day each period. Here a recurrence passes only with the series' own bound, and from a later occurrence or after a deleted first one not even then, since occurrence_count is refused there; leaving recurrence out keeps the rule. To end it or change its bound, pass span 'future' with the occurrence_date of an occurrence that has not happened yet, and end_date. A series with no occurrence still to come has ended and keeps its bound. Nothing was written."
-    static let unwritableRuleReason = "This series' rule has parts recurrence cannot write (a numbered weekday such as the second Tuesday, set positions, months, weeks or days of the year, a week start other than Monday on a weekly rule with more than one day repeating every two weeks or more, or more than one rule), so on a series that has started its rule cannot be changed from an occurrence that has already happened. Leave recurrence out to keep the rule. Nothing was written."
+    static let unwritableRuleReason = "This series' rule has parts recurrence cannot write (a numbered weekday such as the second Tuesday, set positions, months, weeks or days of the year, a week start other than Monday that puts a weekly rule's days in other weeks than Monday would, on a rule repeating every two weeks or more, or more than one rule), so on a series that has started its rule cannot be changed from an occurrence that has already happened. Leave recurrence out to keep the rule. Nothing was written."
+    static let calendarUnwritableReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too, unless the call also changes the rule, and this series' rule has parts recurrence cannot write (or could not be read), so no rule given here is known to keep the earlier occurrences where they are. Pass span 'all' to move the whole series. Nothing was written."
     static let countAfterDeletedFirstReason = "occurrence_count cannot be used here: the series' first occurrence was deleted, and the store counts from the start of the original series (from a later occurrence with span 'future', 4 from the seventh occurrence gave 1). This route was not measured. Use end_date. Nothing was written."
     static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series. Nothing was written."
     static let countReason = "occurrence_count cannot be used with span 'future' from a later occurrence: the store counts from the start of the original series, so 4 from the seventh occurrence gave 1, and the occurrences after it were gone. Use end_date. Nothing was written."

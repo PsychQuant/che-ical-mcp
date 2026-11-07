@@ -1282,7 +1282,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // unwritable pattern), so it throws.
             let series = try addressesOwnOccurrence
                 ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
-            return (series?.recurrenceRules ?? []).map(SeriesRuleWrite.StoredRule.init)
+            // PR #471 verify round 6: whether a week start regroups the rule depends on the
+            // series' start weekday, read in the zone its days are read in.
+            let startWeekday = series.map {
+                Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current)).component(.weekday, from: $0.startDate)
+            }
+            return (series?.recurrenceRules ?? []).map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }
         }()
         let shownStart: Date = event.startDate
         let eventSlot: Date = UndoPostState.ruleSlot(
@@ -1307,6 +1312,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
             hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount,
             wholeSeriesCall: applyToAll,
+            storedRuleUnwritable: SeriesRuleWrite.writableRule(seriesRules) == nil,
             recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }

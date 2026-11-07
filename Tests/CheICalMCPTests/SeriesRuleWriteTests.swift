@@ -193,23 +193,24 @@ final class SeriesRuleWriteTests: XCTestCase {
                                   daysOfTheWeek: [EKRecurrenceDayOfWeek(.tuesday), EKRecurrenceDayOfWeek(.thursday)],
                                   daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
                                   setPositions: nil, end: EKRecurrenceEnd(occurrenceCount: 10))
-        XCTAssertEqual(SeriesRuleWrite.StoredRule(ek), SeriesRuleWrite.StoredRule(frequency: .weekly, interval: 2, daysOfWeek: [3, 5], occurrenceCount: 10))
+        XCTAssertEqual(SeriesRuleWrite.StoredRule(ek, startWeekday: 3), SeriesRuleWrite.StoredRule(frequency: .weekly, interval: 2, daysOfWeek: [3, 5], occurrenceCount: 10))
         let numbered = EKRecurrenceRule(recurrenceWith: .monthly, interval: 1, daysOfTheWeek: [EKRecurrenceDayOfWeek(.tuesday, weekNumber: 2)],
                                         daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
                                         setPositions: nil, end: nil)
-        XCTAssertTrue(SeriesRuleWrite.StoredRule(numbered).hasOtherParts)
+        XCTAssertTrue(SeriesRuleWrite.StoredRule(numbered, startWeekday: nil).hasOtherParts)
         let end = Date(timeIntervalSince1970: 1_900_000_000)
         let ended = EKRecurrenceRule(recurrenceWith: .monthly, interval: 1, daysOfTheWeek: nil, daysOfTheMonth: [15],
                                      monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil,
                                      end: EKRecurrenceEnd(end: end))
-        XCTAssertEqual(SeriesRuleWrite.StoredRule(ended), SeriesRuleWrite.StoredRule(frequency: .monthly, daysOfMonth: [15], endDate: end))
+        XCTAssertEqual(SeriesRuleWrite.StoredRule(ended, startWeekday: nil), SeriesRuleWrite.StoredRule(frequency: .monthly, daysOfMonth: [15], endDate: end))
     }
 
-    /// Verify round 4: a week start (WKST) other than the default decides which days share a period on
-    /// a rule with interval above 1, and recurrence cannot write it (makeRecurrenceRule leaves the
-    /// default), so such a rule counts as having a part recurrence cannot write. With interval 1 the
-    /// week start does not change the expansion.
-    func testANonDefaultWeekStartOnAnIntervalRuleCannotBeWritten() {
+    /// Verify rounds 4-6: changing the week start (WKST) from s to Monday moves a weekly interval>1
+    /// rule's occurrences only when its days plus the series' start weekday fall on both sides of
+    /// the split between the circular range [s, Monday) and the rest. recurrence cannot write the
+    /// week start (makeRecurrenceRule leaves EventKit's default), so such a rule counts as having a
+    /// part recurrence cannot write.
+    func testAWeekStartThatRegroupsTheRuleCannotBeWritten() {
         func weekly(interval: Int, weekStart: Int?, days: [EKRecurrenceDayOfWeek]) -> EKRecurrenceRule {
             let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: interval, daysOfTheWeek: days,
                                         daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
@@ -218,35 +219,63 @@ final class SeriesRuleWriteTests: XCTestCase {
             return rule
         }
         let sunTue = [EKRecurrenceDayOfWeek(.sunday), EKRecurrenceDayOfWeek(.tuesday)]
-        XCTAssertTrue(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1, days: sunTue)).hasOtherParts, "Sunday week start, every two weeks, two days")
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: nil, days: sunTue)).hasOtherParts, "default week start")
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 1, weekStart: 1, days: sunTue)).hasOtherParts, "interval 1")
-        // Verify round 5: one day a week, or another frequency, is not regrouped by the week start.
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1, days: [EKRecurrenceDayOfWeek(.tuesday)])).hasOtherParts,
-                       "every two weeks on Tuesday, as Google writes it with WKST=SU")
+        let tueThu = [EKRecurrenceDayOfWeek(.tuesday), EKRecurrenceDayOfWeek(.thursday)]
+        let tue = [EKRecurrenceDayOfWeek(.tuesday)]
+        func parts(_ rule: EKRecurrenceRule, start: Int?) -> Bool { SeriesRuleWrite.StoredRule(rule, startWeekday: start).hasOtherParts }
+        XCTAssertTrue(parts(weekly(interval: 2, weekStart: 1, days: sunTue), start: 1), "Sunday week start, every two weeks, Sunday and Tuesday")
+        XCTAssertFalse(parts(weekly(interval: 2, weekStart: nil, days: sunTue), start: 1), "default week start")
+        XCTAssertFalse(parts(weekly(interval: 1, weekStart: 1, days: sunTue), start: 1), "interval 1")
+        // Round 6: Tuesday and Thursday from a Tuesday start sit on one side, so WKST=SU changes nothing.
+        XCTAssertFalse(parts(weekly(interval: 2, weekStart: 1, days: tueThu), start: 3), "every two weeks on Tuesday and Thursday, WKST=SU")
+        XCTAssertFalse(parts(weekly(interval: 2, weekStart: 1, days: tue), start: 3), "every two weeks on Tuesday, as Google writes it with WKST=SU")
+        // Round 6: one day, but a Sunday start outside it: WKST=SU puts the first Tuesday 2 days in, Monday 9.
+        XCTAssertTrue(parts(weekly(interval: 2, weekStart: 1, days: tue), start: 1), "a Tuesday rule from a Sunday start")
+        XCTAssertTrue(parts(weekly(interval: 2, weekStart: 1, days: tue), start: nil), "start weekday unknown: the side that refuses")
         let monthly = EKRecurrenceRule(recurrenceWith: .monthly, interval: 2, daysOfTheWeek: nil, daysOfTheMonth: [15],
                                        monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil, end: nil)
         monthly.setValue(1, forKey: "firstDayOfTheWeek")
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(monthly).hasOtherParts, "every two months on the 15th")
-        XCTAssertTrue(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 3, dayCount: 2))
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 2, interval: 3, dayCount: 2), "Monday, what recurrence writes")
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 0, interval: 3, dayCount: 2))
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 1, dayCount: 2))
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 2, dayCount: 1))
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .daily, firstDayOfTheWeek: 1, interval: 2, dayCount: 2))
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(monthly, startWeekday: nil).hasOtherParts, "every two months on the 15th")
+        func matters(_ fdw: Int, interval: Int = 2, days: Set<Int>, start: Int?, frequency: RecurrenceRuleInput.Frequency = .weekly) -> Bool {
+            SeriesRuleWrite.weekStartMatters(frequency: frequency, firstDayOfTheWeek: fdw, interval: interval, days: days, startWeekday: start)
+        }
+        XCTAssertTrue(matters(1, interval: 3, days: [1, 3], start: 1))
+        XCTAssertFalse(matters(2, interval: 3, days: [1, 3], start: 1), "Monday, what recurrence writes")
+        XCTAssertFalse(matters(0, interval: 3, days: [1, 3], start: 1))
+        XCTAssertFalse(matters(1, interval: 1, days: [1, 3], start: 1))
+        XCTAssertFalse(matters(1, days: [1, 3], start: 1, frequency: .daily))
+        XCTAssertFalse(matters(1, days: [], start: 4), "no days: the start weekday alone")
+        XCTAssertFalse(matters(1, days: [1], start: 1), "Sunday alone")
+        // Saturday week start: [Sat, Mon) is Saturday and Sunday.
+        XCTAssertFalse(matters(7, days: [7, 1], start: 7), "Saturday and Sunday")
+        XCTAssertTrue(matters(7, days: [1, 2], start: 1), "Sunday and Monday")
+        XCTAssertFalse(matters(7, days: [3, 5], start: 3), "Tuesday and Thursday")
+        // Wednesday week start: [Wed, Mon) is Wednesday to Sunday.
+        XCTAssertTrue(matters(4, days: [2, 4], start: 2), "Monday and Wednesday")
+        XCTAssertFalse(matters(4, days: [4, 6], start: 4), "Wednesday and Friday")
         XCTAssertEqual(EKRecurrenceRule(recurrenceWith: .weekly, interval: 2, daysOfTheWeek: sunTue, daysOfTheMonth: nil,
                                         monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil,
                                         end: nil).firstDayOfTheWeek,
                        SeriesRuleWrite.writtenWeekStart, "EventKit's default for a rule built as makeRecurrenceRule builds it")
     }
 
-    /// Verify round 5: over a stored rule recurrence cannot write, any recurrence counts as possibly
-    /// the stored one, so calendar_name with it from a later occurrence is refused, not let through.
+    /// Verify rounds 5-6: over a stored rule recurrence cannot write, or rules that could not be
+    /// read, any recurrence counts as possibly the stored one, so calendar_name with it from a later
+    /// occurrence is refused, and the text does not offer a rule change that is refused again.
     func testAnyRuleOverAnUnwritableStoredRuleCountsAsStored() {
         let unwritable = SeriesRuleWrite.StoredRule(frequency: .weekly, interval: 2, daysOfWeek: [1, 3], hasOtherParts: true)
-        XCTAssertTrue(SeriesRuleWrite.isStoredRule(RecurrenceRuleInput(frequency: .weekly, interval: 2, endDate: nil, occurrenceCount: nil,
-                                                                       daysOfWeek: [1, 3], daysOfMonth: nil, excludedOccurrenceDates: nil),
-                                                   stored: [unwritable]))
+        let input = RecurrenceRuleInput(frequency: .weekly, interval: 2, endDate: nil, occurrenceCount: nil,
+                                        daysOfWeek: [1, 3], daysOfMonth: nil, excludedOccurrenceDates: nil)
+        XCTAssertTrue(SeriesRuleWrite.isStoredRule(input, stored: [unwritable]))
+        XCTAssertTrue(SeriesRuleWrite.isStoredRule(input, stored: []), "rules that could not be read")
+        for hasRecurrence in [true, false] {
+            XCTAssertEqual(SeriesRuleWrite.laterOccurrenceRefusal(fromLaterOccurrence: true, changesAllDay: false, changesCalendar: true,
+                                                                  hasRecurrence: hasRecurrence, occurrenceCount: nil,
+                                                                  storedRuleUnwritable: true, recurrenceIsStored: true),
+                           SeriesRuleWrite.calendarUnwritableReason)
+        }
+        XCTAssertFalse(SeriesRuleWrite.calendarUnwritableReason.contains("bound other than"))
+        XCTAssertTrue(SeriesRuleWrite.calendarUnwritableReason.contains("span 'all'"))
+        XCTAssertTrue(SeriesRuleWrite.calendarUnwritableReason.hasSuffix("Nothing was written."))
     }
 
     /// Round-2 LOW: a finished series echoing its own bound changes nothing; any other bound on it
@@ -444,7 +473,9 @@ final class SeriesRuleWriteTests: XCTestCase {
         for pin in ["SeriesRuleWrite.laterOccurrenceRefusal( fromLaterOccurrence: reach.isFromLaterOccurrence,",
                     "if let reason = SeriesRuleWrite.startRefusal( reach: reach, plannedStart: datePlan.datesToWrite?.start, happened: happened, now: now, dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {",
                     "if let reason = SeriesRuleWrite.startedRuleRefusal( recurrenceRule, stored: seriesRules, happened: happened, countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn, firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),",
-                    "recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {"] {
+                    "storedRuleUnwritable: SeriesRuleWrite.writableRule(seriesRules) == nil,",
+                    "recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {",
+                    "map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }"] {
             let range = try XCTUnwrap(flat.range(of: pin), pin)
             XCTAssertLessThan(range.lowerBound, firstWrite.lowerBound, pin)
         }
