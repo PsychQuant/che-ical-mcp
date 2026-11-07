@@ -1333,10 +1333,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         // #478: from an occurrence that happened, a zone change moved happened occurrences and lost
         // the last one, and undo refuses.
+        let changesZone = SeriesRuleWrite.changesZone(
+            requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: TimeZone.current,
+            at: [reach.anchor ?? now, now])
         if let reason = SeriesRuleWrite.zoneRefusal(
-            reach: reach, happened: happened,
-            changesZone: SeriesRuleWrite.changesZone(requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
-            isAllDay: datePlan.isAllDay || event.isAllDay) {
+            reach: reach, happened: happened, changesZone: changesZone,
+            storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the

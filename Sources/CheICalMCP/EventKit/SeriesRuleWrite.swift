@@ -144,25 +144,33 @@ enum SeriesRuleWrite {
 
     // MARK: a time zone change (#478)
 
-    /// Whether the call changes the event's zone: a zone other than the stored one (by identifier,
-    /// so an alias of the same zone counts as a change, the side that refuses), or clear_timezone
-    /// on an event that has one.
-    static func changesZone(requested: TimeZone?, clearTimezone: Bool, stored: TimeZone?) -> Bool {
+    /// Whether the call changes the event's zone: a zone other than the stored one, or
+    /// clear_timezone on an event that has one. The same zone in another spelling (Asia/Taipei, ROC,
+    /// GMT+0800) is no change, compared with `UndoPostState.sameTimeZone` at each of `instants` (the
+    /// occurrence the write starts from, and now), and so is a floating event given `host`, the zone
+    /// list_events shows for it (PR #479 verify). A zone that agrees only for a while (GMT and London
+    /// in winter) is a change.
+    static func changesZone(requested: TimeZone?, clearTimezone: Bool, stored: TimeZone?, host: TimeZone, at instants: [Date]) -> Bool {
         if clearTimezone { return stored != nil }
         guard let requested else { return false }
-        return requested.identifier != stored?.identifier
+        let same = { (zone: TimeZone) in instants.allSatisfy { UndoPostState.sameTimeZone(requested, zone, at: $0) } }
+        return !same(stored ?? host)
     }
 
     /// #478, measured on iCloud: a weekly series of 10 from 2026-09-07 07:30 Asia/Taipei given
     /// Europe/London with span `all` moved the happened occurrences past the daylight-saving change
-    /// by an hour and lost its last one (10 became 9). The store keeps the first occurrence's instant
-    /// and repeats the rule at that wall-clock time in the new zone. A series still to come kept all
-    /// 6, and span `future` from an occurrence still to come left the earlier ones as they were (both
-    /// keep the new zone's wall-clock time across its daylight-saving change). So from an occurrence
-    /// that has happened a zone change is refused; an all-day event has no zone.
-    static func zoneRefusal(reach: Reach, happened: Bool, changesZone: Bool, isAllDay: Bool) -> String? {
-        guard reach.anchor != nil, happened, changesZone, !isAllDay else { return nil }
-        return zoneChangeReason
+    /// by an hour and lost its last one (10 became 9). The store keeps the start of the occurrence
+    /// the write starts from and repeats the others at that wall-clock time in the zone the event
+    /// then has. A series still to come kept all 6, and span `future` from an occurrence still to
+    /// come left the earlier ones as they were (both at the new zone's wall-clock time across its
+    /// daylight-saving change). So from an occurrence that has happened a zone change is refused.
+    /// Exempt only an event all-day before and after (no zone); a flip either way that changes the
+    /// zone is refused (PR #479 verify; such flips also meet #442). clear_timezone gets a text with
+    /// no route: span `future` was measured for timezone only.
+    static func zoneRefusal(reach: Reach, happened: Bool, changesZone: Bool, storedAllDay: Bool, resultAllDay: Bool,
+                            clearingTimezone: Bool) -> String? {
+        guard reach.anchor != nil, happened, changesZone, !(storedAllDay && resultAllDay) else { return nil }
+        return clearingTimezone ? clearZoneReason : zoneChangeReason
     }
 
     // MARK: a rule from an occurrence that has happened
@@ -301,5 +309,6 @@ enum SeriesRuleWrite {
     static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series. Nothing was written."
     static let countReason = "occurrence_count cannot be used with span 'future' from a later occurrence: the store counts from the start of the original series, so 4 from the seventh occurrence gave 1, and the occurrences after it were gone. Use end_date. Nothing was written."
     static let calendarReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too, unless the call also changes the rule. Pass span 'all' to move the whole series. To move the occurrences from one that has not happened yet on, pass recurrence with span 'future' from it and a bound other than the series' own: on a series with an occurrence_count, an end_date or no bound moved only those (measured). Nothing was written."
-    static let zoneChangeReason = "This series has started, and timezone and clear_timezone cannot change from an occurrence that has already happened: the store keeps the first occurrence's time and repeats the others at that wall-clock time in the new zone, so occurrences that happened move, by an hour across a daylight-saving change or to another day, and a series with an occurrence_count can lose its last one (a weekly series of 10 became 9). To keep the series as it is, leave timezone and clear_timezone out. To change the zone from an occurrence that has not happened yet on, pass span 'future' with its occurrence_date: the earlier occurrences stayed as they were (measured on iCloud). Nothing was written."
+    static let zoneChangeReason = "This series has started, and timezone cannot change from an occurrence that has already happened: the store keeps the start of the occurrence the write starts from and repeats the others at that wall-clock time in the zone it then has, so occurrences that happened move, by an hour across a daylight-saving change (measured: a weekly series of 10 had two occurrences move and lost its last one), or near midnight to another day (not measured). To keep the series as it is, leave timezone out. To change the zone from an occurrence that has not happened yet on, pass span 'future' with its occurrence_date: the earlier occurrences stayed as they were (measured on iCloud). Nothing was written."
+    static let clearZoneReason = "This series has started, and clear_timezone cannot change it from an occurrence that has already happened: the occurrences would repeat at the wall-clock time of the zone the event then has (this Mac's), so occurrences that happened can move, and on a series with an occurrence_count it dropped the last occurrence (#455). No route for clear_timezone on a started series was measured, so leave clear_timezone out. Nothing was written."
 }
