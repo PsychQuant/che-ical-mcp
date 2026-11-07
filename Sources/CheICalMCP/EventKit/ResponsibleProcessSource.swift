@@ -236,7 +236,8 @@ enum ResponsibleProcessFormatter {
     /// purpose is described as kept: a status read alone said so after a failed FORCE re-exec
     /// or an inherited sentinel too, contradicting the stderr line (verify round 3b row 5).
     static func attributionSection(
-        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil
+        selfPid: Int32, result: ResponsibleProcessResult, startupDecision: SelfDisclaimDecision? = nil,
+        reexec: CarriedReexec? = nil
     ) -> String {
         // The path comes from the kernel but names a file anyone can create — escape it
         // like every other interpolated field on this output (CWE-150/117, #169).
@@ -256,6 +257,16 @@ enum ResponsibleProcessFormatter {
             default: line = advice(for: process.kind)
             }
             lines.append("  \(escape(line))")
+        }
+        // #361: closed vocabulary or fixed text, so there is nothing to escape.
+        // In the ineffective branch the advice above can say the process was not re-executed, so this
+        // says how the two fit: the record is what the variable claims, and another process is checked.
+        if let reexec {
+            var line = reexec.attributionLine
+            if startupDecision == .skip(.disclaimIneffective) {
+                line += " If it did, it had no effect: macOS still checks another process."
+            }
+            lines.append("  \(line)")
         }
         return lines.joined(separator: "\n")
     }

@@ -48,8 +48,8 @@ enum ReminderUpdateWrite {
     /// reminder (`ReminderDateSync.confirmSaved`), or `nil` when the due date was not touched.
     /// `save` writes to the store, `reload` re-reads the reminder (`EKObject.refresh()`, false
     /// when the reminder is gone), and
-    /// `rollback` discards unsaved changes (`EKObject.rollback()`); when `save` throws, the
-    /// changes are rolled back and the error is rethrown.
+    /// `rollback` is `EKObject.rollback()`, which clears `hasChanges` and does not drop the change
+    /// (#274, `ExistingReminderSave`); when `save` throws, it runs and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
                       save: () throws -> Void, reload: () -> Bool,
                       rollback: () -> Void) throws -> ReminderDateSync.Report? {

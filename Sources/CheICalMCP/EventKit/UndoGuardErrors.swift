@@ -118,11 +118,14 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
             : "ask the user whether to give up this redo; any new change clears the redo history"
         let derived: Situation = changedFields.contains("modified_occurrences") ? .editedOccurrences
             : changedFields.contains("unchecked_occurrences") ? .uncheckedOccurrences : .revertable
+        // #274: a failed write of a reminder can land with a later save, whichever call made it, so the
+        // change found here can be this server's own. Only reminders do this.
+        let changedBy = kind == .reminder ? "in another app, by the calendar server, or by a failed write of this server that landed later" : "in another app or by the calendar server"
         switch situation ?? derived {
         case .revertable where verb == .undo:
-            message = "Cannot undo: the \(item) was changed after this operation, in another app or by the calendar server (\(fields)). Undoing now would overwrite or delete that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id."
+            message = "Cannot undo: the \(item) was changed after this operation, \(changedBy) (\(fields)). Undoing now would overwrite or delete that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id."
         case .revertable:
-            message = "Cannot redo: the \(item) was changed after the undo, in another app or by the calendar server (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run redo again; any new change clears the redo history."
+            message = "Cannot redo: the \(item) was changed after the undo, \(changedBy) (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run redo again; any new change clears the redo history."
         case .editedOccurrences:
             message = "Cannot \(verb.rawValue): occurrences of the \(item) were edited on their own after it was created (\(fields)). Undoing would delete those edits with the series, and an edited occurrence cannot be put back into its series, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
         case .uncheckedOccurrences:
