@@ -3611,7 +3611,7 @@ class CheICalMCPServer {
         }
         if !forReminder, RecurrenceRuleInput.countsYearsForAnEvent(frequency: frequency, interval: interval, daysOfWeek: daysOfWeek,
                                                                    daysOfMonth: daysOfMonth, occurrenceCount: occurrenceCount) {
-            throw ToolError.invalidParameter("recurrence occurrence_count is not taken on a yearly event rule with interval 1 and days_of_week, because the store does not count occurrences there: a count of 6 gave 22. For those days in the start's month, use frequency monthly with interval 12, or end_date; from a later occurrence with span future the count can come out short (#443). For once a year, use yearly without days_of_week. Nothing was written for this item.")
+            throw ToolError.invalidParameter("recurrence occurrence_count is not taken on a yearly event rule with interval 1 and days_of_week, because the store does not count occurrences there: a count of 6 gave 22. For those days in the start's month, use frequency monthly with interval 12, or end_date; from a later occurrence with span future a count is refused (#443). For once a year, use yearly without days_of_week. Nothing was written for this item.")
         }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.
