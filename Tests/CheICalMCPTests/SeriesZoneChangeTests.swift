@@ -98,6 +98,19 @@ final class SeriesZoneChangeTests: XCTestCase {
                        "a timed series turned all-day with clear_timezone")
     }
 
+    /// PR #479 verify round 4: an all-day series turned timed with clear_timezone has no zone to
+    /// clear, so changesZone is false, but the timed result is a new zone state: refused like the
+    /// flip with timezone. Decided from the result's all-day state.
+    func testAnAllDayToTimedFlipWithClearTimezoneIsRefused() {
+        let noZoneToClear = SeriesRuleWrite.changesZone(requested: nil, clearTimezone: true, stored: nil)
+        XCTAssertFalse(noZoneToClear)
+        XCTAssertEqual(refusal(changes: noZoneToClear, storedAllDay: true, resultAllDay: false, clearing: true), SeriesRuleWrite.flipZoneReason)
+        XCTAssertNil(refusal(changes: noZoneToClear, storedAllDay: true, resultAllDay: true, clearing: true), "stays all-day")
+        XCTAssertNil(refusal(happened: false, changes: noZoneToClear, storedAllDay: true, resultAllDay: false, clearing: true), "still to come")
+        XCTAssertNil(refusal(.oneOccurrence, changes: noZoneToClear, storedAllDay: true, resultAllDay: false, clearing: true), "span this")
+        XCTAssertNil(refusal(changes: noZoneToClear, storedAllDay: false, resultAllDay: false, clearing: true), "a timed floating series: nothing to clear")
+    }
+
     func testTheShapesThatKeepWorking() {
         XCTAssertNil(refusal(happened: false), "a series still to come: measured, all 6 kept")
         XCTAssertNil(refusal(changes: false), "the same zone echoed")
