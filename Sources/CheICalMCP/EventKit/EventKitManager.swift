@@ -873,6 +873,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let refusal = WeekdayCheck.createRefusal(rule: recurrenceRule, start: startDate, timezone: timezone, host: Calendar.current) {
             throw refusal
         }
+        // #461: the same for days_of_month on a monthly or yearly rule.
+        if let refusal = MonthDayCheck.createRefusal(rule: recurrenceRule, start: startDate, timezone: timezone, host: Calendar.current) {
+            throw refusal
+        }
 
         // Add recurrence rule
         if let rule = recurrenceRule {
@@ -1315,6 +1319,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
                 }
                 throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)
+            }
+        }
+
+        // #461: days_of_month by the same rules, read on the same day in the same zone.
+        let monthDaysToValidate = MonthDayCheck.daysToCheck(
+            requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
+            stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+            storedUsesMonthDays: storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false,
+            span: span, ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
+        if let days = monthDaysToValidate {
+            let start = MonthDayCheck.day(
+                of: originalDay ?? plannedStart,
+                zone: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+                host: Calendar.current)
+            if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
+                if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
+                throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
             }
         }
 
@@ -3101,6 +3122,8 @@ enum EventKitError: LocalizedError {
     case weekdayMismatch(startDay: String, expectedDays: String)
     /// #454 verify: a stored rule on a numbered weekday, which `recurrence` cannot write.
     case weekdayOffNumberedRule(startDay: String)
+    /// #461: the start is not on the rule's `days_of_month` (`MonthDayCheck`).
+    case dayOfMonthMismatch(startDay: Int, expectedDays: String)
     /// #182 — an excluded date lies outside the recurrence window (before the first
     /// occurrence day, or after end_date). Rejected pre-save: nothing was created.
     case exclusionOutOfWindow(date: String)
@@ -3259,6 +3282,8 @@ enum EventKitError: LocalizedError {
             return "Invalid time range: \(message)"
         case .weekdayMismatch(let startDay, let expectedDays):
             return "The start falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_week that include that day."
+        case .dayOfMonthMismatch(let startDay, let expectedDays):
+            return "The start falls on day \(startDay) of the month, which is not in days_of_month [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_month that include that day. Nothing was written."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):
