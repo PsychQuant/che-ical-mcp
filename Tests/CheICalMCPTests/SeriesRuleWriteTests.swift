@@ -205,6 +205,30 @@ final class SeriesRuleWriteTests: XCTestCase {
         XCTAssertEqual(SeriesRuleWrite.StoredRule(ended), SeriesRuleWrite.StoredRule(frequency: .monthly, daysOfMonth: [15], endDate: end))
     }
 
+    /// Verify round 4: a week start (WKST) other than the default decides which days share a period on
+    /// a rule with interval above 1, and recurrence cannot write it (makeRecurrenceRule leaves the
+    /// default), so such a rule counts as having a part recurrence cannot write. With interval 1 the
+    /// week start does not change the expansion.
+    func testANonDefaultWeekStartOnAnIntervalRuleCannotBeWritten() {
+        func weekly(interval: Int, weekStart: Int?) -> EKRecurrenceRule {
+            let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: interval,
+                                        daysOfTheWeek: [EKRecurrenceDayOfWeek(.sunday), EKRecurrenceDayOfWeek(.tuesday)],
+                                        daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
+                                        setPositions: nil, end: nil)
+            if let weekStart { rule.setValue(weekStart, forKey: "firstDayOfTheWeek") }
+            return rule
+        }
+        XCTAssertTrue(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1)).hasOtherParts, "Sunday week start, every two weeks")
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: nil)).hasOtherParts, "default week start")
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 1, weekStart: 1)).hasOtherParts, "interval 1")
+        XCTAssertTrue(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 1, interval: 3))
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 2, interval: 3), "Monday, what recurrence writes")
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 0, interval: 3))
+        XCTAssertEqual(EKRecurrenceRule(recurrenceWith: .weekly, interval: 2, end: nil).firstDayOfTheWeek,
+                       SeriesRuleWrite.writtenWeekStart, "EventKit's default for a new rule")
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 1, interval: 1))
+    }
+
     /// Round-2 LOW: a finished series echoing its own bound changes nothing; any other bound on it
     /// would add occurrences after its last one, which may be in the past.
     func testAFinishedSeriesTakesOnlyItsOwnBound() {
