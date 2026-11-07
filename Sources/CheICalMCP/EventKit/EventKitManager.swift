@@ -1150,9 +1150,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 } catch EventKitError.occurrenceAddressRefused(let reason) {
                     // verify r2: the occurrence's texts speak to a caller who named it.
                     throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted))
-                } catch EventKitError.seriesWriteRefused {
-                    // verify r7: #451's texts name span future with occurrence_date, not offered here.
-                    throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.throughSeriesIDStartedRule(allEdited: first.allEdited))
+                } catch EventKitError.seriesWriteRefused(let reason) {
+                    // verify r7/r8: #451's texts name span future with occurrence_date, not offered here;
+                    // only that sentence is replaced.
+                    throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.throughSeriesIDStartedRule(reason, allEdited: first.allEdited))
                 }
                 return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)
             }

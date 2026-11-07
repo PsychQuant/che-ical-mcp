@@ -524,14 +524,16 @@ end、notes、location、alarms。
    日期只改當天的時刻（verify r2：量過的每一列都是這樣，改到別天或別的星期拒絕）。
    量過、放行的格子：`start_time`、`end_time`、`all_day: true`、鬧鐘，在第 1 場 span `all`、第 1 場刪掉時第 2 場 span `all`（`all_day: true`
    除外：verify r7 起拒絕，#471 量到這種從較後時段的存檔會掉場次）、
-   第 3 場 span `future`、開放式系列、另有場次改過的系列（改過的場次保留改過的內容，`all_day` 不多出場次）；`timezone`、`url`、
+   第 3 場 span `future`（`all_day: true` 除外：verify r8 起拒絕，#451 的 laterOccurrenceRefusal 本來就拒絕它）、開放式系列、
+   另有場次改過的系列（改過的場次保留改過的內容，`all_day` 不多出場次）；`timezone`、`url`、
    `structured_location` 只在第 1 場 span `all` 與第 3 場 span `future`，5 場、沒有其他改過的場次。鬧鐘只在場次的鬧鐘與系列相同時。
    `timezone` 在已開始的系列上，經兩條 #428 路線都拒絕（verify r7，2026-11-08 量到：從 2026-09-07 起每週 10 場的臺北 07:30 系列
    改成 Europe/London，已發生的 10/26、11/02 變成 08:30，最後一場 11/09 不見；主物件路線同樣如此，另案處理）。未開始的系列跨 DST
    改 London：6 場都在、London 牆上時間不變，與主物件路線相同。
    第 1 場刪掉、第 2 場（已發生）改過的已開始系列，經系列 id 的同日 `start_time`、`end_time`、鬧鐘：4 場都照說的改、新 id
    （2026-11-08）。
-   第 3 場 span `future` 的 `url`、`timezone` 在 2026-11-08 重量一次：第 3 場起拿到新值、新 id，第 1、2 場不動。
+   第 3 場 span `future` 的 `url`、`timezone` 在 2026-11-08 重量一次：第 3 場起拿到新值、新 id，第 1、2 場不動。這兩列都是還沒
+   開始的系列（12/07 起）；已開始的系列沒量過，verify r7 起 `timezone` 在已開始的系列上經這條路也拒絕（`url` 照舊）。
    **沒量、拒絕**：其他規則（M/W/F、每月、隔週）、全天系列、其他欄位組合、日期加 `title` 或 `recurrence`、改到別天的日期、上面沒列的格子。
    經系列 id 被拒絕時，訊息說是經系列 id、不指回系列 id。第 1 場刪掉、其餘全部改過時，系列 id 的 `delete_event` span `all` 也刪光（2026-11-08）。
    第 1 場有自己的地點或鬧鐘時 span `all` 放行、地點與鬧鐘留在第 1 場；會另起新系列時拒絕，同 (d)。`clear_timezone`、

@@ -521,7 +521,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         for key in ["start_time", "end_time", "alarms_minutes_offsets"] {
             XCTAssertNil(dateRefusal([key], firstLeft), "\(key): measured from the first left (2026-11-06, and on a started series 2026-11-08)")
         }
-        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only while the series' first occurrence is still there"))
+        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
     }
 
     /// verify r7 (LOW): a time zone on a started series kept the wall-clock time across a DST change,
@@ -546,17 +546,40 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("timezone only on a series that has not started"))
     }
 
-    /// verify r7 (LOW): a #451 refusal reached through the series' id names no route that is refused
-    /// there (span future with occurrence_date).
-    func testAStartedSeriesRefusalReachedThroughTheSeriesIdSaysSo() {
-        for allEdited in [false, true] {
-            let text = DetachedOccurrenceSpan.throughSeriesIDStartedRule(allEdited: allEdited)
-            XCTAssertTrue(text.hasPrefix("event_id is the series' identifier, and the occurrence that comes first in this series was edited on its own, so update_event with span 'all' went through that occurrence"), text)
-            XCTAssertTrue(text.contains("#451"), text)
-            XCTAssertFalse(text.contains("span 'future'"), text)
-            XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+    /// verify r7/r8 (LOW): a #451 refusal reached through the series' id keeps its cause and its
+    /// valid routes; only the sentence that names span 'future' with occurrence_date, a route that
+    /// neither identifier offers in this shape, is replaced.
+    func testAStartedSeriesRefusalReachedThroughTheSeriesIdKeepsItsCause() {
+        func through(_ reason: String, allEdited: Bool = false) -> String {
+            DetachedOccurrenceSpan.throughSeriesIDStartedRule(reason, allEdited: allEdited)
         }
-        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesIDStartedRule(allEdited: true).contains("(it ends in /RID=...)"))
+        XCTAssertEqual(through(SeriesRuleWrite.pastStartReason), SeriesRuleWrite.pastStartReason, "no such sentence: unchanged")
+        let kept: [(String, [String])] = [
+            (SeriesRuleWrite.startedRuleReason, ["may only keep the series' pattern", "To keep the series' rule, leave recurrence out.",
+                                                 "To end the series, give that rule an end_date after now"]),
+            (SeriesRuleWrite.countedSeriesReason, ["cannot tell whether any are still to come", "leaving recurrence out keeps the rule"]),
+            (SeriesRuleWrite.unwritableRuleReason, ["Leave recurrence out to keep the rule."]),
+            (SeriesRuleWrite.startPassesOccurrencesReason, ["may change only the time of day of its first occurrence", "leave start_time out"])]
+        for (reason, phrases) in kept {
+            for allEdited in [false, true] {
+                let text = through(reason, allEdited: allEdited)
+                for phrase in phrases { XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)") }
+                XCTAssertFalse(text.contains("span 'future'"), text)
+                XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+                if reason.contains("span 'future'") {
+                    XCTAssertTrue(text.contains(allEdited ? "(it ends in /RID=...) with span 'this'" : "span 'this' with occurrence_date"), text)
+                }
+            }
+        }
+        XCTAssertFalse(through(SeriesRuleWrite.countedSeriesReason).contains("would change"), "its own cause, not another")
+    }
+
+    /// verify r8 (LOW): all_day with span future from a later occurrence is refused by #451
+    /// (`allDayReason`, measured), so #428's check refuses it first and the texts do not offer it.
+    func testAllDayWithSpanFutureIsRefused() {
+        XCTAssertEqual(dateRefusal(["all_day"], whole: false, measured(earlierRemain: true)), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false))
+        XCTAssertNil(dateRefusal(["all_day"], measured()), "span all from the first occurrence: measured")
+        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
     }
 
     // MARK: - verify r6
@@ -748,6 +771,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testEachMeasuredFieldGoesThroughAloneInTheMeasuredShape() {
         for key in ownTimeKeys {
             for whole in [true, false] {
+                if key == "all_day", !whole { continue } // verify r8: refused with span future (#451)
                 XCTAssertNil(dateRefusal([key], whole: whole, measured()), key)
                 XCTAssertEqual(dateRefusal([key], whole: whole, measured(own: .init(time: true))), DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole), key)
                 XCTAssertEqual(dateRefusal([key], whole: whole, noneEarlier), DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole, firstDeleted: whole),
