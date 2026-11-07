@@ -47,7 +47,8 @@ protocol SeriesExceptionsStoreSource {
     func save(_ event: Event) throws
     func remove(_ event: Event, span: EKSpan) throws
     /// Whether the store holds an event under `event`'s identifier.
-    func isStored(_ event: Event) -> Bool
+    /// Throws when the lookup failed (#288): that is not "not stored".
+    func isStored(_ event: Event) throws -> Bool
     func markNeedsRefresh()
 
     /// The events in `calendar` from `snapshot`'s start for its length (at least a minute), read
@@ -64,13 +65,13 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     private let eventStore: EKEventStore
     private let readRestoreCalendar: (EventSnapshot, EventRestoreKind) async throws -> EKCalendar
-    private let storedEvent: (String) -> EKEvent?
+    private let storedEvent: (String) throws -> EKEvent?
     private let markRefresh: () -> Void
     private let refreshIfNeeded: () -> Void
 
     init(eventStore: EKEventStore,
          restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
-         storedEvent: @escaping (String) -> EKEvent?,
+         storedEvent: @escaping (String) throws -> EKEvent?,
          markNeedsRefresh: @escaping () -> Void,
          refreshIfNeeded: @escaping () -> Void) {
         self.eventStore = eventStore
@@ -125,9 +126,9 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func remove(_ event: EKEvent, span: EKSpan) throws { try eventStore.remove(event, span: span) }
 
-    func isStored(_ event: EKEvent) -> Bool {
+    func isStored(_ event: EKEvent) throws -> Bool {
         guard let id = event.eventIdentifier else { return false }
-        return storedEvent(id) != nil
+        return try storedEvent(id) != nil
     }
 
     func markNeedsRefresh() { markRefresh() }

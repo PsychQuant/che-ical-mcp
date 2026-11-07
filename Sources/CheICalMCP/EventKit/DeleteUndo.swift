@@ -43,6 +43,13 @@ enum EventRemovalKind: String, Sendable, Hashable, CaseIterable {
         guard hadRules, fromFirstOccurrence, !seriesResolves() else { return .followingOccurrences }
         return .wholeEvent
     }
+
+    /// #288: a lookup that failed says nothing about the series, so it counts as still resolving:
+    /// `of` then answers `.followingOccurrences`, and the undo cannot recreate a whole series that
+    /// may still be there.
+    static func seriesResolves(_ lookup: () throws -> Bool) -> Bool {
+        (try? lookup()) ?? true
+    }
 }
 
 /// What a delete may record, all taken before the removal: the event the identifier resolved to
@@ -272,6 +279,6 @@ extension EventKitManager {
     /// 1, finding 17), so the single and the batch delete read it the same way.
     func seriesResolves(identifier: String) -> Bool {
         markNeedsRefresh()
-        return freshEvent(id: identifier) != nil
+        return EventRemovalKind.seriesResolves { try freshEvent(id: identifier) != nil }
     }
 }

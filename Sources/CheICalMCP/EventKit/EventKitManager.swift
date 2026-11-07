@@ -1073,6 +1073,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         onOccurrence && span == .thisEvent && crossesAccounts
     }
 
+    /// #288: fixed text, no EventKit text. It does not say not found, and it says not to recreate.
+    static let eventLookupFailedReason = "The event lookup failed, so this event may still exist. Do not create it again; try again, and restart the server if this keeps happening"
     /// PR #439 verify: the rule belongs to the series. Measured on iCloud: a rule saved on one
     /// occurrence (span this) left that occurrence as a one-off and deleted the rest of the series,
     /// answering `updated`; clear_recurrence there detached the occurrence and left the series
@@ -1134,7 +1136,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
         // that would write back over an edit made elsewhere before this call.
-        guard let resolved = freshEventWithOrigin(
+        guard let resolved = try freshEventWithOrigin(
             id: identifier,
             refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: applyToAll)) else {
             throw notFoundError(id: identifier)
@@ -1143,14 +1145,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #416: through an occurrence edited on its own, span 'all' or 'future' writes only what was
         // measured to do what it says (`DetachedOccurrenceSpan`); refused before anything is read
         // into the update or written.
-        if let refusal = DetachedOccurrenceSpan.updateRefusal(
+        if let refusal = try DetachedOccurrenceSpan.updateRefusal(
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
             futureSpan: span == .futureEvents, fields: fields,
             repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
             writesLocation: location != nil,
-            neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
+            neighbours: try occurrenceNeighbours(of: masterEvent, id: identifier)) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
@@ -1435,7 +1437,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// whose zone was read. A reminder's id gives nil here and not found from the write (#260).
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {
         try await ensureCalendarAccess()
-        return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
+        return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }
     }
 
     /// #270 round 3: the one zone an occurrence date is read in and searched in. The parse side
@@ -1472,7 +1474,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = freshEventWithOrigin(
+        guard let masterEvent = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
             throw notFoundError(id: identifier)
         }
@@ -1514,12 +1516,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEventSeries(identifier: String) async throws {
         try await ensureCalendarAccess()
 
-        guard let event = freshEvent(id: identifier) else {
+        guard let event = try freshEvent(id: identifier) else {
             throw notFoundError(id: identifier)
         }
         // #416: through an occurrence edited on its own this removes that occurrence only (device,
         // iCloud: it has no recurrence rules of its own), while the answer says the series.
-        if let refusal = seriesDeleteRefusal(event, id: identifier) {
+        if let refusal = try seriesDeleteRefusal(event, id: identifier) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
@@ -1559,13 +1561,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
-                guard let event = freshEvent(id: id) else {
+                guard let event = try freshEvent(id: id) else {
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
                 // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
                 // others go on.
-                if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
+                if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
                     failures.append((id, refusal))
                     continue
                 }
@@ -1746,7 +1748,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
-                guard let masterEvent = freshEventWithOrigin(
+                guard let masterEvent = try freshEventWithOrigin(
                     id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
                     failures.append((item.identifier, notFoundReason(id: item.identifier)))
                     continue
@@ -1898,7 +1900,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String? = nil
     ) async throws -> (event: EKEvent, notCarriedOver: [String]) {
         try await ensureCalendarAccess()
-        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
+        guard let resolved = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
         }
         let sourceEvent = resolved.event
@@ -1934,7 +1936,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let sourceEvent = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
+        guard let sourceEvent = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false)?.event else {
             throw notFoundError(id: identifier)
         }
         if sourceEvent.hasRecurrenceRules {
@@ -1955,7 +1957,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         toCalendarSource: String?
     ) async throws -> (result: EventMoveResult, title: String?) {
         try await ensureCalendarAccess()
-        guard let resolved = freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
+        guard let resolved = try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false) else {
             throw notFoundError(id: identifier)
         }
         let master = resolved.event
@@ -3127,6 +3129,11 @@ enum EventKitError: LocalizedError {
     /// The same for a reminder list. A removal takes every reminder in the list.
     case listChangeMayLand(code: String)
     case listRemovalMayLand(code: String)
+    /// #288: the event lookup raised, so it is not known whether the event exists. Not an
+    /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
+    case eventLookupFailed(identifier: String)
+    /// #288: the same, met by undo or redo, with what to do about the record.
+    case historyLookupFailed(verb: UndoHistoryVerb)
     /// #416: a whole-series write addressed through the identifier of one occurrence that was
     /// edited on its own (`DetachedOccurrenceSpan`). `reason` is one of its fixed strings.
     case occurrenceAddressRefused(reason: String)
@@ -3264,6 +3271,14 @@ enum EventKitError: LocalizedError {
             return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
         case .listRemovalMayLand(let code):
             return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the lists back now does not rule this out: seeing it does not mean it stays."
+        case .eventLookupFailed(let identifier):
+            return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
+        case .historyLookupFailed(let verb):
+            let kept = verb == .undo ? "This history entry was kept" : "This redo entry was kept"
+            let giveUp = verb == .undo
+                ? "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id"
+                : "ask the user whether to give up this redo; any new change clears the redo history"
+            return "Cannot \(verb.rawValue): the event lookup failed, so this event may still exist, and nothing was written. \(kept), so try again. If it keeps failing, \(giveUp)."
         case .occurrenceAddressRefused(let reason):
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):

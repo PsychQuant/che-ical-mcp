@@ -419,6 +419,30 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 
 結果記在 #328。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#328` 的殘留。
 
+## Release gate：event lookup raise（#288）
+
+#288 的 `CheICalEventWithIdentifier` 只有 raise 從 Objective-C 來的單元測試（`CheICalRaisingEventStore`，debug build）。
+raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，要在常駐 process 上才量得到，`--cli` 結構上驗不了
+（見上表）。測試時種類檢查擋在前面，權限都給時走不到這個呼叫，所以要在本機暫時關掉（不 commit），用 **release build**
+（出貨的 optimization level），arm64，單一 stdio process，每次呼叫設 timeout，只用名稱含 `#288` 的拋棄式日曆與清單：
+
+1. 建提醒事項，再建事件，留下一筆 undo 紀錄。
+2. 用提醒事項的 id 呼叫 `update_event` 兩次：都回查詢失敗（may still exist、不要重建），process 活著。
+3. `undo`：刪掉第 1 步的事件。
+4. `create_event` 再 `update_event`，走一次 save。
+5. `update_reminder` 那筆提醒事項：讀得到，仍是提醒事項。
+6. 迴圈 raise 約 1000 次：沒有 hang。記憶體和同樣次數、不會 raise 的 not-found 對照（2026-11-06：每個 raise 約 6 KB，
+   不回收，不 raise 時持平；這是 EventKit frame 裡的物件，修不了，只要沒有明顯變大就算過）。
+7. 結束 process，用新 process 列出：沒有多出事件，提醒事項不變。stdio 有 read-after-write 問題，跨 process 的讀取放在結尾。
+
+2026-11-06 已在 iCloud 做過第 1 到 7 步（release、arm64），結果記在 #288。**沒做，出版前要補**：
+
+- **x86_64 slice**（Rosetta 或 Intel Mac）：同樣步驟跑一次。
+- **Reminders 權限真的被拒絕，以及 `calendarItem(withIdentifier:)` 在那個狀態下回傳什麼**：見 #382 的留言，由使用者撤銷權限後在場執行，
+  種類檢查不用關。`calendarItem` 沒有被包住，raise 的話 process 仍會結束。
+
+結果記在 #288。結束後刪掉拋棄式日曆與清單。
+
 ## Release gate：場次自己的 id 上的 span all（#416）
 
 #416 的拒絕只在 iCloud 量過，判斷靠 `isDetached` 或 id 裡的 `/RID=`，以及從 `/RID=` 前面那段 id 列出系列。#320 在 Google

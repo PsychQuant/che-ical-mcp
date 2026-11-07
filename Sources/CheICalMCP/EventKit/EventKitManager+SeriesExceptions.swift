@@ -13,7 +13,7 @@ extension EventKitManager {
     var seriesExceptionsStore: EventKitSeriesExceptionsStore {
         EventKitSeriesExceptionsStore(eventStore: eventStore,
                                       restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },
-                                      storedEvent: { self.storedEvent(id: $0) },
+                                      storedEvent: { try self.storedEvent(id: $0) },
                                       markNeedsRefresh: { self.markNeedsRefresh() },
                                       refreshIfNeeded: { self.refreshIfNeeded() })
     }

@@ -67,7 +67,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: move).count, 1, "the exact call")
         XCTAssertEqual(move.components(separatedBy: "eventTimeZone(").count - 1, 1, "looked up in that call only")
         // Round 4: the lookup is for the event at the same index as the date.
-        XCTAssertEqual(SourcePins.ranges(of: "let id = ids[index] occurrenceDates[index] = try await OccurrenceDateInput.resolve(", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let id = ids[index] do { occurrenceDates[index] = try await OccurrenceDateInput.resolve(", in: move).count, 1)
     }
 
     /// Round 3: the parse side and the search side read one zone, `occurrenceZone(of:)`. Pinned as
@@ -78,7 +78,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let manager = "EventKit/EventKitManager.swift"
         let lookup = try call(in: "func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? {", file: manager)
         XCTAssertEqual(lookup.trimmingCharacters(in: .whitespaces),
-                       "try await ensureCalendarAccess() return freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }")
+                       "try await ensureCalendarAccess() return try freshEventWithOrigin(id: identifier, refuseWhenEditedBefore: false).flatMap { Self.occurrenceZone(of: $0.event) }")
         XCTAssertFalse(lookup.contains("catch"))
         let helper = try call(in: "static func occurrenceZone(of event: EKEvent) -> TimeZone? {", file: manager)
         XCTAssertEqual(helper.trimmingCharacters(in: .whitespaces), "event.timeZone")
