@@ -1329,7 +1329,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let otherParts = storedRule.map { [$0.monthsOfTheYear, $0.weeksOfTheYear, $0.daysOfTheYear].contains { $0?.isEmpty == false } } ?? false
             throw EventKitError.monthDayMoveRefused(
                 expectedDays: MonthDayCheck.names(storedRule?.daysOfTheMonth?.map(\.intValue) ?? []),
-                unwritable: MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts))
+                unwritable: MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts),
+                spanAll: applyToAll)
         }
         let monthDaysToValidate = MonthDayCheck.daysToCheck(
             requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
@@ -3134,7 +3135,8 @@ enum EventKitError: LocalizedError {
     case dayOfMonthMismatch(startDay: Int, expectedDays: String)
     /// #461 verify round 1: a series' start moved to another day on a rule with days_of_month.
     /// `unwritable`: the stored rule has a part `recurrence` cannot write, so Calendar is the route.
-    case monthDayMoveRefused(expectedDays: String, unwritable: Bool)
+    /// `spanAll`: the call is span all, the only span the recurrence route was measured on.
+    case monthDayMoveRefused(expectedDays: String, unwritable: Bool, spanAll: Bool)
     /// #182 — an excluded date lies outside the recurrence window (before the first
     /// occurrence day, or after end_date). Rejected pre-save: nothing was created.
     case exclusionOutOfWindow(date: String)
@@ -3295,11 +3297,15 @@ enum EventKitError: LocalizedError {
             return "The start falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_week that include that day."
         case .dayOfMonthMismatch(let startDay, let expectedDays):
             return "The start falls on day \(startDay) of the month, which is not in days_of_month [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_month that include that day. Nothing was written."
-        case .monthDayMoveRefused(let expectedDays, let unwritable):
+        case .monthDayMoveRefused(let expectedDays, let unwritable, let spanAll):
             let measured = "This series repeats on days_of_month [\(expectedDays)], and moving its start to another day with no recurrence in the call changes it wrongly: measured on iCloud, a move to a day off the list made that day part of the rule, and a move to another day on it put two occurrences on one day. Nothing was written. To change the time, give start_time on the same day."
-            return unwritable
-                ? measured + " This series' rule has a part this tool cannot write (a day counted from the end of the month, a numbered weekday, or months, weeks or days of the year), so to move it, change the series in Calendar."
-                : measured + " To move it, pass recurrence with the series' whole rule (its frequency, interval, days_of_month and bound, with days that include the new start's day) together with start_time: measured clean on iCloud."
+            if unwritable {
+                return measured + " This series' rule has a part this tool cannot write (a day counted from the end of the month, a numbered weekday or position, or months, weeks or days of the year), so to move it, change the series in Calendar."
+            }
+            if !spanAll {
+                return measured + " Moving it from one occurrence on is not supported here; change the series in Calendar."
+            }
+            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day) together with start_time, on span all: measured clean on iCloud for a monthly series within one month, not for yearly series, a move to another month, or a series with an occurrence edited on its own."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):

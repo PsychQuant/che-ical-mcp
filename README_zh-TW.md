@@ -112,7 +112,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **開始時間要落在 `days_of_week` 上（#454）：** `create_event`、`create_events_batch` 與 `update_event` 對每種頻率都會拒絕不在清單上的開始時間，不只 `weekly`，什麼都不寫入。以前在 `daily`、`monthly`、`yearly` 上會多出一個規則外的第一場（iCloud 實測）。`update_event` 涵蓋呼叫裡帶的規則，以及 span `all` 與 `future` 時系列本身的規則。系列已經偏離規則時，不改變開始日的更新會放行。非 weekly 系列用 span `this` 移動單一場次不會被拒絕。「每月第一個週一」這類第 n 週規則本工具寫不出來，所以這種系列會被告知到行事曆 App 修改。
 
-**開始時間也要落在 `days_of_month` 上（#461）：** monthly 與 yearly 規則上，`create_event`、`create_events_batch` 與 `update_event` 會拒絕不在規則 `days_of_month` 裡的開始日，規則與 `days_of_week` 相同，什麼都不寫入；呼叫不帶 `recurrence` 時，以 span `all` 或 `future` 改這種系列的開始日期會被拒絕，不論新的一天在不在清單上（移到清單上的另一天會讓同一天出現兩場）；要移動請帶上系列完整的 `recurrence` 與 `start_time`。用 span `this` 移動單一場次不檢查。iCloud 實測，這樣的開始日以前會變成規則外的第一場，把系列的開始日移到別天則會讓那一天變成規則的一部分。提醒事項不檢查。
+**開始時間也要落在 `days_of_month` 上（#461）：** monthly 與 yearly 規則上，`create_event`、`create_events_batch` 與 `update_event` 會拒絕不在規則 `days_of_month` 裡的開始日，規則與 `days_of_week` 相同，什麼都不寫入；呼叫不帶 `recurrence` 時，以 span `all` 或 `future` 改這種系列的開始日期會被拒絕，不論新的一天在不在清單上（移到清單上的另一天會讓同一天出現兩場）；span `all` 時訊息會給 monthly 系列量過的做法（帶上規則每一個欄位的 `recurrence` 與 `start_time`）；規則有工具寫不出的部分時則指向行事曆 App。用 span `this` 移動單一場次不檢查。iCloud 實測，這樣的開始日以前會變成規則外的第一場，把系列的開始日移到別天則會讓那一天變成規則的一部分。提醒事項不檢查。
 
 **`yearly` 事件規則帶 `days_of_week` 時的 `occurrence_count`（#444）：** 在 `interval` 為 1 且沒有 `days_of_month` 的規則上，store 算的不是場次，所以 6 得到 22 個場次（iCloud 實測）。`create_event`、`create_events_batch` 與 `update_event` 會拒絕這裡的次數，連 1 也一樣，什麼都不寫入。要這些日子，請用 `monthly` 配 `interval: 12`，次數正確，但從較後場次以 span `future` 帶入時可能變少（#443），或改用 `end_date`。要每年一次，請用不帶 `days_of_week` 的 `yearly`。帶 `days_of_week` 的 `yearly` 規則只在開始日所在的月份重複。`interval` 大於 1 或有非空 `days_of_month` 不會被拒絕：這些情況次數是對的。提醒事項工具不變：提醒事項上的次數是正確的。
 

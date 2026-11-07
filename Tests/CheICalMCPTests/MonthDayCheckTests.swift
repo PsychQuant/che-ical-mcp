@@ -88,11 +88,15 @@ final class MonthDayCheckTests: XCTestCase {
         // Verify round 2, measured on iCloud: with the series' rule in the call, the same moves were
         // clean ([1, 15] resent with the start on the 15th; [1, 4, 15] with the start on the 4th), so
         // the message names that route, unless the stored rule has a part recurrence cannot write.
-        let message = EventKitError.monthDayMoveRefused(expectedDays: "1, 15", unwritable: false).errorDescription ?? ""
-        for phrase in ["days_of_month [1, 15]", "two occurrences", "same day", "recurrence", "Nothing was written"] {
+        let message = EventKitError.monthDayMoveRefused(expectedDays: "1, 15", unwritable: false, spanAll: true).errorDescription ?? ""
+        for phrase in ["days_of_month [1, 15]", "two occurrences", "same day", "pass recurrence", "days_of_week", "span all", "monthly", "Nothing was written"] {
             XCTAssertTrue(message.contains(phrase), message)
         }
-        let unwritable = EventKitError.monthDayMoveRefused(expectedDays: "-1", unwritable: true).errorDescription ?? ""
+        // Verify round 3: the route was measured on span all only; span future meets #443.
+        let future = EventKitError.monthDayMoveRefused(expectedDays: "1, 15", unwritable: false, spanAll: false).errorDescription ?? ""
+        XCTAssertFalse(future.contains("pass recurrence"), future)
+        XCTAssertTrue(future.contains("Calendar"), future)
+        let unwritable = EventKitError.monthDayMoveRefused(expectedDays: "-1", unwritable: true, spanAll: true).errorDescription ?? ""
         for phrase in ["cannot write", "Calendar", "Nothing was written"] {
             XCTAssertTrue(unwritable.contains(phrase), unwritable)
         }
