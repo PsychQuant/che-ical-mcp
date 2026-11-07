@@ -1323,10 +1323,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // #461: days_of_month by the same rules, read on the same day in the same zone.
+        let storedUsesMonthDays = storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false
+        if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil, stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+                                           storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves) {
+            throw EventKitError.monthDayMoveRefused(expectedDays: MonthDayCheck.names(storedRule?.daysOfTheMonth?.map(\.intValue) ?? []))
+        }
         let monthDaysToValidate = MonthDayCheck.daysToCheck(
             requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
             stored: storedRule?.daysOfTheMonth?.map(\.intValue),
-            storedUsesMonthDays: storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false,
+            storedUsesMonthDays: storedUsesMonthDays,
             span: span, ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
         if let days = monthDaysToValidate {
             let start = MonthDayCheck.day(
@@ -1335,6 +1340,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 host: Calendar.current)
             if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
                 if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
+                let otherParts = storedRule.map { [$0.monthsOfTheYear, $0.weeksOfTheYear, $0.daysOfTheYear].contains { $0?.isEmpty == false } } ?? false
+                if MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts) {
+                    throw EventKitError.dayOfMonthOffUnwritableRule(startDay: start.day)
+                }
                 throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
             }
         }
@@ -3124,6 +3133,10 @@ enum EventKitError: LocalizedError {
     case weekdayOffNumberedRule(startDay: String)
     /// #461: the start is not on the rule's `days_of_month` (`MonthDayCheck`).
     case dayOfMonthMismatch(startDay: Int, expectedDays: String)
+    /// #461 verify round 1: a series' start moved to another day on a rule with days_of_month.
+    case monthDayMoveRefused(expectedDays: String)
+    /// #461 verify round 1: the start is off the days, and the stored rule has a part recurrence cannot write.
+    case dayOfMonthOffUnwritableRule(startDay: Int)
     /// #182 — an excluded date lies outside the recurrence window (before the first
     /// occurrence day, or after end_date). Rejected pre-save: nothing was created.
     case exclusionOutOfWindow(date: String)
@@ -3284,6 +3297,10 @@ enum EventKitError: LocalizedError {
             return "The start falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_week that include that day."
         case .dayOfMonthMismatch(let startDay, let expectedDays):
             return "The start falls on day \(startDay) of the month, which is not in days_of_month [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_month that include that day. Nothing was written."
+        case .monthDayMoveRefused(let expectedDays):
+            return "This series repeats on days_of_month [\(expectedDays)], and moving its start to another day changes the series wrongly: measured on iCloud, a move to a day off the list made that day part of the rule, and a move to another day on it put two occurrences on one day. Nothing was written. To change the time, give start_time on the same day; to change the days, change the series in Calendar."
+        case .dayOfMonthOffUnwritableRule(let startDay):
+            return "The start falls on day \(startDay) of the month, which this series' rule does not hold, and the rule has a part this tool cannot write (a day counted from the end of the month, a numbered weekday, or months, weeks or days of the year), so change the series in Calendar. Nothing was written."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):

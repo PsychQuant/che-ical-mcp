@@ -65,11 +65,55 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertEqual(days(requested: [1, 15], ruleInCall: true, stored: [1, 15], keeps: false, moves: false), [1, 15], "another pattern")
         XCTAssertEqual(days(requested: [1, 15], ruleInCall: true, stored: [1, 15], moves: true), [1, 15], "the day moves")
         XCTAssertNil(days(requested: nil, ruleInCall: true, stored: [1], moves: true), "a rule with no days_of_month")
-        // The series' own rule, when the start's day moves on span all or future: the measured 4th.
-        XCTAssertEqual(days(stored: [1, 15], moves: true), [1, 15])
-        XCTAssertNil(days(stored: [1, 15], moves: false), "a time on the same day")
-        XCTAssertNil(days(stored: [1, 15], span: .thisEvent, moves: true), "one occurrence: not measured, not refused")
-        XCTAssertNil(days(stored: [15], storedUses: false, moves: true), "a daily or weekly rule ignores its days_of_month")
+        // With no rule in the call nothing is checked here: a move is `refusesStoredMove`.
+        XCTAssertNil(days(stored: [1, 15], moves: true))
+    }
+
+    /// Verify round 1, measured on iCloud: moving a [1, 15] series' start on span all to the 4th made
+    /// the 4th a day of the rule, and to the 15th, another of its days, put two occurrences on the 15th.
+    /// So any move of the start's day with no rule in the call is refused there.
+    func testAStoredMoveIsRefused() {
+        func refused(ruleInCall: Bool = false, stored: [Int]? = [1, 15], storedUses: Bool = true,
+                     span: EKSpan = .futureEvents, moves: Bool = true) -> Bool {
+            MonthDayCheck.refusesStoredMove(ruleInCall: ruleInCall, stored: stored, storedUsesMonthDays: storedUses,
+                                            span: span, startDayMoves: moves)
+        }
+        XCTAssertTrue(refused(), "to the 4th or to the 15th")
+        XCTAssertFalse(refused(moves: false), "a time on the same day")
+        XCTAssertFalse(refused(span: .thisEvent), "one occurrence: not measured, not refused")
+        XCTAssertFalse(refused(storedUses: false), "a daily or weekly rule ignores its days_of_month")
+        XCTAssertFalse(refused(stored: nil))
+        XCTAssertFalse(refused(stored: []))
+        XCTAssertFalse(refused(ruleInCall: true), "a rule in the call is checked by daysToCheck")
+        let message = EventKitError.monthDayMoveRefused(expectedDays: "1, 15").errorDescription ?? ""
+        for phrase in ["days_of_month [1, 15]", "two occurrences", "same day", "Calendar", "Nothing was written"] {
+            XCTAssertTrue(message.contains(phrase), message)
+        }
+    }
+
+    /// Verify round 1: a day counted from the end of the month, months, weeks or days of the year, or
+    /// a numbered weekday cannot be written by `recurrence`, so the refusal does not offer it.
+    func testAStoredRuleRecurrenceCannotWriteIsToldToUseCalendar() {
+        XCTAssertTrue(MonthDayCheck.storedUnwritable(days: [-1], numbered: false, otherParts: false))
+        XCTAssertTrue(MonthDayCheck.storedUnwritable(days: [15], numbered: true, otherParts: false))
+        XCTAssertTrue(MonthDayCheck.storedUnwritable(days: [15], numbered: false, otherParts: true))
+        XCTAssertFalse(MonthDayCheck.storedUnwritable(days: [1, 15], numbered: false, otherParts: false))
+        XCTAssertFalse(MonthDayCheck.storedUnwritable(days: nil, numbered: false, otherParts: false))
+        let message = EventKitError.dayOfMonthOffUnwritableRule(startDay: 30).errorDescription ?? ""
+        for phrase in ["day 30", "cannot write", "Calendar", "Nothing was written"] {
+            XCTAssertTrue(message.contains(phrase), message)
+        }
+        XCTAssertFalse(message.contains("recurrence"), message)
+    }
+
+    /// Verify round 1: the day is read in the Gregorian calendar, as the rules this tool writes,
+    /// whatever calendar the host uses.
+    func testTheDayIsGregorianOnANonGregorianHost() {
+        var hijri = Calendar(identifier: .islamicUmmAlQura)
+        hijri.timeZone = taipei
+        XCTAssertNil(MonthDayCheck.createRefusal(rule: rule(.monthly, [1]), start: first, timezone: nil, host: hijri),
+                     "2031-12-01 is the 1st in the Gregorian calendar")
+        XCTAssertEqual(MonthDayCheck.day(of: first, zone: nil, host: hijri).daysInMonth, 31)
     }
 
     func testTheMessageNamesBothWaysOut() {
@@ -88,5 +132,12 @@ final class MonthDayCheckTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "let monthDaysToValidate = MonthDayCheck.daysToCheck(", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)", in: update).count, 2)
         XCTAssertEqual(SourcePins.ranges(of: "EventKitError.dayOfMonthMismatch(", in: update).count, 1)
+        // Verify round 1: the stored side and the day's source, so a hardcoded nil or false fails here.
+        XCTAssertEqual(SourcePins.ranges(of: "stored: storedRule?.daysOfTheMonth?.map(\\.intValue),", in: update).count, 2)
+        XCTAssertEqual(SourcePins.ranges(of: "storedUsesMonthDays: storedUsesMonthDays,", in: update).count, 2, "refusesStoredMove and daysToCheck")
+        XCTAssertEqual(SourcePins.ranges(of: "if MonthDayCheck.refusesStoredMove(", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "of: originalDay ?? plannedStart,", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "EventKitError.dayOfMonthOffUnwritableRule(", in: update).count, 1)
     }
 }

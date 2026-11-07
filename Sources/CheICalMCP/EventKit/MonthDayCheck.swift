@@ -14,10 +14,11 @@ enum MonthDayCheck {
         list.contains { $0 > 0 ? $0 == day : daysInMonth + $0 + 1 == day }
     }
 
-    /// The day of the month of `start` in `zone` (the host zone when nil), and that month's length.
+    /// The day of the month of `start` in `zone` (the host's zone when nil), and that month's length,
+    /// in the Gregorian calendar the rules this tool writes use, whatever calendar the host uses
+    /// (verify round 1).
     static func day(of start: Date, zone: TimeZone?, host: Calendar) -> (day: Int, daysInMonth: Int) {
-        var calendar = host
-        if let zone { calendar.timeZone = zone }
+        let calendar = Calendar.gregorian(in: zone ?? host.timeZone)
         let day = calendar.component(.day, from: start)
         let length = calendar.range(of: .day, in: .month, for: start)?.count ?? 31
         return (day, length)
@@ -39,21 +40,32 @@ enum MonthDayCheck {
         days.map(String.init).joined(separator: ", ")
     }
 
-    /// `update_event`: the days of the month the start has to fall on, nil when none apply, by the
-    /// same rules as `WeekdayCheck.daysToCheck`. A rule in the call is checked unless it is the
-    /// series' own pattern again (`ruleKeepsStoredPattern`) and the start's day stays. With no rule
-    /// in the call, the series' own days count when the start's day moves on span `all` or `future`
-    /// (moving one occurrence on span `this` was not measured and is not refused, as for a
-    /// non-weekly rule in #454). `requested` is the call's `days_of_month`, which the parser takes on
-    /// monthly and yearly rules only; `storedUsesMonthDays` is whether the stored rule is one of those.
+    /// `update_event` with a rule in the call: the days of the month the start has to fall on, nil
+    /// when none apply. Checked unless it is the series' own pattern again (`ruleKeepsStoredPattern`)
+    /// and the start's day stays. `requested` is the call's `days_of_month`, which the parser takes on
+    /// monthly and yearly rules only. With no rule in the call this answers nil: see `refusesStoredMove`.
     static func daysToCheck(requested: [Int]?, ruleInCall: Bool, stored: [Int]?, storedUsesMonthDays: Bool,
                             span: EKSpan, ruleKeepsStoredPattern: Bool, startDayMoves: Bool) -> [Int]? {
-        if ruleInCall {
-            guard let requested, !requested.isEmpty else { return nil }
-            if !startDayMoves, ruleKeepsStoredPattern, let stored, Set(stored) == Set(requested) { return nil }
-            return requested
-        }
-        guard startDayMoves, span != .thisEvent, storedUsesMonthDays, let stored, !stored.isEmpty else { return nil }
-        return stored
+        guard ruleInCall, let requested, !requested.isEmpty else { return nil }
+        if !startDayMoves, ruleKeepsStoredPattern, let stored, Set(stored) == Set(requested) { return nil }
+        return requested
+    }
+
+    /// `update_event` with no rule in the call, on a monthly or yearly series with `days_of_month`:
+    /// whether moving the start's day on span `all` or `future` is refused. Measured on iCloud: a
+    /// [1, 15] series moved to the 4th made the 4th a day of the rule; moved to the 15th, another of
+    /// its own days, it put two occurrences on the 15th and kept the rule. So every such move is
+    /// refused, on or off the list. Moving one occurrence on span `this` was not measured and is not
+    /// refused, as for a non-weekly rule in #454.
+    static func refusesStoredMove(ruleInCall: Bool, stored: [Int]?, storedUsesMonthDays: Bool,
+                                  span: EKSpan, startDayMoves: Bool) -> Bool {
+        !ruleInCall && startDayMoves && span != .thisEvent && storedUsesMonthDays && !(stored ?? []).isEmpty
+    }
+
+    /// Whether the stored rule has a part `recurrence` cannot write: a day counted from the end of the
+    /// month (the parser takes 1 to 31), a numbered weekday or position, or months, weeks or days of
+    /// the year. A refusal then points to Calendar, not to a `recurrence` that would drop the part.
+    static func storedUnwritable(days: [Int]?, numbered: Bool, otherParts: Bool) -> Bool {
+        numbered || otherParts || (days ?? []).contains { $0 < 1 }
     }
 }
