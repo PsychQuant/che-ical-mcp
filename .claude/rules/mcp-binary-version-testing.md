@@ -238,8 +238,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
-原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
-實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`）。#274 的探測（2026-11-06）量過
+commit 失敗：有沒有 `rollback()` 都不會落地，它只清 `hasChanges`。下面這步量的是 session MCP 上的另一種失敗（唯讀日曆）。這是 stateful 的（同一個 server process 內的下一次
 寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
 之後），只用名稱含 `#373` 的拋棄式日曆：
 
@@ -375,8 +375,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 #308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
 掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
 `reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
-`rollback` 有被呼叫；`rollback()` 是否真的丟掉一筆已在 store 的提醒事項上待存的改動，**沒有在
-裝置上看過**——這正是 #274 對 reminder 尚未回答的問題，兩者用同一個探測就能一起回答。
+`rollback` 有被呼叫。#274 的探測（2026-11-06）已回答：`EKObject.rollback()` **不會**丟掉已在 store 的
+提醒事項上待存的改動，下一次存檔仍會寫入（見 `ExistingReminderSave`，那裡也寫了為什麼不用
+`EKEventStore.reset()`）。所以這次 fallback 存檔失敗時，改動可能隨下一次存檔落地。
 
 前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
 讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
@@ -385,11 +386,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
    `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
    `create_reminder: the saved due date read back without its time or zone` 這行。
-2. 沒有這樣的來源時，這一步不能在裝置上做：在 #274 的 reminder 探測（`update_reminder` 存檔失敗後
-   同一個 session 的下一次寫入）做完之前，把 #308 的 fallback rollback 視為未驗證，release note
-   照 CHANGELOG 的寫法說明，不寫成已確認。
+2. 沒有這樣的來源時，這一步不能在裝置上做，fallback 這條路徑上的失敗沒有誘發過，release note 照 CHANGELOG 的寫法說明。
 
-結果記在 #308 與 #274。結束後刪掉拋棄式清單。
+結果記在 #308。結束後刪掉拋棄式清單。
 
 ## Release gate：首場被刪除的系列，經 stand-in 的 delete / update 之 undo（#335）
 

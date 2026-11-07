@@ -755,6 +755,11 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"commit: ?(?!true\b|false\b)[^ ,)]"#, in: code).count, 2 * forwarded,
                        "commit flags are literals, apart from the overrides' parameter and forwarding")
         XCTAssertEqual(try matches(#"span: ?[^,)]*, ?commit: ?false"#, in: code).count, 0)
+        // No reset. #274 measured that it drops a failed reminder change and `rollback()` does not,
+        // and PR #456 used it; its verify took it out. The header of `-[EKEventStore reset]` says "All
+        // objects ever created/fetched, etc. using this store are no longer connected to it and are
+        // considered invalid", and the manager is a reentrant actor with one task per request, so
+        // it would hit calls that did nothing wrong. See `ExistingReminderSave`.
         XCTAssertEqual(try matches(#"\.reset\( ?\)"#, in: code).count, 0)
     }
 }
