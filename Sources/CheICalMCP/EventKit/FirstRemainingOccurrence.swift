@@ -16,9 +16,10 @@ import Foundation
 ///
 /// One more refusal (verify round 1): an occurrence edited on its own whose slot is before the
 /// stand-in. A write from the stand-in with `.futureEvents` covers its slot onward, so that
-/// occurrence would stay behind while the call reported success. The series then stays not found,
-/// and single occurrences can still be deleted or updated with span `this`. (The edited
-/// occurrence's own id is a way to the whole series only when it is the earliest one left, #416.)
+/// occurrence would stay behind while the call reported success. The stand-in is then refused, and
+/// single occurrences can still be deleted or updated with span `this`. When that edited occurrence
+/// is the earliest one left, `update_event` and `delete_event` with span `all` through the series'
+/// id go through its own id instead (`earliestEdited`, #428), the way #416 left open.
 enum FirstRemainingOccurrence {
     struct Candidate: Equatable {
         let eventIdentifier: String?
@@ -60,6 +61,25 @@ enum FirstRemainingOccurrence {
             return ofTheSeries && (candidate.slot ?? candidate.start) < standIn
         }
         return editedBefore ? nil : best
+    }
+
+    /// #428: the occurrence edited on its own that comes first in the series, when one does: the
+    /// series' identifier reaches no stand-in then, and a whole-series write goes through that
+    /// occurrence's own identifier, as measured. By slot, with the start standing in. Only an
+    /// occurrence under the identifier's `/`-part: another store's shape was not measured.
+    /// verify r3: it must not start after the next occurrence's slot; every measured row (the delete
+    /// from it with span future included) had it there, and EventKit's cut by slot or by shown start
+    /// past that was not measured.
+    static func earliestEdited(_ candidates: [Candidate], identifier: String) -> Int? {
+        func slot(_ index: Int) -> Date { candidates[index].slot ?? candidates[index].start }
+        guard let first = candidates.indices.min(by: { slot($0) < slot($1) }),
+              candidates[first].isDetached,
+              DetachedOccurrenceSpan.seriesIdentifier(of: candidates[first].eventIdentifier ?? "") == identifier else { return nil }
+        let others = candidates.indices.filter { $0 != first }
+        if let next = others.map(slot).min(), candidates[first].start > next { return nil }
+        // verify r4: nor may another occurrence show a start before its start.
+        if others.contains(where: { candidates[$0].start < candidates[first].start }) { return nil }
+        return first
     }
 
     /// Whether a delete or update resolves the stand-in with the edited-before refusal (verify
@@ -200,6 +220,24 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
+    /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
+    /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
+    func seriesObject(ofOccurrence id: String) throws -> EKEvent? {
+        try DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { try storedEvent(id: $0) }
+    }
+
+    /// #428: the identifier of the occurrence edited on its own that comes first in the series
+    /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
+    /// unedited occurrence first, is not this.
+    func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool, firstDeleted: Bool)? {
+        guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
+              let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id),
+              let first = candidates[index].eventIdentifier else { return nil }
+        let firstStart: Date? = stored.startDate
+        let slot = candidates[index].slot ?? candidates[index].start
+        return (first, !candidates.contains { !$0.isDetached }, !(firstStart.map { UndoPostState.sameInstant(slot, $0) } ?? false))
+    }
+
     /// #416: what is left of the series around `occurrence`, an occurrence edited on its own and
     /// addressed by its own `id`. nil when the series cannot be listed or the scan did not reach
     /// the occurrence. `seriesOccurrences` reads the series object with care, so one that fails to
@@ -214,14 +252,20 @@ extension EventKitManager {
                                                 occurrenceDate: occurrence.occurrenceDate, isAllDay: series.isAllDay) else { return nil }
         let firstStart: Date? = series.startDate
         guard let firstStart else { return nil }
-        return DetachedOccurrenceSpan.neighbours(
-            of: id, slot: slot, among: candidates,
-            coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries(
-                rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-                firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current)),
-            namedInTheCall: namedInTheCall,
+        let rules = series.recurrenceRules ?? []
+        let covers = DetachedOccurrenceSpan.coversWholeSeries(
+            rules: rules.map(DetachedOccurrenceSpan.RuleExtent.init),
+            firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current))
+        var known = DetachedOccurrenceSpan.neighbours(
+            of: id, slot: slot, among: candidates, coversWholeSeries: covers, namedInTheCall: namedInTheCall,
             own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart,
                                          series: listed.first { !$0.isDetached }))
+        known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(
+            of: id, among: candidates, coversWholeSeries: covers,
+            measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules),
+            countBounded: !rules.isEmpty && rules.allSatisfy { ($0.recurrenceEnd?.occurrenceCount ?? 0) > 0 },
+            firstStart: firstStart, now: Date())
+        return known
     }
 
     /// #416: the refusal of a span `all` delete of `event`, resolved from `id`, or nil.

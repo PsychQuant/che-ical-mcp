@@ -454,6 +454,11 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertTrue(message.contains("earlier operations remain undoable"), message)
         XCTAssertTrue(message.contains("in Calendar"), message)
         XCTAssertFalse(message.contains("discard_id"), "the entry is already discarded")
+        // #428 verify r1: from the first occurrence nothing of the series is left, so the text
+        // does not claim a part that is left.
+        XCTAssertTrue(message.contains("(when it started at the first occurrence, every occurrence)"), message)
+        XCTAssertFalse(message.contains("beside the one that is left"), message)
+        XCTAssertFalse(message.contains("(for example by moving the end of the series' repetition back)"), message)
     }
 
     /// D3: a batch that holds such a delete is refused before any member writes, and discarded.
