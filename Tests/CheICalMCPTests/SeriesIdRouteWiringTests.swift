@@ -25,6 +25,12 @@ final class SeriesIdRouteWiringTests: XCTestCase {
         XCTAssertFalse(between.contains("event."), between)
         let call = String(body[inner.lowerBound...].prefix(700))
         XCTAssertTrue(call.contains("identifier: first.id,"), call)
+        // verify r7: the #451 checks on a started series hold only with the call's span and applyToAll.
+        XCTAssertTrue(call.contains("span: span,"), call)
+        XCTAssertTrue(call.contains("applyToAll: applyToAll,"), call)
+        let after = String(body[inner.upperBound...].prefix(900))
+        XCTAssertTrue(after.contains("} catch EventKitError.seriesWriteRefused {"), after)
+        XCTAssertTrue(after.contains("DetachedOccurrenceSpan.throughSeriesIDStartedRule(allEdited: first.allEdited)"), after)
     }
 
     /// In the inner call, on the occurrence's own id, #416's refusal and #451's checks for a started
