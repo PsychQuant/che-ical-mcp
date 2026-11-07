@@ -410,9 +410,9 @@ final class SeriesRuleWriteTests: XCTestCase {
     func testReachAndTheRulesComeFromTheSeries() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        for pin in ["let ownNeighbours = addressesOwnOccurrence ? occurrenceNeighbours(of: masterEvent, id: identifier) : nil",
+        for pin in ["let ownNeighbours = addressesOwnOccurrence ? try occurrenceNeighbours(of: masterEvent, id: identifier) : nil",
                     "ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },",
-                    "DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { storedEvent(id: $0) } : masterEvent",
+                    "DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent",
                     "let dayCalendar = Calendar.gregorian(in: datePlan.isAllDay || event.isAllDay ? .current : (event.timeZone ?? .current))",
                     "wholeSeriesCall: applyToAll,",
                     "$0.calendarIdentifier != event.calendar?.calendarIdentifier"] {
