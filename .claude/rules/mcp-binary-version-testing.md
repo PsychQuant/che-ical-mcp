@@ -537,14 +537,12 @@ end、notes、location、alarms。
    第 1 場刪掉、第 2 場改過時，經系列 id 的 `title`、`notes`（2026-11-08）與 `location`（#416 第 4 步）放行、新 id；`recurrence`
    拒絕（verify r3：會從較後的時段另起新系列，#443 量到 count 會少）。最早改過的場次開始時間晚於下一場的時段時，系列 id 不走這條路
    （2026-11-08：第 2 場移到第 3 場之後，update 與 delete 都回 edited-before 的拒絕，什麼都沒動）。
-   **已經開始的系列沒有量過**（verify r3）：(h) 的每一列都是未來的系列。verify r4 起，經系列 id 時系列一旦開始（任一場次的原本時段
-   早於現在），日期、時區與新的 `recurrence` 一律拒絕（verify r5 加上 `recurrence`）。#471 合併後，確認它的拒絕（startedRuleRefusal、
-   開始時間的規則）也在經系列 id 轉進的內層 `updateEvent` 呼叫裡、在任何欄位寫入之前執行，再量一列已開始的系列（日期與 `recurrence`
-   都要量：換星期、interval 2），才放寬這條拒絕。經場次自己的 id 對已開始系列寫日期、`recurrence`、鬧鐘、`url`、`structured_location`
-   也都沒量過（verify r5 選擇列為待量，不拒絕），#471 合併後一起量。全天系列在 `TZ=America/Los_Angeles` 下，第 1 場改過時經它自己的 id
-   與經系列 id 寫 `recurrence`：2026-11-08 量過（修正前被誤判成第 1 場已刪而拒絕，修正後套用）。`timezone`、`url`、`structured_location` 與 span `future` 的日期只在以次數結束
-   的 5 場系列量過，以 end_date 結束的系列沒量（拒絕）。另一個場次顯示的開始時間早於最早那一場時，系列 id 不走這條路（沒量）。verify r6：在這兩種「最早那一場被移到別場之後」的形狀下，
-   經它自己的 id 的 span `all`／`future` 寫入與 span `future` 刪除也拒絕（同樣沒量），2026-11-08 實機確認拒絕、什麼都沒動。
+   **已經開始的系列（#471 合併後，2026-11-08 量過）**：每週 5 場、第一場已過、第 1 場只改標題。經系列 id 的 span `all`：
+   別天的 `start_time` 被 #428 的同日規則拒絕；`recurrence` 換星期（`days_of_week` 含原日）與 interval 2 被 #471 的
+   startedRuleRefusal 拒絕，什麼都沒動；同一天的 `start_time`、`end_time`、`all_day: true`、`timezone`、保留樣式加 `end_date`
+   的 `recurrence` 都照說的套用到每一場（含已過的那一場，日期不變）。經第 1 場自己的 id 的同日 `start_time`、`end_time`、
+   `all_day: true` 也一樣。所以 #428 r4/r5 對已開始系列的拒絕拿掉，交給 #471 的檢查（它們在內層 `updateEvent` 裡、任何寫入
+   之前執行，`SeriesIdRouteWiringTests` 固定這個順序）。
    **打 tag 前必做（verify r4 的 MEDIUM，仍欠）**：在重啟後的 session MCP 上，先做一筆可 undo 的操作，再做這條經系列 id 的刪除，
    第一次 `undo` 要被拒絕並丟棄刪除紀錄，第二次 `undo` 要還原先前那筆（`--cli` 走不到）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時

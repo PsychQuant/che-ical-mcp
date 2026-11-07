@@ -24,22 +24,25 @@ final class SeriesIdRouteWiringTests: XCTestCase {
         XCTAssertFalse(between.contains("eventStore."), between)
         XCTAssertFalse(between.contains("event."), between)
         let call = String(body[inner.lowerBound...].prefix(700))
-        XCTAssertTrue(call.contains("reachedThroughSeriesID: true)"), call)
+        XCTAssertTrue(call.contains("identifier: first.id,"), call)
     }
 
-    /// In the inner call the refusal that carries `throughSeriesID` (and with it the started-series
-    /// refusal) comes before the snapshot, the first field assignment and the save.
-    func testTheStartedRefusalRunsBeforeTheFirstAssignmentAndTheSave() throws {
+    /// In the inner call, on the occurrence's own id, #416's refusal and #451's checks for a started
+    /// series (`SeriesRuleWrite`: later occurrence, start, started rule) all come before the snapshot,
+    /// the first field assignment, the date assignment and the save. The series-id route relies on
+    /// them for a started series (measured after #471, 2026-11-08).
+    func testTheRefusalsRunBeforeTheFirstAssignmentAndTheSave() throws {
         let body = try updateEventBody()
-        let refusal = try XCTUnwrap(body.range(of: "if let refusal = try DetachedOccurrenceSpan.updateRefusal("))
-        let call = String(body[refusal.lowerBound...].prefix(1200))
-        XCTAssertTrue(call.contains("throughSeriesID: reachedThroughSeriesID"), call)
-        for later in ["let oldSnapshot = EventSnapshot(from: masterEvent)", "if let t = title { event.title = t }",
-                      "event.startDate = dates.start", "try eventStore.save("] {
-            let at = try XCTUnwrap(body.range(of: later), later)
-            XCTAssertLessThan(refusal.lowerBound, at.lowerBound, later)
+        let checks = ["if let refusal = try DetachedOccurrenceSpan.updateRefusal(", "SeriesRuleWrite.laterOccurrenceRefusal(",
+                      "SeriesRuleWrite.startRefusal(", "SeriesRuleWrite.startedRuleRefusal("]
+        let writes = ["if let t = title { event.title = t }", "event.startDate = dates.start", "try eventStore.save("]
+        for check in checks {
+            let at = try XCTUnwrap(body.range(of: check), check)
+            for write in writes {
+                XCTAssertLessThan(at.lowerBound, try XCTUnwrap(body.range(of: write), write).lowerBound, "\(check) before \(write)")
+            }
         }
-        let throwAfter = try XCTUnwrap(body.range(of: "throw EventKitError.occurrenceAddressRefused(reason: refusal)", range: refusal.upperBound..<body.endIndex))
-        XCTAssertLessThan(throwAfter.lowerBound, try XCTUnwrap(body.range(of: "if let t = title { event.title = t }")).lowerBound)
+        let refusal = try XCTUnwrap(body.range(of: checks[0]))
+        XCTAssertLessThan(refusal.lowerBound, try XCTUnwrap(body.range(of: "let oldSnapshot = EventSnapshot(from: masterEvent)")).lowerBound)
     }
 }

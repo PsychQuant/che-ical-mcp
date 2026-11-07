@@ -1127,8 +1127,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         occurrenceDate: Date? = nil,
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
-        clearTimezone: Bool = false,
-        reachedThroughSeriesID: Bool = false
+        clearTimezone: Bool = false
     ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {
         try await ensureCalendarAccess()
 
@@ -1147,7 +1146,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
                         alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                         structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
-                        timezone: timezone, clearTimezone: clearTimezone, reachedThroughSeriesID: true)
+                        timezone: timezone, clearTimezone: clearTimezone)
                 } catch EventKitError.occurrenceAddressRefused(let reason) {
                     // verify r2: the occurrence's texts speak to a caller who named it.
                     throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted))
@@ -1170,7 +1169,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue(
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
-            writesLocation: location != nil, turnsTimed: isAllDay == false, throughSeriesID: reachedThroughSeriesID,
+            writesLocation: location != nil, turnsTimed: isAllDay == false,
             datesStayOnTheDay: DetachedOccurrenceSpan.datesStayOnTheDay(
                 newStart: startDate, newEnd: endDate, start: masterEvent.startDate, end: masterEvent.endDate,
                 zone: masterEvent.timeZone ?? .current),

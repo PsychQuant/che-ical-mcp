@@ -283,7 +283,7 @@ extension EventKitManager {
             of: id, among: candidates, coversWholeSeries: covers,
             measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules),
             countBounded: !rules.isEmpty && rules.allSatisfy { ($0.recurrenceEnd?.occurrenceCount ?? 0) > 0 },
-            firstStart: firstStart, now: Date(), isAllDay: series.isAllDay)
+            firstStart: firstStart, isAllDay: series.isAllDay)
         return known
     }
 

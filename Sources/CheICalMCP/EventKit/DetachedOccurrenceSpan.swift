@@ -115,9 +115,6 @@ enum DetachedOccurrenceSpan {
         /// series' first start (verify r2). Not `OwnValues.firstSlotGone`, which says whether this
         /// occurrence's own slot is the first, and is true for any later occurrence.
         var firstSlotPresent = false
-        /// The series has started: its first start, or any listed slot, is before now (verify r4).
-        /// Every date row was on a series still to come.
-        var started = true
     }
 
     /// What is left of the series around the occurrence. `nil` where one is taken means unknown.
@@ -234,7 +231,7 @@ enum DetachedOccurrenceSpan {
     /// depends on it: it scans the series. Unknown comes first, as the other texts claim a series.
     static func updateRefusal(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool = false,
                               fields: Set<String> = [], repeatsOccurrenceValue: Bool = false, writesLocation: Bool = false,
-                              turnsTimed: Bool = false, throughSeriesID: Bool = false, datesStayOnTheDay: Bool = false,
+                              turnsTimed: Bool = false, datesStayOnTheDay: Bool = false,
                               neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
         guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
         guard let known = try neighbours() else {
@@ -245,8 +242,9 @@ enum DetachedOccurrenceSpan {
         // the fields text does not offer what `updateReason` then refuses.
         if !known.earlierRemain, known.movedPastOthers { return movedFirstReason }
         if wholeSeries && known.earlierRemain { return updateReason }
-        // verify r4: on a series that has started, no date row was run through the series' id.
-        if throughSeriesID, known.seriesTime.started, !fields.isDisjoint(with: startedSeriesFields) { return startedSeriesReason }
+        // A started series is left to #451's checks (`SeriesRuleWrite`), which run in the inner
+        // `updateEvent` call on this occurrence's own id before anything is assigned; measured on
+        // iCloud after #471 (2026-11-08) through the series' id and through the own id.
         // verify r5: after a deleted first occurrence, span all takes no rule (below), and the text says so.
         let firstDeleted = wholeSeries && !known.seriesTime.firstSlotPresent && !known.earlierRemain
         if turnsTimed || !refusedUpdateFields(fields, shape: known, datesStayOnTheDay: datesStayOnTheDay,
@@ -347,23 +345,13 @@ enum DetachedOccurrenceSpan {
     /// `SeriesTimeFacts` from the same listing `neighbours(of:)` reads.
     static func seriesTimeFacts(of identifier: String, among candidates: [FirstRemainingOccurrence.Candidate],
                                 coversWholeSeries: Bool, measuredRule: Bool, countBounded: Bool, firstStart: Date,
-                                now: Date, isAllDay: Bool = false, zone: TimeZone = .current) -> SeriesTimeFacts {
+                                isAllDay: Bool = false, zone: TimeZone = .current) -> SeriesTimeFacts {
         // verify r5: rule slots, so an all-day /RID= is not taken for a deleted first slot.
         let earliest = candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: isAllDay, zone: zone) }.min()
         return SeriesTimeFacts(measuredRule: measuredRule, hasEnd: coversWholeSeries && countBounded,
                                otherEdited: candidates.contains { $0.eventIdentifier != identifier && $0.isDetached },
-                               firstSlotPresent: earliest.map { UndoPostState.sameInstant($0, firstStart) } ?? false,
-                               started: min(earliest ?? firstStart, firstStart) < now)
+                               firstSlotPresent: earliest.map { UndoPostState.sameInstant($0, firstStart) } ?? false)
     }
-
-    /// The fields a started series refuses through the series' id (verify r4).
-    /// With `recurrence` (verify r5): #471 measured occurrences lost when a rule changed from one
-    /// that has happened. Revisit once #471 is on main.
-    static let startedSeriesFields: Set<String> = ["start_time", "end_time", "all_day", "timezone", "clear_timezone", "recurrence"]
-
-    /// verify r4: through the series' id on a series that has started. Reported through
-    /// `throughSeriesID`.
-    static let startedSeriesReason = "A date, time zone or new recurrence through the series' identifier is refused once the series has started: every row measured was on a series still to come. Nothing was written."
 
     /// verify r6: `update_event` span 'all' or 'future' through the first occurrence by slot that was
     /// edited to start after another occurrence.
@@ -519,8 +507,6 @@ enum DetachedOccurrenceSpan {
             cause = "This call would start a new series from that occurrence, and the new series would take values the occurrence holds on its own, such as its location or alarms."
         } else if reason == recurrenceDayReason {
             cause = "days_of_week does not hold the day of the week of that occurrence's original date, the day the series runs from. Add that day, or leave days_of_week out."
-        } else if reason == startedSeriesReason {
-            cause = "This series has started (an occurrence is before now), and no date, time zone or rule was measured on a started series this way, so it is refused."
         } else if reason == firstLeftRecurrenceReason {
             cause = "The series' first occurrence was deleted, so the save would start a new series from that occurrence, a later slot, and a new recurrence is refused there: it was not measured, and a count written from a later slot came out short (#443). Title, notes and location can be written."
         } else {
