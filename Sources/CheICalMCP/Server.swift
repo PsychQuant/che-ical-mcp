@@ -49,6 +49,7 @@ class CheICalMCPServer {
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let calendarDeletionSource: any CalendarDeletionSource
+    private let calendarWriteSource: any CalendarWriteSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let duplicateSearchSource: any DuplicateSearchSource
@@ -86,6 +87,7 @@ class CheICalMCPServer {
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
+         calendarWriteSource: any CalendarWriteSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
@@ -103,6 +105,7 @@ class CheICalMCPServer {
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
+        self.calendarWriteSource = calendarWriteSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
         self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
@@ -161,11 +164,12 @@ class CheICalMCPServer {
                     "properties": .object([
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("The name of the calendar")
+                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Type of calendar: 'event' or 'reminder'")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Type of calendar: 'event' or 'reminder'; anything else is refused")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -207,7 +211,7 @@ class CheICalMCPServer {
                         ]),
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("New calendar name")
+                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -1296,19 +1300,22 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("type is required")
         }
 
-        let entityType: EKEntityType = typeStr == "reminder" ? .reminder : .event
+        // #449: any other string used to make an event calendar.
+        let entityType: EKEntityType
+        switch typeStr {
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
+        }
+        try InputValidation.validateCalendarTitle(title)
         let color = arguments["color"]?.stringValue
 
-        let result = try await eventKitManager.createCalendar(
-            title: title,
-            entityType: entityType,
-            color: color
-        )
+        let result = try await calendarWriteSource.writeNewCalendar(title: title, entityType: entityType, color: color)
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
+            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.title, "id": result.identifier])
         }
-        let fields: [String: Any] = ["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier]
+        let fields: [String: Any] = ["action": "created", "calendar": result.title, "id": result.identifier]
         return try actionResult(fields.merging(NewObjectSave.responseFields(result.storeDiffers)) { $1 })
     }
 
@@ -2098,13 +2105,11 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("At least one of 'title' or 'color' must be provided")
         }
 
-        let calendar = try await eventKitManager.updateCalendar(
-            identifier: id,
-            title: title,
-            color: color
-        )
+        if let title { try InputValidation.validateCalendarTitle(title) }
 
-        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.calendarIdentifier])
+        let calendar = try await calendarWriteSource.writeCalendarUpdate(identifier: id, title: title, color: color)
+
+        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.identifier])
     }
 
     private func handleSearchReminders(arguments: [String: Value]) async throws -> String {
