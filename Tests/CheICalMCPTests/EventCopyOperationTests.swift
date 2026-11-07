@@ -22,23 +22,21 @@ final class EventCopyOperationTests: XCTestCase {
         XCTAssertThrowsError(try saved.resolveCalendar(in: [calendars[0]], identifier: { $0.id }, for: .recreateDeleted))
     }
 
-    private func copyRecord(_ id: String) -> UndoOperation {
-        .createEvent(id: id, title: "Source", created: snapshot())
+    private func copyRecord(_ id: String) -> (id: String, created: EventSnapshot) {
+        (id, snapshot())
     }
 
-    /// #466: the undo of a move by copy removes the copy as well as restoring the source. Undo runs
-    /// a batch's members in reverse, so the source comes back first and the copy goes after it: a
-    /// failure between the two leaves the event twice, never not at all.
-    func testMoveReturnsSourceAndCopyUndoOnlyAfterSuccessfulDeletion() throws {
+    /// #466: the undo of a move by copy restores the source and then removes the copy, so the
+    /// record holds both: its own kind (`moveByCopy`), not a batch, so a copy changed or missing
+    /// at undo time cannot keep the source from coming back (PR #474 verify round 1).
+    func testMoveReturnsSourceUndoOnlyAfterSuccessfulDeletion() throws {
         var calls: [String] = []
         let outcome = try EventCopyOperation.execute(source: snapshot(), saveCopy: { calls.append("save"); return "new" },
                                                      removeSource: { calls.append("remove") }, copyRecord: copyRecord)
         XCTAssertEqual(calls, ["save", "remove"])
         XCTAssertEqual(outcome.value, "new")
-        guard case .batch(let members)? = outcome.undo, members.count == 2,
-              case .createEvent(let copyID, _, _) = members[0],
-              case .deleteEvent(let saved) = members[1] else { return XCTFail("\(String(describing: outcome.undo))") }
-        XCTAssertEqual(copyID, "new", "the copy's own record, from the saved copy")
+        guard case .moveByCopy(let saved, let copyID, _)? = outcome.undo else { return XCTFail("\(String(describing: outcome.undo))") }
+        XCTAssertEqual(copyID, "new", "the copy's own identifier, from the saved copy")
         XCTAssertEqual(saved.title, "Source")
         XCTAssertNil(saved.recurrenceRules, "a single removed occurrence must not restore a duplicate series")
     }
@@ -56,14 +54,14 @@ final class EventCopyOperationTests: XCTestCase {
                                                             copyRecord: copyRecord))
     }
 
-    /// #466: the move wires the copy's record from the saved copy, through `postWriteSnapshot`.
+    /// #466: the move wires the copy's identifier and post-write state from the saved copy, through
+    /// `postWriteSnapshot`, as `create_event` records its own.
     func testTheMovePassesTheCopysRecord() throws {
         let manager = try SourcePins.source("EventKit/EventKitManager.swift")
         let move = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: manager))
         XCTAssertEqual(SourcePins.ranges(of: "copyRecord: { copy in", in: move).count, 1)
-        // String literals are blanked in the body, so the pin stops before the title's fallback.
-        XCTAssertEqual(SourcePins.ranges(of: ".createEvent(id: copyID, title: copy.title ?? title ??", in: move).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "created: self.postWriteSnapshot(eventID: copyID, saved: copy))", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let copyID = copy.eventIdentifier ??", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "return (copyID, self.postWriteSnapshot(eventID: copyID, saved: copy))", in: move).count, 1)
     }
 
     // MARK: - refused copy (#253 verify round 2, D1)

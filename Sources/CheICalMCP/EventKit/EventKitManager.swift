@@ -2013,8 +2013,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }, removeSource: {
                 try self.eventStore.remove(subject, span: .thisEvent)
             }, copyRecord: { copy in
+                // An empty identifier is recorded as such; its undo restores the source and says the
+                // copy was not looked up (#466).
                 let copyID = copy.eventIdentifier ?? ""
-                return .createEvent(id: copyID, title: copy.title ?? title ?? "", created: self.postWriteSnapshot(eventID: copyID, saved: copy))
+                return (copyID, self.postWriteSnapshot(eventID: copyID, saved: copy))
             })
             undo = outcome.undo
             return (outcome.value.eventIdentifier ?? "",
@@ -2796,6 +2798,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
+        case .moveByCopy(let original, let copyID, let copy):
+            // #466: the source first, through the delete-undo's own code (its calendar check, its
+            // refusals, its new ID in the text); its error is thrown and nothing of the copy touched.
+            // Then the copy, checked as the undo of a created event checks it (#236), and removed
+            // only when found unchanged; otherwise it stays. Nothing after the restore throws
+            // (`MoveByCopyUndo.run`), so the record is used up once the source is back. The check
+            // and the removal run with no suspension between them, as in the create-undo arm.
+            let undone = try await MoveByCopyUndo.run(
+                copyID: copyID,
+                restoreOriginal: { try await self.undoDeletedEvent(original).text },
+                checkCopy: { try await self.verifiedEvent(of: .createEvent(id: copyID, title: copy.title, created: copy), verb: .undo) },
+                removeCopy: { try self.removeMoveCopy($0) },
+                describeRemovalFailure: { EventKitErrorSanitizer.writeFailureLog(handler: "undo.moveByCopy", identifier: copyID, error: $0) })
+            markNeedsRefresh()
+            return MoveByCopyUndo.message(restored: undone.restored, copyID: copyID, copy: undone.copy)
+
         case .createReminder(_, let title, _):
             // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:
             // the record is kept and the message names discard_id), as for events since #182;
@@ -2831,6 +2849,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .batch(let ops):
             return try await undoBatch(ops).message
         }
+    }
+
+    /// #466: removes the copy a move by copy made, after its #236 check passed. The check found it
+    /// unchanged, so it has no rules (the copy was saved as a one-off) and span `this` removes it alone.
+    func removeMoveCopy(_ copy: EKEvent) throws {
+        try eventStore.remove(copy, span: .thisEvent)
     }
 
     /// The undo of a batch record: its message, and what the stores of the reminders it recreated
@@ -2915,7 +2939,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
-             .updateRecurringEvent, .moveEvent, .createReminder, .deleteReminder, .updateReminder:
+             .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder:
             // #247: these write nothing on redo. `handleRedo` answers them itself and drops the
             // entry from the redo stack (`CalendarUndoManager.beginRedo`); this is a fallback with
             // the same text, and it writes nothing either.

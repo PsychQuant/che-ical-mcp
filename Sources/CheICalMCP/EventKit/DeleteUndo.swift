@@ -262,6 +262,9 @@ extension UndoOperation {
             return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
             return members.flatMap(\.undoDisclosures)
+        case .moveByCopy(let original, _, _):
+            // #466: the source is restored as `.deleteEvent` restores it; its snapshot holds no rules.
+            return UndoOperation.deleteEvent(snapshot: original).undoDisclosures
         case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
             return []
