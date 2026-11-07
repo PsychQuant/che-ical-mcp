@@ -329,7 +329,7 @@ class CheICalMCPServer {
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")
                                 ]),
                                 "excluded_occurrence_dates": .object([
                                     "type": .string("array"),
@@ -401,7 +401,7 @@ class CheICalMCPServer {
                                 "days_of_month": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")
+                                    "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")
                                 ])
                             ]),
                             "required": .array([.string("frequency")])
@@ -887,7 +887,7 @@ class CheICalMCPServer {
                                             "end_date": .object(["type": .string("string")]),
                                             "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
-                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
+                                            "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
                                         ]),
                                         "required": .array([.string("frequency")])
