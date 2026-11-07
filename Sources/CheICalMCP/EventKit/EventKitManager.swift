@@ -873,6 +873,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let refusal = WeekdayCheck.createRefusal(rule: recurrenceRule, start: startDate, timezone: timezone, host: Calendar.current) {
             throw refusal
         }
+        // #461: the same for days_of_month on a monthly or yearly rule.
+        if let refusal = MonthDayCheck.createRefusal(rule: recurrenceRule, start: startDate, timezone: timezone, host: Calendar.current) {
+            throw refusal
+        }
 
         // Add recurrence rule
         if let rule = recurrenceRule {
@@ -1153,6 +1157,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
+        // Read once: the #416 refusal below and the #451 checks use it (PR #471 verify).
+        let addressesOwnOccurrence = (applyToAll || span == .futureEvents)
+            && DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached)
+        let ownNeighbours = addressesOwnOccurrence ? try occurrenceNeighbours(of: masterEvent, id: identifier) : nil
         // #416: through an occurrence edited on its own, span 'all' or 'future' writes only what was
         // measured to do what it says (`DetachedOccurrenceSpan`); refused before anything is read
         // into the update or written.
@@ -1166,7 +1174,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             datesStayOnTheDay: DetachedOccurrenceSpan.datesStayOnTheDay(
                 newStart: startDate, newEnd: endDate, start: masterEvent.startDate, end: masterEvent.endDate,
                 zone: masterEvent.timeZone ?? .current),
-            neighbours: try occurrenceNeighbours(of: masterEvent, id: identifier)) {
+            neighbours: ownNeighbours) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
@@ -1294,6 +1302,71 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.allDayTimezoneConflict
         }
 
+        // #451: what the write covers, from the original slots (an edited occurrence shows another
+        // time). Through an occurrence's own id the object found is that occurrence, so whether it
+        // is the first comes from the series' listing (PR #471 verify).
+        let seriesRules: [SeriesRuleWrite.StoredRule] = try {
+            // #288: a lookup that raises is a failed lookup, not "no rule" (which would read as an
+            // unwritable pattern), so it throws.
+            let series = try addressesOwnOccurrence
+                ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
+            // PR #471 verify rounds 6-7: whether a week start regroups the rule depends on the
+            // series' start weekday, read in the zone its days are read in, from the first
+            // occurrence's original slot (occurrenceDate), not where an edit moved it.
+            let startWeekday = series.map {
+                Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current))
+                    .component(.weekday, from: $0.occurrenceDate ?? $0.startDate)
+            }
+            return (series?.recurrenceRules ?? []).map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }
+        }()
+        let shownStart: Date = event.startDate
+        let eventSlot: Date = UndoPostState.ruleSlot(
+            eventIdentifier: addressesOwnOccurrence ? identifier : event.eventIdentifier,
+            externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate,
+            isAllDay: event.isAllDay) ?? shownStart
+        let seriesStart: Date = masterEvent.startDate
+        let wholeFromSeries = applyToAll && !addressesOwnOccurrence
+        let reach = SeriesRuleWrite.reach(
+            applyToAll: applyToAll, futureSpan: span == .futureEvents, repeats: masterEvent.hasRecurrenceRules,
+            ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },
+            seriesStart: seriesStart, occurrenceSlot: wholeFromSeries ? seriesStart : eventSlot)
+        let now = Date()
+        let happened = reach.anchor.map {
+            SeriesRuleWrite.hasHappened(slot: $0, shownStart: wholeFromSeries ? seriesStart : shownStart, now: now)
+        } ?? false
+
+        // #451: span future from a later occurrence, on the fields measured to lose occurrences.
+        if let reason = SeriesRuleWrite.laterOccurrenceRefusal(
+            fromLaterOccurrence: reach.isFromLaterOccurrence,
+            changesAllDay: datePlan.isAllDay != event.isAllDay,
+            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
+            hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount,
+            wholeSeriesCall: applyToAll,
+            storedRuleUnwritable: SeriesRuleWrite.writableRule(seriesRules) == nil,
+            recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
+        // #451 (PR #471 verify round 2): from an occurrence that happened, start_time keeps that
+        // occurrence's date; from one still to come, it is not before now. Any other date moved
+        // or dropped occurrences that happened, and undo refuses.
+        let dayCalendar = Calendar.gregorian(in: datePlan.isAllDay || event.isAllDay ? .current : (event.timeZone ?? .current))
+        if let reason = SeriesRuleWrite.startRefusal(
+            reach: reach, plannedStart: datePlan.datesToWrite?.start, happened: happened, now: now,
+            dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
+        // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
+        // stored pattern with a bound that keeps what happened; any other rewrote the past.
+        // The stored count runs from the original first start, which only a call over the whole
+        // series from its first slot holds (PR #471 verify round 3).
+        if let reason = SeriesRuleWrite.startedRuleRefusal(
+            recurrenceRule, stored: seriesRules, happened: happened,
+            countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn,
+                                                 firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),
+            now: now, calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
+
         // Validate recurrence weekday consistency (#5, #454): which days apply is `WeekdayCheck.daysToCheck`.
         // Skip entirely if clearRecurrence is true (event becoming non-recurring)
         // Read from the values the event will have after this update: the planned start, in the
@@ -1353,6 +1426,32 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
                 }
                 throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)
+            }
+        }
+
+        // #461: days_of_month by the same rules, read on the same day in the same zone.
+        let storedUsesMonthDays = storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false
+        if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil, stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+                                           storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves) {
+            let otherParts = storedRule.map { [$0.monthsOfTheYear, $0.weeksOfTheYear, $0.daysOfTheYear].contains { $0?.isEmpty == false } } ?? false
+            throw EventKitError.monthDayMoveRefused(
+                expectedDays: MonthDayCheck.names(storedRule?.daysOfTheMonth?.map(\.intValue) ?? []),
+                unwritable: MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts),
+                spanAll: applyToAll)
+        }
+        let monthDaysToValidate = MonthDayCheck.daysToCheck(
+            requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
+            stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+            storedUsesMonthDays: storedUsesMonthDays,
+            span: span, ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
+        if let days = monthDaysToValidate {
+            let start = MonthDayCheck.day(
+                of: originalDay ?? plannedStart,
+                zone: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+                host: Calendar.current)
+            if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
+                if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
+                throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
             }
         }
 
@@ -3153,6 +3252,12 @@ enum EventKitError: LocalizedError {
     case weekdayMismatch(startDay: String, expectedDays: String)
     /// #454 verify: a stored rule on a numbered weekday, which `recurrence` cannot write.
     case weekdayOffNumberedRule(startDay: String)
+    /// #461: the start is not on the rule's `days_of_month` (`MonthDayCheck`).
+    case dayOfMonthMismatch(startDay: Int, expectedDays: String)
+    /// #461 verify round 1: a series' start moved to another day on a rule with days_of_month.
+    /// `unwritable`: the stored rule has a part `recurrence` cannot write, so Calendar is the route.
+    /// `spanAll`: the call is span all, the only span the recurrence route was measured on.
+    case monthDayMoveRefused(expectedDays: String, unwritable: Bool, spanAll: Bool)
     /// #182 — an excluded date lies outside the recurrence window (before the first
     /// occurrence day, or after end_date). Rejected pre-save: nothing was created.
     case exclusionOutOfWindow(date: String)
@@ -3207,6 +3312,9 @@ enum EventKitError: LocalizedError {
     /// `clear_recurrence` from one occurrence (span future), refused before anything is written by
     /// `refusesRecurrenceChangeOnOccurrence` and `refusesClearRecurrenceFromOccurrence`.
     case recurrenceChangeOnOccurrenceRefused(clearing: Bool, address: EventKitManager.RecurrenceChangeAddress)
+    /// #451: an `update_event` shape measured to lose occurrences. `reason` is one of the fixed
+    /// strings on `SeriesRuleWrite`.
+    case seriesWriteRefused(reason: String)
     /// #285 — restoring the exceptions of a series (undo of a whole-series delete) stopped and was
     /// rolled back: the recreated series and anything created for its exceptions were deleted
     /// again, so nothing of the restore remains and the undo can be retried.
@@ -3311,6 +3419,17 @@ enum EventKitError: LocalizedError {
             return "Invalid time range: \(message)"
         case .weekdayMismatch(let startDay, let expectedDays):
             return "The start falls on \(startDay), which is not in days_of_week [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_week that include that day."
+        case .dayOfMonthMismatch(let startDay, let expectedDays):
+            return "The start falls on day \(startDay) of the month, which is not in days_of_month [\(expectedDays)]. Pass a start_time on one of those days, or recurrence with the rule's other fields and days_of_month that include that day. Nothing was written."
+        case .monthDayMoveRefused(let expectedDays, let unwritable, let spanAll):
+            let measured = "This series repeats on days_of_month [\(expectedDays)], and moving its start to another day with no recurrence in the call changes it wrongly: measured on iCloud, a move to a day off the list made that day part of the rule, and a move to another day on it put two occurrences on one day. Nothing was written. To change the time, give start_time on the same day."
+            if unwritable {
+                return measured + " This series' rule has a part this tool cannot write (a day counted from the end of the month, a numbered weekday or position, or months, weeks or days of the year), so to move it, change the series in Calendar."
+            }
+            if !spanAll {
+                return measured + " From one occurrence on, the recurrence route was not measured, and with a count it can come out short (#443): to move the whole series use span all, or change the series in Calendar."
+            }
+            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day) together with start_time, on span all: measured clean on iCloud for a monthly series on days_of_month only, within one month; not for yearly series, a rule that also has days_of_week, a move to another month, or a series with an occurrence edited on its own."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):
@@ -3351,7 +3470,7 @@ enum EventKitError: LocalizedError {
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
-            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."
+            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own. On a series that has started, an end_date before now is refused, as one before an occurrence that happened deletes it; on a series with an occurrence_count, only a call with the series' id and span 'all' can tell whether it still has occurrences to come, and other calls pass only the series' own bound (#451)."
             let wholeSeries = "span 'all' leaves one event on the series' first day and deletes the other occurrences"
             switch (clearing, address) {
             case (false, .seriesId):
@@ -3363,6 +3482,8 @@ enum EventKitError: LocalizedError {
             case (true, .occurrenceOwnId(let series)):
                 return "This id is one occurrence edited on its own, and clear_recurrence removes the rule of the whole series. Call update_event with \(Self.seriesName(series)) instead: \(wholeSeries). \(ending) Nothing was written."
             }
+        case .seriesWriteRefused(let reason):
+            return reason
         case .seriesExceptionsRestoreFailed(let reason):
             return reason
         case .saveUnchecked(let code):
