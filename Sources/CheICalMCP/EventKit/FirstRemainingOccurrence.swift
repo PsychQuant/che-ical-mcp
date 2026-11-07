@@ -212,15 +212,15 @@ extension EventKitManager {
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
     /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
-    func seriesObject(ofOccurrence id: String) -> EKEvent? {
-        DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { storedEvent(id: $0) }
+    func seriesObject(ofOccurrence id: String) throws -> EKEvent? {
+        try DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { try storedEvent(id: $0) }
     }
 
     /// #428: the identifier of the occurrence edited on its own that comes first in the series
     /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
     /// unedited occurrence first, is not this.
-    func firstEditedOccurrenceID(of id: String) -> String? {
-        guard let stored = storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
+    func firstEditedOccurrenceID(of id: String) throws -> String? {
+        guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
               let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id) else { return nil }
         return candidates[index].eventIdentifier
     }
@@ -229,9 +229,9 @@ extension EventKitManager {
     /// addressed by its own `id`. nil when the series cannot be listed or the scan did not reach
     /// the occurrence. `seriesOccurrences` reads the series object with care, so one that fails to
     /// refresh (#326) is fine here. `namedInTheCall`: see `DetachedOccurrenceSpan.neighbours`.
-    func occurrenceNeighbours(of occurrence: EKEvent, id: String, namedInTheCall: Set<String> = []) -> DetachedOccurrenceSpan.Neighbours? {
+    func occurrenceNeighbours(of occurrence: EKEvent, id: String, namedInTheCall: Set<String> = []) throws -> DetachedOccurrenceSpan.Neighbours? {
         guard let seriesID = DetachedOccurrenceSpan.seriesIdentifier(of: id),
-              let series = storedEvent(id: seriesID),
+              let series = try storedEvent(id: seriesID),
               let (listed, candidates) = seriesOccurrences(of: series, id: seriesID),
               let window = seriesScanWindow(of: series),
               let scannedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max(),
@@ -250,9 +250,9 @@ extension EventKitManager {
     }
 
     /// #416: the refusal of a span `all` delete of `event`, resolved from `id`, or nil.
-    func seriesDeleteRefusal(_ event: EKEvent, id: String, namedInTheCall: Set<String> = [], batch: Bool = false) -> String? {
-        DetachedOccurrenceSpan.seriesDeleteRefusal(identifier: id, isDetached: event.isDetached, batch: batch,
-                                                   neighbours: occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))
+    func seriesDeleteRefusal(_ event: EKEvent, id: String, namedInTheCall: Set<String> = [], batch: Bool = false) throws -> String? {
+        try DetachedOccurrenceSpan.seriesDeleteRefusal(identifier: id, isDetached: event.isDetached, batch: batch,
+                                                       neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))
     }
 
     /// #416: whether `date` is the day of `occurrence`, by the time it shows or by its original slot:

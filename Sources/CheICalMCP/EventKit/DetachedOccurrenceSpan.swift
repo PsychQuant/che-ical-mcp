@@ -188,9 +188,9 @@ enum DetachedOccurrenceSpan {
     /// depends on it: it scans the series. Unknown comes first, as the other texts claim a series.
     static func updateRefusal(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool = false,
                               fields: Set<String> = [], repeatsOccurrenceValue: Bool = false, writesLocation: Bool = false,
-                              turnsTimed: Bool = false, neighbours: @autoclosure () -> Neighbours?) -> String? {
+                              turnsTimed: Bool = false, neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
         guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        guard let known = neighbours() else {
+        guard let known = try neighbours() else {
             return unknownReason(identifier: identifier, span: wholeSeries ? "'all'" : "'future'", suffix: "Nothing was written.")
         }
         if turnsTimed || !refusedUpdateFields(fields, holdsOwnTime: known.own.time).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
@@ -264,9 +264,9 @@ enum DetachedOccurrenceSpan {
     /// The refusal of `delete_event` / `delete_events_batch` with span `all` through one occurrence:
     /// with another one left, or with nothing known about the rest of the series.
     static func seriesDeleteRefusal(identifier: String, isDetached: Bool, batch: Bool,
-                                    neighbours: @autoclosure () -> Neighbours?) -> String? {
+                                    neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
         guard addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        guard let known = neighbours() else {
+        guard let known = try neighbours() else {
             return unknownReason(identifier: identifier, span: "'all'", suffix: batch ? "This row deleted nothing." : "Nothing was deleted.", deleting: true)
         }
         guard known.othersRemain else { return nil }

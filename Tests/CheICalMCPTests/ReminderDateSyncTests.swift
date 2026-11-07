@@ -1113,6 +1113,7 @@ final class ReminderDateSyncTests: XCTestCase {
                                                       },
                                                       rollback: {}, log: { _ in })
 
+        XCTAssertEqual(confirmed.reread, false, "the last reload failed")
         XCTAssertEqual(saves, 1, "the fallback was saved")
         XCTAssertEqual(reloads, 2)
         XCTAssertEqual(confirmed.aligned, false)

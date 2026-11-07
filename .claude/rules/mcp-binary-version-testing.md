@@ -238,8 +238,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
-原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
-實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`）。#274 的探測（2026-11-06）量過
+commit 失敗：有沒有 `rollback()` 都不會落地，它只清 `hasChanges`。下面這步量的是 session MCP 上的另一種失敗（唯讀日曆）。這是 stateful 的（同一個 server process 內的下一次
 寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
 之後），只用名稱含 `#373` 的拋棄式日曆：
 
@@ -277,12 +277,34 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 
 8. 這一步用自己的提醒（第 1 步的提醒在第 3 步已清掉相對鬧鐘、第 5 步的會被 undo 刪掉，都不能用）：
    `create_reminder` 帶**至少一天後**的時間到期日與 `[15]`（遠的到期日，它的鬧鐘才不會在第 9 步等待時響起被算錯；
-   看完就刪掉它），`list_reminders` 讀回 `minutes_before: 15` → 打開 Reminders.app
-   看它：顯示的日期與時間要是**這一步給的到期時間**，不是「到期減 15 分鐘」（#227 / #235 看過 Reminders.app
-   會把鬧鐘時間當成提醒的日期顯示）。
-9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次。到期當下若又出一次通知，
-   **記錄下來、不算失敗**：Reminders 對有到期時間的提醒本來就會在到期時通知，這一步要驗的只是那個提前 2 分鐘
-   的相對鬧鐘有沒有響；到期前 2 分鐘沒有通知才算失敗。
+   看完就刪掉它），回應的 `alarms_note` 有 #433 的說明，`list_reminders` 讀回到期時間不變、`minutes_before: 15` →
+   打開 Reminders.app 看列表：顯示「到期減 15 分鐘」是**已知行為，記錄下來、不算失敗**（#433：2026-11-05 量的 14 列裡，
+   顯示到期時間的列都沒有早於到期的鬧鐘；這 14 列都沒有檢查通知）。失敗條件是 `list_reminders` 讀回的到期時間變了。
+   列表改成顯示到期時間的話也要回報：行為變了，`alarms_note`、tool description 與 README 都要跟著改。
+   再建下面幾筆，到期時間相同（`[1440]` 那筆要**至少兩天後**，否則它的鬧鐘會落在第 9 步等待時）、**標題要不同**
+   （同標題同到期會被當成重複略過），逐筆看列表，記錄顯示的時間，看完全部刪掉再做第 9 步：
+   - `[-15]`：有 note，列表顯示到期加 15 分鐘（量過，已知行為）；
+   - `[15, -15]`：有 note，推得列表顯示到期減 15 分鐘，沒量過；
+   - `[-15, -60]`：有 note，推得列表顯示到期加 15 分鐘，沒量過；
+   - `[0, -15]`：沒有 note。**這一列決定 `listShowsAlarmTime` 的條件**：量到的列分不出它顯示到期時間還是到期加 15
+     分鐘。顯示的不是到期時間，就要回報：規則會變成「最早且不在到期時間上的鬧鐘」，凡是到期時間有鬧鐘、又有更晚鬧鐘的
+     形狀都要改（`[-15]` 加到期時間的絕對鬧鐘、`[0]` 加較晚的絕對鬧鐘也在內），不只 `[0, ...]`；
+   - `[1440]`：跨到前一天，有 note，記錄列表的日期，以及它出現在哪個智慧清單（沒量過）。
+   絕對鬧鐘與相對鬧鐘並存的三個形狀都是推得的，14 列沒有量過，工具也寫不出絕對鬧鐘：
+   - `[-15]` 加到期時間的絕對鬧鐘：沒有 note（`listShowsAlarmTime` 把絕對鬧鐘算進去），推得列表還是到期時間；
+   - `[15]` 加更早的絕對鬧鐘：有 note，推得列表顯示那個絕對鬧鐘的時間；
+   - `[0]` 加更早的絕對鬧鐘：有 note，推得同上。
+   這三個形狀要用未 commit 的本機探針寫絕對鬧鐘（#433 的量測就是這樣做的）；沒有探針時記成沒驗，不算通過。
+   不要用帶 Early Reminder 的提醒代替：列表結果不同時分不出是哪一個造成的。
+   Early Reminder 另外看（手動，#433 只看過一筆，沒有對照組）：同一拋棄式清單手動建兩筆帶時間的提醒，一筆有 Early
+   Reminder、一筆沒有，比較 `list_reminders` 讀回；再對有 Early Reminder 的提醒分別做 `due_date`、以及同一次呼叫帶
+   `due_date` 與 `realign_to_due`（這兩條路徑才會重寫絕對鬧鐘；單獨帶 `realign_to_due` 時鬧鐘已在到期時間，不會重寫，
+   `alarms_minutes_offsets` 也不碰它），回 App 看 Early Reminder 還在不在。
+   只帶 `due_date` 改期一筆帶 `[15]` 的提醒 → 回應有 `alarms_note`；只改標題 → 沒有。
+9. 建一個到期在幾分鐘後、帶 `[2]` 的提醒，等到它的通知：要在到期前 2 分鐘出現一次，記下橫幅顯示的時間。
+   **第一個橫幅出現後就關掉它**，再等到到期時間：2026-11-05 第一個橫幅還在畫面上，到期時有沒有第二個通知沒有量到。
+   到期時有或沒有通知都**記錄下來、不算失敗**，兩邊的文字（`alarmDisplayNote`、README、CHANGELOG）都要照結果改；
+   這一步要驗的只是那個提前 2 分鐘的相對鬧鐘有沒有響，到期前 2 分鐘沒有通知才算失敗。
 
 結果記在 #333。結束後刪掉拋棄式清單，用 `list_calendars` 確認。
 
@@ -353,8 +375,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 #308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
 掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
 `reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
-`rollback` 有被呼叫；`rollback()` 是否真的丟掉一筆已在 store 的提醒事項上待存的改動，**沒有在
-裝置上看過**——這正是 #274 對 reminder 尚未回答的問題，兩者用同一個探測就能一起回答。
+`rollback` 有被呼叫。#274 的探測（2026-11-06）已回答：`EKObject.rollback()` **不會**丟掉已在 store 的
+提醒事項上待存的改動，下一次存檔仍會寫入（見 `ExistingReminderSave`，那裡也寫了為什麼不用
+`EKEventStore.reset()`）。所以這次 fallback 存檔失敗時，改動可能隨下一次存檔落地。
 
 前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
 讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
@@ -363,11 +386,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
    `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
    `create_reminder: the saved due date read back without its time or zone` 這行。
-2. 沒有這樣的來源時，這一步不能在裝置上做：在 #274 的 reminder 探測（`update_reminder` 存檔失敗後
-   同一個 session 的下一次寫入）做完之前，把 #308 的 fallback rollback 視為未驗證，release note
-   照 CHANGELOG 的寫法說明，不寫成已確認。
+2. 沒有這樣的來源時，這一步不能在裝置上做，fallback 這條路徑上的失敗沒有誘發過，release note 照 CHANGELOG 的寫法說明。
 
-結果記在 #308 與 #274。結束後刪掉拋棄式清單。
+結果記在 #308。結束後刪掉拋棄式清單。
 
 ## Release gate：首場被刪除的系列，經 stand-in 的 delete / update 之 undo（#335）
 
@@ -397,6 +418,43 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 5. 不帶 `require_empty`、日曆裡有事件 → 照舊刪除，回 `{action, id}`。
 
 結果記在 #328。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#328` 的殘留。
+
+## Release gate：自然的 re-exec（#361）
+
+#361 的 stderr 行與 sentinel 記錄只在 forced 路徑上看過：開發機的 host 有完整授權，會保留自己的 grant，自然的 re-exec
+不會發生。`testDefault_followsTheHostsAuthorizationStatus` 依 oracle 斷言，所以也要在沒有授權的 host 上才走得到。
+
+**不要動 TCC 去製造這個環境**：撤銷或重設授權要使用者在場，留給 #382。在一個本來就沒有完整授權的 host 底下：
+
+1. 啟動 server：stderr 有一行 `re-executing so macOS checks CheICalMCP's own Calendar and Reminders grant: <host> had Calendar …, Reminders …`。
+2. 同一個 host 底下跑 `--print-tcc-path`：有 `CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): …`。
+3. 從另一個有完整授權的 host 跑 `--print-tcc-path`：沒有這一行。它只回報自己那次啟動，不回報 server 的。
+
+結果記在 #361。
+
+## Release gate：event lookup raise（#288）
+
+#288 的 `CheICalEventWithIdentifier` 只有 raise 從 Objective-C 來的單元測試（`CheICalRaisingEventStore`，debug build）。
+raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，要在常駐 process 上才量得到，`--cli` 結構上驗不了
+（見上表）。測試時種類檢查擋在前面，權限都給時走不到這個呼叫，所以要在本機暫時關掉（不 commit），用 **release build**
+（出貨的 optimization level），arm64，單一 stdio process，每次呼叫設 timeout，只用名稱含 `#288` 的拋棄式日曆與清單：
+
+1. 建提醒事項，再建事件，留下一筆 undo 紀錄。
+2. 用提醒事項的 id 呼叫 `update_event` 兩次：都回查詢失敗（may still exist、不要重建），process 活著。
+3. `undo`：刪掉第 1 步的事件。
+4. `create_event` 再 `update_event`，走一次 save。
+5. `update_reminder` 那筆提醒事項：讀得到，仍是提醒事項。
+6. 迴圈 raise 約 1000 次：沒有 hang。記憶體和同樣次數、不會 raise 的 not-found 對照（2026-11-06：每個 raise 約 6 KB，
+   不回收，不 raise 時持平；這是 EventKit frame 裡的物件，修不了，只要沒有明顯變大就算過）。
+7. 結束 process，用新 process 列出：沒有多出事件，提醒事項不變。stdio 有 read-after-write 問題，跨 process 的讀取放在結尾。
+
+2026-11-06 已在 iCloud 做過第 1 到 7 步（release、arm64），結果記在 #288。**沒做，出版前要補**：
+
+- **x86_64 slice**（Rosetta 或 Intel Mac）：同樣步驟跑一次。
+- **Reminders 權限真的被拒絕，以及 `calendarItem(withIdentifier:)` 在那個狀態下回傳什麼**：見 #382 的留言，由使用者撤銷權限後在場執行，
+  種類檢查不用關。`calendarItem` 沒有被包住，raise 的話 process 仍會結束。
+
+結果記在 #288。結束後刪掉拋棄式日曆與清單。
 
 ## Release gate：場次自己的 id 上的 span all（#416）
 

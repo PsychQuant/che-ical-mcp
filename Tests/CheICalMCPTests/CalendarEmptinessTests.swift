@@ -166,7 +166,7 @@ final class CalendarEmptinessTests: XCTestCase {
         let events = try XCTUnwrap(SourcePins.ranges(of: "CalendarEmptiness.checkEvents(", in: code).first)
         let fetch = try XCTUnwrap(SourcePins.ranges(of: "await countReminders(in: calendar)", in: code).first)
         let compare = try XCTUnwrap(SourcePins.ranges(of: "generationAfter: writeGeneration", in: code).first)
-        let removal = try XCTUnwrap(SourcePins.ranges(of: "eventStore.removeCalendar(", in: code).first)
+        let removal = try XCTUnwrap(SourcePins.ranges(of: "try removeExistingCalendar(", in: code).first)
         // PR #413 round 2: the store is refreshed before the reads (as the other read paths do), and
         // the calendar is looked up again after them, before the removal.
         let refresh = try XCTUnwrap(SourcePins.ranges(of: "refreshIfNeeded()", in: code).first)

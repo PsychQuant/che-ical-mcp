@@ -178,7 +178,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused.",
+                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there, except one that failed earlier and is still pending, which this check does not see). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused. If deleting a reminder list fails, the list and every reminder in it may still be deleted by the next save this server makes, with no undo record of its own: the error says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -197,7 +197,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_calendar",
-                description: "Update a calendar's properties (rename or change color).",
+                description: "Update a calendar's properties (rename or change color). If saving a reminder list fails, the change may still be written by the next save this server makes: the error says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -579,7 +579,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false.")
+                            "description": .string("Relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year). Writes only the relative alarms: absolute-date alarms and the location trigger are not changed. Needs a due_date with a time: refused without a due date (the alarm would never fire) and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is created. On a recurring reminder EventKit is expected to move the alarm with each occurrence; that is not yet checked on a device. The response lists the relative alarms read back as alarms_minutes_offsets (minutes before); a skipped duplicate gets alarms_applied false; if the reminder cannot be re-read after the save, or store_differs lists alarm count, alarms_minutes_offsets is left out and alarms_read_back is false with alarms_read_back_note. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote)")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -604,7 +604,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (Reminders.app displays the date of the earliest absolute-date alarm); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app displays the earliest one and would go on showing its time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due) or the rule (recurrence, clear_recurrence) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
+                description: "Update an existing reminder. If the save fails at commit, the change may still be written by the next save this server makes, with no undo record of its own, and the error says so; reading the reminder back then does not rule it out. EventKit refusals 18, 23 and 26 left nothing behind and answer as a plain error. A failed second save of a due date (see date_sync) answers with aligned false and no error, and may land the same way. Changing due_date moves the start date and any absolute-date alarm by the same amount (in the rows measured, the Reminders.app list showed the earliest time-based alarm, relative or absolute); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app would go on showing the earliest one's time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due), the rule (recurrence, clear_recurrence) or the relative alarms (alarms_minutes_offsets) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -618,7 +618,7 @@ class CheICalMCPServer {
                         ]),
                         "realign_to_due": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. The earliest absolute-date alarm, the date Reminders.app displays, lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. Relative alarms stay, so an early relative alarm still sets what the Reminders.app list shows. The earliest absolute-date alarm lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
@@ -626,7 +626,7 @@ class CheICalMCPServer {
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
                             "items": .object(["type": .string("integer")]),
-                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for. When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them.")
+                            "description": .string("Replaces only the relative alarms, in minutes before the due date (positive = before, negative = after; integers from -525600 to 525600, one year); [] removes them. Absolute-date alarms and the location trigger are not changed (unlike update_event, whose list replaces all alarms). A non-empty list needs the reminder to have a due date with a time after the call: refused without one and on a date-only reminder (when Reminders fires it there has not been measured), and nothing is written. The response lists the relative alarms read back as alarms_minutes_offsets, with alarms_differ and alarms_note when they are not the ones asked for; if the reminder cannot be re-read after the save, alarms_minutes_offsets is left out and alarms_read_back is false with alarms_read_back_note. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote) A call with due_date or realign_to_due and no alarms_minutes_offsets gets the same note on the same condition; a call that touches neither, such as a title change, gets none, and neither does a date-only reminder, so no note does not mean the list shows the due time. When a call without alarms_minutes_offsets changes the due date (due_date or clear_due_date) and the saved reminder is date-only or has no due date while it keeps relative alarms, they stay (nothing else is written) and alarms_note says how many are left, that they cannot fire as before (no due date, or a date-only one whose firing is not measured) and that alarms_minutes_offsets: [] removes them, unless the reminder could not be re-read after the save (date_sync.aligned false).")
                         ]),
                         "location_trigger": .object([
                             "type": .string("object"),
@@ -702,7 +702,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "complete_reminder",
-                description: "Mark a reminder as completed or incomplete. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown. Annotated destructive: completing a recurring reminder advances the series irreversibly, and undo cannot restore a consumed occurrence once the identifier has rolled over. The hint is tool-wide, so clients that gate on it also prompt before reopening or completing a non-recurring reminder. After a confirmed rollover, next_occurrence.alarms_minutes_offsets lists the next occurrence's relative alarms (minutes before its due date), read after re-reading it (next_occurrence.alarms_read_back false with alarms_read_back_note when it cannot be re-read or changed in between); with any other next_occurrence.status these fields are absent. alarms_note names relative alarms that appeared on that read and were not there before the completion; one written by another app or a sync would look the same. This call sets only the completion fields, yet on iCloud the save that rolls over a repeating reminder with a location trigger leaves a 0-minute relative alarm on the next occurrence and on the completed copy; whether that alarm fires or shows in Reminders.app is not checked. The completed copy gets a new identifier and is not read.",
+                description: "Mark a reminder as completed or incomplete. If the save fails at commit, the change may still be written by the next save this server makes, with no undo record of its own, and the error says so; reading the reminder back then does not rule it out. EventKit refusals 18, 23 and 26 left nothing behind and answer as a plain error. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown. Annotated destructive: completing a recurring reminder advances the series irreversibly, and undo cannot restore a consumed occurrence once the identifier has rolled over. The hint is tool-wide, so clients that gate on it also prompt before reopening or completing a non-recurring reminder. After a confirmed rollover, next_occurrence.alarms_minutes_offsets lists the next occurrence's relative alarms (minutes before its due date), read after re-reading it (next_occurrence.alarms_read_back false with alarms_read_back_note when it cannot be re-read or changed in between); with any other next_occurrence.status these fields are absent. alarms_note names relative alarms that appeared on that read and were not there before the completion; one written by another app or a sync would look the same. This call sets only the completion fields, yet on iCloud the save that rolls over a repeating reminder with a location trigger leaves a 0-minute relative alarm on the next occurrence and on the completed copy; whether that alarm fires or shows in Reminders.app is not checked. The completed copy gets a new identifier and is not read.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -715,7 +715,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminder",
-                description: "Delete a reminder.",
+                description: "Delete a reminder. If the deletion fails, it may still happen with the next save this server makes, with no undo record of its own, and the error says so; reading the reminders back then does not rule it out.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -965,7 +965,7 @@ class CheICalMCPServer {
                         "occurrence_dates": .object([
                             "type": .string("array"),
                             "items": .object(["type": .array([.string("string"), .string("null")])]),
-                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given.")
+                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given. A value that cannot be read fails the call; a value whose event lookup failed fails that row only.")
                         ])
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
@@ -1072,7 +1072,7 @@ class CheICalMCPServer {
                                     "alarms_minutes_offsets": .object([
                                         "type": .string("array"),
                                         "items": .object(["type": .string("integer")]),
-                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row.")
+                                        "description": .string("Relative alarms for this reminder, as create_reminder: minutes before the due date (integers from -525600 to 525600, one year), only the relative alarms, refused without a timed due date (date-only included) for that row; alarms_read_back as create_reminder. \(ReminderRelativeAlarms.alarmNoteCondition) \(ReminderRelativeAlarms.alarmDisplayNote)")
                                     ])
                                 ]),
                                 "required": .array([.string("title"), .string("calendar_name")])
@@ -1085,7 +1085,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminders_batch",
-                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
+                description: "PREFERRED: Delete multiple reminders in a single call. When a row fails with a code, it may still be deleted by a later row or the next save this server makes: the response then adds failed_rows_note. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1118,7 +1118,7 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
+                description: "Delete completed reminders in a single call. When a row fails with a code, it may still be deleted by the next save this server makes: the response then adds failed_rows_note. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1901,17 +1901,28 @@ class CheICalMCPServer {
     static func alarmResponseFields(requested: [Int]?, result: EventKitManager.CreateReminderResult) -> [String: Any] {
         guard let requested else { return [:] }
         if result.isDuplicate { return ["alarms_applied": false, "alarms_note": duplicateAlarmsNote] }
-        return storedAlarmFields(requested: requested, stored: result.storedRelativeAlarms)
+        return storedAlarmFields(requested: requested, stored: result.storedRelativeAlarms, listShowsAlarmTime: result.listShowsAlarmTime)
     }
 
-    static func storedAlarmFields(requested: [Int], stored: [Double]?) -> [String: Any] {
-        guard let stored else { return [:] }
+    /// PR #438 verify: `alarms_read_back` as `complete_reminder` reports it on `next_occurrence`.
+    static let alarmsUnreadNote = "The reminder's relative alarms are not confirmed: it could not be re-read after the save, or the alarm count in the store is not the one written. Check them with list_reminders."
+
+    static func storedAlarmFields(requested: [Int], stored: [Double]?, listShowsAlarmTime: Bool) -> [String: Any] {
+        guard let stored else { return ["alarms_read_back": false, "alarms_read_back_note": alarmsUnreadNote] }
         var fields: [String: Any] = ["alarms_minutes_offsets": stored]
+        var notes: [String] = []
         if ReminderRelativeAlarms.differs(requested: requested, stored: stored) {
             fields["alarms_differ"] = true
-            fields["alarms_note"] = "The reminder holds different relative alarms than requested; check it in Reminders."
+            notes.append("The reminder holds different relative alarms than requested; check it in Reminders.")
         }
+        if listShowsAlarmTime { notes.append(ReminderRelativeAlarms.alarmDisplayNote) }   // #433
+        if !notes.isEmpty { fields["alarms_note"] = notes.joined(separator: " ") }
         return fields
+    }
+
+    /// `alarms_note` can hold more than one note; none replaces another.
+    static func appendAlarmNote(_ note: String, to fields: inout [String: Any]) {
+        fields["alarms_note"] = (fields["alarms_note"] as? String).map { "\($0) \(note)" } ?? note
     }
 
     private func handleUpdateReminder(arguments: [String: Value]) async throws -> String {
@@ -2005,8 +2016,13 @@ class CheICalMCPServer {
         ))
 
         var response: [String: Any] = ["action": "updated", "title": update.reminder.title ?? ""]
-        if let alarmOffsets { response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms)) { $1 } }
-        if let leftover = update.leftoverAlarmsNote { response["alarms_note"] = leftover }   // PR #415 verify round 1
+        if let alarmOffsets {
+            response.merge(Self.storedAlarmFields(requested: alarmOffsets, stored: update.storedRelativeAlarms,
+                                                  listShowsAlarmTime: update.listShowsAlarmTime)) { $1 }
+        }
+        if let leftover = update.leftoverAlarmsNote { Self.appendAlarmNote(leftover, to: &response) }   // PR #415 verify round 1
+        // PR #438 verify: a due change on a reminder that keeps its alarms is what #433 explains.
+        if alarmOffsets == nil, update.listShowsAlarmTime { Self.appendAlarmNote(ReminderRelativeAlarms.alarmDisplayNote, to: &response) }
         // #354: the rule and the due read back off the saved reminder; a note when the due is off the rule's days.
         if let recurrence = update.recurrence {
             if recurrence.confirmed {
@@ -2261,7 +2277,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("reminder_ids must contain at least one reminder ID")
         }
 
-        let result = try await eventKitManager.deleteRemindersBatch(identifiers: reminderIds)
+        let result = try await reminderCleanupSource.deleteRemindersBatch(identifiers: reminderIds, onlyCompleted: false)
 
         var response: [String: Any] = [
             "total": reminderIds.count,
@@ -2274,6 +2290,7 @@ class CheICalMCPServer {
                 ["reminder_id": failure.identifier, "error": failure.error]
             }
         }
+        response.merge(result.failedRowsNoteField) { $1 }   // #274
 
         return try formatJSON(response)
     }
@@ -2459,7 +2476,7 @@ class CheICalMCPServer {
             "deleted_ids": deletedIds,
             "failures": failures,
             "remaining": remaining
-        ]
+        ].merging(result.failedRowsNoteField) { $1 }   // #274
         return try formatJSON(response)
     }
 
@@ -2908,6 +2925,7 @@ class CheICalMCPServer {
         // #226: span ('this' default / 'all') and index-aligned occurrence dates, validated
         // before any write.
         let span = try EventMovePolicy.Span.parse(arguments["span"]?.stringValue)
+        var lookupFailures: [Int: EventKitError] = [:]
         var occurrenceDates = [Date?](repeating: nil, count: ids.count)
         if let present = arguments["occurrence_dates"], present != .null {
             // A present but non-array value is rejected, not ignored (verify #10).
@@ -2927,9 +2945,16 @@ class CheICalMCPServer {
                 // so findOccurrence searches the right day (verify #4); the zone is looked up only
                 // for a value without offset (#270 verify).
                 let id = ids[index]
-                occurrenceDates[index] = try await OccurrenceDateInput.resolve(
-                    text, iso: dateFormatter, span: span.rawValue,
-                    zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                // #288: a failed lookup is about this event, so it fails this row and the others go
+                // on. An access error is about every row, and stops the call.
+                do {
+                    occurrenceDates[index] = try await OccurrenceDateInput.resolve(
+                        text, iso: dateFormatter, span: span.rawValue,
+                        zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                } catch let error as EventKitError {
+                    guard case .eventLookupFailed = error else { throw error }
+                    lookupFailures[index] = error
+                }
             }
         }
 
@@ -2937,6 +2962,7 @@ class CheICalMCPServer {
 
         for (index, eventId) in ids.enumerated() {
             do {
+                if let failure = lookupFailures[index] { throw failure }
                 let moved = try await eventCopySource.moveEventValue(
                     identifier: eventId,
                     occurrenceDate: occurrenceDates[index],
