@@ -10,40 +10,56 @@ final class SeriesZoneChangeTests: XCTestCase {
     private let first = Date(timeIntervalSince1970: 1_788_737_400) // 2026-09-07 07:30 +08:00
     private var now: Date { first.addingTimeInterval(9 * 7 * 86_400) }
 
-    private func changes(_ requested: TimeZone?, clear: Bool = false, stored: TimeZone?, host: TimeZone? = nil) -> Bool {
-        SeriesRuleWrite.changesZone(requested: requested, clearTimezone: clear, stored: stored, host: host ?? taipei)
+    private func changes(_ requested: TimeZone?, clear: Bool = false, stored: TimeZone?) -> Bool {
+        SeriesRuleWrite.changesZone(requested: requested, clearTimezone: clear, stored: stored)
     }
 
     func testAZoneChangeIsANewZoneOrClearingOne() {
         XCTAssertTrue(changes(london, stored: taipei))
         XCTAssertFalse(changes(taipei, stored: taipei), "the same zone echoed")
-        XCTAssertTrue(changes(taipei, stored: nil, host: london), "a zone other than the host's on a floating event")
+        XCTAssertTrue(changes(taipei, stored: nil), "any zone on a floating event")
         XCTAssertFalse(changes(nil, stored: taipei), "no zone in the call")
         XCTAssertTrue(changes(nil, clear: true, stored: taipei))
         XCTAssertFalse(changes(nil, clear: true, stored: nil), "nothing to clear")
     }
 
-    /// PR #479 verify round 2: only the stored identifier, or the host's identifier on a floating
-    /// event (what list_events shows for it), is no change. Another spelling of the same zone is a
-    /// change: a zone write rewrites the series, and #455 lost an occurrence on a write that moved
-    /// no wall-clock time.
-    func testOnlyTheIdentifierListEventsShowsIsNoChange() {
+    /// PR #479 verify rounds 2 and 3: only the event's own stored identifier is no change. Another
+    /// spelling of the same zone is a change (a zone write rewrites the series, and #455 lost an
+    /// occurrence on a write that moved no wall-clock time), and so is any zone on a floating event,
+    /// this Mac's included: item_timezone is null, and setting one rewrites the series.
+    func testOnlyTheStoredIdentifierIsNoChange() {
         XCTAssertTrue(changes(TimeZone(identifier: "ROC")!, stored: taipei), "an alias of Asia/Taipei")
         XCTAssertTrue(changes(TimeZone(secondsFromGMT: 8 * 3600)!, stored: taipei), "GMT+0800")
-        XCTAssertFalse(changes(taipei, stored: nil, host: taipei), "a floating event given the host's identifier")
-        XCTAssertTrue(changes(TimeZone(identifier: "ROC")!, stored: nil, host: taipei), "an alias of the host's zone")
+        XCTAssertTrue(changes(TimeZone.current, stored: nil), "a floating event given this Mac's zone")
+        XCTAssertTrue(changes(TimeZone(identifier: "ROC")!, stored: nil))
+        XCTAssertFalse(changes(TimeZone(identifier: taipei.identifier)!, stored: taipei), "the stored identifier")
     }
 
-    /// The no-change shapes write no zone, so the store does not rewrite the series.
+    /// Round 3 MEDIUM: a started floating series given this Mac's zone is refused, not skipped; an
+    /// all-day series turned timed with this Mac's zone gets the flip text.
+    func testAFloatingStartedSeriesGivenThisMacsZoneIsRefused() {
+        let floatingGivenHost = changes(TimeZone.current, stored: nil)
+        XCTAssertEqual(refusal(changes: floatingGivenHost), SeriesRuleWrite.zoneChangeReason)
+        XCTAssertEqual(refusal(changes: floatingGivenHost, storedAllDay: true, resultAllDay: false), SeriesRuleWrite.flipZoneReason)
+        XCTAssertTrue(SeriesRuleWrite.zoneChangeReason.contains("item_timezone is null"), SeriesRuleWrite.zoneChangeReason)
+    }
+
+    /// The no-change shapes write no zone, so the store does not rewrite the series; round 3 LOW:
+    /// clear_timezone on a floating started series writes nothing either.
     func testAZoneThatChangesNothingOnAStartedSeriesIsNotWritten() {
         let whole = SeriesRuleWrite.Reach.wholeSeries(anchor: first)
-        XCTAssertFalse(SeriesRuleWrite.writesZone(requested: taipei, changesZone: false, reach: whole, happened: true))
-        XCTAssertTrue(SeriesRuleWrite.writesZone(requested: taipei, changesZone: false, reach: whole, happened: false),
-                      "a series still to come: written as asked")
-        XCTAssertTrue(SeriesRuleWrite.writesZone(requested: taipei, changesZone: false, reach: .oneOccurrence, happened: true),
-                      "span this or a one-off: written as asked")
-        XCTAssertTrue(SeriesRuleWrite.writesZone(requested: london, changesZone: true, reach: whole, happened: false))
-        XCTAssertFalse(SeriesRuleWrite.writesZone(requested: nil, changesZone: false, reach: whole, happened: false), "no zone in the call")
+        func writes(_ requested: TimeZone?, clear: Bool = false, changes: Bool, reach: SeriesRuleWrite.Reach? = nil, happened: Bool) -> Bool {
+            SeriesRuleWrite.writesZone(requested: requested, clearingTimezone: clear, changesZone: changes, reach: reach ?? whole, happened: happened)
+        }
+        XCTAssertFalse(writes(taipei, changes: false, happened: true))
+        XCTAssertTrue(writes(taipei, changes: false, happened: false), "a series still to come: written as asked")
+        XCTAssertTrue(writes(taipei, changes: false, reach: .oneOccurrence, happened: true), "span this or a one-off: written as asked")
+        XCTAssertTrue(writes(london, changes: true, happened: false))
+        XCTAssertFalse(writes(nil, changes: false, happened: false), "no zone in the call")
+        XCTAssertFalse(writes(nil, clear: true, changes: false, happened: true), "clear_timezone over no zone, started: nil over nil not written")
+        XCTAssertTrue(writes(nil, clear: true, changes: false, happened: false), "not started: written as asked")
+        XCTAssertTrue(writes(nil, clear: true, changes: false, reach: .oneOccurrence, happened: true), "span this")
+        XCTAssertTrue(writes(nil, clear: true, changes: true, happened: false))
     }
 
     private func refusal(_ reach: SeriesRuleWrite.Reach? = nil, happened: Bool = true, changes: Bool = true,
@@ -62,7 +78,7 @@ final class SeriesZoneChangeTests: XCTestCase {
     func testClearTimezoneGetsATextWithNoRoute() {
         XCTAssertEqual(refusal(clearing: true), SeriesRuleWrite.clearZoneReason)
         let reason = SeriesRuleWrite.clearZoneReason
-        for phrase in ["has started", "already happened", "can move, and with a count was measured to lose the last occurrence (#455)", "No route", "leave clear_timezone out", "Nothing was written."] {
+        for phrase in ["has started", "already happened", "and a series with an occurrence_count was measured to lose its last occurrence (#455)", "No route", "leave clear_timezone out", "Nothing was written."] {
             XCTAssertTrue(reason.contains(phrase), "\(phrase): \(reason)")
         }
         XCTAssertFalse(reason.contains("span 'future'"))
@@ -93,7 +109,7 @@ final class SeriesZoneChangeTests: XCTestCase {
         let reason = SeriesRuleWrite.zoneChangeReason
         for phrase in ["has started", "already happened", "the zone it then has", "the occurrence the write starts from",
                        "daylight-saving", "another day (not measured)", "leave timezone out", "span 'future'", "has not happened yet",
-                       "Another spelling of the same zone", "the identifier list_events shows",
+                       "Another spelling of the same zone", "the identifier item_timezone shows",
                        "Nothing was written."] {
             XCTAssertTrue(reason.contains(phrase), "\(phrase): \(reason)")
         }
@@ -118,12 +134,12 @@ final class SeriesZoneChangeTests: XCTestCase {
     }
 
     /// PR #479 verify LOW (Codex): no seam runs updateEvent, so the inputs are pinned: the zone
-    /// comparison reads the call's timezone, the event's stored zone and the host's, at the anchor
-    /// and now, and comes after `reach`, `happened` and the date plan it is given.
+    /// comparison reads the call's timezone and clear_timezone and the event's stored zone, and comes
+    /// after `reach`, `happened` and the date plan it is given.
     func testTheRefusalReceivesTheValuesComputedAboveIt() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let compute = "let changesZone = SeriesRuleWrite.changesZone( requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: TimeZone.current)"
+        let compute = "let changesZone = SeriesRuleWrite.changesZone( requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone)"
         let computed = try XCTUnwrap(flat.range(of: compute), compute)
         let refusal = try XCTUnwrap(flat.range(of: "if let reason = SeriesRuleWrite.zoneRefusal("))
         for earlier in ["let reach = SeriesRuleWrite.reach(", "let happened = reach.anchor.map {", "let datePlan = try AllDayRange.planUpdate("] {
@@ -136,6 +152,7 @@ final class SeriesZoneChangeTests: XCTestCase {
     func testTheZoneIsAssignedOnlyWhenItIsWritten() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        XCTAssertTrue(flat.contains("} else if let tz = timezone, SeriesRuleWrite.writesZone(requested: timezone, changesZone: changesZone, reach: reach, happened: happened) { event.timeZone = tz }"))
+        XCTAssertTrue(flat.contains("if SeriesRuleWrite.writesZone( requested: timezone, clearingTimezone: clearTimezone, changesZone: changesZone, reach: reach, happened: happened) { event.timeZone = clearTimezone ? nil : timezone }"))
+        XCTAssertFalse(flat.contains("if clearTimezone { event.timeZone = nil }"), "clear_timezone goes through the same gate")
     }
 }

@@ -1334,7 +1334,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #478: from an occurrence that happened, a zone change moved happened occurrences and lost
         // the last one, and undo refuses.
         let changesZone = SeriesRuleWrite.changesZone(
-            requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: TimeZone.current)
+            requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone)
         if let reason = SeriesRuleWrite.zoneRefusal(
             reach: reach, happened: happened, changesZone: changesZone,
             storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) {
@@ -1446,12 +1446,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // Update per-event timezone (#12)
-        // #478 (PR #479 verify round 2): on a started series, a zone that changes nothing is not
-        // assigned, so the store does not rewrite the series.
-        if clearTimezone {
-            event.timeZone = nil
-        } else if let tz = timezone, SeriesRuleWrite.writesZone(requested: timezone, changesZone: changesZone, reach: reach, happened: happened) {
-            event.timeZone = tz
+        // #478 (PR #479 verify rounds 2-3): on a started series, a zone that changes nothing (the
+        // stored identifier, or clear_timezone over no zone) is not assigned, so the store does not
+        // rewrite the series.
+        // clear_timezone wins over timezone, as before.
+        if SeriesRuleWrite.writesZone(
+            requested: timezone, clearingTimezone: clearTimezone, changesZone: changesZone, reach: reach, happened: happened) {
+            event.timeZone = clearTimezone ? nil : timezone
         }
 
         if let newCalendar = newCalendar {
