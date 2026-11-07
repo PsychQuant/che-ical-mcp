@@ -185,16 +185,17 @@ final class HostLoadTests: XCTestCase {
         let spawnParameters = try XCTUnwrap(SourceScan.arguments(of: "func spawnAndCaptureStderr(", in: banner))
         XCTAssertTrue(spawnParameters.contains("maxWait: TimeInterval = 10.0,"), "the 10 s spawn cap is unchanged")
         XCTAssertFalse(disclaim.contains("XCTAssertFalse(run.timedOut") || disclaim.contains("XCTAssertFalse(host.timedOut"))
-        // #417: the seven call sites go through `checkRunBounds` (its two `checkNotTimedOut` calls:
+        // #417: every call site goes through `checkRunBounds` (its two `checkNotTimedOut` calls:
         // the 15 s bound and the drain); `HostLoadWiringTests` pins the call sites and their order.
         XCTAssertEqual(disclaim.components(separatedBy: "HostLoad.live.checkNotTimedOut(").count - 1, 2)
-        XCTAssertEqual(disclaim.components(separatedBy: "try checkRunBounds(").count - 1, 7)
+        XCTAssertEqual(disclaim.components(separatedBy: "try checkRunBounds(").count - 1, 11)
         XCTAssertTrue(disclaim.contains("static let printTCCPathTimeout: TimeInterval = 15"), "the 15 s bound is unchanged")
         XCTAssertTrue(disclaim.contains("timeout: TimeInterval = printTCCPathTimeout) throws -> Run {"), "the default is that bound")
-        // Every `timeout:` in the file is one of the seven known ones (runBounded's parameter and its
-        // three waits, runPrintTCCPath's 15 s default and its forward, the hang test's 1 s), so no
+        // Every `timeout:` in the file is one of the eight known ones (runBounded's parameter and its
+        // three waits, runPrintTCCPath's 15 s default and its forward, the hang test's 1 s, the
+        // closed-stderr test's 15 s), so no
         // call site overrides the 15 s bound, whatever its arguments look like.
-        XCTAssertEqual(disclaim.components(separatedBy: "timeout:").count - 1, 7, "a new `timeout:` in SelfDisclaimBinaryTests")
+        XCTAssertEqual(disclaim.components(separatedBy: "timeout:").count - 1, 8, "a new `timeout:` in SelfDisclaimBinaryTests")
         XCTAssertTrue(disclaim.contains("XCTAssertTrue(run.timedOut)"), "the hang test still expects its timeout")
     }
 }

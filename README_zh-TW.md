@@ -63,7 +63,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
+| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`。這個上限不保證長標題留得住：曾有一輪連 255 字元的標題也在 `list_calendars` 讀不到（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
 | `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
 | `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
 
@@ -110,7 +110,11 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **會檢查 `recurrence` 的鍵（#434）：** `create_event`、`create_events_batch`、`update_event`、`create_reminder` 與 `update_reminder` 會拒絕 `recurrence` 裡 `frequency`、`interval`、`end_date`、`occurrence_count`、`days_of_week`、`days_of_month` 以外的鍵（兩個建立事件的工具另外接受 `excluded_occurrence_dates`），該項目什麼都不寫入。以前這種鍵會被忽略，所以把 `occurrence_count` 寫成 `count` 會建立一個永遠不會結束的系列。下列情況這些工具也會拒絕，該項目什麼都不寫入：`end_date` 與 `occurrence_count` 同時給；`daily` 或 `weekly` 規則帶非空的 `days_of_month`，EventKit 會存下來但不使用（iCloud 實測；`monthly` 與 `yearly` 會用，`days_of_week` 每種頻率都會用）；`recurrence` 的任何一個鍵，或讀取工具用的 `recurrence_rules`、`event_recurrence_rules`、`reminder_recurrence_rules` 放在 `recurrence` 旁邊而不是裡面。
 
+**`yearly` 事件規則帶 `days_of_week` 時的 `occurrence_count`（#444）：** 在 `interval` 為 1 且沒有 `days_of_month` 的規則上，store 算的不是場次，所以 6 得到 22 個場次（iCloud 實測）。`create_event`、`create_events_batch` 與 `update_event` 會拒絕這裡的次數，連 1 也一樣，什麼都不寫入。要這些日子，請用 `monthly` 配 `interval: 12`，次數正確，但從較後場次以 span `future` 帶入時可能變少（#443），或改用 `end_date`。要每年一次，請用不帶 `days_of_week` 的 `yearly`。帶 `days_of_week` 的 `yearly` 規則只在開始日所在的月份重複。`interval` 大於 1 或有非空 `days_of_month` 不會被拒絕：這些情況次數是對的。提醒事項工具不變：提醒事項上的次數是正確的。
+
 **重複規則屬於整個系列（PR #439）：** `update_event` 會拒絕對單一場次（`occurrence_date` 配 span `this`）帶 `recurrence` 或 `clear_recurrence`，也會拒絕 `clear_recurrence` 配 `occurrence_date` 與 span `future`，什麼都不寫入。從 v1.5.0 起的每個版本（iCloud 上實測 v1.22.0，其餘版本是讀各 tag 的程式碼），規則存在單一場次上會刪掉系列的其餘場次；`clear_recurrence` 配 span `future` 只留下系列第一天的一個事件；`clear_recurrence` 配 span `this` 則把該場次分離成單次事件，系列繼續重複。要改整個系列用 span `all`，要從某個場次起改規則用 span `future` 配 `occurrence_date`。要讓系列在某個場次結束，用 span `all` 與 `recurrence`，裡面帶系列完整的規則，以及該場次開始之後的 `end_date`，例如當天 23:59:59：只寫日期會在當天的場次之前就結束，之後的場次都會消失，單獨改過的也一樣（iCloud 實測）。`clear_recurrence` 配 span `all` 會只留下第一天的一個事件，並刪除其餘場次。`<series>/RID=<n>` 形式的 id（單獨改過的場次）會被告知系列的 id。`recurrence` 與 `clear_recurrence` 同時給也會拒絕。
+
+**提醒事項寫入失敗後仍可能落地（#274）：** 既有提醒事項或提醒事項清單 commit 失敗時，改動可能留在 server 的 store 裡，下一次任何存檔都可能把它寫進去（iCloud 實測，失敗是為了測試誘發的；沒有找到一般使用會造成這種失敗的情況）。被刪除的提醒事項沒有 undo，被刪除的清單會連同裡面所有提醒事項一起消失。這個改動無法在不影響其他呼叫的前提下丟棄，所以錯誤訊息會說明，批次刪除則多一個 `failed_rows_note`。失敗後馬上讀回不能排除這個情況：下一次存檔之前讀到什麼沒有量過。EventKit 代碼 18、23、26 的拒絕什麼都沒留下，會回一般錯誤。警告的例外只有 due date 的第二次存檔失敗（#237）：回 `date_sync.aligned: false`、不是錯誤，可能落地的是呼叫者要的日期。事件與事件行事曆沒有這個情況。
 
 **改提醒事項的重複規則（#354）：** `update_reminder` 接受 `recurrence`（與 `create_reminder` 相同的物件，但不含 `excluded_occurrence_dates`），用來取代提醒事項的規則；`clear_recurrence: true` 則移除規則。識別碼、完成紀錄與鬧鐘都保留。改規則**不會**移動到期日（這是預設，之後可以改）：在 iCloud 實測，每週四的提醒改成週五後，待完成的這一次仍在週四，完成之後下一次才是週五（量過的是只有一個星期幾的每週規則；其他規則是預期如此，沒有量過）。到期日不在新規則的日子上時，回應附上 `recurrence_note`；要移動就對 `update_reminder` 帶 `due_date`。回應在重新讀取存好的提醒後回報 `has_recurrence`、`reminder_recurrence_rules` 與 `due`（讀不回來時 `recurrence_read_back: false`，並附 `recurrence_read_back_note`）。所有接受 `recurrence` 的工具，`interval` 都必須是 1 到 1000、`occurrence_count` 1 到 10000：`interval` 小於 1 或介於 2^31 到 2^32，以及 `occurrence_count` 為 0 時，以前會讓 server 當掉（實測）；範圍內其餘被拒絕的值則是不合理才拒絕。以下情況在寫入前就拒絕：`recurrence` 與 `clear_recurrence` 或 `clear_due_date` 同時給；呼叫後沒有到期日卻設規則；對已完成的提醒設規則；對仍會重複的提醒 `clear_due_date`（重複的提醒必須有到期日；同時帶 `clear_recurrence` 就能變成沒有到期日的單次提醒）。復原會還原原本的規則（記憶體內已測；session MCP 上待 release gate 確認）。Reminders.app 如何顯示不在規則上的那一次，沒有驗。
 

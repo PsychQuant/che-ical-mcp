@@ -17,6 +17,19 @@ enum InputValidation {
         }
     }
 
+    /// #449: a calendar's title, on `create_calendar` and `update_calendar`. An empty title is not
+    /// always kept as empty (iCloud renamed one `Untitled`), and a blank one cannot be told from it
+    /// in a listing. In one run seven long titles, 255 characters among them, could no longer be
+    /// read by `list_calendars` about two minutes after `created`, which no read right after the
+    /// save can see. No measurement found a safe length, so this is the limit event and reminder
+    /// titles have, not a promise that a title within it stays.
+    static func validateCalendarTitle(_ title: String) throws {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolError.invalidParameter("title must not be empty or only whitespace")
+        }
+        try validateLength(title, field: "title", max: maxTitleLength)
+    }
+
     /// Allowlist http and https via URLComponents scheme parse.
     ///
     /// Using `URLComponents(string:)?.scheme` (rather than `hasPrefix`) rejects

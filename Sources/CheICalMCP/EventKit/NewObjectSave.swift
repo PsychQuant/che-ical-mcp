@@ -163,8 +163,9 @@ import EventKit
 ///   `restoreDeletedReminder`, its names collected into an `UndoRestoredDifference`, which shows
 ///   the title through `undoShownTitle` itself, and `UndoRestoredDifference.sentences` from them),
 ///   not a run; pairing each member with its names is tested in `UndoBatchRestoreTests` with stub
-///   restores. The `create_calendar` response's `store_differs` is pinned in source only (no seam
-///   fakes its store), and a `create_reminders_batch` response's totals do not count rows that
+///   restores. The `create_calendar` response's `store_differs` is tested from the
+///   `CalendarWriteSource` seam out (#449); what fills it, in `createCalendar`, is pinned in source
+///   only, since no seam fakes its store. A `create_reminders_batch` response's totals do not count rows that
 ///   carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.

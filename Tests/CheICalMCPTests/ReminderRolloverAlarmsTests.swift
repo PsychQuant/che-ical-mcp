@@ -175,7 +175,7 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
         let code = try Self.managerCode()
         XCTAssertTrue(code.contains("ReminderRolloverAlarms.observe(before: beforeRelativeAlarms, next: next, item: reminder, reload: { reminder.refresh() ? ReminderCompletionSnapshot(from: reminder) : nil })"), code)
         let body = try Self.completeReminderBody(code)
-        XCTAssertEqual(body.components(separatedBy: "eventStore.save(").count - 1, 1, "one save, as before")
+        XCTAssertEqual(body.components(separatedBy: "saveExistingReminder(").count - 1, 1, "one save, as before")
         Self.assertNoAlarmWrite(body, "completeReminder")
     }
 
@@ -187,7 +187,7 @@ final class ReminderRolloverAlarmsTests: XCTestCase {
         let start = try XCTUnwrap(body.range(of: "let beforeRelativeAlarms"))
         let observe = try XCTUnwrap(body.range(of: "ReminderRolloverAlarms.observe("))
         let stretch = body[start.lowerBound..<observe.lowerBound]
-        XCTAssertTrue(stretch.contains("eventStore.save("), String(stretch))
+        XCTAssertTrue(stretch.contains("saveExistingReminder("), String(stretch))
         XCTAssertFalse(stretch.contains("await"), String(stretch))
         let mark = try XCTUnwrap(body.range(of: "markNeedsRefresh()"))
         let record = try XCTUnwrap(body.range(of: "CalendarUndoManager.shared.record("))
