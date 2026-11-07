@@ -210,23 +210,43 @@ final class SeriesRuleWriteTests: XCTestCase {
     /// default), so such a rule counts as having a part recurrence cannot write. With interval 1 the
     /// week start does not change the expansion.
     func testANonDefaultWeekStartOnAnIntervalRuleCannotBeWritten() {
-        func weekly(interval: Int, weekStart: Int?) -> EKRecurrenceRule {
-            let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: interval,
-                                        daysOfTheWeek: [EKRecurrenceDayOfWeek(.sunday), EKRecurrenceDayOfWeek(.tuesday)],
+        func weekly(interval: Int, weekStart: Int?, days: [EKRecurrenceDayOfWeek]) -> EKRecurrenceRule {
+            let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: interval, daysOfTheWeek: days,
                                         daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
                                         setPositions: nil, end: nil)
             if let weekStart { rule.setValue(weekStart, forKey: "firstDayOfTheWeek") }
             return rule
         }
-        XCTAssertTrue(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1)).hasOtherParts, "Sunday week start, every two weeks")
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: nil)).hasOtherParts, "default week start")
-        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 1, weekStart: 1)).hasOtherParts, "interval 1")
-        XCTAssertTrue(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 1, interval: 3))
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 2, interval: 3), "Monday, what recurrence writes")
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 0, interval: 3))
-        XCTAssertEqual(EKRecurrenceRule(recurrenceWith: .weekly, interval: 2, end: nil).firstDayOfTheWeek,
-                       SeriesRuleWrite.writtenWeekStart, "EventKit's default for a new rule")
-        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(firstDayOfTheWeek: 1, interval: 1))
+        let sunTue = [EKRecurrenceDayOfWeek(.sunday), EKRecurrenceDayOfWeek(.tuesday)]
+        XCTAssertTrue(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1, days: sunTue)).hasOtherParts, "Sunday week start, every two weeks, two days")
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: nil, days: sunTue)).hasOtherParts, "default week start")
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 1, weekStart: 1, days: sunTue)).hasOtherParts, "interval 1")
+        // Verify round 5: one day a week, or another frequency, is not regrouped by the week start.
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(weekly(interval: 2, weekStart: 1, days: [EKRecurrenceDayOfWeek(.tuesday)])).hasOtherParts,
+                       "every two weeks on Tuesday, as Google writes it with WKST=SU")
+        let monthly = EKRecurrenceRule(recurrenceWith: .monthly, interval: 2, daysOfTheWeek: nil, daysOfTheMonth: [15],
+                                       monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil, end: nil)
+        monthly.setValue(1, forKey: "firstDayOfTheWeek")
+        XCTAssertFalse(SeriesRuleWrite.StoredRule(monthly).hasOtherParts, "every two months on the 15th")
+        XCTAssertTrue(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 3, dayCount: 2))
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 2, interval: 3, dayCount: 2), "Monday, what recurrence writes")
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 0, interval: 3, dayCount: 2))
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 1, dayCount: 2))
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .weekly, firstDayOfTheWeek: 1, interval: 2, dayCount: 1))
+        XCTAssertFalse(SeriesRuleWrite.weekStartMatters(frequency: .daily, firstDayOfTheWeek: 1, interval: 2, dayCount: 2))
+        XCTAssertEqual(EKRecurrenceRule(recurrenceWith: .weekly, interval: 2, daysOfTheWeek: sunTue, daysOfTheMonth: nil,
+                                        monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil,
+                                        end: nil).firstDayOfTheWeek,
+                       SeriesRuleWrite.writtenWeekStart, "EventKit's default for a rule built as makeRecurrenceRule builds it")
+    }
+
+    /// Verify round 5: over a stored rule recurrence cannot write, any recurrence counts as possibly
+    /// the stored one, so calendar_name with it from a later occurrence is refused, not let through.
+    func testAnyRuleOverAnUnwritableStoredRuleCountsAsStored() {
+        let unwritable = SeriesRuleWrite.StoredRule(frequency: .weekly, interval: 2, daysOfWeek: [1, 3], hasOtherParts: true)
+        XCTAssertTrue(SeriesRuleWrite.isStoredRule(RecurrenceRuleInput(frequency: .weekly, interval: 2, endDate: nil, occurrenceCount: nil,
+                                                                       daysOfWeek: [1, 3], daysOfMonth: nil, excludedOccurrenceDates: nil),
+                                                   stored: [unwritable]))
     }
 
     /// Round-2 LOW: a finished series echoing its own bound changes nothing; any other bound on it
