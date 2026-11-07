@@ -56,7 +56,8 @@ final class WeekdayCheckZoneTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span)", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "EventKitError.weekdayOffNumberedRule(", in: update).count, 1)
         // PR #462 verify round 3: the pattern check reaches daysToCheck, call side first.
-        XCTAssertEqual(SourcePins.ranges(of: "ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)", in: update).count, 2,
+                       "daysToCheck, and #461's MonthDayCheck.daysToCheck")
         XCTAssertEqual(SourcePins.ranges(of: "frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,", in: update).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "stored: storedRule.frequency, storedInterval: storedRule.interval,", in: update).count, 1)
         // Round 4: the stored-side arguments too, so a hardcoded nil or false fails here.
