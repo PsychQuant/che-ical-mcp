@@ -141,7 +141,7 @@ final class SeriesZoneChangeTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let firstWrite = try XCTUnwrap(flat.range(of: "if let t = title { event.title = t }"))
-        let pin = "if let reason = SeriesRuleWrite.zoneRefusal( reach: reach, happened: happened, changesZone: changesZone, storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) { throw EventKitError.seriesWriteRefused(reason: reason) }"
+        let pin = "if let reason = SeriesRuleWrite.zoneRefusal( reach: reach, happened: happened, changesZone: changesZone, storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) { throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours) ? DetachedOccurrenceSpan.firstEditedOccurrenceRoute(reason) : reason) }"
         let range = try XCTUnwrap(flat.range(of: pin), pin)
         XCTAssertLessThan(range.lowerBound, firstWrite.lowerBound)
     }
