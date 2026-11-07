@@ -1362,8 +1362,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // the last one, and undo refuses.
         let changesZone = SeriesRuleWrite.changesZone(
             requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone)
-        // #428 verify r9: through the first occurrence by slot no identifier takes the refusal's span
-        // future route, so that sentence is replaced there.
+        // #428 verify r9: through the first occurrence by slot no identifier takes this refusal's span
+        // future route for a time zone, so that sentence is replaced there (#478's text only).
         if let reason = SeriesRuleWrite.zoneRefusal(
             reach: reach, happened: happened, changesZone: changesZone,
             storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) {

@@ -541,6 +541,21 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(fields.contains("except where the series' first occurrence was edited on its own, or deleted with the first one left edited on its own: no identifier takes that route there yet"), fields)
     }
 
+    /// verify r10 (LOW): through the series' id the zone text is swapped twice (inner call, then the
+    /// series-id mapping); the composed text names the series-id routes, not the own-id sentence.
+    func testTheComposedZoneTextThroughTheSeriesIdNamesItsRoutes() {
+        let inner = DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.zoneChangeReason)
+        for allEdited in [false, true] {
+            let text = DetachedOccurrenceSpan.throughSeriesIDStartedRule(inner, allEdited: allEdited)
+            XCTAssertFalse(text.contains(DetachedOccurrenceSpan.firstEditedNoZoneRoute), text)
+            XCTAssertFalse(text.contains("span 'future'"), text)
+            XCTAssertTrue(text.contains("timezone cannot change from an occurrence that has already happened"), text)
+            XCTAssertTrue(text.contains(allEdited ? "(it ends in /RID=...) with span 'this'" : "span 'this' with occurrence_date"), text)
+            XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+        }
+        XCTAssertTrue(DetachedOccurrenceSpan.firstEditedNoZoneRoute.contains("no identifier takes a time zone change from a later date on yet"))
+    }
+
     /// verify r9 (LOW): span future with timezone from a later edited occurrence still to come is
     /// refused in the #428 shape (the first occurrence edited too: another edited occurrence), as
     /// measured; with the first occurrence not edited it went through (measured, 2026-11-08).

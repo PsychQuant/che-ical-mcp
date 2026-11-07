@@ -370,20 +370,25 @@ enum DetachedOccurrenceSpan {
         let single = allEdited
             ? "Through the series' identifier in this shape, single occurrences take the id list_events shows for each (it ends in /RID=...) with span 'this'; a write from a date on has no tested way yet."
             : "Through the series' identifier in this shape, single occurrences take span 'this' with occurrence_date; a write from a date on has no tested way yet."
+        // verify r10: the inner call on the first occurrence already swapped the zone text's span
+        // future sentence for the own-id one; the series' id names its own routes instead.
+        if reason.contains(firstEditedNoZoneRoute) { return reason.replacingOccurrences(of: firstEditedNoZoneRoute, with: single) }
         return replacingSpanFutureSentence(in: reason, with: single)
     }
 
-    /// verify r9: the call addresses the first occurrence by slot through its own id (an edited
-    /// occurrence with no earlier one left): the #428 shapes, where no identifier takes a write
-    /// from a later date on (the series' id refuses it as edited-before, and a later edited
-    /// occurrence's own id with `otherEdited`).
+    /// verify r9/r10: the call addresses the first occurrence by slot through its own id (an edited
+    /// occurrence with no earlier one left): the #428 shapes, where no identifier takes a time zone
+    /// change from a later date on (the series' id refuses it as edited-before, and a later edited
+    /// occurrence's own id with `otherEdited`). Title, notes, location and recurrence do have that
+    /// route through a later edited occurrence's own id. This reads iCloud's model, where an edited
+    /// occurrence has an id of its own (`/RID=`); Google and Exchange are the release gate's step.
     static func addressesFirstBySlot(_ neighbours: Neighbours?) -> Bool {
         neighbours.map { !$0.earlierRemain } ?? false
     }
 
-    static let firstEditedNoZoneRoute = "In this shape, where the series' first occurrence was edited on its own (or deleted with the first one left edited on its own), no identifier takes a write from a later date on yet; single occurrences take span 'this' on their own."
+    static let firstEditedNoZoneRoute = "In this shape, where the series' first occurrence was edited on its own (or deleted with the first one left edited on its own), no identifier takes a time zone change from a later date on yet; single occurrences take span 'this' on their own."
 
-    /// verify r9: a #451/#478 text through that occurrence, with its span 'future' sentence replaced
+    /// verify r9: #478's zone text through that occurrence, with its span 'future' sentence replaced
     /// by `firstEditedNoZoneRoute`; the cause and the other routes stay.
     static func firstEditedOccurrenceRoute(_ reason: String) -> String {
         replacingSpanFutureSentence(in: reason, with: firstEditedNoZoneRoute)
