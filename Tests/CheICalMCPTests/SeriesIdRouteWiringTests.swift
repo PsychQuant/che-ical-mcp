@@ -40,7 +40,8 @@ final class SeriesIdRouteWiringTests: XCTestCase {
     func testTheRefusalsRunBeforeTheFirstAssignmentAndTheSave() throws {
         let body = try updateEventBody()
         let checks = ["if let refusal = try DetachedOccurrenceSpan.updateRefusal(", "SeriesRuleWrite.laterOccurrenceRefusal(",
-                      "SeriesRuleWrite.startRefusal(", "SeriesRuleWrite.startedRuleRefusal("]
+                      "SeriesRuleWrite.startRefusal(", "SeriesRuleWrite.startedRuleRefusal(",
+                      "SeriesRuleWrite.zoneRefusal("]
         let writes = ["if let t = title { event.title = t }", "event.startDate = dates.start", "try eventStore.save("]
         for check in checks {
             let at = try XCTUnwrap(body.range(of: check), check)

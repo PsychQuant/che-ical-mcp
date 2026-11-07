@@ -45,9 +45,9 @@ import EventKit
 ///   edited, except `all_day: true` from the first left and with span `future` (verify r7/r8: #471
 ///   refuses those saves, which it measured losing occurrences, and #428 refuses them first); `timezone`, `url` and
 ///   `structured_location` were run only from the first occurrence and with span `future` from a
-///   later one, on series of 5 with no other edited occurrence, and `timezone` is refused on a
-///   series that has started (verify r7, measured: occurrences that had happened moved across a
-///   DST change and the last one of a counted series was lost). That is
+///   later one, on series of 5 with no other edited occurrence. On a series that has started,
+///   `timezone` is left to #478's check in the inner call, which refuses it from an occurrence that
+///   has happened (measured through both routes after #478, 2026-11-08). That is
 ///   the closed list `seriesTimeAllowed` holds; every other shape is refused. `all_day: false` on an
 ///   all-day series gave the others another time and an extra occurrence, `clear_timezone` moved
 ///   them and `clear_recurrence` changed nothing, and `calendar_name` with span `future` moved the
@@ -119,11 +119,6 @@ enum DetachedOccurrenceSpan {
         /// series' first start (verify r2). Not `OwnValues.firstSlotGone`, which says whether this
         /// occurrence's own slot is the first, and is true for any later occurrence.
         var firstSlotPresent = false
-        /// verify r7: the series has started (its first start or any listed slot is before now). A
-        /// time zone on such a series moved occurrences that had happened across a DST change and
-        /// lost the last one of a counted series (measured, iCloud 2026-11-08), so it is refused
-        /// there. The default false is safe: `measuredRule` false already refuses everything.
-        var started = false
     }
 
     /// What is left of the series around the occurrence. `nil` where one is taken means unknown.
@@ -326,9 +321,8 @@ enum DetachedOccurrenceSpan {
         if !time.isDisjoint(with: ["start_time", "end_time"]), !datesStayOnTheDay { return false }
         if time.contains("alarms_minutes_offsets"), shape.own.alarms { return false }
         // verify r7: all_day from the first left after a deleted first saves from a later slot,
-        // which #471 measured losing occurrences; and a time zone on a started series did (above).
+        // which #471 measured losing occurrences. A time zone on a started series is #478's check.
         if time.contains("all_day"), !shape.seriesTime.firstSlotPresent || futureSpan { return false }
-        if time.contains("timezone"), shape.seriesTime.started { return false }
         // verify r3: a place rewrites the location text, and no row had its own location then.
         if time.contains("structured_location"), shape.own.location { return false }
         let firstRow = shape.seriesTime.firstSlotPresent && shape.seriesTime.hasEnd && !shape.seriesTime.otherEdited
@@ -360,13 +354,12 @@ enum DetachedOccurrenceSpan {
     /// `SeriesTimeFacts` from the same listing `neighbours(of:)` reads.
     static func seriesTimeFacts(of identifier: String, among candidates: [FirstRemainingOccurrence.Candidate],
                                 coversWholeSeries: Bool, measuredRule: Bool, countBounded: Bool, firstStart: Date,
-                                now: Date = Date(), isAllDay: Bool = false, zone: TimeZone = .current) -> SeriesTimeFacts {
+                                isAllDay: Bool = false, zone: TimeZone = .current) -> SeriesTimeFacts {
         // verify r5: rule slots, so an all-day /RID= is not taken for a deleted first slot.
         let earliest = candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: isAllDay, zone: zone) }.min()
         return SeriesTimeFacts(measuredRule: measuredRule, hasEnd: coversWholeSeries && countBounded,
                                otherEdited: candidates.contains { $0.eventIdentifier != identifier && $0.isDetached },
-                               firstSlotPresent: earliest.map { UndoPostState.sameInstant($0, firstStart) } ?? false,
-                               started: min(earliest ?? firstStart, firstStart) < now)
+                               firstSlotPresent: earliest.map { UndoPostState.sameInstant($0, firstStart) } ?? false)
     }
 
     /// verify r7: a #451 refusal (`seriesWriteRefused`) reached through the series' id. Its texts
@@ -526,7 +519,7 @@ enum DetachedOccurrenceSpan {
     }
 
     /// `seriesTimeAllowed` in words (#428 verify r1): only the rows that were run.
-    static let measuredDateRows = "Others were measured only in a timed series repeating weekly, every week, on at most one day, each in a call of its own with nothing else written (start_time with end_time may go together), with the occurrence at its original start and differing from an occurrence not edited on its own only in title, notes, location or alarms: start_time and end_time only as a new time of day, the start and the end staying on the dates they are on, all_day true only with span all while the series' first occurrence is still there, and alarms while it has the series' alarms; timezone, url and structured_location only in a series that ends after a number of occurrences, whose first occurrence is still there and which has no other occurrence edited on its own, and structured_location only while the occurrence has the series' location, and timezone only on a series that has not started; with span future every one of these fields needs that series too. all_day true has no way back through this id: all_day false is refused, and so are dates on an all-day series. After a date was written through it, the occurrence no longer starts at its original time, so later dates through it are refused."
+    static let measuredDateRows = "Others were measured only in a timed series repeating weekly, every week, on at most one day, each in a call of its own with nothing else written (start_time with end_time may go together), with the occurrence at its original start and differing from an occurrence not edited on its own only in title, notes, location or alarms: start_time and end_time only as a new time of day, the start and the end staying on the dates they are on, all_day true only with span all while the series' first occurrence is still there, and alarms while it has the series' alarms; timezone, url and structured_location only in a series that ends after a number of occurrences, whose first occurrence is still there and which has no other occurrence edited on its own, and structured_location only while the occurrence has the series' location; with span future every one of these fields needs that series too. all_day true has no way back through this id: all_day false is refused, and so are dates on an all-day series. After a date was written through it, the occurrence no longer starts at its original time, so later dates through it are refused."
 
     /// verify r2: the refusal of `update_event` span 'all' that named the series' id and went through
     /// its first occurrence edited on its own (#428). The texts above speak to a caller who named

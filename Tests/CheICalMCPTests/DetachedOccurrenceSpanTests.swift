@@ -379,8 +379,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         var shape = try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: third.eventIdentifier ?? "", slot: try XCTUnwrap(third.slot),
                                                                    among: listing, coversWholeSeries: true, own: own))
         shape.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(of: third.eventIdentifier ?? "", among: listing, coversWholeSeries: true,
-                                                                  measuredRule: true, countBounded: true, firstStart: first,
-                                                                  now: first.addingTimeInterval(-day))
+                                                                  measuredRule: true, countBounded: true, firstStart: first)
         XCTAssertTrue(shape.earlierRemain)
         XCTAssertTrue(shape.seriesTime.firstSlotPresent)
         for key in DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows {
@@ -524,26 +523,12 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
     }
 
-    /// verify r7 (LOW): a time zone on a started series kept the wall-clock time across a DST change,
-    /// moved occurrences that had happened and lost the last one of a counted series (measured), so
-    /// both #428 routes refuse it there.
-    func testATimeZoneOnAStartedSeriesIsRefused() {
-        let started = measured(facts: .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: true, started: true))
-        for whole in [true, false] {
-            XCTAssertEqual(dateRefusal(["timezone"], whole: whole, measured(earlierRemain: !whole, facts: started.seriesTime)),
-                           DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole), "\(whole)")
-        }
-        XCTAssertNil(dateRefusal(["timezone"], measured()), "not started: measured")
-        XCTAssertNil(dateRefusal(["start_time"], started), "a same-day start on a started series: #451's rules, measured")
-        let first = Date(timeIntervalSinceReferenceDate: 0)
-        func facts(now: Date, among: [FirstRemainingOccurrence.Candidate]) -> DetachedOccurrenceSpan.SeriesTimeFacts {
-            DetachedOccurrenceSpan.seriesTimeFacts(of: edited(0).eventIdentifier ?? "", among: among, coversWholeSeries: true, measuredRule: true,
-                                                   countBounded: true, firstStart: first, now: now)
-        }
-        XCTAssertFalse(facts(now: first.addingTimeInterval(-60), among: [edited(0), unedited(7)]).started)
-        XCTAssertTrue(facts(now: first.addingTimeInterval(60), among: [edited(0), unedited(7)]).started)
-        XCTAssertTrue(facts(now: first.addingTimeInterval(60), among: [unedited(7)]).started, "a deleted first slot in the past counts")
-        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("timezone only on a series that has not started"))
+    /// After #478: a time zone on a started series is #478's check in the inner call (zoneRefusal,
+    /// pinned in `SeriesIdRouteWiringTests`), measured refused through the series' id and the first
+    /// occurrence's own id with nothing changed (2026-11-08); #428's check no longer duplicates it.
+    func testATimeZoneIsNotRefusedByTheShapeCheck() {
+        XCTAssertNil(dateRefusal(["timezone"], measured()))
+        XCTAssertFalse(DetachedOccurrenceSpan.measuredDateRows.contains("timezone only on a series that has not started"))
     }
 
     /// verify r7/r8 (LOW): a #451 refusal reached through the series' id keeps its cause and its
@@ -559,7 +544,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                                                  "To end the series, give that rule an end_date after now"]),
             (SeriesRuleWrite.countedSeriesReason, ["cannot tell whether any are still to come", "leaving recurrence out keeps the rule"]),
             (SeriesRuleWrite.unwritableRuleReason, ["Leave recurrence out to keep the rule."]),
-            (SeriesRuleWrite.startPassesOccurrencesReason, ["may change only the time of day of its first occurrence", "leave start_time out"])]
+            (SeriesRuleWrite.startPassesOccurrencesReason, ["may change only the time of day of its first occurrence", "leave start_time out"]),
+            // After #478: its route from an occurrence still to come is span 'future' with occurrence_date.
+            (SeriesRuleWrite.zoneChangeReason, ["timezone cannot change from an occurrence that has already happened", "leave timezone out"])]
         for (reason, phrases) in kept {
             for allEdited in [false, true] {
                 let text = through(reason, allEdited: allEdited)
@@ -850,12 +837,10 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testTheFactsAreReadFromTheListing() {
         let first = Date(timeIntervalSinceReferenceDate: 0)
         XCTAssertEqual(DetachedOccurrenceSpan.seriesTimeFacts(of: edited(0).eventIdentifier ?? "", among: [edited(0), unedited(7)],
-                                                              coversWholeSeries: true, measuredRule: true, countBounded: true, firstStart: first,
-                                                              now: first.addingTimeInterval(-day)),
+                                                              coversWholeSeries: true, measuredRule: true, countBounded: true, firstStart: first),
                        .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: true))
         XCTAssertEqual(DetachedOccurrenceSpan.seriesTimeFacts(of: edited(7).eventIdentifier ?? "", among: [edited(7), unedited(14), edited(21)],
-                                                              coversWholeSeries: false, measuredRule: false, countBounded: true, firstStart: first,
-                                                              now: first.addingTimeInterval(-day)),
+                                                              coversWholeSeries: false, measuredRule: false, countBounded: true, firstStart: first),
                        .init(measuredRule: false, hasEnd: false, otherEdited: true, firstSlotPresent: false))
         XCTAssertEqual(DetachedOccurrenceSpan.SeriesTimeFacts(), .init(measuredRule: false, hasEnd: false, otherEdited: true, firstSlotPresent: false), "the defaults refuse")
     }
