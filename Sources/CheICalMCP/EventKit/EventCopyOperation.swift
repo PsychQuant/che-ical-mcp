@@ -5,12 +5,18 @@ enum EventCopyOperation {
         let undo: UndoOperation?
     }
 
+    /// `copyRecord` gives the saved copy's own create record. #466: the undo of a move by copy is
+    /// one batch of that record and the source's delete record, so it removes the copy as well as
+    /// restoring the source (before, the copy stayed and the event was there twice). Undo runs a
+    /// batch's members in reverse: the source comes back first, then the copy goes, so a failure in
+    /// between leaves the event twice, never not at all, and the batch keeps the copy's record.
     static func execute<Value>(source: EventSnapshot?, saveCopy: () throws -> Value,
-                               removeSource: () throws -> Void) throws -> Outcome<Value> {
+                               removeSource: () throws -> Void,
+                               copyRecord: (Value) -> UndoOperation) throws -> Outcome<Value> {
         let value = try saveCopy()
         if let source {
             try removeSource()
-            return Outcome(value: value, undo: .deleteEvent(snapshot: source))
+            return Outcome(value: value, undo: .batch([copyRecord(value), .deleteEvent(snapshot: source)]))
         }
         return Outcome(value: value, undo: nil)
     }

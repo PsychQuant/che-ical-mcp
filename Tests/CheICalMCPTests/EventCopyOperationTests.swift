@@ -22,24 +22,48 @@ final class EventCopyOperationTests: XCTestCase {
         XCTAssertThrowsError(try saved.resolveCalendar(in: [calendars[0]], identifier: { $0.id }, for: .recreateDeleted))
     }
 
-    func testMoveReturnsSourceUndoOnlyAfterSuccessfulDeletion() throws {
+    private func copyRecord(_ id: String) -> UndoOperation {
+        .createEvent(id: id, title: "Source", created: snapshot())
+    }
+
+    /// #466: the undo of a move by copy removes the copy as well as restoring the source. Undo runs
+    /// a batch's members in reverse, so the source comes back first and the copy goes after it: a
+    /// failure between the two leaves the event twice, never not at all.
+    func testMoveReturnsSourceAndCopyUndoOnlyAfterSuccessfulDeletion() throws {
         var calls: [String] = []
-        let outcome = try EventCopyOperation.execute(source: snapshot(), saveCopy: { calls.append("save"); return "new" }, removeSource: { calls.append("remove") })
+        let outcome = try EventCopyOperation.execute(source: snapshot(), saveCopy: { calls.append("save"); return "new" },
+                                                     removeSource: { calls.append("remove") }, copyRecord: copyRecord)
         XCTAssertEqual(calls, ["save", "remove"])
         XCTAssertEqual(outcome.value, "new")
-        guard case .deleteEvent(let saved)? = outcome.undo else { return XCTFail("Missing deletion undo") }
+        guard case .batch(let members)? = outcome.undo, members.count == 2,
+              case .createEvent(let copyID, _, _) = members[0],
+              case .deleteEvent(let saved) = members[1] else { return XCTFail("\(String(describing: outcome.undo))") }
+        XCTAssertEqual(copyID, "new", "the copy's own record, from the saved copy")
         XCTAssertEqual(saved.title, "Source")
         XCTAssertNil(saved.recurrenceRules, "a single removed occurrence must not restore a duplicate series")
     }
     func testCopyDoesNotDeleteOrRecordSourceUndo() throws {
-        let outcome = try EventCopyOperation.execute(source: nil, saveCopy: { "new" }, removeSource: { XCTFail("must not remove") })
+        let outcome = try EventCopyOperation.execute(source: nil, saveCopy: { "new" }, removeSource: { XCTFail("must not remove") },
+                                                     copyRecord: copyRecord)
         XCTAssertNil(outcome.undo)
     }
     func testFailedSaveDoesNotDeleteSource() {
-        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { () throws -> String in throw Failure.save }, removeSource: { XCTFail("must not remove") }))
+        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { () throws -> String in throw Failure.save },
+                                                            removeSource: { XCTFail("must not remove") }, copyRecord: copyRecord))
     }
     func testFailedDeletionDoesNotProduceUndoOutcome() {
-        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, removeSource: { throw Failure.remove }))
+        XCTAssertThrowsError(try EventCopyOperation.execute(source: snapshot(), saveCopy: { "new" }, removeSource: { throw Failure.remove },
+                                                            copyRecord: copyRecord))
+    }
+
+    /// #466: the move wires the copy's record from the saved copy, through `postWriteSnapshot`.
+    func testTheMovePassesTheCopysRecord() throws {
+        let manager = try SourcePins.source("EventKit/EventKitManager.swift")
+        let move = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: manager))
+        XCTAssertEqual(SourcePins.ranges(of: "copyRecord: { copy in", in: move).count, 1)
+        // String literals are blanked in the body, so the pin stops before the title's fallback.
+        XCTAssertEqual(SourcePins.ranges(of: ".createEvent(id: copyID, title: copy.title ?? title ??", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "created: self.postWriteSnapshot(eventID: copyID, saved: copy))", in: move).count, 1)
     }
 
     // MARK: - refused copy (#253 verify round 2, D1)
