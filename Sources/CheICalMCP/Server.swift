@@ -49,6 +49,7 @@ class CheICalMCPServer {
     private let eventWriteSource: any EventWriteSource
     private let eventDeletionSource: any EventDeletionSource
     private let calendarDeletionSource: any CalendarDeletionSource
+    private let calendarWriteSource: any CalendarWriteSource
     /// #331: the date-range listing and batch deletes of `delete_events_batch`.
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let duplicateSearchSource: any DuplicateSearchSource
@@ -86,6 +87,7 @@ class CheICalMCPServer {
          eventWriteSource: any EventWriteSource = EventKitManager.shared,
          eventDeletionSource: any EventDeletionSource = EventKitManager.shared,
          calendarDeletionSource: any CalendarDeletionSource = EventKitManager.shared,
+         calendarWriteSource: any CalendarWriteSource = EventKitManager.shared,
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
@@ -103,6 +105,7 @@ class CheICalMCPServer {
         self.eventWriteSource = eventWriteSource
         self.eventDeletionSource = eventDeletionSource
         self.calendarDeletionSource = calendarDeletionSource
+        self.calendarWriteSource = calendarWriteSource
         self.eventBatchDeletionSource = eventBatchDeletionSource
         self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
@@ -147,7 +150,8 @@ class CheICalMCPServer {
                     "properties": .object([
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Filter by type: 'event' or 'reminder'. If not provided, returns all calendars.")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Filter by type: 'event' or 'reminder'; anything else is refused. If not provided, returns all calendars.")
                         ])
                     ])
                 ]),
@@ -161,11 +165,12 @@ class CheICalMCPServer {
                     "properties": .object([
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("The name of the calendar")
+                            "description": .string("The name of the calendar, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "type": .object([
                             "type": .string("string"),
-                            "description": .string("Type of calendar: 'event' or 'reminder'")
+                            "enum": .array([.string("event"), .string("reminder")]),
+                            "description": .string("Type of calendar: 'event' or 'reminder'; anything else is refused")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -178,7 +183,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_calendar",
-                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused.",
+                description: "Delete a calendar (or reminder list) by its identifier; not undoable. With require_empty true, a calendar that holds any event, or a list that holds any reminder (completed ones included), is refused and nothing is deleted; so is one whose reminders cannot be counted or that allows neither kind. What is not seen, and is deleted with the calendar: an event more than about 200 years from now (EventKit has no query for every event of a calendar), for example one typed with the year 0026; an event still on the server and not yet synced to this Mac (the check reads this Mac's calendar data); and a write by another app or a sync between the check and the deletion (no write by this server process can land there, except one that failed earlier and is still pending, which this check does not see). A passed check answers {action, id, checked_empty: true} plus searched_from and searched_to (the window searched, local time) for a calendar, or reminders_found: 0 for a list; a calendar that allows both kinds is checked for both and answers with both. Without require_empty the answer is {action, id}, as before. Pass only id and require_empty; null or another key is refused. If deleting a reminder list fails, the list and every reminder in it may still be deleted by the next save this server makes, with no undo record of its own: the error says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -197,7 +202,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_calendar",
-                description: "Update a calendar's properties (rename or change color).",
+                description: "Update a calendar's properties (rename or change color). If saving a reminder list fails, the change may still be written by the next save this server makes: the error says so.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -207,7 +212,7 @@ class CheICalMCPServer {
                         ]),
                         "title": .object([
                             "type": .string("string"),
-                            "description": .string("New calendar name")
+                            "description": .string("New calendar name, 1 to 255 characters and not only whitespace. The limit is not a promise that a long title stays: see #449.")
                         ]),
                         "color": .object([
                             "type": .string("string"),
@@ -314,12 +319,12 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -366,6 +371,7 @@ class CheICalMCPServer {
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
                             "description": .string("Set or replace recurrence rule; on a recurring event pass span all, or span future with occurrence_date (a rule on one occurrence, span this, is refused). With span future from a later occurrence, occurrence_count is refused, as the store counts from the start of the original series: use end_date (#451). On a series that has started, a rule from an occurrence that has already happened must keep the series' pattern (frequency, interval, days_of_week, days_of_month) with its own bound or, while the series has occurrences to come, no bound, an end_date not in the past, or an occurrence_count no smaller than the series' own (#451). Cannot be combined with clear_recurrence. Example: {\"frequency\": \"weekly\", \"interval\": 1, \"days_of_week\": [2,6]} for every Monday and Friday. A key that is not one of this object's properties is refused and nothing is written, so a misspelled bound cannot leave the series open-ended."),
@@ -385,12 +391,12 @@ class CheICalMCPServer {
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
-                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused.")
+                                    "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too is refused. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")
                                 ]),
                                 "days_of_week": .object([
                                     "type": .string("array"),
                                     "items": .object(["type": .string("integer")]),
-                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency")
+                                    "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); used by every frequency, and the start has to fall on one of them")
                                 ]),
                                 "days_of_month": .object([
                                     "type": .string("array"),
@@ -604,7 +610,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "update_reminder",
-                description: "Update an existing reminder. Changing due_date moves the start date and any absolute-date alarm by the same amount (in the rows measured, the Reminders.app list showed the earliest time-based alarm, relative or absolute); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app would go on showing the earliest one's time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due), the rule (recurrence, clear_recurrence) or the relative alarms (alarms_minutes_offsets) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
+                description: "Update an existing reminder. If the save fails at commit, the change may still be written by the next save this server makes, with no undo record of its own, and the error says so; reading the reminder back then does not rule it out. EventKit refusals 18, 23 and 26 left nothing behind and answer as a plain error. A failed second save of a due date (see date_sync) answers with aligned false and no error, and may land the same way. Changing due_date moves the start date and any absolute-date alarm by the same amount (in the rows measured, the Reminders.app list showed the earliest time-based alarm, relative or absolute); clear_due_date also clears the start date and removes absolute-date alarms. A due_date given as a bare date (YYYY-MM-DD) makes the reminder date-only instead, with no time: the start date is set to that day, also when it was set apart from the due date, and absolute-date alarms are removed, since Reminders.app would go on showing the earliest one's time; relative and location alarms are kept (if relative alarms remain, the response's alarms_note says so, see alarms_minutes_offsets); date_sync counts the removed alarms, and the response's note says how many and that undo restores them while this server is running, if the reminder has not been changed since. Giving the reminder's own date removes its time. realign_to_due instead puts them onto the due date, new or current, whatever it moved by: use it to repair a reminder whose alarm already disagrees with its due date. Relative and location alarms are unchanged; a moved alarm is written as a new alarm and keeps only its sound and email. The response's date_sync reports what moved and aligned: whether, on the saved reminder, the start date and the earliest absolute-date alarm agree with the due date. A start agrees on the due's day for a date-only due; for a timed due it agrees at the due instant, or on the due's day at midnight or without a time (that is how a date-only start is stored). An alarm set apart on purpose reads false, and so does a timed due that could only be saved without its time or zone, or a reminder that could not be read back after the save. Only updates that touch the due date (due_date, realign_to_due), the rule (recurrence, clear_recurrence) or the relative alarms (alarms_minutes_offsets) are read back after saving. The response's id is the reminder's identifier after the save; id_changed says whether it differs from reminder_id (a move to a list in another account may change it), and previous_id (only when it changed) repeats the reminder_id you passed. An update that makes the reminder date-only or undated while it keeps relative alarms adds alarms_note. recurrence replaces the reminder's recurrence rule and does not move the due date (recurrence_note says when the due is not on the rule's days), and clear_recurrence removes it; clear_due_date on a reminder that keeps repeating is refused (pass clear_recurrence with it).",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -702,7 +708,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "complete_reminder",
-                description: "Mark a reminder as completed or incomplete. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown. Annotated destructive: completing a recurring reminder advances the series irreversibly, and undo cannot restore a consumed occurrence once the identifier has rolled over. The hint is tool-wide, so clients that gate on it also prompt before reopening or completing a non-recurring reminder. After a confirmed rollover, next_occurrence.alarms_minutes_offsets lists the next occurrence's relative alarms (minutes before its due date), read after re-reading it (next_occurrence.alarms_read_back false with alarms_read_back_note when it cannot be re-read or changed in between); with any other next_occurrence.status these fields are absent. alarms_note names relative alarms that appeared on that read and were not there before the completion; one written by another app or a sync would look the same. This call sets only the completion fields, yet on iCloud the save that rolls over a repeating reminder with a location trigger leaves a 0-minute relative alarm on the next occurrence and on the completed copy; whether that alarm fires or shows in Reminders.app is not checked. The completed copy gets a new identifier and is not read.",
+                description: "Mark a reminder as completed or incomplete. If the save fails at commit, the change may still be written by the next save this server makes, with no undo record of its own, and the error says so; reading the reminder back then does not rule it out. EventKit refusals 18, 23 and 26 left nothing behind and answer as a plain error. Read operation.status for write success; legacy is_completed is the saved object state. Recurring reminders may advance to another incomplete occurrence. next_occurrence reports confirmed or unknown; never retry completion just because the next occurrence is unknown. Annotated destructive: completing a recurring reminder advances the series irreversibly, and undo cannot restore a consumed occurrence once the identifier has rolled over. The hint is tool-wide, so clients that gate on it also prompt before reopening or completing a non-recurring reminder. After a confirmed rollover, next_occurrence.alarms_minutes_offsets lists the next occurrence's relative alarms (minutes before its due date), read after re-reading it (next_occurrence.alarms_read_back false with alarms_read_back_note when it cannot be re-read or changed in between); with any other next_occurrence.status these fields are absent. alarms_note names relative alarms that appeared on that read and were not there before the completion; one written by another app or a sync would look the same. This call sets only the completion fields, yet on iCloud the save that rolls over a repeating reminder with a location trigger leaves a 0-minute relative alarm on the next occurrence and on the completed copy; whether that alarm fires or shows in Reminders.app is not checked. The completed copy gets a new identifier and is not read.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -715,7 +721,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminder",
-                description: "Delete a reminder.",
+                description: "Delete a reminder. If the deletion fails, it may still happen with the next save this server makes, with no undo record of its own, and the error says so; reading the reminders back then does not rule it out.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -879,8 +885,8 @@ class CheICalMCPServer {
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
                                             "end_date": .object(["type": .string("string")]),
-                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item.")]),
-                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")])]),
+                                            "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")]),
+                                            "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them")]),
                                             "excluded_occurrence_dates": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Occurrence dates to exclude at creation (max 100, occurrence_date grammar, best-effort all-or-nothing via compensating delete; first occurrence not excludable). Each date is the day the occurrence starts on: an occurrence that runs past midnight is removed by the day it starts, and a date it only runs into removes the occurrence starting on that day instead, or, when none starts on it, the create is rolled back with the no-occurrence error.")])
                                         ]),
@@ -965,7 +971,7 @@ class CheICalMCPServer {
                         "occurrence_dates": .object([
                             "type": .string("array"),
                             "items": .object(["type": .array([.string("string"), .string("null")])]),
-                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given.")
+                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given. A value that cannot be read fails the call; a value whose event lookup failed fails that row only.")
                         ])
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
@@ -1085,7 +1091,7 @@ class CheICalMCPServer {
             ),
             Tool(
                 name: "delete_reminders_batch",
-                description: "PREFERRED: Delete multiple reminders in a single call. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
+                description: "PREFERRED: Delete multiple reminders in a single call. When a row fails with a code, it may still be deleted by a later row or the next save this server makes: the response then adds failed_rows_note. Use this instead of calling delete_reminder multiple times - it's faster and more reliable. Returns detailed success/failure counts. The call is one undo entry: one undo recreates every reminder it deleted, one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1118,7 +1124,7 @@ class CheICalMCPServer {
             // Cleanup Tool
             Tool(
                 name: "cleanup_completed_reminders",
-                description: "Delete completed reminders in a single call. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
+                description: "Delete completed reminders in a single call. When a row fails with a code, it may still be deleted by the next save this server makes: the response then adds failed_rows_note. Intended for periodic cleanup (e.g. daily) without needing an external scheduler. \n\nBLAST RADIUS: without calendar_name, this affects every reminder list across every connected account (iCloud, Google, Exchange, local). Use dry_run=true (default) to preview scope before deleting. \n\nThe call is one undo entry, however many reminders it deleted, and it becomes the newest one: recording it clears the redo history, and only the newest 50 undo entries are kept, so a frequent scheduled cleanup pushes older entries out. One undo recreates every reminder it deleted (up to limit, or every reminder_ids entry), one save at a time within that undo call, each under a new identifier and with what the undo snapshot records (not subtasks). The undo is refused before any reminder is recreated, and its history entry kept whole, when the list of any of its reminders is missing or read-only; giving up that undo with discard_id drops every reminder of the call. If a recreate still fails part-way, the entry keeps only the reminders not yet recreated. \n\nPreview response returns only reminder_id (no titles) to avoid echoing untrusted content; pipe through list_reminders if you need full reminder details. \n\nTwo input modes: (1) FILTER — supply calendar_name/source (or neither) and the handler re-derives the reminder list on every call. Best for automations. (2) BINDING — supply reminder_ids and the handler acts on exactly those IDs. Best for interactive callers who read a preview and want the execute call to match it verbatim. When reminder_ids is supplied, filter parameters (calendar_name, calendar_source, limit) are ignored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1191,6 +1197,7 @@ class CheICalMCPServer {
     }
 
     func executeToolCall(name: String, arguments: [String: Value]) async throws -> String {
+        try ToolArgumentCheck.check(tool: name, arguments: arguments)
         switch name {
         // Calendar Tools
         case "list_calendars":
@@ -1268,9 +1275,13 @@ class CheICalMCPServer {
     // MARK: - Calendar Handlers
 
     private func handleListCalendars(arguments: [String: Value]) async throws -> String {
-        var entityType: EKEntityType?
-        if let typeStr = arguments["type"]?.stringValue {
-            entityType = typeStr == "event" ? .event : typeStr == "reminder" ? .reminder : nil
+        let entityType: EKEntityType?
+        // PR #457 verify: any other string, `Reminder` included, used to list every calendar.
+        switch arguments["type"]?.stringValue {
+        case nil: entityType = nil
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
         }
 
         let calendars = try await eventKitManager.listCalendars(for: entityType)
@@ -1296,19 +1307,22 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("type is required")
         }
 
-        let entityType: EKEntityType = typeStr == "reminder" ? .reminder : .event
+        // #449: any other string used to make an event calendar.
+        let entityType: EKEntityType
+        switch typeStr {
+        case "event": entityType = .event
+        case "reminder": entityType = .reminder
+        default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
+        }
+        try InputValidation.validateCalendarTitle(title)
         let color = arguments["color"]?.stringValue
 
-        let result = try await eventKitManager.createCalendar(
-            title: title,
-            entityType: entityType,
-            color: color
-        )
+        let result = try await calendarWriteSource.writeNewCalendar(title: title, entityType: entityType, color: color)
 
         if result.isDuplicate {
-            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier])
+            return try actionResult(["action": "skipped", "reason": "duplicate", "calendar": result.title, "id": result.identifier])
         }
-        let fields: [String: Any] = ["action": "created", "calendar": result.calendar.title, "id": result.calendar.calendarIdentifier]
+        let fields: [String: Any] = ["action": "created", "calendar": result.title, "id": result.identifier]
         return try actionResult(fields.merging(NewObjectSave.responseFields(result.storeDiffers)) { $1 })
     }
 
@@ -1316,11 +1330,8 @@ class CheICalMCPServer {
         guard let id = arguments["id"]?.stringValue else {
             throw ToolError.invalidParameter("id is required")
         }
-        // #328 (PR #413 round 2): this switch guards an irreversible delete, so a misspelled key or
-        // null must not fall back to the unchecked delete. The caller's key is not echoed (#37).
-        guard Set(arguments.keys).isSubset(of: ["id", "require_empty"]) else {
-            throw ToolError.invalidParameter("delete_calendar accepts only id and require_empty; another key was given (check its spelling). Nothing was deleted.")
-        }
+        // #328 (PR #413 round 2): this switch guards an irreversible delete, so null must not fall
+        // back to the unchecked delete. A misspelled key is refused at dispatch (#448).
         if case .null? = arguments["require_empty"] {
             throw ToolError.invalidParameter("require_empty must be true or false; null is not accepted here, since it would skip the emptiness check. Nothing was deleted.")
         }
@@ -1455,7 +1466,7 @@ class CheICalMCPServer {
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
         let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone, allowsExclusions: true)
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
 
         let result = try await eventWriteSource.createEventValue(EventCreateRequest(
             title: title,
@@ -1535,7 +1546,7 @@ class CheICalMCPServer {
         if recurrenceRule != nil && clearRecurrence {
             throw ToolError.invalidParameter(ReminderRecurrenceWrite.bothMessage)
         }
-        let structuredLocation = parseStructuredLocation(from: arguments)
+        let structuredLocation = try parseStructuredLocation(from: arguments)
         let clearTimezone = try InputValidation.requireOptionalBool(arguments, key: "clear_timezone") ?? false
         if clearTimezone && timezone != nil {
             throw ToolError.invalidParameter("Cannot specify both timezone and clear_timezone")
@@ -1945,7 +1956,7 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = arguments["priority"]?.intValue
+        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -2090,13 +2101,11 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("At least one of 'title' or 'color' must be provided")
         }
 
-        let calendar = try await eventKitManager.updateCalendar(
-            identifier: id,
-            title: title,
-            color: color
-        )
+        if let title { try InputValidation.validateCalendarTitle(title) }
 
-        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.calendarIdentifier])
+        let calendar = try await calendarWriteSource.writeCalendarUpdate(identifier: id, title: title, color: color)
+
+        return try actionResult(["action": "updated", "calendar": calendar.title, "id": calendar.identifier])
     }
 
     private func handleSearchReminders(arguments: [String: Value]) async throws -> String {
@@ -2200,6 +2209,12 @@ class CheICalMCPServer {
                 continue
             }
 
+            // #448: a numeric due_date or a bare-string tags read as absent.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_reminders_batch", rowsKey: "reminders", row: reminderDict, index: index, checksKeys: false) {
+                results.append(["index": index, "success": false, "error": problem])
+                continue
+            }
+
             guard let title = reminderDict["title"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "title is required"])
                 continue
@@ -2277,7 +2292,7 @@ class CheICalMCPServer {
             throw ToolError.invalidParameter("reminder_ids must contain at least one reminder ID")
         }
 
-        let result = try await eventKitManager.deleteRemindersBatch(identifiers: reminderIds)
+        let result = try await reminderCleanupSource.deleteRemindersBatch(identifiers: reminderIds, onlyCompleted: false)
 
         var response: [String: Any] = [
             "total": reminderIds.count,
@@ -2290,6 +2305,7 @@ class CheICalMCPServer {
                 ["reminder_id": failure.identifier, "error": failure.error]
             }
         }
+        response.merge(result.failedRowsNoteField) { $1 }   // #274
 
         return try formatJSON(response)
     }
@@ -2475,7 +2491,7 @@ class CheICalMCPServer {
             "deleted_ids": deletedIds,
             "failures": failures,
             "remaining": remaining
-        ]
+        ].merging(result.failedRowsNoteField) { $1 }   // #274
         return try formatJSON(response)
     }
 
@@ -2631,6 +2647,11 @@ class CheICalMCPServer {
                 results.append(["index": index, "success": false, "error": "Invalid event format"])
                 continue
             }
+            // #448: a misspelled timezone read naive times in the host zone. Only this row fails.
+            if let problem = ToolArgumentCheck.rowProblem(tool: "create_events_batch", rowsKey: "events", row: eventDict, index: index, checksKeys: true) {
+                results.append(["index": index, "success": false, "error": problem])
+                continue
+            }
 
             guard let title = eventDict["title"]?.stringValue else {
                 results.append(["index": index, "success": false, "error": "title is required"])
@@ -2712,7 +2733,7 @@ class CheICalMCPServer {
                 try rejectAllDayTimezoneConflict(allDay: itemAllDay, timezone: batchTimezone)   // #190
                 // Parse recurrence and structured location from batch item
                 let batchRecurrence = try parseRecurrenceRule(from: eventDict, defaultTimezone: batchTimezone, allowsExclusions: true)
-                let batchStructuredLocation = parseStructuredLocation(from: eventDict)
+                let batchStructuredLocation = try parseStructuredLocation(from: eventDict)
 
                 let batchNotes = eventDict["notes"]?.stringValue
                 let batchLocation = eventDict["location"]?.stringValue
@@ -2924,6 +2945,7 @@ class CheICalMCPServer {
         // #226: span ('this' default / 'all') and index-aligned occurrence dates, validated
         // before any write.
         let span = try EventMovePolicy.Span.parse(arguments["span"]?.stringValue)
+        var lookupFailures: [Int: EventKitError] = [:]
         var occurrenceDates = [Date?](repeating: nil, count: ids.count)
         if let present = arguments["occurrence_dates"], present != .null {
             // A present but non-array value is rejected, not ignored (verify #10).
@@ -2943,9 +2965,16 @@ class CheICalMCPServer {
                 // so findOccurrence searches the right day (verify #4); the zone is looked up only
                 // for a value without offset (#270 verify).
                 let id = ids[index]
-                occurrenceDates[index] = try await OccurrenceDateInput.resolve(
-                    text, iso: dateFormatter, span: span.rawValue,
-                    zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                // #288: a failed lookup is about this event, so it fails this row and the others go
+                // on. An access error is about every row, and stops the call.
+                do {
+                    occurrenceDates[index] = try await OccurrenceDateInput.resolve(
+                        text, iso: dateFormatter, span: span.rawValue,
+                        zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                } catch let error as EventKitError {
+                    guard case .eventLookupFailed = error else { throw error }
+                    lookupFailures[index] = error
+                }
             }
         }
 
@@ -2953,6 +2982,7 @@ class CheICalMCPServer {
 
         for (index, eventId) in ids.enumerated() {
             do {
+                if let failure = lookupFailures[index] { throw failure }
                 let moved = try await eventCopySource.moveEventValue(
                     identifier: eventId,
                     occurrenceDate: occurrenceDates[index],
@@ -3571,6 +3601,10 @@ class CheICalMCPServer {
         if frequency == .daily || frequency == .weekly, daysOfMonth?.isEmpty == false {
             throw ToolError.invalidParameter("recurrence days_of_month is used by monthly and yearly rules only; a \(freqStr) rule would repeat as if it were not there. Nothing was written for this item.")
         }
+        if !forReminder, RecurrenceRuleInput.countsYearsForAnEvent(frequency: frequency, interval: interval, daysOfWeek: daysOfWeek,
+                                                                   daysOfMonth: daysOfMonth, occurrenceCount: occurrenceCount) {
+            throw ToolError.invalidParameter("recurrence occurrence_count is not taken on a yearly event rule with interval 1 and days_of_week, because the store does not count occurrences there: a count of 6 gave 22. For those days in the start's month, use frequency monthly with interval 12, or end_date; from a later occurrence with span future the count can come out short (#443). For once a year, use yearly without days_of_week. Nothing was written for this item.")
+        }
 
         // #182 — excluded_occurrence_dates: parse + validate with zero mutation.
         // Caller gating: only create_event / create_events_batch pass
@@ -3618,14 +3652,16 @@ class CheICalMCPServer {
         )
     }
 
-    private func parseStructuredLocation(from arguments: [String: Value]) -> StructuredLocationInput? {
+    private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else { return nil }
+        guard let title = dict["title"]?.stringValue else {
+            throw ToolError.invalidParameter("structured_location.title is required")
+        }
         return StructuredLocationInput(
             title: title,
-            latitude: dict["latitude"]?.doubleValue,
-            longitude: dict["longitude"]?.doubleValue,
-            radius: dict["radius"]?.doubleValue
+            latitude: InputValidation.number(dict["latitude"]),
+            longitude: InputValidation.number(dict["longitude"]),
+            radius: InputValidation.number(dict["radius"])
         )
     }
 
@@ -3642,13 +3678,13 @@ class CheICalMCPServer {
         guard let title = dict["title"]?.stringValue else {
             throw ToolError.invalidParameter("location_trigger.title is required")
         }
-        guard let lat = dict["latitude"]?.doubleValue else {
+        guard let lat = InputValidation.number(dict["latitude"]) else {
             throw ToolError.invalidParameter("location_trigger.latitude is required")
         }
-        guard let lon = dict["longitude"]?.doubleValue else {
+        guard let lon = InputValidation.number(dict["longitude"]) else {
             throw ToolError.invalidParameter("location_trigger.longitude is required")
         }
-        let radius = dict["radius"]?.doubleValue ?? 100
+        let radius = InputValidation.number(dict["radius"]) ?? 100
         let proximityStr = dict["proximity"]?.stringValue ?? "enter"
         let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
 

@@ -176,9 +176,9 @@ enum DetachedOccurrenceSpan {
     /// depends on it: it scans the series. Unknown comes first, as the other texts claim a series.
     static func updateRefusal(identifier: String, isDetached: Bool, wholeSeries: Bool, futureSpan: Bool = false,
                               fields: Set<String> = [], repeatsOccurrenceValue: Bool = false, writesLocation: Bool = false,
-                              neighbours: @autoclosure () -> Neighbours?) -> String? {
+                              neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
         guard wholeSeries || futureSpan, addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        guard let known = neighbours() else {
+        guard let known = try neighbours() else {
             return unknownReason(identifier: identifier, span: wholeSeries ? "'all'" : "'future'", suffix: "Nothing was written.")
         }
         if !refusedUpdateFields(fields).isEmpty { return fieldsReason(wholeSeries: wholeSeries) }
@@ -198,7 +198,7 @@ enum DetachedOccurrenceSpan {
     /// The fields `update_event` writes with span `all` or `future` through one occurrence: what was
     /// measured field by field. Everything else is refused, a parameter added later included. The
     /// list holds top-level keys only: what is inside `recurrence` is not classified. `days_of_week`
-    /// of a weekly rule is checked against the original day; a monthly rule was not measured.
+    /// of any rule is checked against the original day (#454); only a weekly rule was measured.
     static let allowedUpdateFields: Set<String> = ["title", "notes", "location", "recurrence"]
 
     /// The keys of `update_event` that say what to write to, and write nothing themselves.
@@ -245,9 +245,9 @@ enum DetachedOccurrenceSpan {
     /// The refusal of `delete_event` / `delete_events_batch` with span `all` through one occurrence:
     /// with another one left, or with nothing known about the rest of the series.
     static func seriesDeleteRefusal(identifier: String, isDetached: Bool, batch: Bool,
-                                    neighbours: @autoclosure () -> Neighbours?) -> String? {
+                                    neighbours: @autoclosure () throws -> Neighbours?) rethrows -> String? {
         guard addressesOneOccurrence(identifier: identifier, isDetached: isDetached) else { return nil }
-        guard let known = neighbours() else {
+        guard let known = try neighbours() else {
             return unknownReason(identifier: identifier, span: "'all'", suffix: batch ? "This row deleted nothing." : "Nothing was deleted.", deleting: true)
         }
         guard known.othersRemain else { return nil }

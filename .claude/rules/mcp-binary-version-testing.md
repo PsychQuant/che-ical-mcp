@@ -235,11 +235,27 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 結果記在 #437。結束後刪掉拋棄式日曆（第二個來源的那個也要手動刪）。做完後把 README 與 CHANGELOG 的
 「沒有在裝置上跑過」改成量到的結果。
 
+## Release gate：第 n 週規則移動開始日（#454）
+
+工具寫不出第 n 週規則，所以 PR #462 只讀過程式，沒有跑過。**出 #454 的那個版本打 tag 之前**，由使用者在
+Calendar.app 建名稱含 `#454` 的拋棄式日曆與一個「每月第一個週一」的事件，再用剛 build 的 binary 的 `--cli`：
+
+1. span `all`，`start_time` 放在某個週四：要被拒絕，訊息說到行事曆 App 改，不提 `recurrence`。
+2. span `all`，`start_time` 放在同一天的另一個時間：要成功，場次還是每月第一個週一。
+3. span `all`，`start_time` 放在第二個週一：目前會放行，記下 store 怎麼處理規則。
+4. 改成「每月最後一個工作日」（`setPositions`），span `all`，`start_time` 放在某個週六：要被拒絕，訊息同第 1 步。
+   週一到週五的起始日都在規則的星期裡，會放行（同第 3 步），記下 store 怎麼處理規則。
+5. 第 1 步的系列，span `all` 帶 `recurrence`（`monthly`、`days_of_week: [2]`、`end_date`）、不改起始日：目前會放行，
+   規則變成每個週一（第 n 週無法用 `recurrence` 寫出），記下讀回的場次。這不是 regression，但不要在真實系列上這樣結束一個
+   第 n 週系列。
+
+結果記在 #454。結束後刪掉拋棄式日曆。
+
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
-原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`），EventKit 在存檔失敗後
-實際留下什麼沒有在裝置上看過（#261 的問題）。這是 stateful 的（同一個 server process 內的下一次
+原始碼結構測試（`UpdateEventRefusalOrderTests.testAFailedSaveRollsTheEventBack`）。#274 的探測（2026-11-06）量過
+commit 失敗：有沒有 `rollback()` 都不會落地，它只清 `hasChanges`。下面這步量的是 session MCP 上的另一種失敗（唯讀日曆）。這是 stateful 的（同一個 server process 內的下一次
 寫入），所以**出 #373 這個修正的版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary
 之後），只用名稱含 `#373` 的拋棄式日曆：
 
@@ -375,8 +391,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 #308 讓 timed `create_reminder`（與 `create_reminders_batch` 的 timed 列）存檔後讀回；讀回時 due
 掉了時間或時區，就跑 #237 fallback，把這筆**已經存進 store** 的提醒事項再存一次，失敗時呼叫
 `reminder.rollback()`、回報 `aligned: false`。單元測試（`ReminderCreateWriteTests`）只看得到
-`rollback` 有被呼叫；`rollback()` 是否真的丟掉一筆已在 store 的提醒事項上待存的改動，**沒有在
-裝置上看過**——這正是 #274 對 reminder 尚未回答的問題，兩者用同一個探測就能一起回答。
+`rollback` 有被呼叫。#274 的探測（2026-11-06）已回答：`EKObject.rollback()` **不會**丟掉已在 store 的
+提醒事項上待存的改動，下一次存檔仍會寫入（見 `ExistingReminderSave`，那裡也寫了為什麼不用
+`EKEventStore.reset()`）。所以這次 fallback 存檔失敗時，改動可能隨下一次存檔落地。
 
 前提是要有一個「存檔後會丟掉 due 時區」的來源；iCloud 會保住時區（2026-11-05 實測，timed create
 讀回 `aligned: true`），所以在 iCloud 上 fallback 根本不會跑，這一步無法在 iCloud 誘發。**出 #308
@@ -385,11 +402,9 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 1. 若手邊有已知會丟時區的來源（#237 的紀錄只確認 iCloud 與 Exchange 會保住），在該來源名稱含
    `#308` 的拋棄式清單上做 timed `create_reminder`，記下 `date_sync`；看 stderr 有沒有
    `create_reminder: the saved due date read back without its time or zone` 這行。
-2. 沒有這樣的來源時，這一步不能在裝置上做：在 #274 的 reminder 探測（`update_reminder` 存檔失敗後
-   同一個 session 的下一次寫入）做完之前，把 #308 的 fallback rollback 視為未驗證，release note
-   照 CHANGELOG 的寫法說明，不寫成已確認。
+2. 沒有這樣的來源時，這一步不能在裝置上做，fallback 這條路徑上的失敗沒有誘發過，release note 照 CHANGELOG 的寫法說明。
 
-結果記在 #308 與 #274。結束後刪掉拋棄式清單。
+結果記在 #308。結束後刪掉拋棄式清單。
 
 ## Release gate：首場被刪除的系列，經 stand-in 的 delete / update 之 undo（#335）
 
@@ -419,6 +434,43 @@ stateful，`--cli` 走不到。**出 #354 的那個版本打 tag 之前**，在�
 5. 不帶 `require_empty`、日曆裡有事件 → 照舊刪除，回 `{action, id}`。
 
 結果記在 #328。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#328` 的殘留。
+
+## Release gate：自然的 re-exec（#361）
+
+#361 的 stderr 行與 sentinel 記錄只在 forced 路徑上看過：開發機的 host 有完整授權，會保留自己的 grant，自然的 re-exec
+不會發生。`testDefault_followsTheHostsAuthorizationStatus` 依 oracle 斷言，所以也要在沒有授權的 host 上才走得到。
+
+**不要動 TCC 去製造這個環境**：撤銷或重設授權要使用者在場，留給 #382。在一個本來就沒有完整授權的 host 底下：
+
+1. 啟動 server：stderr 有一行 `re-executing so macOS checks CheICalMCP's own Calendar and Reminders grant: <host> had Calendar …, Reminders …`。
+2. 同一個 host 底下跑 `--print-tcc-path`：有 `CHE_ICAL_MCP_DISCLAIMED says this process re-executed at start (hostGrantUnusable): …`。
+3. 從另一個有完整授權的 host 跑 `--print-tcc-path`：沒有這一行。它只回報自己那次啟動，不回報 server 的。
+
+結果記在 #361。
+
+## Release gate：event lookup raise（#288）
+
+#288 的 `CheICalEventWithIdentifier` 只有 raise 從 Objective-C 來的單元測試（`CheICalRaisingEventStore`，debug build）。
+raise 穿過 EventKit 之後 store 還能不能用、undo history 在不在，要在常駐 process 上才量得到，`--cli` 結構上驗不了
+（見上表）。測試時種類檢查擋在前面，權限都給時走不到這個呼叫，所以要在本機暫時關掉（不 commit），用 **release build**
+（出貨的 optimization level），arm64，單一 stdio process，每次呼叫設 timeout，只用名稱含 `#288` 的拋棄式日曆與清單：
+
+1. 建提醒事項，再建事件，留下一筆 undo 紀錄。
+2. 用提醒事項的 id 呼叫 `update_event` 兩次：都回查詢失敗（may still exist、不要重建），process 活著。
+3. `undo`：刪掉第 1 步的事件。
+4. `create_event` 再 `update_event`，走一次 save。
+5. `update_reminder` 那筆提醒事項：讀得到，仍是提醒事項。
+6. 迴圈 raise 約 1000 次：沒有 hang。記憶體和同樣次數、不會 raise 的 not-found 對照（2026-11-06：每個 raise 約 6 KB，
+   不回收，不 raise 時持平；這是 EventKit frame 裡的物件，修不了，只要沒有明顯變大就算過）。
+7. 結束 process，用新 process 列出：沒有多出事件，提醒事項不變。stdio 有 read-after-write 問題，跨 process 的讀取放在結尾。
+
+2026-11-06 已在 iCloud 做過第 1 到 7 步（release、arm64），結果記在 #288。**沒做，出版前要補**：
+
+- **x86_64 slice**（Rosetta 或 Intel Mac）：同樣步驟跑一次。
+- **Reminders 權限真的被拒絕，以及 `calendarItem(withIdentifier:)` 在那個狀態下回傳什麼**：見 #382 的留言，由使用者撤銷權限後在場執行，
+  種類檢查不用關。`calendarItem` 沒有被包住，raise 的話 process 仍會結束。
+
+結果記在 #288。結束後刪掉拋棄式日曆與清單。
 
 ## Release gate：場次自己的 id 上的 span all（#416）
 
