@@ -965,7 +965,7 @@ class CheICalMCPServer {
                         "occurrence_dates": .object([
                             "type": .string("array"),
                             "items": .object(["type": .array([.string("string"), .string("null")])]),
-                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given.")
+                            "description": .string("Index-aligned with event_ids: the date of the occurrence to move for each recurring event with span 'this' (e.g., '2026-10-21' or '2026-10-21T10:00:00+08:00'): the day the occurrence starts on, in the event's time zone; null for the others. An occurrence that runs past midnight is found by the day it starts on; a date or time on the following day, even a time inside that occurrence, selects the occurrence starting on that following day, if any. Must have the same length as event_ids when given. A value that cannot be read fails the call; a value whose event lookup failed fails that row only.")
                         ])
                     ]),
                     "required": .array([.string("event_ids"), .string("target_calendar")])
@@ -2924,6 +2924,7 @@ class CheICalMCPServer {
         // #226: span ('this' default / 'all') and index-aligned occurrence dates, validated
         // before any write.
         let span = try EventMovePolicy.Span.parse(arguments["span"]?.stringValue)
+        var lookupFailures: [Int: EventKitError] = [:]
         var occurrenceDates = [Date?](repeating: nil, count: ids.count)
         if let present = arguments["occurrence_dates"], present != .null {
             // A present but non-array value is rejected, not ignored (verify #10).
@@ -2943,9 +2944,16 @@ class CheICalMCPServer {
                 // so findOccurrence searches the right day (verify #4); the zone is looked up only
                 // for a value without offset (#270 verify).
                 let id = ids[index]
-                occurrenceDates[index] = try await OccurrenceDateInput.resolve(
-                    text, iso: dateFormatter, span: span.rawValue,
-                    zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                // #288: a failed lookup is about this event, so it fails this row and the others go
+                // on. An access error is about every row, and stops the call.
+                do {
+                    occurrenceDates[index] = try await OccurrenceDateInput.resolve(
+                        text, iso: dateFormatter, span: span.rawValue,
+                        zoneLookup: { try await self.eventCopySource.eventTimeZone(identifier: id) })
+                } catch let error as EventKitError {
+                    guard case .eventLookupFailed = error else { throw error }
+                    lookupFailures[index] = error
+                }
             }
         }
 
@@ -2953,6 +2961,7 @@ class CheICalMCPServer {
 
         for (index, eventId) in ids.enumerated() {
             do {
+                if let failure = lookupFailures[index] { throw failure }
                 let moved = try await eventCopySource.moveEventValue(
                     identifier: eventId,
                     occurrenceDate: occurrenceDates[index],

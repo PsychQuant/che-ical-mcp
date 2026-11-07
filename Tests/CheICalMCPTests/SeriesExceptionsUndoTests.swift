@@ -128,6 +128,24 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(store.events.count, 0, "nothing of the recreated series or the one-off is left")
     }
 
+    /// #288: the cleanup asks whether the one-off that failed to save was stored. A lookup that
+    /// failed does not say it was not, so the event is reported as maybe left, not as nothing done.
+    func testAFailedLookupDuringTheCleanupIsReportedAsMaybeLeft() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+        store.isStoredFails = true
+
+        do {
+            let series = recordedSeries().snapshot
+            _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+            XCTFail("must throw")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains("nothing was restored"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("may"), error.localizedDescription)
+        }
+    }
+
     // MARK: - #398: the failure's code reaches the text
 
     /// An EventKit error whose description names a calendar (remote-set text, #37).
