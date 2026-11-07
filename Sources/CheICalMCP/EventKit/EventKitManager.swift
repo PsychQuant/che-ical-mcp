@@ -1138,6 +1138,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw notFoundError(id: identifier)
         }
         let masterEvent = resolved.event
+        // Read once: the #416 refusal below and the #451 checks use it (PR #471 verify).
+        let addressesOwnOccurrence = (applyToAll || span == .futureEvents)
+            && DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached)
+        let ownNeighbours = addressesOwnOccurrence ? occurrenceNeighbours(of: masterEvent, id: identifier) : nil
         // #416: through an occurrence edited on its own, span 'all' or 'future' writes only what was
         // measured to do what it says (`DetachedOccurrenceSpan`); refused before anything is read
         // into the update or written.
@@ -1148,7 +1152,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title,
                 occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location),
             writesLocation: location != nil,
-            neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) {
+            neighbours: ownNeighbours) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
@@ -1276,26 +1280,53 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.allDayTimezoneConflict
         }
 
+        // #451: what the write covers, from the original slots (an edited occurrence shows another
+        // time). Through an occurrence's own id the object found is that occurrence, so whether it
+        // is the first comes from the series' listing (PR #471 verify).
+        let seriesRules: [SeriesRuleWrite.StoredRule] = {
+            let series = addressesOwnOccurrence
+                ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { storedEvent(id: $0) } : masterEvent
+            return (series?.recurrenceRules ?? []).map(SeriesRuleWrite.StoredRule.init)
+        }()
+        let shownStart: Date = event.startDate
+        let eventSlot: Date = UndoPostState.ruleSlot(
+            eventIdentifier: addressesOwnOccurrence ? identifier : event.eventIdentifier,
+            externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate,
+            isAllDay: event.isAllDay) ?? shownStart
+        let seriesStart: Date = masterEvent.startDate
+        let wholeFromSeries = applyToAll && !addressesOwnOccurrence
+        let reach = SeriesRuleWrite.reach(
+            applyToAll: applyToAll, futureSpan: span == .futureEvents, repeats: masterEvent.hasRecurrenceRules,
+            ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },
+            seriesStart: seriesStart, occurrenceSlot: wholeFromSeries ? seriesStart : eventSlot)
+        let now = Date()
+        let happened = reach.anchor.map {
+            SeriesRuleWrite.hasHappened(slot: $0, shownStart: wholeFromSeries ? seriesStart : shownStart, now: now)
+        } ?? false
+
         // #451: span future from a later occurrence, on the fields measured to lose occurrences.
         if let reason = SeriesRuleWrite.laterOccurrenceRefusal(
-            fromLaterOccurrence: !applyToAll && span == .futureEvents && event !== masterEvent && event.startDate > masterEvent.startDate,
+            fromLaterOccurrence: reach.isFromLaterOccurrence,
             changesAllDay: datePlan.isAllDay != event.isAllDay,
-            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar.calendarIdentifier } ?? false,
+            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
             hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
-        // #451: a start moved past occurrences that happened takes them with it, and undo refuses.
-        if SeriesRuleWrite.needsPassedOccurrenceCheck(
-            coversSeries: applyToAll || (span == .futureEvents && event.startDate == masterEvent.startDate),
-            repeats: event.hasRecurrenceRules, firstStart: event.startDate,
-            plannedStart: datePlan.datesToWrite?.start ?? event.startDate, now: Date()),
-           let planned = datePlan.datesToWrite?.start {
-            let series = event.calendarItemIdentifier
-            let starts = try self.events(from: event.startDate, to: planned.addingTimeInterval(1), calendars: [event.calendar])
-                .filter { $0.calendarItemIdentifier == series }.map(\.startDate)
-            if SeriesRuleWrite.passesAnOccurrence(starts: starts.compactMap { $0 }, firstStart: event.startDate, plannedStart: planned) {
-                throw EventKitError.seriesWriteRefused(reason: SeriesRuleWrite.startPassesOccurrencesReason)
-            }
+        // #451: a start moved past the next slot, from an occurrence that happened, takes the
+        // occurrences before the new start with it, and undo refuses. Decided from the rule, so a
+        // deleted occurrence there does not let it through (PR #471 verify).
+        if let anchor = reach.anchor, let planned = datePlan.datesToWrite?.start,
+           SeriesRuleWrite.needsPassedOccurrenceCheck(repeats: !seriesRules.isEmpty, anchorStart: anchor, plannedStart: planned, happened: happened),
+           SeriesRuleWrite.passesNextSlot(
+               plannedStart: planned,
+               nextSlot: SeriesRuleWrite.nextSlotLowerBound(after: anchor, rules: seriesRules, calendar: Calendar.gregorian(in: event.timeZone ?? .current)),
+               dayCalendar: datePlan.isAllDay || event.isAllDay ? Calendar.gregorian(in: .current) : nil) {
+            throw EventKitError.seriesWriteRefused(reason: SeriesRuleWrite.startReason(reach: reach, clearingRecurrence: clearRecurrence))
+        }
+        // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
+        // stored pattern with a bound that keeps what happened; any other rewrote the past.
+        if let reason = SeriesRuleWrite.startedRuleRefusal(recurrenceRule, stored: seriesRules, happened: happened, now: now) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
         }
 
         // Validate recurrence weekday consistency (#5) — check when:
@@ -3271,7 +3302,7 @@ enum EventKitError: LocalizedError {
             return reason
         case .recurrenceChangeOnOccurrenceRefused(let clearing, let address):
             // Not delete_event: it takes the occurrence named as well, and undo refuses it.
-            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own."
+            let ending = "To end a series at an occurrence, call update_event with the series' id, span 'all', and recurrence holding the series' whole rule with end_date on that day after the occurrence's start, such as 23:59:59: a bare date ends before that day's occurrence. Later occurrences are deleted, also one edited on its own. On a series that has started, an end_date before now is refused, as it deletes occurrences that happened (#451)."
             let wholeSeries = "span 'all' leaves one event on the series' first day and deletes the other occurrences"
             switch (clearing, address) {
             case (false, .seriesId):
