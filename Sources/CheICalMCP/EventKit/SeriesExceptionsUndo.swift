@@ -67,8 +67,9 @@ enum SeriesExceptionsUndo {
                     }
                 },
                 removeOneOff: { oneOff in
-                    // A save that threw may or may not have written: remove only what the store holds.
-                    guard store.isStored(oneOff) else { return }
+                    // A save that threw may or may not have written: remove only what the store
+                    // holds. A failed lookup throws, so the event is reported as maybe left (#288).
+                    guard try store.isStored(oneOff) else { return }
                     try store.remove(oneOff, span: .thisEvent)
                 },
                 rollbackSeries: { try store.remove(restored, span: .futureEvents) })

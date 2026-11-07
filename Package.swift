@@ -11,9 +11,14 @@ let package = Package(
         .package(url: "https://github.com/PsychQuant/che-mcp-kit-swift.git", .upToNextMinor(from: "0.2.0"))
     ],
     targets: [
+        .target(
+            name: "CheICalMCPObjC",
+            path: "Sources/CheICalMCPObjC"
+        ),
         .executableTarget(
             name: "CheICalMCP",
             dependencies: [
+                "CheICalMCPObjC",
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "CheMCPKit", package: "che-mcp-kit-swift")
             ],
@@ -28,9 +33,13 @@ let package = Package(
                 ])
             ]
         ),
+        .target(
+            name: "CheICalMCPObjCTestSupport",
+            path: "Tests/CheICalMCPObjCTestSupport"
+        ),
         .testTarget(
             name: "CheICalMCPTests",
-            dependencies: ["CheICalMCP"],
+            dependencies: ["CheICalMCP", "CheICalMCPObjC", "CheICalMCPObjCTestSupport"],
             path: "Tests/CheICalMCPTests"
         )
     ]
