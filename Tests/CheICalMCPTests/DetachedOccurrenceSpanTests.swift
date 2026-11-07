@@ -706,7 +706,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testUpdateEventChecksBeforeItTakesTheSnapshotOrWrites() throws {
         let head = try collapsed("func updateEvent(", upTo: "let oldSnapshot = EventSnapshot(from: masterEvent)", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(head.contains("if let refusal = DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
+        XCTAssertTrue(head.contains("if let refusal = try DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, neighbours: try occurrenceNeighbours(of: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
     }
 
     /// Before the first field is assigned, as #373 requires of every refusal.
@@ -762,7 +762,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) { matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent)) }"), manager)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
         XCTAssertTrue(source.contains("return [occurrence.startDate, slot].contains {"), "the shown day or the original one")
-        XCTAssertTrue(source.contains("neighbours: occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
+        XCTAssertTrue(source.contains("neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
         XCTAssertTrue(source.contains("namedInTheCall: namedInTheCall)"))
     }
 
@@ -773,9 +773,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(single.contains("if let refusal = seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
+        XCTAssertTrue(single.contains("if let refusal = try seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
         let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
+        XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
     /// The preview by `event_ids` walks the rows as the real call does and does not list what the
@@ -786,9 +786,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(server.contains("let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds"), "the real call's order")
         XCTAssertTrue(server.contains("identifier: id, span: spanStr == \"future\" ? .futureEvents : .thisEvent, spanAll: spanAll, namedInTheCall: named, goneInTheCall: gone"), server)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
-        XCTAssertTrue(source.contains("guard let event = freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else { throw notFoundError(id: identifier) }"), source)
+        XCTAssertTrue(source.contains("guard let event = try freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else { throw notFoundError(id: identifier) }"), source)
         XCTAssertTrue(source.contains("if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }"), source)
-        XCTAssertTrue(source.contains("if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) { return .refused(refusal) }"), source)
+        XCTAssertTrue(source.contains("if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) { return .refused(refusal) }"), source)
         let scan = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
         XCTAssertTrue(scan.contains("FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore, goneInTheCall: goneInTheCall)"), scan)
     }
