@@ -1362,10 +1362,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // the last one, and undo refuses.
         let changesZone = SeriesRuleWrite.changesZone(
             requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone)
+        // #428 verify r9: through the first occurrence by slot no identifier takes the refusal's span
+        // future route, so that sentence is replaced there.
         if let reason = SeriesRuleWrite.zoneRefusal(
             reach: reach, happened: happened, changesZone: changesZone,
             storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) {
-            throw EventKitError.seriesWriteRefused(reason: reason)
+            throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours)
+                ? DetachedOccurrenceSpan.firstEditedOccurrenceRoute(reason) : reason)
         }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.

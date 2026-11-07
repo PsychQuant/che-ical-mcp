@@ -370,11 +370,33 @@ enum DetachedOccurrenceSpan {
         let single = allEdited
             ? "Through the series' identifier in this shape, single occurrences take the id list_events shows for each (it ends in /RID=...) with span 'this'; a write from a date on has no tested way yet."
             : "Through the series' identifier in this shape, single occurrences take span 'this' with occurrence_date; a write from a date on has no tested way yet."
+        return replacingSpanFutureSentence(in: reason, with: single)
+    }
+
+    /// verify r9: the call addresses the first occurrence by slot through its own id (an edited
+    /// occurrence with no earlier one left): the #428 shapes, where no identifier takes a write
+    /// from a later date on (the series' id refuses it as edited-before, and a later edited
+    /// occurrence's own id with `otherEdited`).
+    static func addressesFirstBySlot(_ neighbours: Neighbours?) -> Bool {
+        neighbours.map { !$0.earlierRemain } ?? false
+    }
+
+    static let firstEditedNoZoneRoute = "In this shape, where the series' first occurrence was edited on its own (or deleted with the first one left edited on its own), no identifier takes a write from a later date on yet; single occurrences take span 'this' on their own."
+
+    /// verify r9: a #451/#478 text through that occurrence, with its span 'future' sentence replaced
+    /// by `firstEditedNoZoneRoute`; the cause and the other routes stay.
+    static func firstEditedOccurrenceRoute(_ reason: String) -> String {
+        replacingSpanFutureSentence(in: reason, with: firstEditedNoZoneRoute)
+    }
+
+    /// The sentences of `reason` that name span 'future' replaced, once, by `replacement` (which
+    /// ends in a full stop); `reason` unchanged when none does.
+    static func replacingSpanFutureSentence(in reason: String, with replacement: String) -> String {
         var sentences: [String] = []
         var replaced = false
         for sentence in reason.components(separatedBy: ". ") {
             if sentence.contains("span 'future'") {
-                if !replaced { sentences.append(String(single.dropLast())); replaced = true }
+                if !replaced { sentences.append(String(replacement.dropLast())); replaced = true }
             } else {
                 sentences.append(sentence)
             }
@@ -557,7 +579,7 @@ enum DetachedOccurrenceSpan {
     /// #478: on a series that has started, timezone and clear_timezone through the series' id are
     /// refused from an occurrence that has happened; the measured way for timezone is span future
     /// from an occurrence still to come.
-    private static let startedZone = "On a series that has started, timezone and clear_timezone are refused from an occurrence that has happened (#478); timezone can change with span 'future' from an occurrence that has not happened yet."
+    private static let startedZone = "On a series that has started, timezone and clear_timezone are refused from an occurrence that has happened (#478); timezone can change with span 'future' from an occurrence that has not happened yet, except where the series' first occurrence was edited on its own, or deleted with the first one left edited on its own: no identifier takes that route there yet."
 
     /// Everything `refusedUpdateFields` refuses.
     static func fieldsReason(wholeSeries: Bool, firstDeleted: Bool = false) -> String {

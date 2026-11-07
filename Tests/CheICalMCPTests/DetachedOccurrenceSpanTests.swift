@@ -523,6 +523,33 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
     }
 
+    /// verify r9 (LOW): through the first occurrence by slot, edited on its own (the #428 shapes), no
+    /// identifier takes a time zone change from a date on, so #478's route sentence is replaced
+    /// there; the cause stays.
+    func testTheZoneTextThroughTheFirstEditedOccurrenceNamesNoSpanFuture() {
+        let text = DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.zoneChangeReason)
+        XCTAssertTrue(text.contains("timezone cannot change from an occurrence that has already happened"), text)
+        XCTAssertTrue(text.contains("leave timezone out"), text)
+        XCTAssertFalse(text.contains("span 'future'"), text)
+        XCTAssertTrue(text.contains(DetachedOccurrenceSpan.firstEditedNoZoneRoute), text)
+        XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+        XCTAssertEqual(DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.pastStartReason), SeriesRuleWrite.pastStartReason)
+        XCTAssertTrue(DetachedOccurrenceSpan.addressesFirstBySlot(measured()))
+        XCTAssertFalse(DetachedOccurrenceSpan.addressesFirstBySlot(measured(earlierRemain: true)))
+        XCTAssertFalse(DetachedOccurrenceSpan.addressesFirstBySlot(nil))
+        let fields = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
+        XCTAssertTrue(fields.contains("except where the series' first occurrence was edited on its own, or deleted with the first one left edited on its own: no identifier takes that route there yet"), fields)
+    }
+
+    /// verify r9 (LOW): span future with timezone from a later edited occurrence still to come is
+    /// refused in the #428 shape (the first occurrence edited too: another edited occurrence), as
+    /// measured; with the first occurrence not edited it went through (measured, 2026-11-08).
+    func testSpanFutureTimezoneFromALaterOccurrenceInThe428ShapeIsRefused() {
+        let otherEdited = measured(earlierRemain: true, facts: .init(measuredRule: true, hasEnd: true, otherEdited: true, firstSlotPresent: true))
+        XCTAssertEqual(dateRefusal(["timezone"], whole: false, otherEdited), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false))
+        XCTAssertNil(dateRefusal(["timezone"], whole: false, measured(earlierRemain: true)), "only that occurrence edited")
+    }
+
     /// After #478: a time zone on a started series is #478's check in the inner call (zoneRefusal,
     /// pinned in `SeriesIdRouteWiringTests`), measured refused through the series' id and the first
     /// occurrence's own id with nothing changed (2026-11-08); #428's check no longer duplicates it.

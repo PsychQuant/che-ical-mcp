@@ -52,4 +52,14 @@ final class SeriesIdRouteWiringTests: XCTestCase {
         let refusal = try XCTUnwrap(body.range(of: checks[0]))
         XCTAssertLessThan(refusal.lowerBound, try XCTUnwrap(body.range(of: "let oldSnapshot = EventSnapshot(from: masterEvent)")).lowerBound)
     }
+
+    /// verify r9: a #451/#478 refusal through the first occurrence by slot (its own id) gets its
+    /// route sentence replaced before it is thrown.
+    func testTheFirstOccurrenceRouteIsAppliedToTheZoneRefusal() throws {
+        let body = try updateEventBody()
+        let zone = try XCTUnwrap(body.range(of: "if let reason = SeriesRuleWrite.zoneRefusal("))
+        let call = String(body[zone.lowerBound...].prefix(600))
+        XCTAssertTrue(call.contains("DetachedOccurrenceSpan.firstEditedOccurrenceRoute(reason)"), call)
+        XCTAssertTrue(call.contains("DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours)"), call)
+    }
 }
