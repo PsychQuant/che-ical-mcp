@@ -722,7 +722,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     /// a moved first occurrence shows left two occurrences on that day.
     func testTheWeekdayCheckReadsTheEventsOwnRulesAndTheOriginalDay() throws {
         let body = try updateBody()
-        XCTAssertTrue(body.contains("let rules = event.recurrenceRules,"), body)
+        XCTAssertTrue(body.contains("let storedRule = clearRecurrence ? nil : event.recurrenceRules?.first"), body)
         XCTAssertFalse(body.contains("seriesObject"), body)
         XCTAssertTrue(body.contains("let originalDay = DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)"), body)
         XCTAssertTrue(body.contains("of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate"), body)

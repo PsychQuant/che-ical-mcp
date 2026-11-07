@@ -235,6 +235,22 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 結果記在 #437。結束後刪掉拋棄式日曆（第二個來源的那個也要手動刪）。做完後把 README 與 CHANGELOG 的
 「沒有在裝置上跑過」改成量到的結果。
 
+## Release gate：第 n 週規則移動開始日（#454）
+
+工具寫不出第 n 週規則，所以 PR #462 只讀過程式，沒有跑過。**出 #454 的那個版本打 tag 之前**，由使用者在
+Calendar.app 建名稱含 `#454` 的拋棄式日曆與一個「每月第一個週一」的事件，再用剛 build 的 binary 的 `--cli`：
+
+1. span `all`，`start_time` 放在某個週四：要被拒絕，訊息說到行事曆 App 改，不提 `recurrence`。
+2. span `all`，`start_time` 放在同一天的另一個時間：要成功，場次還是每月第一個週一。
+3. span `all`，`start_time` 放在第二個週一：目前會放行，記下 store 怎麼處理規則。
+4. 改成「每月最後一個工作日」（`setPositions`），span `all`，`start_time` 放在某個週六：要被拒絕，訊息同第 1 步。
+   週一到週五的起始日都在規則的星期裡，會放行（同第 3 步），記下 store 怎麼處理規則。
+5. 第 1 步的系列，span `all` 帶 `recurrence`（`monthly`、`days_of_week: [2]`、`end_date`）、不改起始日：目前會放行，
+   規則變成每個週一（第 n 週無法用 `recurrence` 寫出），記下讀回的場次。這不是 regression，但不要在真實系列上這樣結束一個
+   第 n 週系列。
+
+結果記在 #454。結束後刪掉拋棄式日曆。
+
 ## Release gate：update_event 存檔失敗後的 rollback（#373）
 
 #373 verify 讓 `updateEvent` 在 `eventStore.save` 丟錯時先 `event.rollback()` 再回傳錯誤；這只有
