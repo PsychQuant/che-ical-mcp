@@ -1331,6 +1331,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             dayCalendar: dayCalendar, clearingRecurrence: clearRecurrence) {
             throw EventKitError.seriesWriteRefused(reason: reason)
         }
+        // #478: from an occurrence that happened, a zone change moved happened occurrences and lost
+        // the last one, and undo refuses.
+        let changesZone = SeriesRuleWrite.changesZone(
+            requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone)
+        if let reason = SeriesRuleWrite.zoneRefusal(
+            reach: reach, happened: happened, changesZone: changesZone,
+            storedAllDay: event.isAllDay, resultAllDay: datePlan.isAllDay, clearingTimezone: clearTimezone) {
+            throw EventKitError.seriesWriteRefused(reason: reason)
+        }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.
         // The stored count runs from the original first start, which only a call over the whole
@@ -1437,10 +1446,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // Update per-event timezone (#12)
-        if clearTimezone {
-            event.timeZone = nil
-        } else if let tz = timezone {
-            event.timeZone = tz
+        // #478 (PR #479 verify rounds 2-3): on a started series, a zone that changes nothing (the
+        // stored identifier, or clear_timezone over no zone) is not assigned, so the store does not
+        // rewrite the series.
+        // clear_timezone wins over timezone, as before.
+        if SeriesRuleWrite.writesZone(
+            requested: timezone, clearingTimezone: clearTimezone, changesZone: changesZone, reach: reach, happened: happened) {
+            event.timeZone = clearTimezone ? nil : timezone
         }
 
         if let newCalendar = newCalendar {
