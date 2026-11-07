@@ -156,10 +156,12 @@ final class HostLoadWiringTests: XCTestCase {
         XCTAssertEqual(try helperBody("private func checkRunBounds(", in: source),
                        #"try HostLoad.live.checkNotTimedOut(run.timedOut, bound: Self.printTCCPathTimeout, what, file: file, line: line) try HostLoad.live.checkNotTimedOut(run.drainTimedOut, bound: Self.drainCap, "\(what): output drain", file: file, line: line)"#)
         assertOnlyAllowedLessThan(in: source, allowed: [], "SelfDisclaim")
-        XCTAssertEqual(source.components(separatedBy: "try checkRunBounds(").count - 1, 7)
+        XCTAssertEqual(source.components(separatedBy: "try checkRunBounds(").count - 1, 11)
         for name in ["testForcedDisclaim_reexecsAsItsOwnResponsibleProcessKeepingThePid", "testForcedDisclaim_saysSoOnStderr",
                      "testOptOut_keepsTheHostAsTheResponsibleProcess", "testSentinelAlreadySet_doesNotReexecAgain_andSaysItHadNoEffect",
-                     "testPrintTCCPath_singleQuotesItsCommands"] {
+                     "testPrintTCCPath_singleQuotesItsCommands", "testAnIneffectiveDisclaimStillShowsTheRecord",
+                     "testAnInheritedValueIsNotPrinted", "testAClosedOrReaderlessStderrDoesNotStopTheReexec",
+                     "testDuplicateSentinelEntriesDoNotDefeatTheLoopGuard"] {
             assertFirst("try checkRunBounds(run", before: ["run.stdout", "run.stderr", "run.status", "skipIfThePolicyKeptTheHost(run)"],
                         in: try body("func \(name)() throws {", in: source), name)
         }
