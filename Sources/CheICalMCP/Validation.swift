@@ -224,6 +224,19 @@ enum InputValidation {
         throw ToolError.invalidParameter("\(key) must be an integer")
     }
 
+    /// `requireOptionalInt` where JSON `null` counts as omitted.
+    static func requireOptionalIntOrNull(_ arguments: [String: Value], key: String) throws -> Int? {
+        if case .null? = arguments[key] { return nil }
+        return try requireOptionalInt(arguments, key: key)
+    }
+
+    /// A number, for a key the schema declares `number`. `Value` decodes any JSON number it can as
+    /// an Int first, so `500`, `500.0` and `1e2` are `.int`, and `doubleValue` alone reads them as
+    /// nil: a whole `radius` silently became the default (PR #463 verify).
+    static func number(_ value: Value?) -> Double? {
+        value?.doubleValue ?? value?.intValue.map(Double.init)
+    }
+
     /// A boolean argument that may be omitted; JSON `null` counts as omitted.
     /// Any other non-boolean value (string, number, …) is rejected. The old
     /// `?.boolValue ?? default` shape silently turned `"false"` into the default,
