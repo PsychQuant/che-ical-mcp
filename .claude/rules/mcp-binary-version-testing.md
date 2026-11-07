@@ -513,6 +513,9 @@ end、notes、location、alarms。
    `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
    `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
+   **#478 之後**：系列已開始（第 1 場的原時段在現在之前）時，`timezone`（與事件原本不同的時區）與 `clear_timezone` 經系列 id、span `all`
+   會在寫入前被拒絕，系列不變；這是預期結果，不是 regression。上面 `timezone` 與 `clear_timezone` 那兩句描述的是舊行為，要看它們，
+   用一個還沒開始的系列（第 1 場在未來）重做這兩列；(g) 從還沒發生的下一場用 span `future` 帶 `timezone` 仍放行（#478 量過）。
    **系列 id 走到第一場（#428）**：第 1 場只改標題或結束（開始時間沒動），或第 1 場刪掉、第 2 場單獨改過時，系列 id 帶 span `all` 的
    `update_event`、`delete_event` 改走該場次自己的 id：見 (h)。`id` 是系列 id（第 1 場刪掉時是新 id），回 `occurrence_id`。
    span `future` 與 `delete_events_batch` 的 `event_ids` 在這個形狀仍被拒絕。`move_events_batch` span `all` 可搬同帳號的日曆，整個

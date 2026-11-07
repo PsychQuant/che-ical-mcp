@@ -504,7 +504,8 @@ enum DetachedOccurrenceSpan {
     /// a calendar.
     private static let noTestedWay = "this shape has no tested way yet"
 
-    /// The way around every refusal of `update_event` below, as run on a device: with span `all` the
+    /// The way around every refusal of `update_event` below, as run on a device (before #478, which
+    /// now refuses timezone and clear_timezone from an occurrence that has happened): with span `all` the
     /// series' id took `start_time`, `end_time`, `timezone`, `url`, alarms, `structured_location`,
     /// `clear_recurrence`, `calendar_name` of the same account, and a value the occurrence holds,
     /// with an edited occurrence present; with span `future` from the next occurrence it took the
@@ -560,13 +561,18 @@ enum DetachedOccurrenceSpan {
     /// (`updateRefusal`). Reported through `throughSeriesID`.
     static let firstLeftRecurrenceReason = "This identifier names the first occurrence left of a recurring series whose first occurrence was deleted, edited on its own, and a new recurrence with span 'all' through it is refused: the save would start a new series from a later slot, which was not measured with a rule for span 'all' (a count from a later slot came out short, #443). Title, notes and location can be written. Nothing was written."
 
+    /// #478: on a series that has started, timezone and clear_timezone through the series' id are
+    /// refused from an occurrence that has happened; the measured way for timezone is span future
+    /// from an occurrence still to come.
+    private static let startedZone = "On a series that has started, timezone and clear_timezone are refused from an occurrence that has happened (#478); timezone can change with span 'future' from an occurrence that has not happened yet."
+
     /// Everything `refusedUpdateFields` refuses.
     static func fieldsReason(wholeSeries: Bool, firstDeleted: Bool = false) -> String {
         let limits = wholeSeries
             ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences. For a calendar of the same account, move_events_batch with span 'all' moves the whole series."
             : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
         let plain = firstDeleted ? "title, notes and location" : "title, notes, location and recurrence"
-        return "\(opening(wholeSeries)) \(plain) can be written. \(measuredDateRows) Any other field or combination is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
+        return "\(opening(wholeSeries)) \(plain) can be written. \(measuredDateRows) Any other field or combination is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) \(startedZone) Nothing was written."
     }
 
     /// A value the occurrence already holds would answer updated and reach no other occurrence.
