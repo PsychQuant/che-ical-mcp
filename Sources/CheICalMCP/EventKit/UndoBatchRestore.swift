@@ -68,10 +68,16 @@ enum UndoRestoreDestination {
     /// syncs in the background), so the second read may still see the old view; every refused call
     /// requests one again, so a retry may see what this call did not (round 3, findings 10 and 20).
     /// Closure seam, so the order is unit-tested without EventKit.
+    ///
+    /// #476: runs on the caller's actor (`isolation`, SE-0420), so `identifier`,
+    /// `allowsModifications` (which read its `EKCalendar`s) and `invalidate` (which writes its
+    /// refresh state) run there after each read; as a nonisolated async function it resumed off
+    /// the actor (Swift 5 mode, SE-0338).
     static func verify<C>(_ destinations: [UndoRestoreDestination], identifier: (C) -> String,
                           allowsModifications: (C) -> Bool,
                           read: () async throws -> (eventCalendars: [C], reminderLists: [C]),
-                          invalidate: () -> Void) async throws {
+                          invalidate: () -> Void,
+                          isolation: isolated (any Actor)? = #isolation) async throws {
         guard !destinations.isEmpty else { return }
         func check(_ lists: (eventCalendars: [C], reminderLists: [C])) -> [UndoRestoreFinding] {
             problems(among: destinations, eventCalendars: lists.eventCalendars, reminderLists: lists.reminderLists,
