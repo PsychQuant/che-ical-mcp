@@ -196,6 +196,18 @@ enum UndoPostState {
         return local.date(from: day) ?? rid
     }
 
+    /// #428 verify r5: a listed candidate's slot as the rule gives it. The candidate's `slot` is the
+    /// raw `/RID=` instant (`originalSlot`), which for an all-day series is the wall-clock date read
+    /// as UTC; reinterpreted in `zone` as `ruleSlot` does. A candidate without `/RID=` already holds
+    /// its local slot (its `occurrenceDate`), or its start.
+    static func ruleSlot(of candidate: FirstRemainingOccurrence.Candidate, isAllDay: Bool, zone: TimeZone = .current) -> Date {
+        let raw = candidate.slot ?? candidate.start
+        guard isAllDay, candidate.eventIdentifier?.contains("/RID=") == true else { return raw }
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        var local = Calendar(identifier: .gregorian); local.timeZone = zone
+        return local.date(from: utc.dateComponents([.year, .month, .day], from: raw)) ?? raw
+    }
+
     /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
     /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {

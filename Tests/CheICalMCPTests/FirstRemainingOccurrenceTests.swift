@@ -258,6 +258,19 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertFalse(reason.contains("copy"))
     }
 
+    /// verify r5 (LOW): the "otherwise" case does not contradict the move the hint offers, covers an
+    /// id with no /RID= part, and span future names only what it takes in these shapes.
+    func testTheOtherwiseCaseAndTheSpanFutureFieldsAreStated() {
+        for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
+            XCTAssertTrue(text.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) nothing else updates or deletes the series as a whole yet."), text)
+            XCTAssertFalse(text.contains("nothing reaches the series as a whole"), text)
+            XCTAssertTrue(text.contains("span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."), text)
+            XCTAssertFalse(text.contains("takes the same fields"), text)
+        }
+        let all = EventKitManager.standInAllEditedReason
+        XCTAssertTrue(all.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) only single occurrences can be updated or deleted."), all)
+    }
+
     func testTheHintNamesWhatWorksAndIsFixedText() throws {
         let reason = EventKitManager.standInEditedBeforeReason
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {

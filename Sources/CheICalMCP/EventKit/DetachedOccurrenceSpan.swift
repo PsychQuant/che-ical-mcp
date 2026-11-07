@@ -232,14 +232,16 @@ enum DetachedOccurrenceSpan {
         }
         // verify r4: on a series that has started, no date row was run through the series' id.
         if throughSeriesID, known.seriesTime.started, !fields.isDisjoint(with: startedSeriesFields) { return startedSeriesReason }
+        // verify r5: after a deleted first occurrence, span all takes no rule (below), and the text says so.
+        let firstDeleted = wholeSeries && !known.seriesTime.firstSlotPresent && !known.earlierRemain
         if turnsTimed || !refusedUpdateFields(fields, shape: known, datesStayOnTheDay: datesStayOnTheDay,
                                               futureSpan: !wholeSeries).isEmpty {
-            return fieldsReason(wholeSeries: wholeSeries)
+            return fieldsReason(wholeSeries: wholeSeries, firstDeleted: firstDeleted)
         }
         // verify r3/r4: span all after a deleted first occurrence saves from a later slot and starts
         // a new series, through the series' id or the first left's own id alike. Title, notes and
         // location were measured there; a rule was not.
-        if wholeSeries, !known.seriesTime.firstSlotPresent, !known.earlierRemain, fields.contains("recurrence") {
+        if firstDeleted, fields.contains("recurrence") {
             return firstLeftRecurrenceReason
         }
         if wholeSeries && known.earlierRemain { return updateReason }
@@ -331,8 +333,9 @@ enum DetachedOccurrenceSpan {
     /// `SeriesTimeFacts` from the same listing `neighbours(of:)` reads.
     static func seriesTimeFacts(of identifier: String, among candidates: [FirstRemainingOccurrence.Candidate],
                                 coversWholeSeries: Bool, measuredRule: Bool, countBounded: Bool, firstStart: Date,
-                                now: Date) -> SeriesTimeFacts {
-        let earliest = candidates.map { $0.slot ?? $0.start }.min()
+                                now: Date, isAllDay: Bool = false, zone: TimeZone = .current) -> SeriesTimeFacts {
+        // verify r5: rule slots, so an all-day /RID= is not taken for a deleted first slot.
+        let earliest = candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: isAllDay, zone: zone) }.min()
         return SeriesTimeFacts(measuredRule: measuredRule, hasEnd: coversWholeSeries && countBounded,
                                otherEdited: candidates.contains { $0.eventIdentifier != identifier && $0.isDetached },
                                firstSlotPresent: earliest.map { UndoPostState.sameInstant($0, firstStart) } ?? false,
@@ -340,11 +343,13 @@ enum DetachedOccurrenceSpan {
     }
 
     /// The fields a started series refuses through the series' id (verify r4).
-    static let startedSeriesFields: Set<String> = ["start_time", "end_time", "all_day", "timezone", "clear_timezone"]
+    /// With `recurrence` (verify r5): #471 measured occurrences lost when a rule changed from one
+    /// that has happened. Revisit once #471 is on main.
+    static let startedSeriesFields: Set<String> = ["start_time", "end_time", "all_day", "timezone", "clear_timezone", "recurrence"]
 
     /// verify r4: through the series' id on a series that has started. Reported through
     /// `throughSeriesID`.
-    static let startedSeriesReason = "A date or time zone through the series' identifier is refused once the series has started: every row measured was on a series still to come. Nothing was written."
+    static let startedSeriesReason = "A date, time zone or new recurrence through the series' identifier is refused once the series has started: every row measured was on a series still to come. Nothing was written."
 
     /// verify r4 (#454 merge): a new days_of_week through an occurrence's own id is read against
     /// its original day, before the exemptions that read the series' stored rule.
@@ -478,7 +483,7 @@ enum DetachedOccurrenceSpan {
     /// routes that exist from there.
     static func throughSeriesID(_ reason: String, allEdited: Bool = false, firstDeleted: Bool = false) -> String {
         let cause: String
-        if reason == fieldsReason(wholeSeries: true) {
+        if reason == fieldsReason(wholeSeries: true) || reason == fieldsReason(wholeSeries: true, firstDeleted: true) {
             // verify r4: after a deleted first occurrence a rule is refused there too.
             let plain = firstDeleted ? "title, notes and location" : "title, notes, location and recurrence"
             cause = "Through it \(plain) can be written. \(measuredDateRows) This call wrote a field or combination outside that."
@@ -489,7 +494,7 @@ enum DetachedOccurrenceSpan {
         } else if reason == recurrenceDayReason {
             cause = "days_of_week does not hold the day of the week of that occurrence's original date, the day the series runs from. Add that day, or leave days_of_week out."
         } else if reason == startedSeriesReason {
-            cause = "This series has started (an occurrence is before now), and no date or time zone was measured on a started series this way, so it is refused."
+            cause = "This series has started (an occurrence is before now), and no date, time zone or rule was measured on a started series this way, so it is refused."
         } else if reason == firstLeftRecurrenceReason {
             cause = "The series' first occurrence was deleted, so the save would start a new series from that occurrence, a later slot, and a new recurrence is refused there: it was not measured, and a count written from a later slot came out short (#443). Title, notes and location can be written."
         } else {
@@ -505,14 +510,15 @@ enum DetachedOccurrenceSpan {
 
     /// verify r3: `recurrence` through the series' id after its first occurrence was deleted
     /// (`updateRefusal`). Reported through `throughSeriesID`.
-    static let firstLeftRecurrenceReason = "This identifier names the first occurrence left of a recurring series whose first occurrence was deleted, edited on its own, and a new recurrence with span 'all' through it is refused: the save would start a new series from a later slot, which was not measured with a rule (a count from a later slot came out short, #443). Title, notes and location can be written. Nothing was written."
+    static let firstLeftRecurrenceReason = "This identifier names the first occurrence left of a recurring series whose first occurrence was deleted, edited on its own, and a new recurrence with span 'all' through it is refused: the save would start a new series from a later slot, which was not measured with a rule for span 'all' (a count from a later slot came out short, #443). Title, notes and location can be written. Nothing was written."
 
     /// Everything `refusedUpdateFields` refuses.
-    static func fieldsReason(wholeSeries: Bool) -> String {
+    static func fieldsReason(wholeSeries: Bool, firstDeleted: Bool = false) -> String {
         let limits = wholeSeries
             ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences. For a calendar of the same account, move_events_batch with span 'all' moves the whole series."
             : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
-        return "\(opening(wholeSeries)) title, notes, location and recurrence can be written. \(measuredDateRows) Any other field or combination is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
+        let plain = firstDeleted ? "title, notes and location" : "title, notes, location and recurrence"
+        return "\(opening(wholeSeries)) \(plain) can be written. \(measuredDateRows) Any other field or combination is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) Nothing was written."
     }
 
     /// A value the occurrence already holds would answer updated and reach no other occurrence.

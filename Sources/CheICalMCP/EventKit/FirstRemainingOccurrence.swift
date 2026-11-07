@@ -234,7 +234,8 @@ extension EventKitManager {
               let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id),
               let first = candidates[index].eventIdentifier else { return nil }
         let firstStart: Date? = stored.startDate
-        let slot = candidates[index].slot ?? candidates[index].start
+        // verify r5: as a rule slot, so an all-day /RID= is not taken for a deleted first slot.
+        let slot = UndoPostState.ruleSlot(of: candidates[index], isAllDay: stored.isAllDay)
         return (first, !candidates.contains { !$0.isDetached }, !(firstStart.map { UndoPostState.sameInstant(slot, $0) } ?? false))
     }
 
@@ -264,7 +265,7 @@ extension EventKitManager {
             of: id, among: candidates, coversWholeSeries: covers,
             measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules),
             countBounded: !rules.isEmpty && rules.allSatisfy { ($0.recurrenceEnd?.occurrenceCount ?? 0) > 0 },
-            firstStart: firstStart, now: Date())
+            firstStart: firstStart, now: Date(), isAllDay: series.isAllDay)
         return known
     }
 
