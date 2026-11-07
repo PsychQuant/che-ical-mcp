@@ -251,8 +251,24 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
         XCTAssertFalse(reason.contains("every remaining occurrence"), "the scan is bounded: it cannot claim every occurrence")
+        // #428 verify r2: span 'all' through the series' id does reach the earliest of them now
+        // (the update's ids and the delete measured on iCloud, 2026-11-08).
+        XCTAssertTrue(reason.contains("except update_event and delete_event with span 'all', which go through the earliest of them"), reason)
         XCTAssertFalse(reason.contains("move"), "no stand-in exists, so a move cannot work")
         XCTAssertFalse(reason.contains("copy"))
+    }
+
+    /// verify r5 (LOW): the "otherwise" case does not contradict the move the hint offers, covers an
+    /// id with no /RID= part, and span future names only what it takes in these shapes.
+    func testTheOtherwiseCaseAndTheSpanFutureFieldsAreStated() {
+        for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
+            XCTAssertTrue(text.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) nothing else updates or deletes the series as a whole yet."), text)
+            XCTAssertFalse(text.contains("nothing reaches the series as a whole"), text)
+            XCTAssertTrue(text.contains("span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."), text)
+            XCTAssertFalse(text.contains("takes the same fields"), text)
+        }
+        let all = EventKitManager.standInAllEditedReason
+        XCTAssertTrue(all.contains("Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) only single occurrences can be updated or deleted."), all)
     }
 
     func testTheHintNamesWhatWorksAndIsFixedText() throws {
@@ -260,9 +276,9 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         for word in ["occurrence_date", "span 'this'", "move", "copy"] {
             XCTAssertTrue(reason.contains(word), "the hint should name '\(word)': \(reason)")
         }
-        // #416 measured it: the occurrence that comes first reaches the series through its own id.
-        // A later edited occurrence does not, so the hint names that one only.
-        XCTAssertTrue(reason.contains("The occurrence that comes first in the series reaches it through its own id"), reason)
+        // #416 measured it: the occurrence that comes first reaches the series; #428 goes there
+        // through the series' id. A later edited occurrence does not reach the series.
+        XCTAssertTrue(reason.contains("When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it"), reason)
         XCTAssertFalse(reason.contains("RID"))
     }
 
@@ -344,12 +360,12 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let to = try XCTUnwrap(source.range(of: "case .reminder:", range: from.upperBound..<source.endIndex))
         let body = String(source[from.upperBound..<to.lowerBound])
         let gate = try XCTUnwrap(body.range(of: "if operation.resolvesThroughStandIn {"), "the stand-in sits behind the predicate")
-        let close = try XCTUnwrap(body.range(of: "\n                    }\n", range: gate.upperBound..<body.endIndex))
+        let close = try XCTUnwrap(body.range(of: "\n                        }\n", range: gate.upperBound..<body.endIndex))
         let gated = String(body[gate.upperBound..<close.lowerBound])
         XCTAssertTrue(gated.contains("return try seriesMoveUndoTarget(operation, expected, verb: verb)"), "the helper is called inside the gate")
         let outside = String(body[..<gate.lowerBound]) + String(body[close.upperBound...])
         XCTAssertFalse(outside.contains("seriesMoveUndoTarget("), "and nowhere else in the event arm")
-        XCTAssertTrue(outside.contains("return storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
+        XCTAssertTrue(outside.contains("return try storedEvent(id: expected.itemID)"), "every other record keeps the plain lookup")
         XCTAssertFalse(body.contains("refuseWhenEditedBefore"), "no other stand-in lookup in the event arm")
         XCTAssertEqual(source.components(separatedBy: "seriesMoveUndoTarget(").count, 3, "declared once, called once")
         let helperFrom = try XCTUnwrap(source.range(of: "private func seriesMoveUndoTarget("))
@@ -366,7 +382,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         XCTAssertTrue(helper.contains("sourceID: $0.source?.sourceIdentifier"), "the original calendar's account")
         XCTAssertTrue(helper.contains("SeriesMoveUndo.restoringCalendarID(of: expected)"), "the original calendar from the record (tested seam)")
         XCTAssertTrue(helper.contains("eventStore.calendar(withIdentifier: restoring)"), "resolved from that identifier")
-        XCTAssertTrue(helper.contains("stored: { storedEvent(id: id) != nil }"), "the residual case asks the store")
+        XCTAssertTrue(helper.contains("stored: { try storedEvent(id: id) != nil }"), "the residual case asks the store")
     }
 
     /// #377: the one other stand-in probe in the event arm. It is the not-found hook of the
@@ -496,7 +512,7 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager+UndoGuard.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
-        let from = try XCTUnwrap(source.range(of: "func freshEvent(id: String) -> EKEvent?"))
+        let from = try XCTUnwrap(source.range(of: "func freshEvent(id: String) throws -> EKEvent?"))
         let to = try XCTUnwrap(source.range(of: "func freshReminder(id: String)", range: from.upperBound..<source.endIndex))
         let body = String(source[from.lowerBound..<to.lowerBound])
         // The branches themselves are tested through `resolve`; this pins that freshEvent uses it.

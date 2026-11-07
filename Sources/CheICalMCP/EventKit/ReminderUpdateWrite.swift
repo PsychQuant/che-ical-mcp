@@ -48,8 +48,8 @@ enum ReminderUpdateWrite {
     /// reminder (`ReminderDateSync.confirmSaved`), or `nil` when the due date was not touched.
     /// `save` writes to the store, `reload` re-reads the reminder (`EKObject.refresh()`, false
     /// when the reminder is gone), and
-    /// `rollback` discards unsaved changes (`EKObject.rollback()`); when `save` throws, the
-    /// changes are rolled back and the error is rethrown.
+    /// `rollback` is `EKObject.rollback()`, which clears `hasChanges` and does not drop the change
+    /// (#274, `ExistingReminderSave`); when `save` throws, it runs and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
                       save: () throws -> Void, reload: () -> Bool,
                       rollback: () -> Void) throws -> ReminderDateSync.Report? {
@@ -111,6 +111,27 @@ enum ReminderUpdateWrite {
         }
         guard let dateSync else { return nil }
         return ReminderDateSync.confirmSaved(reminder, report: dateSync, save: save, reload: reload, rollback: rollback)
+    }
+
+    /// What `update_reminder` may say about the alarms after the save (PR #438 verify).
+    struct AlarmReadBack: Equatable, Sendable {
+        /// The relative alarms off the re-read reminder, when the call passed
+        /// `alarms_minutes_offsets`; `nil` otherwise and when it could not be re-read.
+        let stored: [Double]?
+        /// #433: the call touched the alarms or the due date and the earliest alarm is off the due time.
+        let listShowsAlarmTime: Bool
+    }
+
+    /// `reload` runs only when the date path did not try one: `dateSync.reread` is what happened
+    /// there, and a date sync does not by itself mean a reload (`clear_due_date` writes no due).
+    /// A call that touches neither the alarms nor the due date reloads nothing and reports nothing.
+    static func alarmReadBack(_ request: ReminderUpdateRequest, saved reminder: EKReminder,
+                              dateSync: ReminderDateSync.Report?, reload: () -> Bool) -> AlarmReadBack {
+        guard ReminderRelativeAlarms.reportsListTime(request), dateSync?.reread ?? reload() else {
+            return AlarmReadBack(stored: nil, listShowsAlarmTime: false)
+        }
+        return AlarmReadBack(stored: request.alarmOffsets.map { _ in ReminderRelativeAlarms.storedMinutesBefore(reminder) },
+                             listShowsAlarmTime: ReminderRelativeAlarms.listShowsAlarmTime(saved: reminder))
     }
 
     private static func removeLocationAlarms(from reminder: EKReminder) {
