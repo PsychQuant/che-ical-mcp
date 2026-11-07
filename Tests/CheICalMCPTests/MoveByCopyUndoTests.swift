@@ -24,18 +24,23 @@ final class MoveByCopyUndoTests: XCTestCase {
     private let restored = "Undone: restored event 'Standup' (new ID: NEW-1)"
 
     private func run(copyID: String = "COPY-1", restore: @escaping () throws -> String,
+                     held: Bool = false,
                      check: @escaping () throws -> String = { "copy" },
-                     remove: @escaping (String) throws -> Void = { _ in }) async throws -> (calls: [String], result: (restored: String, copy: MoveByCopyUndo.Copy)) {
+                     remove: @escaping (String) throws -> Void = { _ in }) async throws
+        -> (calls: [String], result: (restore: MoveByCopyUndo.Restore, copy: MoveByCopyUndo.Copy)) {
         var calls: [String] = []
         let result = try await MoveByCopyUndo.run(
             copyID: copyID,
-            restoreOriginal: { calls.append("restore"); return try restore() },
+            restoreOriginal: {
+                calls.append("restore")
+                let text = try restore()
+                return held ? .slotAlreadyHeld : .written(text)
+            },
             checkAndRemove: {
                 calls.append("check")
                 let item = try check()
-                try MoveByCopyUndo.removing { calls.append("remove"); try remove(item) }
-            },
-            describeRemovalFailure: { _ in "error_code_1" })
+                try MoveByCopyUndo.removing({ calls.append("remove"); try remove(item) }, describe: { _ in "error_code_1" })
+            })
         return (calls, result)
     }
 
@@ -61,7 +66,7 @@ final class MoveByCopyUndoTests: XCTestCase {
     func testTheOriginalIsRestoredBeforeTheCopyIsCheckedAndRemoved() async throws {
         let outcome = try await run(restore: { self.restored })
         XCTAssertEqual(outcome.calls, ["restore", "check", "remove"])
-        XCTAssertEqual(outcome.result.restored, restored)
+        XCTAssertEqual(outcome.result.restore, .written(restored))
         XCTAssertEqual(outcome.result.copy, .removed)
     }
 
@@ -120,23 +125,66 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertEqual(outcome.calls, ["restore", "check", "remove"])
         XCTAssertEqual(outcome.result.copy, .removalFailed("error_code_1"))
         // Only an error from inside `removing` is a removal failure; one thrown around it is the check's.
-        let other = try await MoveByCopyUndo.run(copyID: "COPY-1", restoreOriginal: { self.restored },
-                                                 checkAndRemove: { throw Failure.remove }, describeRemovalFailure: { _ in "x" })
+        let other = try await MoveByCopyUndo.run(copyID: "COPY-1", restoreOriginal: { .written(self.restored) },
+                                                 checkAndRemove: { throw Failure.remove })
         XCTAssertEqual(other.copy, .unchecked)
+    }
+
+    // MARK: - round 3
+
+    /// Round 3, MEDIUM: the occurrence undo writes nothing when an occurrence of a recurring event
+    /// with its title already holds its time (#285), which may be another series of the same title.
+    /// The copy is then the only copy of the occurrence for all this server knows, so it is kept and
+    /// not even looked up.
+    func testACopyIsKeptWhenTheOriginalWasNotRecreated() async throws {
+        let outcome = try await run(restore: { self.restored }, held: true, check: { XCTFail("must not check"); return "" },
+                                    remove: { _ in XCTFail("must not remove") })
+        XCTAssertEqual(outcome.calls, ["restore"])
+        XCTAssertEqual(outcome.result.restore, .slotAlreadyHeld)
+        XCTAssertEqual(outcome.result.copy, .keptSlotHeld)
+        XCTAssertEqual(MoveByCopyUndo.Restore(text: "t", outcome: .occurrenceAlreadyHeld), .slotAlreadyHeld)
+        XCTAssertEqual(MoveByCopyUndo.Restore(text: "t", outcome: .occurrenceOneOff(notCarriedOver: [])), .written("t"))
+        XCTAssertEqual(MoveByCopyUndo.Restore(text: "t", outcome: nil), .written("t"))
+
+        let text = MoveByCopyUndo.message(restore: .slotAlreadyHeld, title: "Standup", copyID: "COPY-1", copy: .keptSlotHeld)
+        XCTAssertTrue(text.hasPrefix("Undone: the moved occurrence of 'Standup' was not recreated in its original calendar"), text)
+        XCTAssertTrue(text.contains("an occurrence of a recurring event with its title already holds its time there"), text)
+        XCTAssertTrue(text.contains("the copy the move made (id COPY-1) was kept in the calendar it was moved to"), text)
+        XCTAssertFalse(text.contains("nothing was written") || text.contains("removed the copy"), text)
+        XCTAssertTrue(text.contains("running undo again undoes the operation before it"), text)
+    }
+
+    /// Round 3, LOW: a copy with attendees now (added after the move; a move of an event with
+    /// attendees is refused) is kept: removing it could send them cancellations.
+    func testACopyWithAttendeesIsKept() async throws {
+        let outcome = try await run(restore: { self.restored }, check: { throw MoveByCopyUndo.CopyHasAttendees() },
+                                    remove: { _ in XCTFail("must not remove") })
+        XCTAssertEqual(outcome.result.copy, .hasAttendees)
+        let text = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .hasAttendees)
+        XCTAssertTrue(text.contains("has attendees now, so it was not removed (removing it could send them a cancellation)"), text)
+        XCTAssertTrue(text.contains("the event is now in both calendars"), text)
+    }
+
+    /// Round 3, INFO: the removal's sentence is its own, so it does not read as part of a note the
+    /// restore text ends with (an occurrence's absolute_alarms).
+    func testTheRemovalIsItsOwnSentence() {
+        let withNote = "Undone: restored the deleted occurrence of 'Standup' as a one-off event (new ID: NEW-1). Not carried over: absolute_alarms (an absolute-date alarm of the series is now an alarm at the occurrence's start)"
+        let text = MoveByCopyUndo.message(restore: .written(withNote), title: "Standup", copyID: "COPY-1", copy: .removed)
+        XCTAssertEqual(text, withNote + ". The copy the move made was removed from the calendar it was moved to.")
     }
 
     // MARK: - texts
 
     func testTheAnswerSaysWhatBecameOfTheCopy() {
-        let removed = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .removed)
+        let removed = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .removed)
         XCTAssertTrue(removed.hasPrefix(restored), removed)
-        XCTAssertTrue(removed.contains("removed the copy the move made in the calendar it was moved to"), removed)
+        XCTAssertTrue(removed.contains("The copy the move made was removed from the calendar it was moved to."), removed)
         XCTAssertFalse(removed.contains("both calendars"), removed)
 
         let left: [MoveByCopyUndo.Copy] = [.noIdentifier, .notFound, .changed(["title"]), .changed(["calendar", "title"]),
-                                           .unchecked, .removalFailed("error_code_1")]
+                                           .unchecked, .removalFailed("error_code_1"), .hasAttendees]
         for state in left {
-            let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
+            let text = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: state)
             XCTAssertTrue(text.hasPrefix(restored), "the original's restore and its new ID come first: \(text)")
             XCTAssertTrue(text.contains("both calendars"), text)
             XCTAssertTrue(text.contains("running undo again undoes the operation before it"), text)
@@ -146,29 +194,29 @@ final class MoveByCopyUndoTests: XCTestCase {
         }
         // Where the copy is known to be: found unchanged but not removed, or found changed in fields
         // that do not include its calendar.
-        for state: MoveByCopyUndo.Copy in [.changed(["title"]), .removalFailed("error_code_1")] {
-            let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
+        for state: MoveByCopyUndo.Copy in [.changed(["title"]), .removalFailed("error_code_1"), .hasAttendees] {
+            let text = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: state)
             XCTAssertTrue(text.contains("the event is now in both calendars"), text)
         }
         // Round 2, LOW 1: where it is not known, the text does not say where it is.
         for state: MoveByCopyUndo.Copy in [.noIdentifier, .notFound, .changed(["calendar", "title"]), .unchecked] {
-            let text = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: state)
+            let text = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: state)
             XCTAssertFalse(text.contains("is now in both calendars"), text)
             XCTAssertFalse(text.contains("left in the calendar it was moved to"), text)
             XCTAssertTrue(text.contains("if it is still in the calendar it was moved to, the event is in both calendars")
                           || text.contains("check where it is"), text)
         }
-        let changed = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .changed(["title", "alarms"]))
+        let changed = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["title", "alarms"]))
         XCTAssertTrue(changed.contains("was changed after the move (title, alarms)") && changed.contains("COPY-1"), changed)
-        let moved = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .changed(["calendar", "title"]))
+        let moved = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["calendar", "title"]))
         XCTAssertTrue(moved.contains("was changed after the move (calendar, title)") && moved.contains("it may be in another calendar now"), moved)
-        let missing = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .notFound)
+        let missing = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .notFound)
         XCTAssertTrue(missing.contains("was not found under its recorded identifier"), missing)
-        let unchecked = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .unchecked)
+        let unchecked = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .unchecked)
         XCTAssertTrue(unchecked.contains("could not be checked, so it was not removed"), unchecked)
-        let noID = MoveByCopyUndo.message(restored: restored, copyID: "", copy: .noIdentifier)
+        let noID = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "", copy: .noIdentifier)
         XCTAssertTrue(noID.contains("did not record the copy's identifier"), noID)
-        let failed = MoveByCopyUndo.message(restored: restored, copyID: "COPY-1", copy: .removalFailed("error_code_1"))
+        let failed = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .removalFailed("error_code_1"))
         XCTAssertTrue(failed.contains("removing the copy the move made failed (error_code_1)"), failed)
     }
 
@@ -188,7 +236,7 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertEqual(record.description,
                        "Moved event: Standup (by copy: undo restores it in its original calendar and removes the copy if unchanged)")
         XCTAssertEqual(split.description,
-                       "Moved occurrence of event: Standup (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged)")
+                       "Moved occurrence of event: Standup (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)")
     }
 
     /// Round 1 LOW: redo answered the generic batch line, which points at create_event and
@@ -240,15 +288,15 @@ private actor IsolationProbe {
         assertIsolated("the removal must run on the actor that made the check")
         steps.append("remove (isolated)")
     }
+    private func describe() -> String { assertIsolated("the failure is described on the actor"); return "" }
 
     func undo() async throws -> MoveByCopyUndo.Copy {
         try await MoveByCopyUndo.run(
             copyID: "COPY-1",
-            restoreOriginal: { await self.restore() },
+            restoreOriginal: { .written(await self.restore()) },
             checkAndRemove: {
                 let item = try await self.check()
-                try MoveByCopyUndo.removing { self.remove(item) }
-            },
-            describeRemovalFailure: { _ in "" }).copy
+                try MoveByCopyUndo.removing({ self.remove(item) }, describe: { _ in self.describe() })
+            }).copy
     }
 }

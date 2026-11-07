@@ -13,55 +13,83 @@ import Foundation
 /// would restore the source a second time. Closure seam, so the order is unit-tested without
 /// EventKit (`MoveByCopyUndoTests`).
 enum MoveByCopyUndo {
+    /// What the restore of the source did.
+    enum Restore: Equatable, Sendable {
+        /// The source was recreated; the restore's own text (title, new ID, notes).
+        case written(String)
+        /// A split's source was not recreated: an occurrence of a recurring event with its title
+        /// already holds its time in its calendar (#285's slot check). That may be another series of
+        /// the same title (PR #474 round 3), so the copy is kept, not even looked up.
+        case slotAlreadyHeld
+
+        /// From the occurrence or event undo's text and outcome.
+        init(text: String, outcome: UndoEventOutcome?) {
+            self = outcome == .occurrenceAlreadyHeld ? .slotAlreadyHeld : .written(text)
+        }
+    }
+
     /// What became of the copy.
     enum Copy: Equatable, Sendable {
         case removed
+        /// The source was not recreated (`Restore.slotAlreadyHeld`); the copy was kept unchecked.
+        case keptSlotHeld
         /// The move recorded no identifier for the copy; it was not looked up.
         case noIdentifier
         /// Not found under its recorded identifier (deleted, or given a new one by its account).
         case notFound
         /// Changed after the move in the fields named (the #236 compare of a created event).
         case changed([String])
+        /// Unchanged in the compared fields, but it has attendees now (the move refuses an event with
+        /// attendees, so they were added after it): removing it could send them a cancellation.
+        case hasAttendees
         /// The check failed for another reason (a lookup that raised, #288; an access gate).
         case unchecked
         /// Found and unchanged, but its removal failed with this sanitized code.
         case removalFailed(String)
     }
 
-    /// What `removing` throws: the removal of a copy that passed its check failed.
+    /// What `removing` throws: the removal of a copy that passed its check failed, with the code.
     struct RemovalFailure: Error {
-        let underlying: Error
+        let code: String
     }
 
-    /// Runs the removal inside `checkAndRemove`, so its failure is told apart from the check's.
-    /// Synchronous: it runs where its caller runs, on the actor of the closure that calls it.
-    static func removing(_ removal: () throws -> Void) throws {
-        do { try removal() } catch { throw RemovalFailure(underlying: error) }
+    /// What `checkAndRemove` throws for a copy that passed the #236 compare but has attendees.
+    struct CopyHasAttendees: Error {}
+
+    /// Runs the removal inside `checkAndRemove`, so its failure is told apart from the check's, and
+    /// describes the failure there (round 3: on the caller's actor, as the removal is; `run` takes no
+    /// synchronous closure, which it would call off the actor). Synchronous: it runs where its caller
+    /// runs.
+    static func removing(_ removal: () throws -> Void, describe: (Error) -> String) throws {
+        do { try removal() } catch { throw RemovalFailure(code: describe(error)) }
     }
 
     /// Restore the source, then check the copy and remove it. Only the restore's error is thrown
-    /// (nothing of the copy was touched then); every outcome after it is returned.
+    /// (nothing of the copy was touched then); every outcome after it is returned. A source not
+    /// recreated because its slot is held keeps the copy (round 3, MEDIUM: removing it could leave
+    /// the occurrence nowhere).
     ///
     /// PR #474 round 2: this function is nonisolated (Swift 5 mode, SE-0338), so it resumes off the
     /// caller's actor after each await. The check and the removal are therefore one async closure,
-    /// `checkAndRemove`, which the caller forms on its actor: the whole closure runs there, so nothing
-    /// suspends between the #236 check and the removal, and the removal never runs off the actor. It
-    /// wraps the removal in `removing`; any other error it throws is the check's. A synchronous
-    /// removal closure, which this took in round 1, ran off the actor after the check's await.
+    /// `checkAndRemove`, which the caller forms on its actor: the whole closure runs there, so no
+    /// other call of this server runs between the #236 check and the removal (actor reentrancy; a
+    /// change another process saves in between is not excluded), and the removal never runs off the
+    /// actor. It wraps the removal in `removing`; any other error it throws is the check's. A
+    /// synchronous removal closure, which this took in round 1, ran off the actor after the check.
     static func run(copyID: String,
-                    restoreOriginal: () async throws -> String,
-                    checkAndRemove: () async throws -> Void,
-                    describeRemovalFailure: (Error) -> String) async throws -> (restored: String, copy: Copy) {
-        let restored = try await restoreOriginal()
-        guard !copyID.isEmpty else { return (restored, .noIdentifier) }
+                    restoreOriginal: () async throws -> Restore,
+                    checkAndRemove: () async throws -> Void) async throws -> (restore: Restore, copy: Copy) {
+        let restore = try await restoreOriginal()
+        guard restore != .slotAlreadyHeld else { return (restore, .keptSlotHeld) }
+        guard !copyID.isEmpty else { return (restore, .noIdentifier) }
         do {
             try await checkAndRemove()
         } catch let failure as RemovalFailure {
-            return (restored, .removalFailed(describeRemovalFailure(failure.underlying)))
+            return (restore, .removalFailed(failure.code))
         } catch {
-            return (restored, copyState(afterCheckFailure: error))
+            return (restore, copyState(afterCheckFailure: error))
         }
-        return (restored, .removed)
+        return (restore, .removed)
     }
 
     /// The copy's state from the error its check threw: the two #236 errors by type, anything else
@@ -69,6 +97,7 @@ enum MoveByCopyUndo {
     static func copyState(afterCheckFailure error: Error) -> Copy {
         if let changed = error as? UndoTargetChangedError { return .changed(changed.changedFields) }
         if error is UndoTargetMissingError { return .notFound }
+        if error is CopyHasAttendees { return .hasAttendees }
         return .unchecked
     }
 
@@ -79,13 +108,19 @@ enum MoveByCopyUndo {
     /// LOW 1: a copy moved elsewhere is `changed(["calendar", …])`); and that this entry is used up, and leaves removing the copy to the user, naming no
     /// tool. Field names come from the #236 compare (author-controlled); `copyID` is the store's
     /// identifier, as the restore text gives the new one.
-    static func message(restored: String, copyID: String, copy: Copy) -> String {
+    static func message(restore: Restore, title: String, copyID: String, copy: Copy) -> String {
         let id = copyID.isEmpty ? "" : " (id \(copyID))"
         let used = " This history entry is used up: running undo again undoes the operation before it, not this copy."
         let both = "and the event is now in both calendars: remove the copy there if it should go."
+        guard case .written(let restored) = restore else {
+            return "Undone: the moved occurrence of '\(undoVisibleTitle(title))' was not recreated in its original calendar: an occurrence of a recurring event with its title already holds its time there, which may be another series of the same title. So the copy the move made\(id) was kept in the calendar it was moved to: check the original calendar, and remove the copy if the occurrence there is this one." + used
+        }
         switch copy {
         case .removed:
-            return restored + ", and removed the copy the move made in the calendar it was moved to"
+            return restored + ". The copy the move made was removed from the calendar it was moved to."
+        case .keptSlotHeld:
+            // Unreachable with `.written` (`run` gives it only for `.slotAlreadyHeld`); worded anyway.
+            return restored + ". The copy the move made\(id) was kept in the calendar it was moved to, " + both + used
         case .noIdentifier:
             return restored + ". The move did not record the copy's identifier, so the copy was not looked up and nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .notFound:
@@ -94,6 +129,8 @@ enum MoveByCopyUndo {
             return restored + ". The copy the move made\(id) was changed after the move (\(fields.joined(separator: ", "))), so it was not removed; it may be in another calendar now: check where it is, since the event may be in both calendars, and remove the copy if it should go." + used
         case .changed(let fields):
             return restored + ". The copy the move made\(id) was changed after the move (\(fields.joined(separator: ", "))), so it was left in the calendar it was moved to, " + both + used
+        case .hasAttendees:
+            return restored + ". The copy the move made\(id) has attendees now, so it was not removed (removing it could send them a cancellation); it was left in the calendar it was moved to, " + both + used
         case .unchecked:
             return restored + ". The copy the move made\(id) could not be checked, so it was not removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .removalFailed(let code):

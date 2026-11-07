@@ -387,8 +387,12 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#466` 的
 6. 搬移後用 `--cli` 把副本改到第三個拋棄式日曆 C → `undo`：原事件回來，訊息列出 `calendar`，不說副本在 B；
    搬移後刪掉 A → `undo`：以「the move of an event」與「the copy the move made stays in the calendar it was moved to,
    if it is still there」拒絕，什麼都沒寫，`discard_id` 移除。
-系列已經重新佔了那個時段（#285 的 `seriesHoldsSlot`）時 split 的還原什麼都不寫，這個形狀要 `delete_event` span `all`
-的 capture 失敗才造得出來，沒有量。
+7. 同名系列佔住時段（#285 的 `seriesHoldsSlot` 不比對系列 id）：在第三個拋棄式日曆建同標題、同時間的每週系列，用
+   `--cli` 的 `move_events_batch` span `all` 搬進 A（同一日曆內 `create_event` 會回既有系列，造不出第二個）→ split →
+   `undo`：原場次不重建、副本留在 B，訊息說「was not recreated」與「kept」。2026-11-08 在單一 stdio process 量過。
+8. 搬移後在 Calendar.app 替副本加受邀者 → `undo`：原事件回來，副本留下，訊息說「has attendees now」（沒有量過；
+   `--cli` 加不了受邀者）。
+系列自己重新佔了那個時段（整串刪除的 capture 失敗後從規則重建）也走第 7 步的路，副本同樣留下；這個形狀沒有量。
 fallback copy（in-place 失敗後的複製）在裝置上誘發不了，沒有量；它與 split 走同一個紀錄與同一個 undo arm。
 
 結果記在 #466。結束後刪掉拋棄式日曆，用 `list_calendars` 確認。

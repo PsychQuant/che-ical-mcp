@@ -2809,22 +2809,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // (`MoveByCopyUndo.run`), so the record is used up once the source is back.
             // PR #474 round 2: `run` is nonisolated, so the check and the removal are one async
             // closure formed here: it runs on this actor, and nothing suspends between the check
-            // and the removal (the create-undo arm's order). A synchronous removal closure called
-            // from `run` after the check ran off the actor.
+            // and the removal (the guard's only await is its access check, before the comparison;
+            // the create-undo arm's order). That excludes this server's other calls, not a change
+            // another process saves in between. A synchronous removal closure called from `run`
+            // after the check ran off the actor.
             let undone = try await MoveByCopyUndo.run(
                 copyID: copyID,
                 restoreOriginal: {
-                    isSplit
-                        ? try await self.undoDeletedOccurrence(original, notCarriedOver: notCarriedOver, kind: .undoMoveByCopy).text
-                        : try await self.undoDeletedEvent(original, kind: .undoMoveByCopy).text
+                    guard isSplit else { return .written(try await self.undoDeletedEvent(original, kind: .undoMoveByCopy).text) }
+                    let undone = try await self.undoDeletedOccurrence(original, notCarriedOver: notCarriedOver, kind: .undoMoveByCopy)
+                    // Round 3: a held slot recreated nothing, so the copy is kept (`Restore`).
+                    return MoveByCopyUndo.Restore(text: undone.text, outcome: undone.outcome)
                 },
                 checkAndRemove: {
                     let event = try await self.verifiedEvent(of: .createEvent(id: copyID, title: copy.title, created: copy), verb: .undo)
-                    try MoveByCopyUndo.removing { try self.removeMoveCopy(event) }
-                },
-                describeRemovalFailure: { EventKitErrorSanitizer.writeFailureLog(handler: "undo.moveByCopy", identifier: copyID, error: $0) })
+                    // Round 3: attendees are not in the #236 compare; a copy that has them now is kept.
+                    guard !event.hasAttendees else { throw MoveByCopyUndo.CopyHasAttendees() }
+                    try MoveByCopyUndo.removing({ try self.removeMoveCopy(event) }, describe: {
+                        EventKitErrorSanitizer.writeFailureLog(handler: "undo.moveByCopy", identifier: copyID, error: $0)
+                    })
+                })
             markNeedsRefresh()
-            return MoveByCopyUndo.message(restored: undone.restored, copyID: copyID, copy: undone.copy)
+            return MoveByCopyUndo.message(restore: undone.restore, title: original.title, copyID: copyID, copy: undone.copy)
 
         case .createReminder(_, let title, _):
             // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:

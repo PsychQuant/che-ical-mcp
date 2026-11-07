@@ -425,7 +425,7 @@ enum UndoOperation {
             return "Moved event: \(undoVisibleTitle(title))"
         case .moveByCopy(let original, let isSplit, _, _, _):
             if isSplit {
-                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged)"
+                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)"
             }
             return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):
