@@ -78,10 +78,33 @@ final class EventMoveIdentifierTests: XCTestCase {
 
     private func XCTUnwrapAsync<T>(_ value: T?) async throws -> T { try XCTUnwrap(value) }
 
+    /// Cluster verify r2: an undo that changes the identifier runs after popUndo moved its own record
+    /// to the redo stack, so the redo stack follows too, and the redo finds the event.
+    func testTheRedoStackFollowsTheUndoOfAMove() async throws {
+        let manager = CalendarUndoManager()
+        await manager.record(.moveEvent(id: "moved", fromCalendarIdentifier: "cal-A", toCalendarIdentifier: "cal-B",
+                                        title: "Standup", isSeries: false))
+        _ = try await XCTUnwrapAsync(await manager.popUndo())
+        await manager.replaceEventIdentifier("moved", with: "restored")
+        let redo = try await XCTUnwrapAsync(await manager.popRedo())
+        XCTAssertEqual(id(of: redo.operation), "restored")
+    }
+
+    /// Cluster verify r2: through a stand-in the series' id reads as an occurrence's own id of the
+    /// same series, which is not a new identifier; nothing is rewritten.
+    func testAStandInIsNotANewIdentifier() {
+        XCTAssertFalse(CalendarUndoManager.identifierChanged(from: "S", to: "S/RID=1800000000"))
+        XCTAssertFalse(CalendarUndoManager.identifierChanged(from: "S/RID=1800000000", to: "S"))
+        XCTAssertFalse(CalendarUndoManager.identifierChanged(from: "A", to: "A"))
+        XCTAssertFalse(CalendarUndoManager.identifierChanged(from: "A", to: ""), "no identifier read back")
+        XCTAssertTrue(CalendarUndoManager.identifierChanged(from: "A", to: "B"), "measured on Google (#435)")
+        XCTAssertTrue(CalendarUndoManager.identifierChanged(from: "S/RID=1800000000", to: "T/RID=1800000000"))
+    }
+
     func testTheMoveAndItsUndoReportAndFollow() throws {
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
-        XCTAssertTrue(source.contains("if let restoredID = event.eventIdentifier, restoredID != movedID { await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID) return \"Undone: moved event '\\(undoVisibleTitle(title))' back to its original calendar (new ID: \\(restoredID))\" }"), "the undo")
-        XCTAssertTrue(source.contains("if result.eventIdentifier != identifier, !result.eventIdentifier.isEmpty, result.method == .inPlace { await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier) }"), "the move")
+        XCTAssertTrue(source.contains("if let restoredID = event.eventIdentifier, CalendarUndoManager.identifierChanged(from: movedID, to: restoredID) { await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID) return \"Undone: moved event '\\(undoVisibleTitle(title))' back to its original calendar (new ID: \\(restoredID))\" }"), "the undo")
+        XCTAssertTrue(source.contains("if result.method == .inPlace, CalendarUndoManager.identifierChanged(from: identifier, to: result.eventIdentifier) { await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier) }"), "the move")
     }
 }
 
