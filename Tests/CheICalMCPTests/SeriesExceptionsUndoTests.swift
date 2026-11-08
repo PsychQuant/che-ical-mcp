@@ -730,24 +730,6 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(outcome, .occurrenceAlreadyHeld)
     }
 
-    /// LOW 1: an unknown count whose early history the store does not hold (none of it listed in
-    /// the window from its first occurrence, which always holds its first slot): that window is
-    /// dropped, so the restore does not take every slot in it for deleted.
-    func testAnEmptyWindowFromTheFirstOccurrenceIsDropped() throws {
-        let now = s0
-        let store = FakeSeriesExceptionsStore()
-        let near = [-14.0, -7, 7, 14].map { now.addingTimeInterval($0 * day) }
-        store.addSeries(id: "S", calendar: "C", title: "Standup", slots: near)
-        store.seriesEnd = .unknown
-        let series = FakeSeriesExceptionsStore.Event(id: "S", external: "X-S", calendar: "C", title: "Standup",
-                                                     start: now.addingTimeInterval(-3650 * day), occurrenceDate: now.addingTimeInterval(-3650 * day), hasRules: true)
-
-        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
-
-        XCTAssertEqual(exceptions.windows, [around(now)])
-        XCTAssertEqual(exceptions.keptSlots, near)
-    }
-
     /// LOW 2: the windows overlap and a surplus slot is inside both: the occurrence is listed by
     /// each window but removed once.
     func testASurplusSlotInsideBothWindowsIsRemovedOnce() throws {
@@ -802,21 +784,53 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(store.observedCount, occurrences.count, "each occurrence snapshotted once")
     }
 
-    /// LOW: the window from the first occurrence is kept only when the series is listed in its
-    /// earliest part, before the window around the delete; here the store lacks everything before
-    /// that window, so the overlap alone does not keep it.
-    func testAWindowFromTheFirstOccurrenceWithAnEmptyEarlyPartIsDropped() throws {
+    // MARK: - PR #494 round 7: a count always keeps the window from its first occurrence
+
+    /// Codex (round 7): every occurrence of the early part was deleted on its own, one by one, while
+    /// the part where the windows overlap still lists some. The window from the first occurrence is
+    /// kept, so after undo those early deletions stay deleted, as before #319 (round 6 dropped the
+    /// window here and the deletions came back from the rules).
+    func testEarlyOccurrencesAllDeletedOnTheirOwnStayDeletedAfterUndo() throws {
         let now = s0
-        let store = FakeSeriesExceptionsStore()
         let first = now.addingTimeInterval(-1200 * day)
-        let near = stride(from: -1080.0, through: 200, by: 30).map { now.addingTimeInterval($0 * day) }
-        store.addSeries(id: "S", calendar: "C", title: "Standup", slots: near)
+        let all = stride(from: -1200.0, through: 200, by: 30).map { now.addingTimeInterval($0 * day) }
+        let early = Set(all.filter { $0 < around(now).start })
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: all.filter { !early.contains($0) })
         store.seriesEnd = .unknown
         let series = FakeSeriesExceptionsStore.Event(id: "S", external: "X-S", calendar: "C", title: "Standup",
                                                      start: first, occurrenceDate: first, hasRules: true)
+        XCTAssertFalse(occurrences.isEmpty)
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
+        XCTAssertEqual(exceptions.windows, [around(now), fromFirst(now, -1200)], "kept although its early part lists nothing")
+
+        // Undo recreates the series from its rules (every slot) and removes the early slots again.
+        let restoreStore = FakeSeriesExceptionsStore()
+        restoreStore.seriesSlots = all
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: first).withExceptions(exceptions)
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: restoreStore)
+
+        guard case .seriesWithExceptions(let restored)? = outcome else { return XCTFail("\(String(describing: outcome))") }
+        XCTAssertFalse(restored.notApplied)
+        XCTAssertEqual(Set(restoreStore.starts(of: "E1")), Set(all).subtracting(early).union([first]),
+                       "the early deletions stay deleted (the first occurrence is the series' anchor)")
+    }
+
+    /// A store that lacks a count's early history keeps the window from its first occurrence too:
+    /// its missing occurrences count as deleted, the same as before #319.
+    func testAStoreMissingTheEarlyHistoryKeepsTheWindowFromTheFirstOccurrence() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let near = [-14.0, -7, 7, 14].map { now.addingTimeInterval($0 * day) }
+        store.addSeries(id: "S", calendar: "C", title: "Standup", slots: near)
+        store.seriesEnd = .unknown
+        let series = FakeSeriesExceptionsStore.Event(id: "S", external: "X-S", calendar: "C", title: "Standup",
+                                                     start: now.addingTimeInterval(-3650 * day), occurrenceDate: now.addingTimeInterval(-3650 * day), hasRules: true)
 
         let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
 
-        XCTAssertEqual(exceptions.windows, [around(now)])
+        XCTAssertEqual(exceptions.windows, [around(now), fromFirst(now, -3650)])
+        XCTAssertEqual(exceptions.keptSlots, near)
     }
 }

@@ -626,7 +626,7 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), end: seriesEnd,\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
         // Round 4: the second window is the create-undo window, uncut (1460 days).
         XCTAssertEqual(SourcePins.ranges(of: "let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)", in: capture).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "let windows = listedEarly ? [window, fromFirst] : [window]", in: capture).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let windows = [window, fromFirst]", in: capture).count, 1, "always both (round 7)")
         let restore = try XCTUnwrap(SourcePins.body(of: "static func restore<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for window in exceptions\.windows \{\s*for occurrence in store\.events\(in: window, inCalendarOf: restored\)"#, in: restore).count, 1)
     }

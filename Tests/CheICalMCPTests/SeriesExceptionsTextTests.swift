@@ -141,7 +141,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     private var aroundTheDelete: DateInterval {
         DateInterval(start: iso("2025-11-08T12:00:00Z"), end: iso("2029-11-07T12:00:00Z"))
     }
-    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later and the store lists that early part"
+    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later"
 
     private func restored(startsBefore: Bool, continuesAfter: Bool) -> String {
         var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [])

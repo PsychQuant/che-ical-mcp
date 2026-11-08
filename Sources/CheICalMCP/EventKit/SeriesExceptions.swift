@@ -25,8 +25,8 @@ struct SeriesExceptions {
     var seriesMayContinueAfterWindow: Bool = false
     /// PR #494 rounds 4-5: further windows the occurrences were listed over, each one EventKit query
     /// long. A count whose window around the delete starts after its first occurrence records the
-    /// window from its first occurrence here (the window before #319) beside `window`, unless none
-    /// of the series is listed there. Empty for every other series.
+    /// window from its first occurrence here (the window before #319) beside `window`, always (round 7).
+    /// Empty for every other series.
     var extraWindows: [DateInterval] = []
 
     /// `window` and `extraWindows`: every slot judged, kept or removed is inside one of them.
@@ -121,8 +121,8 @@ enum SeriesExceptionsPlanner {
     /// is listed toward its end: for an end date, over its last four years up to that date; for a
     /// count, the window from its first occurrence when its last possible slot is within 1459 days
     /// of the first occurrence, else the 1460 days before that slot (not cut at it). A count whose
-    /// end cannot be shown is placed as open-ended here; the capture adds the window from its first
-    /// occurrence (PR #494 round 4).
+    /// end cannot be shown is placed as open-ended here; for every count the capture adds the window
+    /// from its first occurrence when this one starts later (PR #494 rounds 4-7).
     ///
     /// Before #319 this was the create-undo window (`UndoPostState.seriesScanWindow`, #259),
     /// anchored at the first occurrence; for a series begun more than about four years before the

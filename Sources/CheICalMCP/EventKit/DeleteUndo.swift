@@ -247,7 +247,7 @@ extension UndoOperation {
     }
 
     /// #319: how the checked window is placed, in the words every text uses.
-    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later and the store lists that early part"
+    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later"
 
     /// #319: the window by its two instants, to the minute, in the host zone; the end is exclusive.
     /// PR #494 round 1: by instants, not days: the edges fall at the time of day of the delete or of

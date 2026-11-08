@@ -32,17 +32,13 @@ enum SeriesExceptionsUndo {
         if seriesEnd.isCount, window.start > fromFirst.start {
             let both = observedOccurrences(of: series, ids: seriesIDs,
                                            over: SeriesExceptionsPlanner.listingRanges(covering: [window, fromFirst]), in: store)
-            // Rounds 5-6: the window from the first occurrence is kept only when the series is listed
-            // in its earliest part, before the window around the delete (that part always holds the
-            // first slot). Listed nowhere there, the store lacks that history: the window is dropped,
-            // or the restore would take every slot in that part for deleted.
-            let listedEarly = both.contains {
-                let slot = SeriesExceptionsPlanner.ruleSlot(of: $0)
-                return UndoPostState.isOccurrence($0.ids, of: seriesIDs) && SeriesExceptionsPlanner.inWindow(slot, fromFirst) && slot < window.start
-            }
-            let windows = listedEarly ? [window, fromFirst] : [window]
+            // Round 7: always kept. It is exactly the window before #319, so its early part behaves as
+            // it did then, whether the user deleted those occurrences one by one or the store lacks
+            // that history (rounds 5-6 dropped it when its early part listed nothing, which brought a
+            // user's early deletions back from the rules).
+            let windows = [window, fromFirst]
             guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
-            exceptions.seriesStartsBeforeWindow = !listedEarly && placed.seriesStartsBefore
+            exceptions.seriesStartsBeforeWindow = false
             exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
             exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
