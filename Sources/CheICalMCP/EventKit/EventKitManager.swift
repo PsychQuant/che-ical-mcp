@@ -1981,16 +1981,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // snapshots of one identifier would rebuild it twice; occurrence records are distinct items.
         var undoOperations: [UndoOperation] = []
         var undoSeenWholeIdentifiers = Set<String>()
-        // #325 verify rounds 3-4: occurrences an earlier span-future removal already reached.
-        var coverage = FutureDeletionCoverage()
+        // #325 verify rounds 3-4: occurrences an earlier span-future removal already reached; #452:
+        // and ids an earlier row deleted whole. The event_ids dry run goes through the same sequence.
+        var sequence = BatchRowSequence(span: span)
         var coveredCount = 0
 
         for (index, item) in items.enumerated() {
             // `slots` is index-aligned with `items` (the by-date-range handler); absent, nothing is skipped.
             let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
-            if span == .futureEvents, coverage.covers(identifier: item.identifier, slot: slot) {
+            switch sequence.before(identifier: item.identifier, slot: slot) {
+            case .deletedEarlier:
+                failures.append((item.identifier, Self.batchRowDeletedEarlier))
+                continue
+            case .alreadyRemoved:
                 coveredCount += 1
                 continue
+            case .lookUp:
+                break
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
@@ -2011,9 +2018,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                                       seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
                     let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
                     try eventStore.remove(occurrence, span: span)
-                    if span == .futureEvents, let removedStart {
-                        coverage.recordRemoval(identifier: item.identifier, requested: date, requestedSlot: slot,
-                                               removedStart: removedStart, removedSlot: removedSlot)
+                    if let removedStart {
+                        sequence.deletedOccurrence(identifier: item.identifier, requested: date, requestedSlot: slot,
+                                                   removedStart: removedStart, removedSlot: removedSlot)
                     }
                 } else if hadRules {
                     failures.append((item.identifier, Self.batchOccurrenceDateRequired))
@@ -2023,10 +2030,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     let removedStart = masterEvent.startDate, removedSlot = masterEvent.occurrenceDate
                     try eventStore.remove(masterEvent, span: span)
                     // An occurrence edited on its own reads back without rules; with span future its
-                    // removal takes its series from its slot on (#325 verify round 6).
-                    if span == .futureEvents, let removedStart, item.identifier.contains("/RID=") {
-                        coverage.recordRemoval(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
-                                               removedStart: removedStart, removedSlot: removedSlot)
+                    // removal takes its series from its slot on (#325 verify round 6), by event_ids too (#452).
+                    if let removedStart {
+                        sequence.deletedWhole(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
+                                              removedStart: removedStart, removedSlot: removedSlot)
                     }
                 }
                 successCount += 1

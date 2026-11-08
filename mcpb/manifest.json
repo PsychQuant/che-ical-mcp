@@ -113,7 +113,7 @@
     },
     {
       "name": "delete_events_batch",
-      "description": "Delete multiple events at once; by event_ids, span all through an occurrence edited on its own is refused for that row while another occurrence remains; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
+      "description": "Delete multiple events at once; by event_ids, span all through an occurrence edited on its own is refused for that row while another occurrence remains; a date range with one bound searches 100 years out and reports searched_from/searched_to, and over a range wider than 1462 days (every one-sided range) more than 2000 deletions, or a read of more than about 200,000 occurrences (about 2,000 a year over 100 years), are refused, and span future does not retry occurrences an earlier deletion already removed with their series, by event_ids too, where an occurrence's own id with span future deletes the later occurrences of its series and the dry run runs the rows in order as the real call does (one undo restores them; the undo is refused before any write, and its entry kept, when an event's calendar is missing or read-only, and discarding it then drops every event)"
     },
     {
       "name": "find_duplicate_events",

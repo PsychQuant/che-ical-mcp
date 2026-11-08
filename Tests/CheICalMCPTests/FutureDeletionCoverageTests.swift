@@ -130,7 +130,7 @@ final class FutureDeletionCoverageTests: XCTestCase {
     }
 
     /// The span "future" path of deleteEventsBatch consults the coverage before any EventKit lookup
-    /// and records only after a successful removal.
+    /// and records only after a successful removal; since #452 through `BatchRowSequence`, which holds it.
     func testDeleteEventsBatchSkipsCoveredItemsBeforeLookingThemUp() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/CheICalMCP/EventKit/EventKitManager.swift")
@@ -138,11 +138,11 @@ final class FutureDeletionCoverageTests: XCTestCase {
         let from = try XCTUnwrap(source.range(of: "func deleteEventsBatch("))
         let to = try XCTUnwrap(source.range(of: "func findDuplicateEvents(", range: from.upperBound..<source.endIndex))
         let body = String(source[from.lowerBound..<to.lowerBound])
-        let skip = try XCTUnwrap(body.range(of: "coverage.covers("))
+        let skip = try XCTUnwrap(body.range(of: "sequence.before("))
         let lookup = try XCTUnwrap(body.range(of: "freshEventWithOrigin("))
         XCTAssertLessThan(skip.lowerBound, lookup.lowerBound)
         let remove = try XCTUnwrap(body.range(of: "try eventStore.remove(occurrence, span: span)"))
-        let record = try XCTUnwrap(body.range(of: "coverage.recordRemoval("))
+        let record = try XCTUnwrap(body.range(of: "sequence.deletedOccurrence("))
         XCTAssertLessThan(remove.lowerBound, record.lowerBound)
         // Verify round 6: with a slot, the occurrence is located exactly, never another one of that day.
         XCTAssertTrue(body.contains("findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot)"))
@@ -151,6 +151,8 @@ final class FutureDeletionCoverageTests: XCTestCase {
         let lookupEnd = try XCTUnwrap(source.range(of: "return target", range: lookup0.upperBound..<source.endIndex))
         XCTAssertTrue(source[lookup0.lowerBound..<lookupEnd.lowerBound].contains("FutureDeletionCoverage.isRequested("))
         // ...and a removal of an occurrence edited on its own is recorded too (it has no rules).
-        XCTAssertEqual(body.components(separatedBy: "coverage.recordRemoval(").count - 1, 2)
+        let whole = try XCTUnwrap(body.range(of: "sequence.deletedWhole("))
+        let removeWhole = try XCTUnwrap(body.range(of: "try eventStore.remove(masterEvent, span: span)"))
+        XCTAssertLessThan(removeWhole.lowerBound, whole.lowerBound)
     }
 }

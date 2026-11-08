@@ -607,3 +607,21 @@ end、notes、location、alarms。
 
 結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
 （2026-11-05，空的）。
+
+## Release gate：event_ids 搭配 span this / future 的 dry run 與實際刪除（#452）
+
+#452 讓 `delete_events_batch` 以 `event_ids` 搭配 span `this` / `future` 時，dry run 與實際呼叫走同一個
+`BatchRowSequence`。單元測試只到 handler 與 `SeriesModel`；「場次自己的 id 以 span `future` 刪除後，系列從該時段起
+被刪掉、較晚場次自己的 id 不再解析得到」只在依日期範圍時於 iCloud 量過（2026-10-20）。這是 stateless 的，**出 #452 的
+那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表），只在名稱含 `#452` 的拋棄式日曆上，每個形狀用新的系列：
+
+1. 一次性事件 A：`event_ids: [A, A]`、span `this`，dry run 第二列 `error` 是 `Event not found: an earlier row of this call
+   deleted it` → 實際呼叫 `succeeded: 1`、`failed: 1`，`failures` 的那一列同一句；
+2. 每週 5 場的系列，單獨改第 2 場與第 4 場的標題 → `list_events` 取兩者自己的 id（`/RID=`）→ `event_ids: [第 2 場, 第 4 場]`、
+   span `future`：dry run 第一列有 `also_deletes_later_occurrences: true`、第二列 `already_removed: true`、頂層
+   `already_removed: 1` → 實際呼叫 `succeeded: 1`、`failed: 0`、`already_removed: 1` → `list_events` 只剩第 1 場；
+3. 同樣的系列，順序反過來（`[第 4 場, 第 2 場]`）：兩列都刪除，兩邊都沒有 `already_removed`，只剩第 1 場；
+4. 同樣的系列，span `this`、`[第 2 場, 第 4 場]`：兩列都刪除、沒有標記，剩 3 場。
+
+若第 2 步的實際呼叫回 `failed: 1`、`Event not found`（不是 `already_removed`），就是 `/RID=` 的時段比對在該來源不成立，
+要回報到 #452。結果記在 #452。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次。

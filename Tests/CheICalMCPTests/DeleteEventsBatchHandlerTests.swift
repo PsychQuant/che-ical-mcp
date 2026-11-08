@@ -145,23 +145,52 @@ private actor SeriesModel: EventBatchDeletionSource {
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
                                calendarSource: String?) async throws -> [BatchDeletionListedEvent] { listed }
 
+    /// The manager's loop with span `this` / `future` (#452): `BatchRowSequence` first, then the row.
+    /// An occurrence's own id that is no longer held fails as not found, as on a device; removing one
+    /// with span `future` removes the series from its slot on (iCloud, 2026-10-20).
     func deleteEventsBatch(items: [(identifier: String, occurrenceDate: Date?)], span: EKSpan,
                            slots: [Date?]?) async throws -> BatchDeleteResult {
         var succeeded = 0
+        var covered = 0
         var failures: [(String, String)] = []
-        for item in items {
+        var sequence = BatchRowSequence(span: span)
+        for (index, item) in items.enumerated() {
+            let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
+            switch sequence.before(identifier: item.identifier, slot: slot) {
+            case .deletedEarlier:
+                failures.append((item.identifier, EventKitManager.batchRowDeletedEarlier))
+                continue
+            case .alreadyRemoved:
+                covered += 1
+                continue
+            case .lookUp:
+                break
+            }
             do {
                 if let reason = try judgeOneRow(item.identifier, span: span) {
                     failures.append((item.identifier, reason))
                     continue
                 }
+                let own = occurrences.first { $0.eventIdentifier == item.identifier }
+                if item.identifier.contains("/RID="), own == nil {
+                    failures.append((item.identifier, "Event not found"))
+                    continue
+                }
                 occurrences.removeAll { $0.eventIdentifier == item.identifier }
+                if let own, BatchRowSequence.deletesLaterOccurrences(identifier: item.identifier, span: span) {
+                    let from = own.slot ?? own.start
+                    occurrences.removeAll { ($0.slot ?? $0.start) >= from }
+                }
+                let removedStart = own?.start ?? Date(timeIntervalSinceReferenceDate: 0)
+                sequence.deletedWhole(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
+                                      removedStart: removedStart, removedSlot: own?.slot)
                 succeeded += 1
             } catch {
                 failures.append((item.identifier, "refused"))
             }
         }
-        return BatchDeleteResult(successCount: succeeded, failedCount: failures.count, failures: failures)
+        return BatchDeleteResult(successCount: succeeded, failedCount: failures.count, failures: failures,
+                                 coveredCount: covered)
     }
 }
 
@@ -664,5 +693,76 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testTheDryRunCountsARepeatedIdOnce() async throws {
         let shape = [editedOccurrence(0), unedited(7)]
         try await assertSameAnswer(shape, ids: [series, ownId(0), series], deletes: 2, left: 0)
+    }
+
+    // MARK: - #452: span this and future, the dry run gives the real call's rows
+
+    /// A repeated id with span `this` or `future`: the dry run used to list two deletions while the
+    /// real call deleted one and failed the other. Both now say the second row fails, in the same words.
+    func testARepeatedIdPreviewsTheRealCallsFailure() async throws {
+        let shape = [editedOccurrence(7), unedited(14)]
+        for span in ["this", "future"] {
+            for id in [ownId(7), "one-off"] {
+                let answer = try await dryRunAndRealCall(shape, ids: [id, id], span: span)
+                XCTAssertNil(answer.dry.first?["error"], "\(span) \(answer.dry)")
+                let dryError = try XCTUnwrap(answer.dry.last?["error"] as? String, "\(span) \(answer.dry)")
+                XCTAssertEqual(dryError, EventKitManager.batchRowDeletedEarlier)
+                XCTAssertEqual(answer.real["succeeded"] as? Int, 1, "\(span) \(answer.real)")
+                XCTAssertEqual(answer.real["failed"] as? Int, 1, "\(span) \(answer.real)")
+                let failures = try XCTUnwrap(answer.real["failures"] as? [[String: Any]])
+                XCTAssertEqual(failures.first?["error"] as? String, dryError)
+                XCTAssertEqual(answer.total, answer.real["total"] as? Int)
+            }
+        }
+    }
+
+    /// Span `future` on an occurrence's own id removes the series from its slot on. A later
+    /// occurrence's own id of the same series is then already removed: the real call counts it in
+    /// `already_removed` (it used to fail it as not found) and the dry run shows it so, and the
+    /// first row says it also deletes the later occurrences.
+    func testSpanFutureShowsTheLaterOccurrenceAsAlreadyRemoved() async throws {
+        let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
+        let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "future")
+        XCTAssertNil(answer.dry[0]["error"], "\(answer.dry)")
+        XCTAssertEqual(answer.dry[0]["also_deletes_later_occurrences"] as? Bool, true, "\(answer.dry)")
+        XCTAssertEqual(answer.dry[1]["already_removed"] as? Bool, true, "\(answer.dry)")
+        XCTAssertNil(answer.dry[1]["error"], "\(answer.dry)")
+        XCTAssertNil(answer.dry[1]["start_date_local"], "a row the call does not look up shows no dates")
+        XCTAssertEqual(answer.real["succeeded"] as? Int, 1, "\(answer.real)")
+        XCTAssertEqual(answer.real["failed"] as? Int, 0, "\(answer.real)")
+        XCTAssertEqual(answer.real["already_removed"] as? Int, 1, "\(answer.real)")
+        XCTAssertEqual(answer.left, 1, "only the occurrence before the cut is left")
+    }
+
+    /// The dry run counts `already_removed` at the top, under the real call's name.
+    func testTheSpanFutureDryRunCountsAlreadyRemoved() async throws {
+        let shape = [editedOccurrence(7), unedited(14), editedOccurrence(21)]
+        let server = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(series: series, occurrences: shape))
+        let dry = try object(await server.executeToolCall(name: "delete_events_batch", arguments: [
+            "event_ids": .array([.string(ownId(7)), .string(ownId(21))]), "span": .string("future"), "dry_run": .bool(true)]))
+        XCTAssertEqual(dry["already_removed"] as? Int, 1, "\(dry)")
+        let none = try object(await server.executeToolCall(name: "delete_events_batch", arguments: [
+            "event_ids": .array([.string(ownId(7))]), "span": .string("this"), "dry_run": .bool(true)]))
+        XCTAssertNil(none["already_removed"], "\(none)")
+    }
+
+    /// The later occurrence first: each row deletes, in both modes, and nothing is marked.
+    func testSpanFutureInTheOtherOrderDeletesBoth() async throws {
+        let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
+        let answer = try await dryRunAndRealCall(shape, ids: [ownId(21), ownId(7)], span: "future")
+        XCTAssertEqual(answer.dry.filter { $0["error"] == nil && $0["already_removed"] == nil }.count, 2, "\(answer.dry)")
+        XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
+        XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
+        XCTAssertEqual(answer.left, 1)
+    }
+
+    /// Span `this`: each occurrence's own id deletes that occurrence only; nothing is covered or marked.
+    func testSpanThisDeletesOnlyTheNamedOccurrences() async throws {
+        let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
+        let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "this")
+        XCTAssertTrue(answer.dry.allSatisfy { $0["error"] == nil && $0["already_removed"] == nil
+                                              && $0["also_deletes_later_occurrences"] == nil }, "\(answer.dry)")
+        XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
+        XCTAssertEqual(answer.left, 3)
     }
 }
