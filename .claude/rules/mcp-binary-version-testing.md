@@ -634,7 +634,7 @@ end、notes、location、alarms。
    occurrence_date is required` 對 `Event not found`），要回報。
 
 若第 2 步的實際呼叫回 `failed: 1`、`Event not found`（不是 `already_removed`），就是 `/RID=` 的時段比對在該來源不成立，
-要回報到 #452。2026-11-09 已在 iCloud 用 repo 內 build 的 binary（Developer ID 簽章、`--cli`）做過第 1–4 步；verify r1 修正後（先查詢再算 `already_removed`、`undo_note`）重做第 1–5 步，五步都如上；verify r2 修正後（`covered_by_earlier_row`）重做第 2、5、6 步（結果見 #452 的 Verify-fix）；出版前用出版的 binary 再做一次。結果記在 #452。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次。
+要回報到 #452。2026-11-09 已在 iCloud 用 repo 內 build 的 binary（Developer ID 簽章、`--cli`）做過第 1–4 步；verify r1 修正後（先查詢再算 `already_removed`、`undo_note`）重做第 1–5 步，五步都如上；verify r2 修正後（`covered_by_earlier_row`）重做第 2、5、6 步，都如上；第 5 步與第 6(b) 步兩邊的原文都是 dry run `Event not found: <id>`、實際呼叫 `Event not found`（結果見 #452 的 Verify-fix）；出版前用出版的 binary 再做一次。結果記在 #452。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次。
 
 ## Release gate：行事曆操作與單純 copy_event 的 undo 紀錄（#273）
 
