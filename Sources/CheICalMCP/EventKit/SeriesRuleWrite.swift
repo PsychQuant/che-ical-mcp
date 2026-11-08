@@ -87,6 +87,12 @@ enum SeriesRuleWrite {
             return false
         }
 
+        /// Span `all`, or span `future` from the first occurrence: one save over the whole series.
+        var isWholeSeries: Bool {
+            if case .wholeSeries = self { return true }
+            return false
+        }
+
         var anchor: Date? {
             switch self {
             case .oneOccurrence: return nil
@@ -324,7 +330,7 @@ enum SeriesRuleWrite {
     static let unwritableRuleReason = "This series' rule has parts recurrence cannot write (a numbered weekday such as the second Tuesday, set positions, months, weeks or days of the year, a week start other than Monday on a weekly rule repeating every two weeks or more, when it splits the rule's days and the series' first weekday between two weeks that Monday would keep together, or the reverse, or more than one rule), so on a series that has started its rule cannot be changed from an occurrence that has already happened. Leave recurrence out to keep the rule. Nothing was written."
     static let calendarUnwritableReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too, unless the call also changes the rule, and this series' rule has parts recurrence cannot write (or could not be read), so no rule given here is known to keep the earlier occurrences where they are. Pass span 'all' to move the whole series. Nothing was written."
     static let countAfterDeletedFirstReason = "occurrence_count cannot be used here: the series' first occurrence was deleted, and the store counts from the start of the original series (from a later occurrence with span 'future', 4 from the seventh occurrence gave 1). This route was not measured. Use end_date. Nothing was written."
-    static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series. Nothing was written."
+    static let allDayReason = "all_day cannot change from a later occurrence: with span 'future' it left a timed and an all-day occurrence on that day, and lost the series' last occurrences. Pass span 'all' for the whole series, unless it has an occurrence edited on its own, which is refused too (#442). Nothing was written."
     static let countReason = "occurrence_count cannot be used with span 'future' from a later occurrence: the store counts from the start of the original series, so 4 from the seventh occurrence gave 1, and the occurrences after it were gone. Use end_date. Nothing was written."
     static let calendarReason = "calendar_name with span 'future' from a later occurrence moves every occurrence, the earlier ones too, unless the call also changes the rule. Pass span 'all' to move the whole series. To move the occurrences from one that has not happened yet on, pass recurrence with span 'future' from it and a bound other than the series' own: on a series with an occurrence_count, an end_date or no bound moved only those (measured). Nothing was written."
     static let zoneChangeReason = "This series has started, and timezone cannot change from an occurrence that has already happened: the store keeps the start of the occurrence the write starts from and repeats the others at that wall-clock time in the zone it then has, so occurrences that happened move, by an hour across a daylight-saving change (measured: a weekly series of 10 had two occurrences move and lost its last one), or near midnight to another day (not measured). Another spelling of the same zone counts as a change, because a zone write rewrites the series, and so does any zone on an event with no zone of its own (item_timezone is null), this Mac's included. To keep the zone, leave timezone out or pass the identifier item_timezone shows. To change the zone from an occurrence that has not happened yet on, pass span 'future' with its occurrence_date: the earlier occurrences stayed as they were (measured on iCloud). Nothing was written."
