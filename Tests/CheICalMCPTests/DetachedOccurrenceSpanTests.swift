@@ -997,6 +997,17 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         }
     }
 
+    /// Cluster verify r4 (LOW): the facts' wiring, which only EventKit can run: unlisted and empty
+    /// listings fail closed, and coverage is read over the end of the listing ranges.
+    func testTheAllDayFactsFailClosed() throws {
+        let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func allDayEditFacts(", in: SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))))
+        XCTAssertTrue(body.contains("let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\\.end).max() else { return (false, true, false) }"), body)
+        XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return (false, true, false) }"), body)
+        XCTAssertTrue(body.contains("if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false, true) }"), body)
+        XCTAssertTrue(body.contains("scannedTo: listedTo"), body)
+        XCTAssertTrue(body.contains("return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)"), body)
+    }
+
     /// Cluster verify r3 (LOW): clearing the rule in the same call leaves one event.
     func testClearingTheRuleTakesAnAllDayChange() {
         XCTAssertFalse(DetachedOccurrenceSpan.refusesAllDayChange(wholeSeries: true, hasRules: true, requested: true, current: false,

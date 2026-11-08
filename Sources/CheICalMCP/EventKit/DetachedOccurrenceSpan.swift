@@ -627,7 +627,7 @@ enum DetachedOccurrenceSpan {
         !coversWholeSeries
     }
 
-    static let allDayUnknownReason = "This series reaches past what can be listed (about five years from its start, or no end), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+    static let allDayUnknownReason = "The scan cannot show where this series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
 
     static let allDayUnlistedReason = "This series' occurrences could not be listed, so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
 
