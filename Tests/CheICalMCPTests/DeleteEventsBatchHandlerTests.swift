@@ -494,6 +494,30 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertEqual(calls, [[series]], "the occurrence's row is not sent")
     }
 
+    /// Cluster verify r2: the series' row refused on its own (the first occurrence moved past the next
+    /// slot, so neither the stand-in nor the first-occurrence route takes it). The occurrence's row is
+    /// kept and runs first, as on main, and the series' row then reaches the rest: nothing is newly
+    /// refused, in both modes.
+    func testAListedSeriesRefusedAloneKeepsItsOccurrenceRow() async throws {
+        let firstSlot = base, movedTo = base.addingTimeInterval(10 * day)
+        let moved = FirstRemainingOccurrence.Candidate(eventIdentifier: ownId(0), isDetached: true, hasRecurrenceRules: false,
+                                                       start: movedTo, slot: firstSlot)
+        let occurrences = [moved, unedited(7), unedited(14)]
+        let listing = [BatchDeletionListedEvent(identifier: ownId(0), start: movedTo, end: movedTo, slot: firstSlot, isDetached: true),
+                       BatchDeletionListedEvent(identifier: series, start: base.addingTimeInterval(7 * day), end: base.addingTimeInterval(7 * day),
+                                                slot: base.addingTimeInterval(7 * day))]
+        let range = args(after: base.addingTimeInterval(-day), before: base.addingTimeInterval(15 * day), span: "all", dryRun: true)
+        let dry = try await call(SeriesModel(series: series, occurrences: occurrences, listed: listing), range)
+        XCTAssertEqual(dry["deletions"] as? Int, 2, "\(dry)")
+        XCTAssertTrue((dry["events_to_delete"] as? [[String: Any]] ?? []).allSatisfy { $0["error"] == nil }, "\(dry)")
+        let model = SeriesModel(series: series, occurrences: occurrences, listed: listing)
+        var real = range; real["dry_run"] = .bool(false)
+        let answer = try await call(model, real)
+        XCTAssertEqual(answer["failed"] as? Int, 0, "\(answer)")
+        let left = await model.left
+        XCTAssertEqual(left, 0)
+    }
+
     /// #427 cluster verify: by date range too, a series' row that the real call deletes through its
     /// first occurrence says so in the dry run, as by event_ids.
     func testARangeRowThroughTheFirstOccurrenceCarriesItsUndoNote() async throws {

@@ -1358,10 +1358,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #442: it answered updated and an occurrence nobody created appeared (device). Read from the
         // reach, so span future from the first occurrence (the same save over the whole series) is
         // refused too (cluster verify); still before the first write.
+        // Cluster verify r2: a series the scan cannot rule out is refused too (fail closed).
+        var allDayFacts: (edited: Bool, unknown: Bool)?
         if DetachedOccurrenceSpan.refusesAllDayChange(
             wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
-            hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason)
+            hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) {
+            throw EventKitError.occurrenceAddressRefused(reason: allDayFacts?.edited == false
+                ? DetachedOccurrenceSpan.allDayUnknownReason : DetachedOccurrenceSpan.allDayChangeReason)
         }
         let now = Date()
         let happened = reach.anchor.map {
@@ -2186,7 +2189,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #226: moves an event (or one occurrence) to another calendar. In place first, which
-    /// keeps the identifier within an account and every field; see `EventMovePolicy` for when
+    /// keeps every field, and the identifier on iCloud (on Google it changed within one account, #435); see `EventMovePolicy` for when
     /// it splits, falls back to copy + delete, or refuses.
     func moveEvent(
         identifier: String,
@@ -2287,7 +2290,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             copy: { try copyOut(false) },
             split: { try copyOut(true) })
         // #435: older records of this event follow it to its new identifier.
-        if result.eventIdentifier != identifier, !result.eventIdentifier.isEmpty, result.method == .inPlace {
+        if result.method == .inPlace, CalendarUndoManager.identifierChanged(from: identifier, to: result.eventIdentifier) {
             await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier)
         }
         if let undo { await CalendarUndoManager.shared.record(undo) }
@@ -3043,7 +3046,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             markNeedsRefresh()
             // #435: on Google a move within one account gave a new identifier, its undo too.
-            if let restoredID = event.eventIdentifier, restoredID != movedID {
+            if let restoredID = event.eventIdentifier, CalendarUndoManager.identifierChanged(from: movedID, to: restoredID) {
                 await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID)
                 return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar (new ID: \(restoredID))"
             }
