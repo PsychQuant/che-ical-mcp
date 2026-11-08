@@ -437,7 +437,7 @@ final class DeleteUndoTests: XCTestCase {
         let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoBatch\(ops\)\.message"#, in: undo)
         XCTAssertEqual(call.count, 1)
         if let call = call.first { XCTAssertGreaterThan(call.lowerBound, arm.lowerBound) }
-        let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation]) async throws", in: source))
+        let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation], restoreAvailable: Bool = false) async throws", in: source))
         let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing\)"#, in: body)
         XCTAssertEqual(message.count, 1)
     }
