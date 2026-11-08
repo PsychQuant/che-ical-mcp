@@ -53,8 +53,9 @@ final class UndoPartialRestoreHandlerTests: XCTestCase {
 
     private let refusal = UndoRestoreDestinationMissingError(findings: [], total: 4)
 
-    private func kept(_ members: [UndoOperation]) -> UndoBatchKeptUnavailable {
-        UndoBatchKeptUnavailable(kept: members, message: "Undone batch (2 operations). 2 items of this batch were not restored")
+    private func kept(_ members: [UndoOperation], restored: [UndoOperation]? = nil) -> UndoBatchKeptUnavailable {
+        UndoBatchKeptUnavailable(kept: members, restored: restored ?? [reminder("A"), reminder("C")],
+                                 message: "Undone batch (2 operations). 2 items of this batch were not restored")
     }
 
     /// The batch of a reminder batch delete (or a cleanup): two restored, two kept.
@@ -177,5 +178,26 @@ final class UndoPartialRestoreHandlerTests: XCTestCase {
         XCTAssertTrue(flags.isEmpty, "nothing ran")
         let after = await history.historySnapshot()
         XCTAssertEqual(after.entries.count, 2)
+    }
+
+    /// PR #496 round 1: the restored items leave a redo record, as a whole batch undo does, so redo
+    /// answers for them (a batch of deletes writes nothing on redo, #247) and does not jump to an
+    /// older undone operation. The kept record stays on the undo history.
+    func testAPartialRestoreLeavesARedoRecordForTheRestoredItems() async throws {
+        let (history, _, server, id) = try await setUp([.failure(kept([reminder("B"), reminder("D")]))])
+        _ = await server.handleToolCallForTesting(name: "undo", arguments: ["restore_available": .bool(true)])
+
+        let snapshot = await history.historySnapshot()
+        XCTAssertEqual(snapshot.redoCount, 1)
+        XCTAssertEqual(snapshot.entries.first?.id, id)
+
+        let redo = await server.handleToolCallForTesting(name: "redo", arguments: [:])
+        let redoText = try text(redo)
+        let answer = try object(redo)
+        XCTAssertEqual(answer["success"] as? Bool, false, redoText)
+        XCTAssertTrue(redoText.contains("delete_reminders_batch"), redoText)
+        let after = await history.historySnapshot()
+        XCTAssertEqual(after.redoCount, 0)
+        XCTAssertEqual(after.entries.first?.id, id, "the kept record is untouched")
     }
 }

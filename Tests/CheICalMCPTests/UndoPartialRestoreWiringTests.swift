@@ -37,7 +37,7 @@ final class UndoPartialRestoreWiringTests: XCTestCase {
         let handler = try Self.body("private func handleUndo(arguments:", in: "Server.swift")
         XCTAssertTrue(handler.contains("executeUndo(record.operation, restoreAvailable: restoreAvailable)"))
         XCTAssertTrue(handler.contains("catch let kept as UndoBatchKeptUnavailable"))
-        XCTAssertTrue(handler.contains("restoreFailedUndo(record, remaining: .batch(kept.kept))"))
+        XCTAssertTrue(handler.contains("finishPartialUndo(record, kept: .batch(kept.kept), restored: .batch(kept.restored))"))
         XCTAssertTrue(handler.contains("catch let stopped as UndoBatchPartialRestoreStoppedError"))
         XCTAssertTrue(handler.contains("restoreFailedUndo(record, remaining: .batch(stopped.remaining))"))
     }

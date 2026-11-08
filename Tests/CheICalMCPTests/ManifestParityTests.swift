@@ -559,7 +559,7 @@ final class ManifestParityTests: XCTestCase {
              "discarding it drops every item of the batch"),
             ("#287: restore_available restores the items whose calendar or list is in place and keeps the others",
              "Called with restore_available set to true (ask the user first), such a batch instead restores the items whose calendar or list is in place and keeps an entry of only the others, under the same id",
-             "unless undo is called with restore_available, which restores the items whose calendar or list is in place and keeps an entry of only the others under the same id"),
+             "called with restore_available (ask the user first), such a batch undo instead restores the items whose calendar or list is in place and keeps an entry of only the others under the same id"),
             ("#248: a batch undo that fails part-way keeps only the items not yet restored",
              "A batch undo that fails part-way keeps only the items not yet restored.",
              "a batch undo that fails part-way keeps only the items not yet restored;"),

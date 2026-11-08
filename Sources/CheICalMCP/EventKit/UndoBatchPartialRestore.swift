@@ -7,7 +7,8 @@ import Foundation
 /// destination is in place and keeps a record of only the others, under the same id, as a write
 /// that fails part-way has been kept since #248 A (`CalendarUndoManager.restoreFailedUndo(_:remaining:)`).
 /// Opt-in, so the agent asks the user before a batch is split; without the argument the refusal
-/// stands. Members are restored independently, in recorded order: each recreates one item and reads
+/// stands. Members are restored independently, in the order a whole batch undo runs them (the
+/// reverse of the recorded order, `UndoBatchExecution`): each recreates one item and reads
 /// no other member's result (a deleted occurrence too, #244), so none needs another one with it.
 /// A destination that is only unavailable for now (an account still syncing) leaves the kept
 /// members for a later undo, which the text says.
@@ -69,6 +70,17 @@ enum UndoBatchPartialRestore {
             return (try await runMembers(parts.restorable), parts)
         } catch let partial as UndoBatchPartiallyUndoneError {
             throw UndoBatchPartialRestoreStoppedError(partial: partial, kept: parts)
+        } catch is UndoRestoreDestinationMissingError {
+            // PR #496 round 1: a calendar or list gone between the split and the subset's own check;
+            // nothing was written, and the answer is the whole entry's refusal.
+            throw refusal
+        } catch let permanent as UnrecoverableUndoError {
+            // PR #496 round 1: #248 A passes a permanent error on alone when nothing was restored and
+            // no other member waits (one restorable member); `handleUndo` would discard the whole
+            // record, blocked members included, which the plain path keeps as never attempted.
+            // Every other error discards nothing (`UndoFailureDisposition`) and is passed on: the
+            // record is kept whole, and nothing of it was written.
+            throw UndoBatchPartialRestoreStoppedError(permanent: permanent, kept: parts)
         }
     }
 
@@ -78,7 +90,8 @@ enum UndoBatchPartialRestore {
         let count = kept.blocked.count
         let items = count == 1 ? "1 item of this batch was" : "\(count) items of this batch were"
         let those = count == 1 ? "that item" : "those \(count) items"
-        return restored + ". \(items) not restored, because the calendar or list each would be recreated in is missing or read-only: "
+        // The batch text may already end with a sentence of its own (#261's differences).
+        return restored + (restored.hasSuffix(".") ? " " : ". ") + "\(items) not restored, because the calendar or list each would be recreated in is missing or read-only: "
             + describe(kept.findings) + "."
             + " This history entry was kept with only \(those), under the same id; run undo again once their calendar or list is back"
             + " (with restore_available set to true if only some of them can be restored then)."
@@ -86,15 +99,16 @@ enum UndoBatchPartialRestore {
             + " Giving up this undo with discard_id drops only \(those) and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
     }
 
-    /// How many items are stopped, by kind and problem, with up to three titles each, in the order
-    /// the batch meets them. No calendar, list or account name (#37): a shared calendar's title is set
-    /// remotely and an account name is often an e-mail address.
+    /// How many items are stopped, per calendar or list and problem, with up to three titles each, in
+    /// the order the batch meets them. A calendar or list is described, not named (#37): a shared
+    /// calendar's title is set remotely and an account name is often an e-mail address; its recorded
+    /// identifier only keeps two of them apart.
     static func describe(_ findings: [UndoRestoreFinding]) -> String {
         var groups: [(key: String, item: String, words: String, titles: [String])] = []
         for finding in findings {
             let (item, container) = finding.destination.isReminder ? ("reminder", "list") : ("event", "calendar")
             let state = finding.problem == .missing ? "is not available" : "is read-only"
-            let key = "\(item)|\(state)"
+            let key = "\(item)|\(finding.destination.containerID)|\(state)"
             if let index = groups.firstIndex(where: { $0.key == key }) {
                 groups[index].titles.append(finding.destination.itemTitle)
             } else {
@@ -115,6 +129,14 @@ private extension UndoRestoreDestination {
         if case .reminderList = self { return true }
         return false
     }
+
+    /// The recorded calendar or list identifier, which keeps two of them apart in the text.
+    var containerID: String {
+        switch self {
+        case .eventCalendar(let snapshot): return snapshot.calendarIdentifier
+        case .reminderList(let snapshot): return snapshot.calendarIdentifier
+        }
+    }
 }
 
 /// #287: a partial restore finished. Not shown as an error: `handleUndo` puts back a record of
@@ -125,6 +147,8 @@ private extension UndoRestoreDestination {
 /// list or account name.
 struct UndoBatchKeptUnavailable: Error, Sendable {
     let kept: [UndoOperation]
+    /// The members restored, for the redo record (PR #496 round 1).
+    let restored: [UndoOperation]
     let message: String
 }
 
@@ -145,25 +169,54 @@ struct UndoBatchPartialRestoreStoppedError: LocalizedError, Sendable {
         self.remaining = remaining
         self.message = message
     }
-
     init(partial: UndoBatchPartiallyUndoneError, kept: UndoBatchPartialRestore.Split) {
         let count = kept.blocked.count
         let items = count == 1 ? "1 item whose calendar or list is missing or read-only was" : "\(count) items whose calendar or list is missing or read-only were"
-        let note = " \(items) not attempted (restore_available): " + UndoBatchPartialRestore.describe(kept.findings) + "."
+        let notAttempted = " \(items) not attempted (restore_available): " + UndoBatchPartialRestore.describe(kept.findings) + "."
+        let those = count == 1 ? "the 1 item" : "the \(count) items"
         if partial.remaining.isEmpty {
-            // #248 A would say the entry was discarded; it is kept for the blocked items.
+            // #248 A would say the entry was discarded; it is kept for the blocked items. What the
+            // restored items did not carry over is still named (PR #496 round 1).
             let restored = partial.restoredCount == 1 ? "1 item was" : "\(partial.restoredCount) items were"
-            let those = count == 1 ? "the 1 item" : "the \(count) items"
+            let loss = (UndoOperation.batchLossNote(events: partial.restoredEvents).map { " For the items restored: \($0)." } ?? "")
+                + UndoRestoredDifference.sentences(partial.restoredDiffering)
             message = "Undo of this batch stopped part-way: \(restored) restored, then one item cannot be restored by any retry and was dropped from this history entry."
-                + note
+                + loss + notAttempted
                 + " The entry was kept with only \(those) whose calendar or list is missing or read-only, under the same id; run undo again once their calendar or list is back."
-                + " Giving up this undo with discard_id drops only those, and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
+                + Self.giveUp(those)
                 + " The dropped item's own error follows: \(partial.memberError)"
         } else {
-            message = partial.message + note
-                + " They are kept in this history entry too, first, so they run after the items not yet restored; giving up with discard_id drops them as well."
+            // #248 A's text counts only its own remainder; the blocked items are kept too, before the
+            // member's own error (PR #496 round 1).
+            let total = partial.remaining.count + count
+            let note = notAttempted + " Besides the items not yet restored counted above, \(those) are kept in this history entry too, first, so they run after the others, so the entry holds \(total) items; giving up with discard_id drops them as well."
+            let marker = " The failed item's own error follows;"
+            if let range = partial.message.range(of: marker) {
+                message = partial.message[..<range.lowerBound] + note + partial.message[range.lowerBound...]
+            } else {
+                message = partial.message + note
+            }
         }
         self.remaining = kept.blocked + partial.remaining
+    }
+
+    /// PR #496 round 1: the restorable items' undo failed for good before any item was restored (#248
+    /// A passes such an error on alone). Those items are dropped, as the plain path drops them, and
+    /// the blocked ones, never attempted, are kept.
+    init(permanent: UnrecoverableUndoError, kept: UndoBatchPartialRestore.Split) {
+        let count = kept.blocked.count
+        let those = count == 1 ? "the 1 item" : "the \(count) items"
+        let restorable = kept.restorable.count == 1 ? "the 1 item whose calendar or list is in place" : "the \(kept.restorable.count) items whose calendar or list is in place"
+        message = "Undo of this batch stopped with no item restored: restoring \(restorable) failed in a way no retry can restore, so \(kept.restorable.count == 1 ? "it was" : "they were") dropped from this history entry."
+            + " " + UndoBatchPartialRestore.describe(kept.findings) + "."
+            + " The entry was kept with only \(those) whose calendar or list is missing or read-only, under the same id; run undo again once their calendar or list is back."
+            + Self.giveUp(those)
+            + " The failed item's own error follows: \(permanent.message)"
+        remaining = kept.blocked
+    }
+
+    private static func giveUp(_ those: String) -> String {
+        " Giving up this undo with discard_id drops only \(those), and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
     }
 }
 

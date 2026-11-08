@@ -660,19 +660,34 @@ session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#
 ## Release gate：batch undo 的部分還原（#287）
 
 #287 的 `restore_available` 只有純函式（`UndoBatchPartialRestore`）、handler 與原始碼 pin 的測試；undo 是 stateful，`--cli`
-走不到（見上表）。**出 #287 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary 之後：`undo`
-帶 `restore_available: "x"` 要回型別錯誤，不是不認得這個參數），只用名稱含 `#287` 的拋棄式日曆與清單：
+走不到（見上表）。**出 #287 的那個版本打 tag 之前**，在重啟後的 session MCP 上做，只用名稱含 `#287` 的拋棄式日曆與清單。
 
-1. 拋棄式日曆 A、B 各建兩個一次性事件 → `delete_events_batch` 用 `event_ids` 刪掉這四個 → 刪掉日曆 B → `undo`（不帶參數）：
-   整批拒絕，訊息有 `restore_available set to true`，`undo_history` 最上面仍是 `Batch (4 operations)`；
-2. `undo` 帶 `restore_available: true`：`success: true`、`partial: true`、`kept: 2`，A 的兩個事件回來（`list_events` 讀回），
-   `undo_history` 最上面是 `Batch (2 operations)`、id 與第 1 步相同，訊息說 2 個事件所在的行事曆不在、不寫行事曆名稱；
-3. `undo` 帶 `discard_id` 為該 id：只丟掉那 2 筆，下面的紀錄還在；
-4. 提醒事項：拋棄式清單 C、D 各建兩個提醒事項 → `delete_reminders_batch` 刪掉這四個 → 刪掉清單 D →
-   `undo` 帶 `restore_available: true`：C 的兩筆回來，`kept: 2`（`cleanup_completed_reminders` 記的是同一種紀錄）；
-5. 同第 4 步，但在 `undo` 之前先建一個與 D 同名的新清單：仍是 `kept: 2`（同名的清單不算）；
-6. 第 2 步之後重建不出被刪的日曆（id 不同），所以「之後再 undo 就還原保留的項目」只能用暫時不可用的來源量：有第二個帳號時，
-   在該帳號的拋棄式日曆做第 1–2 步，然後關掉再打開該帳號，`undo`（不帶參數）要還原保留的 2 筆、紀錄消失；沒有就記成沒做；
-7. 全部擋住：拋棄式日曆 E 建兩個事件 → 批次刪除 → 刪掉 E → `undo` 帶 `restore_available: true`：仍是整批拒絕，紀錄整筆保留。
+**行為探測（什麼都不寫）**：session MCP 的 `undo` 帶 `restore_available: true` 與 `discard_id: "00000000-0000-0000-0000-000000000000"`。
+新 binary 回 `restore_available cannot be combined with discard_id`；舊 binary 在 dispatch 就以不認得的參數拒絕（#448）。兩者都不碰
+undo history。
 
-結果記在 #287。結束後刪掉拋棄式日曆與清單，隔一段時間再用 `list_calendars` 確認兩次。
+**日曆與清單的建立、刪除，以及建事件與提醒事項，一律用 `--cli`**（各自獨立的 process，與 #369 第 10 步同理）：`create_calendar`
+與 `delete_calendar` 會記一筆 `.calendarOperation`，它的 undo 被拒絕並丟棄，若在 session 上做，第一次 `undo` 會碰到它而不是批次。
+session MCP 上只做批次刪除、`undo`、`redo`、`undo_history`。每一步開始前先看 `undo_history`，最上面要是那一步的批次紀錄。
+
+1. `--cli`：建拋棄式日曆 A、B，各建兩個一次性事件 → session：`delete_events_batch` 用 `event_ids` 刪掉這四個 → `--cli`：刪掉日曆 B →
+   session：`undo`（不帶參數）：整批拒絕（`2 of its 4 deleted items cannot be restored`），訊息有 `restore_available set to true`，
+   `undo_history` 最上面仍是 `Batch (4 operations)`；
+2. session：`undo` 帶 `restore_available: true`：`success: true`、`partial: true`、`kept: 2`，訊息開頭是 `Undone batch (2 operations).`，
+   接著 `2 items of this batch were not restored, ... 2 events in a calendar that is not available: ...`，不寫行事曆名稱；`--cli`：
+   `list_events` 限定日曆 A，兩個事件回來；`undo_history` 最上面是 `Batch (2 operations)`、id 與第 1 步相同，`redo_available` 是 1；
+3. session：`redo`：`success: false`，指向重做刪除的工具，什麼都沒寫；`undo_history` 最上面仍是第 2 步的紀錄；
+4. session：`undo` 帶 `discard_id` 為該 id：只丟掉那 2 筆，`description` 是 `Batch (2 operations)`；
+5. 提醒事項：`--cli` 建拋棄式清單 C、D，各建兩個提醒事項 → session：`delete_reminders_batch` 刪掉這四個 → `--cli`：刪掉清單 D →
+   session：`undo` 帶 `restore_available: true`：`kept: 2`，訊息是 `2 reminders in a list that is not available: ...`，C 的兩筆回來
+   （`cleanup_completed_reminders` 記的是同一種紀錄）；
+6. 同第 5 步，但 `--cli` 在 `undo` 之前先建一個與 D 同名的新清單：仍是 `kept: 2`（同名的清單不算，#242）；
+7. **需要使用者在場（切換真實帳號）**：只在有 Google 或 Exchange 等非 iCloud 帳號時做，否則記成無法執行。使用者在該帳號裡手動建
+   拋棄式日曆 G（`create_calendar` 只能建在預設來源），`--cli` 在 G 與 iCloud 的拋棄式日曆 H 各建兩個事件 → session：
+   `delete_events_batch` 刪掉這四個 → 使用者在「系統設定 > 網際網路帳號」關掉該帳號的行事曆 → `--cli`：`list_calendars` 確認看不到
+   G → session：`undo` 帶 `restore_available: true`：`kept: 2`，H 的兩個回來 → 使用者把該帳號的行事曆打開 → `--cli`：`list_calendars`
+   確認 G 回來且 id 與原本相同（不同就記下來回報，這一步到此為止）→ session：`undo`（不帶參數）：還原 G 的兩個事件，紀錄消失；
+8. 全部擋住：`--cli` 建拋棄式日曆 E 與兩個事件 → session：批次刪除 → `--cli`：刪掉 E → session：`undo` 帶 `restore_available: true`：
+   仍是整批拒絕（`2 of its 2 deleted items cannot be restored`，不提 `restore_available`），紀錄整筆保留；之後用 `discard_id` 放棄它。
+
+結果記在 #287。結束後用 `--cli` 刪掉拋棄式日曆與清單（G 由使用者刪），隔一段時間再用 `list_calendars` 確認兩次。

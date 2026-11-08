@@ -3232,7 +3232,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             split: { try await self.splitByRestoreDestination(ops) },
             runMembers: { members in try await self.undoBatch(members) })
         if let kept {
-            throw UndoBatchKeptUnavailable(kept: kept.blocked, message: UndoBatchPartialRestore.keptMessage(restored: outcome.message, kept: kept))
+            throw UndoBatchKeptUnavailable(kept: kept.blocked, restored: kept.restorable, message: UndoBatchPartialRestore.keptMessage(restored: outcome.message, kept: kept))
         }
         return outcome
     }

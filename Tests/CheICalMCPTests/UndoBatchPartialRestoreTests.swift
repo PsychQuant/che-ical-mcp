@@ -178,4 +178,99 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
                                                      total: members.count)
         XCTAssertFalse(all.message.contains("restore_available"), all.message)
     }
+
+    // MARK: - PR #496 round 1
+
+    /// One restorable member (A) and every other one blocked.
+    private var onlyA: UndoBatchPartialRestore.Split {
+        UndoBatchPartialRestore.split(members) { destination in
+            if case .eventCalendar(let snapshot) = destination, snapshot.calendarIdentifier == self.a.calendarIdentifier { return nil }
+            return .missing
+        }
+    }
+
+    /// MEDIUM 3: the only restorable member fails with a permanent error. #248 A returns that error
+    /// alone (nothing restored, nothing waiting), which used to discard the whole record, blocked
+    /// members included; they are kept now.
+    func testAPermanentFailureOfTheOnlyRestorableMemberKeepsTheBlockedOnes() async throws {
+        let steps = Steps()
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, split: onlyA,
+                              runFails: UnrecoverableUndoError(message: "rollback failed"), steps: steps)
+            XCTFail("the failure must surface")
+        } catch let stopped as UndoBatchPartialRestoreStoppedError {
+            XCTAssertEqual(stopped.remaining.map(\.description), onlyA.blocked.map(\.description))
+            XCTAssertTrue(stopped.message.contains("rollback failed"), stopped.message)
+            XCTAssertTrue(stopped.message.contains("kept with only the 4 items whose calendar or list is missing or read-only"),
+                          stopped.message)
+            XCTAssertFalse(stopped.message.contains("was discarded"), stopped.message)
+        }
+    }
+
+    /// A failure that keeps a record (any error but a permanent one, written nothing) is passed on as
+    /// it is: `handleUndo` keeps the record whole, blocked members included.
+    func testATransientFailureOfTheSubsetIsPassedOn() async throws {
+        let steps = Steps()
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, runFails: EventKitError.eventNotFound(identifier: "x"), steps: steps)
+            XCTFail("the failure must surface")
+        } catch let error as EventKitError {
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
+        }
+    }
+
+    /// LOW: a calendar gone between the split and the subset's own check refuses the subset; the
+    /// answer is the whole entry's refusal, which counts every item of the entry.
+    func testTheSubsetsOwnRefusalIsAnsweredWithTheWholeEntrysRefusal() async throws {
+        let steps = Steps()
+        let subset = UndoRestoreDestinationMissingError(findings: Array(split.findings.prefix(1)), total: 3)
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, runFails: subset, steps: steps)
+            XCTFail("the refusal must surface")
+        } catch let error as UndoRestoreDestinationMissingError {
+            XCTAssertEqual(error.message, refused.message)
+        }
+    }
+
+    /// LOW: the text after a batch text that ends in a period does not double it, and two calendars
+    /// that are missing are two groups.
+    func testTheKeptTextKeepsCalendarsApartAndPunctuation() {
+        let other = UndoSnapshotFixtures.event(title: "F")
+        let twoCalendars = UndoBatchPartialRestore.split([.deleteEvent(snapshot: a), .deleteEvent(snapshot: b), .deleteEvent(snapshot: other)]) {
+            if case .eventCalendar(let snapshot) = $0, snapshot.calendarIdentifier == self.a.calendarIdentifier { return nil }
+            return .missing
+        }
+        let message = UndoBatchPartialRestore.keptMessage(restored: "Undone batch (1 operation). Restored reminder 'R' — check it.", kept: twoCalendars)
+        XCTAssertFalse(message.contains(".."), message)
+        XCTAssertTrue(message.contains("1 event in a calendar that is not available: 'B'; 1 event in a calendar that is not available: 'F'"), message)
+    }
+
+    /// LOW: on a part-way stop the #287 note comes before the member's own error, and the count of
+    /// what the entry keeps adds up.
+    func testThePartWayNoteComesBeforeTheMembersError() async throws {
+        let steps = Steps()
+        let partial = UndoBatchPartiallyUndoneError(remaining: [members[0]], restoredCount: 2, memberError: "eventkit_error_1")
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, runFails: partial, steps: steps)
+            XCTFail("the part-way failure must surface")
+        } catch let stopped as UndoBatchPartialRestoreStoppedError {
+            let note = try XCTUnwrap(stopped.message.range(of: "were not attempted"))
+            let member = try XCTUnwrap(stopped.message.range(of: "eventkit_error_1"))
+            XCTAssertLessThan(note.lowerBound, member.lowerBound, stopped.message)
+            XCTAssertTrue(stopped.message.contains("so the entry holds 3 items"), stopped.message)
+        }
+    }
+
+    /// LOW: a dropped last member still names what the restored ones did not carry over.
+    func testADroppedLastMemberStillNamesTheRestoredDifferences() async throws {
+        let steps = Steps()
+        let partial = UndoBatchPartiallyUndoneError(remaining: [], restoredCount: 1, memberError: "gone", failing: .dropped,
+                                                    restoredDiffering: [UndoRestoredDifference(title: "R1", storeDiffers: ["due"])])
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, runFails: partial, steps: steps)
+            XCTFail("the part-way failure must surface")
+        } catch let stopped as UndoBatchPartialRestoreStoppedError {
+            XCTAssertTrue(stopped.message.contains("R1") && stopped.message.contains("due"), stopped.message)
+        }
+    }
 }

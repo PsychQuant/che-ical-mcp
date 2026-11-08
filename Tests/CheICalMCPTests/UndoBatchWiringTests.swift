@@ -133,9 +133,9 @@ final class UndoBatchWiringTests: XCTestCase {
 
         // Every `.batch(...)` built in Sources (a `case .batch(` match is not one): the two event
         // builders, the reminder builder, and five that rebuild an existing record's members (the
-        // #244 refusal check of a batch, a narrowed batch, a nested batch's remainder, and #287's two
-        // narrowings in `handleUndo`: the members a partial restore kept, and those with the
-        // remainder of one that stopped part-way).
+        // #244 refusal check of a batch, a narrowed batch, a nested batch's remainder, and #287's three
+        // in `handleUndo`: the members a partial restore kept, the members it restored (their redo
+        // record), and the kept ones with the remainder of one that stopped part-way).
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?
@@ -149,7 +149,7 @@ final class UndoBatchWiringTests: XCTestCase {
         }
         // UndoManager.swift's second is `replacingEventIdentifier` (#435): the same members, with one
         // identifier replaced, so nothing new can run last.
-        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 3, "UndoBatchRestore.swift": 1],
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 4, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 

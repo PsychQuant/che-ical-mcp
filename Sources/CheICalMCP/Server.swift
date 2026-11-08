@@ -1676,7 +1676,8 @@ class CheICalMCPServer {
         } catch let kept as UndoBatchKeptUnavailable {
             // #287: some members restored; the ones whose calendar or list is missing or read-only
             // are kept, under the same id. A success that kept some items.
-            await undoManager.restoreFailedUndo(record, remaining: .batch(kept.kept))
+            // PR #496 round 1: the restored items leave a redo record, as a whole batch undo does.
+            await undoManager.finishPartialUndo(record, kept: .batch(kept.kept), restored: .batch(kept.restored))
             return try actionResult(["action": "undo", "success": true, "partial": true, "kept": kept.kept.count,
                                      "message": kept.message])
         } catch let stopped as UndoBatchPartialRestoreStoppedError {
