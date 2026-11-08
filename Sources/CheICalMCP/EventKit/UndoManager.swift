@@ -471,7 +471,7 @@ enum UndoOperation {
             if snapshot.restoresFromRules {
                 // #319: a single record names its window by its instants (PR #494 round 1).
                 restore = snapshot.exceptions.map {
-                    " (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowRange($0.window))): \(UndoOperation.seriesExceptionsListingNote))"
+                    " (undo recreates the series and its exceptions within the checked window\($0.extraWindows.isEmpty ? "" : "s") (\(UndoOperation.windowRanges($0.windows))): \(UndoOperation.seriesExceptionsListingNote))"
                 } ?? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
             }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"

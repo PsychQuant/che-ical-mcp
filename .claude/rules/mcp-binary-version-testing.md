@@ -210,16 +210,20 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 多年前的系列，刪除前後的場次能在一次查詢內列出且 `/RID=` 照舊；整個系列 undo 重建的系列，其場次讀回
 的 identifier 是新系列的 id、`occurrenceDate` 等於規則時段（`OccurrenceSlotGuard.holder` 用它）。undo 是
 stateful 的，`--cli` 走不到（見上表），所以**出 #319／#321 的那個版本打 tag 之前**，在重啟後的 session
-MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或 `#321` 的拋棄式日曆：
+MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或 `#321` 的拋棄式日曆。每一步建的系列用自己的
+標題（例如「#321 step 4」），因為 `create_event` 會把同一日曆裡 30 秒內同標題同開始的事件當成重複而略過；
+每次建立都確認回應是 created、不是 skipped：
 
 1. **#319 舊系列**：`create_event` 建一個開始於約六年前、不設結束的每週系列 → 用 `--cli` 刪掉一個
    未來兩週內的場次（span `this`），再用 `--cli` 改另一個未來場次的標題（span `this`；兩個寫入都不進 session
    的 undo stack）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除、1 個編輯過的場次
    以一次性事件回來，視窗起訖約為刪除前三年到一年後，並說系列在視窗前後都有場次；`list_events` 讀回：
    被刪的那天沒有場次，被改的那天只有一個（一次性事件，改過的標題）。修正前的 binary 會兩個都依規則回來。
-2. **#321 同名的另一個系列**：同一拋棄式日曆建兩個同標題、同時間的每週系列 A、B → `delete_event` 刪 A 的
-   第二個場次（span `this`）→ `undo`：要寫回一次性事件（修正前回「already restored by its series」、什麼都沒寫）；
-   `list_events` 讀回那個時間有 B 的場次與一次性事件各一個。
+2. **#321 同名的另一個系列**：同一拋棄式日曆建同標題的每週系列 A，再建 B，B 的開始比 A 早一週（S − 7 天，
+   之後的場次與 A 同時）；`create_event` 會把 30 秒內同標題同開始的事件當成重複而略過，所以 B 不可與 A 同一個
+   開始時間，**確認 B 的回應是 created、不是 skipped** → `delete_event` 刪 A 的第二個場次（span `this`）→ `undo`：
+   要寫回一次性事件（修正前回「already restored by its series」、什麼都沒寫）；`list_events` 讀回那個時間有 B 的
+   場次與一次性事件各一個。
 3. **#321 先 undo 整個系列，再 undo 單一場次（例外擷取到的形狀）**：建每週 ×4 系列 → 刪第三場（span `this`）→
    `delete_event` span `all` → `undo`（系列回來、第三場維持刪除）→ `undo`：第三場以一次性事件回來；讀回第三場那天
    只有一個事件。

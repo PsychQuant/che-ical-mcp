@@ -807,4 +807,15 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(text.contains("alarms_note"), "\(place): \(text)")
         }
     }
+
+    /// PR #494 round 4: the `move_events_batch` description says the split undo's slot check is by
+    /// series and original slot (#321), not by title, and that a held edited occurrence keeps the
+    /// copy as the only version with its edit.
+    func testTheMoveDescriptionSaysTheSplitSlotCheckIsBySeries() {
+        let description = CheICalMCPServer.defineTools().first { $0.name == "move_events_batch" }?.description ?? ""
+        XCTAssertFalse(description.contains("with the split occurrence's title"), description)
+        XCTAssertTrue(description.contains("not by title"), description)
+        XCTAssertTrue(description.contains("moved off its slot"), description)
+        XCTAssertTrue(description.contains("the only version with that edit"), description)
+    }
 }

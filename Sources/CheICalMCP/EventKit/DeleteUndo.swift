@@ -247,7 +247,7 @@ extension UndoOperation {
     }
 
     /// #319: how the checked window is placed, in the words every text uses.
-    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; a count whose end cannot be shown and that ended inside it, from one day before its first occurrence or over its last four years, whichever holds more of it"
+    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count whose end cannot be shown, also the four years from one day before its first occurrence"
 
     /// #319: the window by its two instants, to the minute, in the host zone; the end is exclusive.
     /// PR #494 round 1: by instants, not days: the edges fall at the time of day of the delete or of
@@ -259,9 +259,18 @@ extension UndoOperation {
         return "from \(formatter.string(from: window.start)) up to \(formatter.string(from: window.end))"
     }
 
+    /// Round 4: every window of a record, by its instants, joined with ", and ".
+    static func windowRanges(_ windows: [DateInterval]) -> String {
+        windows.map(windowRange).joined(separator: ", and ")
+    }
+
     /// #319: on which side(s) the series has, or may have, occurrences outside its window; nil when
     /// it has none.
     static func outsideWindowNote(_ exceptions: SeriesExceptions) -> String? {
+        // Round 4: a record with two windows (a count whose end cannot be shown).
+        if !exceptions.extraWindows.isEmpty {
+            return "This series may have occurrences outside those windows (between them, where they do not meet, and after them)"
+        }
         let before = exceptions.seriesStartsBeforeWindow
         switch (before, exceptions.seriesContinuesAfterWindow, exceptions.seriesMayContinueAfterWindow) {
         case (true, true, _): return "This series has occurrences outside that window, before and after it"
@@ -280,8 +289,9 @@ extension UndoOperation {
         if outcome.notApplied {
             return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
         }
-        let window = exceptions.map { "\(windowRange($0.window)); \(seriesExceptionsWindowRule)" } ?? seriesExceptionsWindowRule
-        var note = "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (\(window)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
+        let window = exceptions.map { "\(windowRanges($0.windows)); \(seriesExceptionsWindowRule)" } ?? seriesExceptionsWindowRule
+        let checked = (exceptions?.extraWindows.isEmpty ?? true) ? "the checked window" : "the checked windows"
+        var note = "Restored from the series rules with its exceptions inside \(checked): \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside \(checked) (\(window)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
         if let outside = exceptions.flatMap(outsideWindowNote) { note += ". " + outside }
         if outcome.firstOccurrenceKeptFromRule {
             note += ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"

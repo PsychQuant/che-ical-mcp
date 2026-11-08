@@ -517,25 +517,6 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertLessThanOrEqual(range.duration, 1460 * day, "one EventKit query")
     }
 
-    /// LOW: a count whose end cannot be shown, ended years before the delete. Placed as open-ended
-    /// around the delete, its window held none of its occurrences; when that capture finds none, the
-    /// capture lists the window from its first occurrence instead, as before #319.
-    func testAnUnknownCountWithNothingAroundTheDeleteIsListedFromItsFirstOccurrence() throws {
-        let now = s0
-        let first = now.addingTimeInterval(-3650 * day)
-        let slots = (0..<10).map { first.addingTimeInterval(Double($0) * 31 * day) }
-        let store = FakeSeriesExceptionsStore()
-        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots.enumerated().filter { $0.offset != 3 }.map(\.element))
-        store.seriesEnd = .unknown
-
-        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
-
-        XCTAssertEqual(exceptions.window, UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil))
-        XCTAssertEqual(exceptions.keptSlots.count, 9)
-        XCTAssertFalse(exceptions.seriesStartsBeforeWindow)
-        XCTAssertTrue(exceptions.seriesMayContinueAfterWindow)
-    }
-
     // MARK: - PR #494 round 3: the link is noted before the exceptions restore
 
     /// The series S recorded with its exceptions (s0, s1 kept; s2 edited; s3 deleted on its own),
@@ -587,19 +568,23 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(store.log.last, "save Standup")
     }
 
-    // MARK: - PR #494 round 3, MEDIUM B: a count whose end cannot be shown, ended inside the window
+    // MARK: - PR #494 round 4: a count whose end cannot be shown records two windows
 
     /// Occurrences about a month apart from `first` (days), `count` of them, all but `missing`.
-    private func monthly(_ store: FakeSeriesExceptionsStore, from first: Double, count: Int, missing: Set<Int> = [], now: Date) -> [FakeSeriesExceptionsStore.Event] {
-        let slots = (0..<count).map { now.addingTimeInterval((first + Double($0) * 30) * day) }
+    private func monthly(_ store: FakeSeriesExceptionsStore, from first: Double, count: Int, every: Double = 30, missing: Set<Int> = [], now: Date) -> [FakeSeriesExceptionsStore.Event] {
+        let slots = (0..<count).map { now.addingTimeInterval((first + Double($0) * every) * day) }
         return store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots.enumerated().filter { !missing.contains($0.offset) }.map(\.element))
     }
 
+    private func around(_ now: Date) -> DateInterval { DateInterval(start: now.addingTimeInterval(-1094 * day), duration: 1460 * day) }
+    private func fromFirst(_ now: Date, _ first: Double) -> DateInterval {
+        UndoPostState.seriesScanWindow(firstStart: now.addingTimeInterval(first * day), ruleEnd: nil)
+    }
+
     /// Monthly on a filter, 33 occurrences, begun 2000 days and ended about 1040 days before the
-    /// delete. The window around the delete holds two of them; the window from the first
-    /// occurrence held all 33 before #319. The listing shows the series ended inside the window, so
-    /// the capture takes the window that holds more of it.
-    func testAnUnknownCountThatEndedInsideTheWindowGetsTheWindowFromItsFirstOccurrence() throws {
+    /// delete. The record holds the window around the delete and the window from the first
+    /// occurrence, which held all 33 before #319: every occurrence but the one deleted is kept.
+    func testAnUnknownCountThatEndedInsideTheWindowRecordsBothWindows() throws {
         let now = s0
         let store = FakeSeriesExceptionsStore()
         let occurrences = monthly(store, from: -2000, count: 33, missing: [5], now: now)
@@ -607,31 +592,27 @@ final class SeriesExceptionsUndoTests: XCTestCase {
 
         let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
 
-        XCTAssertEqual(exceptions.window, UndoPostState.seriesScanWindow(firstStart: now.addingTimeInterval(-2000 * day), ruleEnd: nil))
+        XCTAssertEqual(exceptions.windows, [around(now), fromFirst(now, -2000)])
         XCTAssertEqual(exceptions.keptSlots.count, 32, "every occurrence but the one deleted on its own")
-        XCTAssertFalse(exceptions.seriesStartsBeforeWindow)
         XCTAssertTrue(exceptions.seriesMayContinueAfterWindow, "its end cannot be shown")
     }
 
-    /// The same, longer than four years (70 monthly, ended about 930 days before the delete): the
-    /// window from the first occurrence and the window over its last four years hold about as many;
-    /// the one that holds more is taken, never fewer than the window from the first occurrence.
-    func testAnUnknownCountLongerThanFourYearsNeverGetsFewerThanTheOldWindow() throws {
+    /// Longer than four years: the record holds every slot the window from the first occurrence held.
+    func testAnUnknownCountKeepsEverySlotOfTheWindowFromItsFirstOccurrence() throws {
         let now = s0
         let store = FakeSeriesExceptionsStore()
         let occurrences = monthly(store, from: -3000, count: 70, now: now)
         store.seriesEnd = .unknown
-        let old = UndoPostState.seriesScanWindow(firstStart: now.addingTimeInterval(-3000 * day), ruleEnd: nil)
-        let inOld = store.events.filter { SeriesExceptionsPlanner.inWindow($0.start, old) }.count
+        let old = fromFirst(now, -3000)
+        let inOld = Set(store.events.map(\.start).filter { SeriesExceptionsPlanner.inWindow($0, old) })
 
         let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
 
-        XCTAssertGreaterThanOrEqual(exceptions.keptSlots.count, inOld)
+        XCTAssertTrue(inOld.isSubset(of: Set(exceptions.keptSlots)))
     }
 
-    /// Still running past the window (monthly until about 970 days after the delete): the window
-    /// stays around the delete.
-    func testAnUnknownCountStillRunningKeepsTheWindowAroundTheDelete() throws {
+    /// Still running past the window: both windows, the one around the delete first.
+    func testAnUnknownCountStillRunningRecordsTheWindowAroundTheDelete() throws {
         let now = s0
         let store = FakeSeriesExceptionsStore()
         let occurrences = monthly(store, from: -2000, count: 100, now: now)
@@ -639,8 +620,74 @@ final class SeriesExceptionsUndoTests: XCTestCase {
 
         let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
 
-        XCTAssertEqual(exceptions.window.start, now.addingTimeInterval(-1094 * day))
-        XCTAssertTrue(exceptions.seriesStartsBeforeWindow)
+        XCTAssertEqual(exceptions.window, around(now))
+        XCTAssertEqual(exceptions.extraWindows, [fromFirst(now, -2000)])
+    }
+
+    /// Round 4, MEDIUM 1: a continuing unknown count whose occurrences past the window were deleted
+    /// one by one, and one near the delete too. Nothing is listed past the window, which round 3 read
+    /// as "ended" and dropped the window around the delete. The record keeps it: the occurrence
+    /// deleted near the delete stays deleted.
+    func testAContinuingUnknownCountWithItsLaterOccurrencesDeletedKeepsTheWindowAroundTheDelete() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let later = Set(79..<100)  // the last one left (+340 days) is inside the window
+        let occurrences = monthly(store, from: -2000, count: 100, missing: later.union([67]), now: now)
+        store.seriesEnd = .unknown
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertTrue(exceptions.windows.contains(around(now)))
+        XCTAssertFalse(exceptions.keptSlots.contains(now.addingTimeInterval(10 * day)), "deleted near the delete: stays deleted")
+        XCTAssertTrue(exceptions.keptSlots.contains(now.addingTimeInterval(-20 * day)))
+    }
+
+    /// Round 4, MEDIUM 1: a sparse filtered count (about every two years), whose next slot after the
+    /// window lies past the listing. The window around the delete is kept with its exception.
+    func testASparseBiennialUnknownCountKeepsTheWindowAroundTheDelete() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = monthly(store, from: -5000, count: 10, every: 730, missing: [7], now: now)
+        store.seriesEnd = .unknown
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertTrue(exceptions.windows.contains(around(now)))
+        XCTAssertTrue(exceptions.keptSlots.contains(now.addingTimeInterval(-620 * day)))
+        XCTAssertFalse(exceptions.keptSlots.contains(now.addingTimeInterval(110 * day)), "deleted on its own: stays deleted")
+    }
+
+    /// The restore lists the recreated series over each window and removes the surplus in both.
+    func testTheRestoreListsEveryWindowAndRemovesTheSurplusInEach() throws {
+        let store = FakeSeriesExceptionsStore()
+        let slots = [s0, s1, s0.addingTimeInterval(400 * day), s0.addingTimeInterval(407 * day)]
+        store.seriesSlots = slots
+        let first = DateInterval(start: s0.addingTimeInterval(-day), end: s1.addingTimeInterval(day))
+        let later = DateInterval(start: slots[2].addingTimeInterval(-day), end: slots[3].addingTimeInterval(day))
+        let exceptions = SeriesExceptions(window: later, keptSlots: [s0, slots[2]], detached: [], extraWindows: [first])
+        let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
+
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 2, oneOffs: 0)))
+        XCTAssertEqual(store.starts(of: "E1"), [s0, slots[2]])
+        XCTAssertEqual(store.log.filter { $0 == "list" }.count, 2, "one listing per window")
+    }
+
+    /// The round-2 shape (nothing listed near the delete) records the window from the first
+    /// occurrence too, so its occurrences are kept.
+    func testAnUnknownCountWithNothingAroundTheDeleteIsListedFromItsFirstOccurrence() throws {
+        let now = s0
+        let first = now.addingTimeInterval(-3650 * day)
+        let slots = (0..<10).map { first.addingTimeInterval(Double($0) * 31 * day) }
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots.enumerated().filter { $0.offset != 3 }.map(\.element))
+        store.seriesEnd = .unknown
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertTrue(exceptions.windows.contains(UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)))
+        XCTAssertEqual(exceptions.keptSlots.count, 9)
         XCTAssertTrue(exceptions.seriesMayContinueAfterWindow)
     }
 }

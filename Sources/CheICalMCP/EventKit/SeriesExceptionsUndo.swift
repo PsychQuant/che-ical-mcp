@@ -20,15 +20,20 @@ enum SeriesExceptionsUndo {
         let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: seriesEnd,
                                                           deletedAt: now)
         let window = placed.window
-        let observed = observedOccurrences(of: series, ids: seriesIDs, over: window, in: store)
-        // PR #494 round 3: a count whose end cannot be shown is placed as open-ended, around the
-        // delete. When the listing shows it ended inside that window (none of its occurrences at or
-        // past the window's end, a year past it included), it is captured over the window that
-        // holds more of it: the window from its first occurrence (the one before #319) or the one
-        // ending at the last occurrence listed. So it never holds fewer than before #319.
+        let observed = observedOccurrences(of: series, ids: seriesIDs, over: [window], in: store)
+        // PR #494 round 4: a count whose end cannot be shown is placed as open-ended, around the
+        // delete, and also listed over the window from its first occurrence (the window before
+        // #319): its end is not known, so either can hold its exceptions. Both are recorded, and the
+        // restore applies the exceptions inside either. Rounds 2 and 3 chose one window by what the
+        // listing showed, which a continuing series with deleted later occurrences, or a sparse one,
+        // fooled.
         if case .unknown = seriesEnd, placed.seriesStartsBefore {
-            let end = SeriesExceptionsPlanner.observedEnd(of: observed, window: window)
-            if end.ended { return captureEndedUnknownCount(of: series, ids: seriesIDs, lastSlot: end.lastSlot, now: now, in: store) }
+            let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
+            let windows = [window, fromFirst]
+            guard var exceptions = SeriesExceptionsPlanner.capture(observedOccurrences(of: series, ids: seriesIDs, over: windows, in: store),
+                                                                   of: seriesIDs, windows: windows) else { return nil }
+            exceptions.seriesMayContinueAfterWindow = true
+            return exceptions
         }
         guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
@@ -37,43 +42,17 @@ enum SeriesExceptionsUndo {
         return exceptions
     }
 
-    /// Round 3: an unknown count that the listing shows ended before the end of the window around
-    /// the delete, its last listed slot `lastSlot` (nil: none listed, it ended before the listing).
-    /// The capture over the window from the first occurrence (the window before #319), and over the
-    /// window placed as if the rule ended at `lastSlot` (its last four years) when that one starts
-    /// later; the one with more occurrences in it, the later on a tie (closer to the delete). So it
-    /// never holds fewer than the window before #319. Its end cannot be shown, so it may still have
-    /// occurrences after either.
-    private static func captureEndedUnknownCount<Store: SeriesExceptionsStoreSource>(of series: Store.Event, ids seriesIDs: UndoPostState.OccurrenceIDs,
-                                                                                    lastSlot: Date?, now: Date, in store: Store) -> SeriesExceptions? {
-        let firstStart = store.startDate(of: series)
-        let fromFirst = UndoPostState.seriesScanWindow(firstStart: firstStart, ruleEnd: nil)
-        var candidates: [(window: DateInterval, startsBefore: Bool)] = [(fromFirst, false)]
-        if let lastSlot {
-            let ending = SeriesExceptionsPlanner.deleteWindow(firstStart: firstStart, end: .endsBy(lastSlot), deletedAt: now)
-            if ending.window.start > fromFirst.start { candidates.append((ending.window, ending.seriesStartsBefore)) }
-        }
-        var best: SeriesExceptions?
-        for candidate in candidates {
-            guard var exceptions = SeriesExceptionsPlanner.capture(observedOccurrences(of: series, ids: seriesIDs, over: candidate.window, in: store),
-                                                                   of: seriesIDs, window: candidate.window) else { continue }
-            exceptions.seriesStartsBeforeWindow = candidate.startsBefore
-            exceptions.seriesMayContinueAfterWindow = true
-            if best.map({ SeriesExceptionsPlanner.heldCount(exceptions) >= SeriesExceptionsPlanner.heldCount($0) }) ?? true { best = exceptions }
-        }
-        return best
-    }
-
-    /// The series' own occurrences, listed over `window` and a year on each side, as separate
-    /// queries: an occurrence edited on its own is matched by its current time, so one moved out of
-    /// the window is only found there (PR #318 verify B1; round 2, A: the four-year limit is per
-    /// query). #319: only this series' occurrences are snapshotted; the listing covers the calendar.
+    /// The series' own occurrences, listed over each of `windows` and a year on each side of it, as
+    /// separate queries: an occurrence edited on its own is matched by its current time, so one
+    /// moved out of a window is only found there (PR #318 verify B1; round 2, A: the four-year limit
+    /// is per query). #319: only this series' occurrences are snapshotted; the listing covers the
+    /// calendar. An occurrence listed twice (overlapping ranges) is taken once.
     private static func observedOccurrences<Store: SeriesExceptionsStoreSource>(of series: Store.Event, ids seriesIDs: UndoPostState.OccurrenceIDs,
-                                                                                over window: DateInterval, in store: Store)
+                                                                                over windows: [DateInterval], in store: Store)
         -> [SeriesExceptionsPlanner.ObservedOccurrence] {
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
         var seen = Set<String>()
-        for range in SeriesExceptionsPlanner.listingRanges(for: window) {
+        for range in windows.flatMap(SeriesExceptionsPlanner.listingRanges(for:)) {
             for occurrence in store.events(in: range, inCalendarOf: series) {
                 let occurrenceIDs = store.identifiers(of: occurrence)
                 guard UndoPostState.isOccurrence(occurrenceIDs, of: seriesIDs) else { continue }
@@ -98,9 +77,13 @@ enum SeriesExceptionsUndo {
         }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: restoredIDs.externalIdentifier)
         var generated: [(slot: Date, occurrence: Store.Event)] = []
-        for occurrence in store.events(in: exceptions.window, inCalendarOf: restored)
-        where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
-            generated.append((store.slot(of: occurrence), occurrence))
+        // Round 4: one listing per recorded window; an occurrence where they overlap is taken once.
+        for window in exceptions.windows {
+            for occurrence in store.events(in: window, inCalendarOf: restored)
+            where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
+                let slot = store.slot(of: occurrence)
+                if !generated.contains(where: { UndoPostState.sameInstant($0.slot, slot) }) { generated.append((slot, occurrence)) }
+            }
         }
         do {
             return try SeriesExceptionsRestorer.restore(

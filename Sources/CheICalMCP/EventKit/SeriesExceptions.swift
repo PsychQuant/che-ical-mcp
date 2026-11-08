@@ -23,6 +23,13 @@ struct SeriesExceptions {
     /// possible slot is at or past the window's end (an upper bound), or a count whose end cannot
     /// be shown. Never set together with `seriesContinuesAfterWindow`.
     var seriesMayContinueAfterWindow: Bool = false
+    /// PR #494 round 4: further windows the occurrences were listed over, each one EventKit query
+    /// long. A count whose end cannot be shown records the window from its first occurrence here
+    /// (the window before #319) beside `window` around the delete. Empty for every other series.
+    var extraWindows: [DateInterval] = []
+
+    /// `window` and `extraWindows`: every slot judged, kept or removed is inside one of them.
+    var windows: [DateInterval] { [window] + extraWindows }
 }
 
 /// An occurrence edited on its own: undo recreates it as a one-off event (EventKit cannot put an
@@ -101,10 +108,12 @@ enum SeriesExceptionsPlanner {
     /// when that is later, and moved earlier when the rule ends sooner, so that it reaches one day
     /// after the rule's end (an end date also cuts it there; a count's last possible slot only moves
     /// it). It so reaches at least a year past the delete; a series begun within about three years
-    /// of the delete gets the window it had before #319, and a series that ended long before the
-    /// delete is listed over its last four years: for an end date, up to that date; for a count,
-    /// the window from its first occurrence when its last possible slot is within 1459 days of the
-    /// first occurrence, else the 1460 days before that slot (not cut at it).
+    /// of the delete gets the window it had before #319. A series that ended long before the delete
+    /// is listed toward its end: for an end date, over its last four years up to that date; for a
+    /// count, the window from its first occurrence when its last possible slot is within 1459 days
+    /// of the first occurrence, else the 1460 days before that slot (not cut at it). A count whose
+    /// end cannot be shown is placed as open-ended here; the capture adds the window from its first
+    /// occurrence (PR #494 round 4).
     ///
     /// Before #319 this was the create-undo window (`UndoPostState.seriesScanWindow`, #259),
     /// anchored at the first occurrence; for a series begun more than about four years before the
@@ -173,6 +182,33 @@ enum SeriesExceptionsPlanner {
         slot >= window.start && slot < window.end
     }
 
+    /// Round 4: inside any of `windows` (`inWindow`).
+    static func inWindows(_ slot: Date, _ windows: [DateInterval]) -> Bool {
+        windows.contains { inWindow(slot, $0) }
+    }
+
+    /// Round 4: `capture(_:of:window:)` over several windows: a slot counts when it is inside any
+    /// of them. The first is the record's `window`, the rest its `extraWindows`. Nil when none of
+    /// the series' occurrences was listed inside any.
+    static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
+                        windows: [DateInterval]) -> SeriesExceptions? {
+        guard let first = windows.first else { return nil }
+        var kept: [Date] = []
+        var detached: [DetachedOccurrence] = []
+        for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
+            if occurrence.isDetached {
+                let slot = Self.ruleSlot(of: occurrence)
+                if Self.inWindows(slot, windows) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
+            } else {
+                let slot = occurrence.occurrenceDate ?? occurrence.startDate
+                if Self.inWindows(slot, windows) { kept.append(slot) }
+            }
+        }
+        guard !kept.isEmpty || !detached.isEmpty else { return nil }
+        return SeriesExceptions(window: first, keptSlots: kept.sorted(), detached: detached.sorted { $0.slot < $1.slot },
+                                extraWindows: Array(windows.dropFirst()))
+    }
+
     /// The ranges to LIST occurrences over: the window, and a year on each side of it, as three
     /// separate queries. An occurrence edited on its own is matched by its current (edited) time,
     /// not by its rule slot, so listing only the window loses one that was moved out of it (PR #318
@@ -187,20 +223,6 @@ enum SeriesExceptionsPlanner {
                 DateInterval(start: window.end, end: window.end.addingTimeInterval(margin))]
     }
 
-    /// PR #494 round 3: for a count whose end cannot be shown, whether the listing shows it ended
-    /// before the window's end (none of its listed occurrences is at or past it; the listing reaches
-    /// a year past it), and the last rule slot listed (nil when none was: it ended before the
-    /// listing). Nil when one is at or past the end: it runs on past the window.
-    static func observedEnd(of observed: [ObservedOccurrence], window: DateInterval) -> (ended: Bool, lastSlot: Date?) {
-        let slots = observed.map(ruleSlot(of:))
-        return (!slots.contains(where: { $0 >= window.end }), slots.max())
-    }
-
-    /// How many occurrences of the series a capture holds inside its window (kept and edited).
-    static func heldCount(_ exceptions: SeriesExceptions) -> Int {
-        exceptions.keptSlots.count + exceptions.detached.count
-    }
-
     /// Splits what was listed into the slots that stay and the occurrences edited on their own.
     /// Occurrences of other series (same calendar, same range) are ignored. Everything is judged
     /// by RULE SLOT against `window`, never by where an occurrence currently sits: a slot outside
@@ -213,20 +235,7 @@ enum SeriesExceptionsPlanner {
     /// margin queries always find an open-ended series' own occurrences).
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
                         window: DateInterval) -> SeriesExceptions? {
-        var kept: [Date] = []
-        var detached: [DetachedOccurrence] = []
-        for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
-            if occurrence.isDetached {
-                let slot = Self.ruleSlot(of: occurrence)
-                if Self.inWindow(slot, window) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
-            } else {
-                let slot = occurrence.occurrenceDate ?? occurrence.startDate
-                if Self.inWindow(slot, window) { kept.append(slot) }
-            }
-        }
-        guard !kept.isEmpty || !detached.isEmpty else { return nil }
-        return SeriesExceptions(window: window, keptSlots: kept.sorted(),
-                                detached: detached.sorted { $0.slot < $1.slot })
+        capture(observed, of: series, windows: [window])
     }
 
     /// The slots of the recreated series (`generated`) that undo must remove: inside the window
@@ -236,7 +245,7 @@ enum SeriesExceptionsPlanner {
     /// Slots compare as instants, to the second (`UndoPostState.sameInstant`).
     static func surplusSlots(generated: [Date], exceptions: SeriesExceptions) -> [Date] {
         generated.filter { slot in
-            SeriesExceptionsPlanner.inWindow(slot, exceptions.window)
+            SeriesExceptionsPlanner.inWindows(slot, exceptions.windows)
                 && !exceptions.keptSlots.contains { UndoPostState.sameInstant($0, slot) }
         }
     }
@@ -311,7 +320,7 @@ enum SeriesExceptionsRestorer {
         return EventKitErrorSanitizer.sanitize(underlying).code
     }
 
-    /// `generated` lists the recreated series' occurrences inside `exceptions.window`, as
+    /// `generated` lists the recreated series' occurrences inside `exceptions.windows`, as
     /// EventKit expanded the rules; `seriesStart` is the start of the recreated series itself.
     /// Throws `SeriesExceptionsRestoreError`.
     static func restore<Occurrence, OneOff>(
@@ -329,7 +338,7 @@ enum SeriesExceptionsRestorer {
         func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
         // #319: the window may start after the series' first occurrence (a series begun more than a
         // few years before the delete), where the listing cannot show it; it is required only inside.
-        let firstSlotChecked = SeriesExceptionsPlanner.inWindow(seriesStart, exceptions.window)
+        let firstSlotChecked = SeriesExceptionsPlanner.inWindows(seriesStart, exceptions.windows)
         guard !firstSlotChecked || isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
               exceptions.detached.allSatisfy({ isGenerated($0.slot) }) else {
             return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)

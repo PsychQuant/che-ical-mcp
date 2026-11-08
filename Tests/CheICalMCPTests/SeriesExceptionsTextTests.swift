@@ -141,7 +141,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     private var aroundTheDelete: DateInterval {
         DateInterval(start: iso("2025-11-08T12:00:00Z"), end: iso("2029-11-07T12:00:00Z"))
     }
-    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; a count whose end cannot be shown and that ended inside it, from one day before its first occurrence or over its last four years, whichever holds more of it"
+    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count whose end cannot be shown, also the four years from one day before its first occurrence"
 
     private func restored(startsBefore: Bool, continuesAfter: Bool) -> String {
         var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [])
@@ -254,5 +254,30 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let result = try await MoveByCopyUndo.run(copyID: "C1", restoreOriginal: { .editedSlotAlreadyHeld },
                                                   checkAndRemove: { XCTFail("must not check") })
         XCTAssertEqual(result.copy, .keptSlotHeld)
+    }
+
+    // MARK: - PR #494 round 4: two windows
+
+    private var fromTheFirst: DateInterval {
+        DateInterval(start: iso("2019-03-01T12:00:00Z"), end: iso("2023-02-28T12:00:00Z"))
+    }
+
+    func testTheUndoTextNamesBothWindows() {
+        var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [], extraWindows: [fromTheFirst])
+        exceptions.seriesMayContinueAfterWindow = true
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4).withExceptions(exceptions)
+        let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW", exceptionsOutcome: .init(stayedDeleted: 1, oneOffs: 0))
+        let both = "\(UndoOperation.windowRange(aroundTheDelete)), and \(UndoOperation.windowRange(fromTheFirst))"
+        XCTAssertTrue(message.contains("inside the checked windows: "), message)
+        XCTAssertTrue(message.contains("Exceptions outside the checked windows (\(both); \(windowRule)) are not restored"), message)
+        XCTAssertTrue(message.contains("This series may have occurrences outside those windows"), message)
+    }
+
+    func testTheHistoryLineNamesBothWindows() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
+            .withExceptions(SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [], extraWindows: [fromTheFirst]))
+        let both = "\(UndoOperation.windowRange(aroundTheDelete)), and \(UndoOperation.windowRange(fromTheFirst))"
+        XCTAssertEqual(UndoOperation.deleteEvent(snapshot: snapshot).description,
+                       "Deleted event: Standup (undo recreates the series and its exceptions within the checked windows (\(both)): \(exceptionsListing))")
     }
 }
