@@ -409,6 +409,12 @@ enum UndoOperation {
             return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
         case .batch(let operations):
             return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+        case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
+            // #466 and #435: the copy is the live event this record names; a later move of it that
+            // changed its identifier is followed, so the undo can still find and remove it. The
+            // original is a removed event's snapshot, which no move can reach.
+            return .moveByCopy(original: original, isSplit: isSplit, notCarriedOver: notCarriedOver,
+                               copyID: swapped(copyID), copy: copy)
         default:
             return self
         }
