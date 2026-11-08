@@ -544,8 +544,9 @@ end、notes、location、alarms。
    會在寫入前被拒絕，系列不變；這是預期結果，不是 regression。上面 `timezone` 與 `clear_timezone` 那兩句描述的是舊行為，要看它們，
    用一個還沒開始的系列（第 1 場在未來）重做這兩列；(g) 從還沒發生的下一場用 span `future` 帶 `timezone` 仍放行（#478 量過）。
    **系列 id 走到第一場（#428）**：第 1 場只改標題或結束（開始時間沒動），或第 1 場刪掉、第 2 場單獨改過時，系列 id 帶 span `all` 的
-   `update_event`、`delete_event` 改走該場次自己的 id：見 (h)。`id` 是系列 id（第 1 場刪掉時是新 id），回 `occurrence_id`。
-   span `future` 與 `delete_events_batch` 的 `event_ids` 在這個形狀仍被拒絕。`move_events_batch` span `all` 可搬同帳號的日曆，整個
+   `update_event`、`delete_event`、`delete_events_batch`（`event_ids`，含 dry run，#436）改走該場次自己的 id：見 (h)。`id` 是系列 id
+   （第 1 場刪掉時是新 id），回 `occurrence_id`。span `future` 在這個形狀仍被拒絕。#436 是在 Google 帳號上量到的，那裡要再跑一次
+   刪除（`create_calendar` 只建在預設來源，要手動建拋棄式日曆）。`move_events_batch` span `all` 可搬同帳號的日曆，整個
    系列搬走，要走一次；
    (g) 系列 id 加下一場的 `occurrence_date`、span `future`：`start_time`、`end_time`、`timezone`、`url`、鬧鐘、
    `structured_location` 只動後面的場次；`all_day`、`clear_recurrence`、`calendar_name` 不是（#451），訊息不給這條路；
@@ -589,10 +590,11 @@ end、notes、location、alarms。
    **打 tag 前必做（verify r4 的 MEDIUM，仍欠）**：在重啟後的 session MCP 上，先做一筆可 undo 的操作，再做這條經系列 id 的刪除，
    第一次 `undo` 要被拒絕並丟棄刪除紀錄，第二次 `undo` 要還原先前那筆（`--cli` 走不到）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
-   系列 id 單獨呼叫才會被拒絕，#428）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
+   系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
    訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。第 1 場刪掉、第 2 場只改標題的
    形狀同樣走一次。span `this` 帶系列 id：dry run 與實際都回 `occurrence_date` 那一句；
+   **#436 經第一場刪除（session MCP）**：先在 session 裡做一筆可 undo 的建立，再用 `--cli` 建一個一次性事件與一個系列、用 `--cli` 只改第 1 場的標題（都不進 session 的 undo stack）；`delete_events_batch` 的 `event_ids` 帶 [系列 id, 一次性事件]、span `all`：dry run 那一列有 `occurrence_id` 與 `undo_note`，實際回應有 `through_first_occurrence` 與 `undo_note`；`undo` 一次只把一次性事件還原、系列不回來。再用 `--cli` 建一個同形狀的系列，只帶 [系列 id]：第一次 `undo` 要被拒絕並丟棄這筆，第二次 `undo` 才還原最早那筆建立（沒在裝置上跑過）；
 7. 超出掃描範圍：開始日超過五年前的每週開放式系列，單獨改最近一場 → 用它的 id 的 `update_event` span `all`、`delete_event`
    span `all`、`delete_events_batch`（含 dry run）：都拒絕、系列不變，訊息是「past what can be listed」；用系列 id 帶 span `all`
    更新 `location` 與 `start_time`，再刪除：都走得通（2026-11-06，2020 年開始的系列）。

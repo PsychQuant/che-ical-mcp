@@ -23,12 +23,17 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
     /// `refusingOccurrenceIdentifiers` of each series call (#416).
     private(set) var seriesRefusals: [Bool] = []
 
+    /// What every `event_ids` dry-run row answers (PR #465 verify r2).
+    private let previewRow: BatchDeletionPreviewRow
+
     init(listed: [BatchDeletionListedEvent],
          result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: []),
-         listError: Error? = nil) {
+         listError: Error? = nil,
+         previewRow: BatchDeletionPreviewRow = .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))) {
         self.listed = listed
         self.result = result
         self.listError = listError
+        self.previewRow = previewRow
     }
 
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
@@ -53,7 +58,7 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
 
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
-        .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))
+        previewRow
     }
 
     var anyDelete: Bool { !deleteCalls.isEmpty || !seriesCalls.isEmpty }
@@ -78,7 +83,9 @@ private actor SeriesModel: EventBatchDeletionSource {
     /// nil when the row goes ahead; a refusal; or a throw, as the bare id's edited-before refusal.
     private func judge(_ id: String, named: Set<String>, gone: Set<String>) throws -> String? {
         guard id != series else {
-            guard FirstRemainingOccurrence.pick(occurrences, identifier: series, goneInTheCall: gone) != nil else {
+            let left = occurrences.filter { !gone.contains($0.eventIdentifier ?? "") }
+            guard FirstRemainingOccurrence.pick(occurrences, identifier: series, goneInTheCall: gone) != nil
+                    || FirstRemainingOccurrence.earliestEdited(left, identifier: series) != nil else {
                 throw EventKitError.standInRefused(reason: EventKitManager.standInEditedBeforeBatchReason)
             }
             return nil
@@ -122,7 +129,8 @@ private actor SeriesModel: EventBatchDeletionSource {
                     failures.append((id, refusal))
                     continue
                 }
-                occurrences.removeAll { $0.eventIdentifier == id }
+                // The series' row takes what is left, edited occurrences included (#436: measured).
+                occurrences.removeAll { id == series || $0.eventIdentifier == id }
                 succeeded += 1
             } catch {
                 failures.append((id, "refused"))
@@ -257,6 +265,43 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertTrue(deleteCalls.isEmpty)
         XCTAssertEqual(real["span"] as? String, "all")
         XCTAssertEqual(real["total"] as? Int, 1)
+    }
+
+    /// #436 (PR #465 verify r1): a series row deleted from its first occurrence edited on its own
+    /// cannot be undone, so the response names it and says the call's undo leaves it out.
+    func testARowThroughTheFirstOccurrenceIsReportedWithItsUndoNote() async throws {
+        var result = BatchDeleteResult(successCount: 2, failedCount: 0, failures: [])
+        result.throughFirstOccurrence = [(identifier: "S1", occurrenceID: "S1/RID=1")]
+        let fake = BatchDeletionFake(listed: [], result: result)
+        let real = try await call(fake, ["event_ids": .array([.string("S1"), .string("S2")]), "span": .string("all"),
+                                         "dry_run": .bool(false)])
+        let rows = try XCTUnwrap(real["through_first_occurrence"] as? [[String: String]])
+        XCTAssertEqual(rows, [["event_id": "S1", "occurrence_id": "S1/RID=1"]])
+        XCTAssertEqual(real["undo_note"] as? String, CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote)
+        XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("cannot be undone"))
+        XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("restores only the other rows"))
+
+        // PR #465 verify r2: when no other row was deleted, the call has no undo of its own.
+        var only = BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])
+        only.throughFirstOccurrence = [(identifier: "S1", occurrenceID: "S1/RID=1")]
+        let alone = try await call(BatchDeletionFake(listed: [], result: only),
+                                   ["event_ids": .array([.string("S1")]), "span": .string("all"), "dry_run": .bool(false)])
+        XCTAssertEqual(alone["undo_note"] as? String, CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote)
+        XCTAssertFalse(CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote.contains("other rows"))
+        XCTAssertTrue(CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote.contains("restores nothing"))
+
+        // The dry run says so before anything is deleted.
+        let dry = try await call(BatchDeletionFake(listed: [], previewRow: .deletesThroughFirstOccurrence(
+                                    start: base, end: base.addingTimeInterval(3600), occurrenceID: "S1/RID=1")),
+                                 ["event_ids": .array([.string("S1")]), "span": .string("all"), "dry_run": .bool(true)])
+        let row = try XCTUnwrap((dry["events_to_delete"] as? [[String: Any]])?.first)
+        XCTAssertEqual(row["occurrence_id"] as? String, "S1/RID=1")
+        XCTAssertEqual(row["undo_note"] as? String, CheICalMCPServer.batchPreviewThroughOccurrenceNote)
+
+        let plain = try await call(BatchDeletionFake(listed: [], result: BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])),
+                                   ["event_ids": .array([.string("S2")]), "span": .string("all"), "dry_run": .bool(false)])
+        XCTAssertNil(plain["undo_note"], "no note when no row went through a first occurrence")
+        XCTAssertNil(plain["through_first_occurrence"])
     }
 
     func testSpanFutureCountsTheSeriesOnceAndSendsEveryOccurrenceInSlotOrder() async throws {
@@ -461,11 +506,12 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try await assertSameAnswer(shape, ids: [series, ownId(7)], deletes: 2, left: 0)
     }
 
-    /// Another edited occurrence the call does not name: the occurrence's row is refused, so it is
-    /// not gone, and the bare id stays refused. Both modes refuse both rows and nothing is deleted.
-    func testTheDryRunRefusesBothRowsWhenAnEditedOccurrenceIsNotNamed() async throws {
+    /// Another edited occurrence the call does not name: the occurrence's row is refused, as it would
+    /// delete only that occurrence, and the series' row reaches the series through it (#436), as
+    /// the call named the series. Both modes say so.
+    func testTheDryRunShowsTheSeriesRowWhenAnEditedOccurrenceIsNotNamed() async throws {
         let shape = [editedOccurrence(0), unedited(7), editedOccurrence(14), unedited(21)]
-        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 0, left: 4)
+        try await assertSameAnswer(shape, ids: [series, ownId(0)], deletes: 1, left: 0)
     }
 
     /// Every edited occurrence named: each runs first, and the bare id then reaches the rest.
@@ -474,10 +520,19 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try await assertSameAnswer(shape, ids: [series, ownId(14), ownId(0)], deletes: 3, left: 0)
     }
 
-    /// The bare id alone: refused in both modes, nothing deleted.
-    func testTheDryRunRefusesTheBareIdAlone() async throws {
+    /// The bare id alone, the first occurrence edited (#436): the whole series, in both modes.
+    func testTheDryRunShowsTheWholeDeleteForTheBareIdAlone() async throws {
         let shape = [editedOccurrence(0), unedited(7), unedited(14)]
-        try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 3)
+        try await assertSameAnswer(shape, ids: [series], deletes: 1, left: 0)
+    }
+
+    /// An occurrence matched only by its external identifier is not the series' first edited
+    /// occurrence (`earliestEdited` leaves it out), though it comes first by slot: the bare id
+    /// reaches no occurrence of its own and is refused, in both modes.
+    func testAnExternalIdMatchIsNotTheFirstEditedOccurrence() async throws {
+        let shape = [unedited(7), .init(eventIdentifier: "unrelated", isDetached: true, hasRecurrenceRules: false,
+                                        start: base, slot: base, sameSeriesByExternalID: true)]
+        try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 2)
     }
 
     /// Span `this` does not take the edited-before refusal: the first occurrence deleted, the first
