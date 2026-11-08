@@ -495,24 +495,35 @@ enum UndoBatchExecution {
     /// Undo runs the members in reverse record order and reports a failed write through
     /// `UndoOperation.batchUndoFailure`. Redo runs them in record order and reports the member error
     /// as it is: no batch whose members write on redo is recorded (#247).
+    ///
+    /// #482: runs on the caller's actor (`isolation`, SE-0420), as #476's restore seams do. In
+    /// Swift 5 mode (SE-0338) a nonisolated async function resumes on the generic executor after
+    /// an await, so `describe`, a synchronous closure the caller forms on its actor, ran off it
+    /// (nothing raced: both production closures call only the static `EventKitErrorSanitizer`).
+    /// The callers in `EventKitManager` pass nothing, so `#isolation` gives them the actor; `nil`
+    /// passed by hand brings the old behavior back. `UndoBatchRunner.run` calls no synchronous
+    /// closure, so it takes none.
     static func run(_ members: [UndoOperation], verb: UndoHistoryVerb,
                     check: (UndoOperation) async throws -> Void,
                     execute: (UndoOperation) async throws -> String,
-                    describe: (Error) -> String) async throws -> [String] {
+                    describe: (Error) -> String,
+                    isolation: isolated (any Actor)? = #isolation) async throws -> [String] {
         try await run(members, verb: verb, check: check,
                       restore: { UndoMemberOutcome(text: try await execute($0), differing: []) },
-                      describe: describe).texts
+                      describe: describe, isolation: isolation).texts
     }
 
     /// The same, for members whose restore returns what its store holds differently (a recreated
     /// reminder found with differing fields, #261; PR #282 round 5, finding 1), as data. Those of
     /// the members written are returned, in the order they ran; when a write fails, they go into
     /// the partial error instead, named once. What the event members did (`UndoEventOutcome`,
-    /// #323) travels the same way. No member text is read back.
+    /// #323) travels the same way. No member text is read back. Runs on the caller's actor, as
+    /// the overload above does (#482).
     static func run(_ members: [UndoOperation], verb: UndoHistoryVerb,
                     check: (UndoOperation) async throws -> Void,
                     restore: (UndoOperation) async throws -> UndoMemberOutcome,
-                    describe: (Error) -> String) async throws
+                    describe: (Error) -> String,
+                    isolation: isolated (any Actor)? = #isolation) async throws
         -> (texts: [String], differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
         var differing: [UndoRestoredDifference] = []
         var events: [UndoEventOutcome] = []
