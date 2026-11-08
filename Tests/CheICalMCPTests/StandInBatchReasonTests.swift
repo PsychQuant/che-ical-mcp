@@ -45,6 +45,10 @@ final class StandInBatchReasonTests: XCTestCase {
         XCTAssertTrue(reason.contains("batchRowReason("), reason)
         let server = try SourcePins.source("Server.swift")
         let handler = try XCTUnwrap(SourcePins.body(of: "private func handleDeleteEventsBatch(", in: server))
-        XCTAssertTrue(SourceScan.collapsingWhitespace(handler).contains("error: EventKitManager.batchRowError(error)"), handler)
+        // #427 cluster verify: both dry runs preview through one helper, which maps the error.
+        XCTAssertTrue(SourceScan.collapsingWhitespace(handler).contains("let preview = await previewDeletionRows(eventIds, spanStr: spanStr)"), handler)
+        XCTAssertTrue(SourceScan.collapsingWhitespace(handler).contains("for row in await previewDeletionRows(unique, spanStr: spanStr) {"), handler)
+        let rows = try XCTUnwrap(SourcePins.body(of: "private func previewDeletionRows(", in: server))
+        XCTAssertTrue(SourceScan.collapsingWhitespace(rows).contains("error: EventKitManager.batchRowError(error)"), rows)
     }
 }

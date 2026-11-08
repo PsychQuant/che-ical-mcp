@@ -66,8 +66,6 @@ import EventKit
 ///   first occurrence, the whole series).
 /// - `move_events_batch` span `all`: all occurrences moved and the identifier stayed, within one
 ///   iCloud account. Across accounts was not measured.
-/// - `delete_events_batch` by date range: the listing named the identifier, not the caller; a range
-///   holding only that occurrence deletes it alone (#427).
 ///
 /// Sources: `/RID=` and `isDetached` were measured reliable on Google (#320), and these refusals ran
 /// on iCloud only. On a source with no `/RID=`, which Exchange may be (not measured), the rest of the
