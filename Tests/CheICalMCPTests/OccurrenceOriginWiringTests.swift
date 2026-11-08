@@ -50,14 +50,17 @@ final class OccurrenceOriginWiringTests: XCTestCase {
         XCTAssertEqual(count("refreshIfNeeded()", in: holders), 1, "the series an earlier undo recreated is seen")
     }
 
-    /// The whole-series undo notes the recreation only after its exceptions were restored (a failed
-    /// restore deletes the series again, so nothing is noted), and only for a series.
-    func testTheRecreationIsNotedAfterTheRestore() throws {
+    /// PR #494 round 3: the whole-series undo notes the recreation right after the series is saved,
+    /// before its exceptions are restored, so a series left by `rollbackFailed` is linked too (a
+    /// rolled-back series leaves a link to nothing, which holds no slot). Only for a series.
+    func testTheRecreationIsNotedBeforeTheRestore() throws {
         let source = SourcePins.code(try SourcePins.source("EventKit/SeriesExceptionsUndo.swift"))
         let body = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: source))
+        let save = try XCTUnwrap(body.range(of: "try store.save(event)"))
         let restore = try XCTUnwrap(body.range(of: "outcome = try restore(exceptions, of: event, in: store)"))
         let note = try XCTUnwrap(body.range(of: "store.noteRecreation(of: recorded, as: store.identifiers(of: event))"))
-        XCTAssertLessThan(restore.lowerBound, note.lowerBound)
+        XCTAssertLessThan(save.lowerBound, note.lowerBound)
+        XCTAssertLessThan(note.lowerBound, restore.lowerBound)
         XCTAssertEqual(count("if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {", in: body), 1)
     }
 }

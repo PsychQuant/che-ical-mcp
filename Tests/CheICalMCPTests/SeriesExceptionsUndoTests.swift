@@ -534,4 +534,55 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertFalse(exceptions.seriesStartsBeforeWindow)
         XCTAssertTrue(exceptions.seriesMayContinueAfterWindow)
     }
+
+    // MARK: - PR #494 round 3: the link is noted before the exceptions restore
+
+    /// The series S recorded with its exceptions (s0, s1 kept; s2 edited; s3 deleted on its own),
+    /// under its identity.
+    private func seriesSWithExceptions() -> EventSnapshot {
+        let edited = UndoSnapshotFixtures.event(title: "Standup moved", startDate: s2.addingTimeInterval(1800))
+        let exceptions = SeriesExceptions(window: DateInterval(start: s0.addingTimeInterval(-day), end: s3.addingTimeInterval(day)),
+                                          keptSlots: [s0, s1], detached: [DetachedOccurrence(slot: s2, snapshot: edited)])
+        return UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
+            .withExceptions(exceptions).withSeriesIdentity(seriesIDs)
+    }
+
+    /// The restore failed and deleting the recreated series again failed too (`rollbackFailed`):
+    /// the series stays. An older occurrence record of S sees its slot held by it, so nothing is
+    /// written; before round 3 the link was noted only after a successful restore, and the undo
+    /// wrote a second event there (the title match before #321 had caught it).
+    func testAfterARollbackThatFailedTheLeftSeriesHoldsTheSlot() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+        store.seriesRemovalFails = true
+        let series = seriesSWithExceptions()
+        XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)) {
+            XCTAssertTrue($0 is UnrecoverableUndoError, "\($0)")
+        }
+        XCTAssertEqual(store.starts(of: "E1"), [s0, s1], "the series is left, with its surplus slots removed")
+
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1).withOccurrenceOrigin(origin(s1))
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceAlreadyHeld)
+        XCTAssertFalse(store.log.contains("save Standup"), "no second event at the slot")
+    }
+
+    /// The restore failed and the recreated series was deleted again: the link to it stays, but it
+    /// holds nothing, so the occurrence's undo writes the one-off.
+    func testAfterARollbackThatSucceededTheStaleLinkHoldsNothing() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+        let series = seriesSWithExceptions()
+        XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store))
+        XCTAssertEqual(store.starts(of: "E1"), [], "the recreated series was deleted again")
+
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1).withOccurrenceOrigin(origin(s1))
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []))
+        XCTAssertEqual(store.log.last, "save Standup")
+    }
 }

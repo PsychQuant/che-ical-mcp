@@ -181,7 +181,7 @@ enum SeriesExceptionsUndo {
     /// not a series), which a batch carries up instead of the text.
     ///
     /// #321: a series recreated from its rules is noted under the recorded series' identifiers
-    /// (`noteRecreation`), so an older occurrence record of it sees its slot held. A rule-less
+    /// (`noteRecreation`, right after its save), so an older occurrence record of it sees its slot held. A rule-less
     /// snapshot of one occurrence (the whole-series delete of an occurrence edited on its own,
     /// addressed by its own identifier: PR #318 round 3, finding 22) is guarded as an occurrence
     /// record is: nothing is written when the series holds its slot again.
@@ -195,12 +195,15 @@ enum SeriesExceptionsUndo {
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
+        // PR #494 round 3: noted right after the save, before the restore, so a series that
+        // `rollbackFailed` leaves in place is linked too (the title match before #321 saw it). A
+        // rolled-back series leaves a link to a series that no longer exists, which holds nothing.
+        if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {
+            store.noteRecreation(of: recorded, as: store.identifiers(of: event))
+        }
         var outcome: SeriesExceptionsRestorer.Outcome?
         if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
             outcome = try restore(exceptions, of: event, in: store)
-        }
-        if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {
-            store.noteRecreation(of: recorded, as: store.identifiers(of: event))
         }
         let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                       exceptionsOutcome: outcome)
