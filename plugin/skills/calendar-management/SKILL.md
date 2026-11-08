@@ -86,7 +86,7 @@ list_reminders          → See tasks by list or completion status
 ## Common Workflows
 
 ### Schedule a Meeting
-If the input matches a module's trigger in `rules/event-modules.md` (today: a conference program or a booking for a stay) and that module is on, build it as the module says instead of the steps below for what the module handles (a program, a stay); other items in the same message, such as a flight, still go through the steps below; otherwise carry on below.
+If the input matches a module's trigger in `rules/event-modules.md` (today: a conference program or a booking for a stay) and that module is on, build it as the module says instead of the steps below for what the module handles (a program, a stay); other items in the same message, such as a flight, still go through the steps below; otherwise carry on below. An event whose notes hold a `lodging-module:` marker line is a stay: it is changed or deleted only through the lodging module (its end-day rule and read-back, its questions), never by the update or delete steps of this skill, also when the user asks to change it here ("I changed it by phone" is the module's section 5).
 
 ```
 1. Resolve calendar_name  → name from the user, else the folder's calendar_routing rules (rules/calendar-routing.md), else ask
