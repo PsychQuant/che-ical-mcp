@@ -1717,8 +1717,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// (on iCloud an edited occurrence has none; Google and Exchange are not measured).
     static func throughFirstOccurrenceRefusal(_ occurrence: EKEvent, movedFirst: String?) -> String? {
         if let movedFirst { return movedFirst }
-        return occurrence.hasRecurrenceRules ? batchOccurrenceDateRequired : nil
+        return occurrence.hasRecurrenceRules ? throughFirstOccurrenceHasRulesReason : nil
     }
+
+    /// PR #465 verify r2: the row has no occurrence_date to give, so the text names a call that works.
+    static let throughFirstOccurrenceHasRulesReason = "This series' first occurrence was edited on its own and reports recurrence rules of its own, which was not measured, so this row does not delete the series through it. Use delete_event with that occurrence's id and occurrence_date, or with span 'future'. This row deleted nothing."
 
     /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no
     /// date is passed, so every bare recurring id gets this; its dry run says the same (#416).
@@ -1735,6 +1738,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var failures: [(String, String)] = []
         var undoSnapshots: [EventSnapshot] = []
         var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
+        var refusingMarker: UndoOperation?
 
         for id in identifiers {
             do {
@@ -1749,9 +1753,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                             failures.append((id, refusal))
                             continue
                         }
+                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
                         throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))
+                        // PR #465 verify r2: kept only for a call where no other row is recorded.
+                        if refusingMarker == nil {
+                            refusingMarker = snapshots.record(for: snapshots.kind(
+                                span: .futureEvents, seriesResolves: { seriesResolves(identifier: first.id) }))
+                        }
                         continue
                     }
                     failures.append((id, notFoundReason(id: id)))
@@ -1784,6 +1794,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         markNeedsRefresh()
         if !undoSnapshots.isEmpty {
             await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
+        } else if let refusingMarker {
+            // PR #465 verify r2: with no other row recorded, the call records what delete_event
+            // records for the same delete, which undo refuses and drops. Without it, the next undo
+            // would revert an older, unrelated entry, and redo would not be cleared.
+            await CalendarUndoManager.shared.record(refusingMarker)
         }
         return BatchDeleteResult(
             successCount: successCount,

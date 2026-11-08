@@ -23,12 +23,17 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
     /// `refusingOccurrenceIdentifiers` of each series call (#416).
     private(set) var seriesRefusals: [Bool] = []
 
+    /// What every `event_ids` dry-run row answers (PR #465 verify r2).
+    private let previewRow: BatchDeletionPreviewRow
+
     init(listed: [BatchDeletionListedEvent],
          result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: []),
-         listError: Error? = nil) {
+         listError: Error? = nil,
+         previewRow: BatchDeletionPreviewRow = .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))) {
         self.listed = listed
         self.result = result
         self.listError = listError
+        self.previewRow = previewRow
     }
 
     func listEventsForDeletion(startDate: Date, endDate: Date, calendarName: String?,
@@ -53,7 +58,7 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
 
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
-        .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 0))
+        previewRow
     }
 
     var anyDelete: Bool { !deleteCalls.isEmpty || !seriesCalls.isEmpty }
@@ -275,6 +280,23 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertEqual(real["undo_note"] as? String, CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote)
         XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("cannot be undone"))
         XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("restores only the other rows"))
+
+        // PR #465 verify r2: when no other row was deleted, the call has no undo of its own.
+        var only = BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])
+        only.throughFirstOccurrence = [(identifier: "S1", occurrenceID: "S1/RID=1")]
+        let alone = try await call(BatchDeletionFake(listed: [], result: only),
+                                   ["event_ids": .array([.string("S1")]), "span": .string("all"), "dry_run": .bool(false)])
+        XCTAssertEqual(alone["undo_note"] as? String, CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote)
+        XCTAssertFalse(CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote.contains("other rows"))
+        XCTAssertTrue(CheICalMCPServer.batchOnlySeriesDeletedThroughOccurrenceNote.contains("restores nothing"))
+
+        // The dry run says so before anything is deleted.
+        let dry = try await call(BatchDeletionFake(listed: [], previewRow: .deletesThroughFirstOccurrence(
+                                    start: base, end: base.addingTimeInterval(3600), occurrenceID: "S1/RID=1")),
+                                 ["event_ids": .array([.string("S1")]), "span": .string("all"), "dry_run": .bool(true)])
+        let row = try XCTUnwrap((dry["events_to_delete"] as? [[String: Any]])?.first)
+        XCTAssertEqual(row["occurrence_id"] as? String, "S1/RID=1")
+        XCTAssertEqual(row["undo_note"] as? String, CheICalMCPServer.batchPreviewThroughOccurrenceNote)
 
         let plain = try await call(BatchDeletionFake(listed: [], result: BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])),
                                    ["event_ids": .array([.string("S2")]), "span": .string("all"), "dry_run": .bool(false)])

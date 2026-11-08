@@ -14,6 +14,9 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
     case deletes(start: Date, end: Date)
+    /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
+    /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
+    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String)
     case refused(String)
 }
 
@@ -66,7 +69,7 @@ extension EventKitManager: EventBatchDeletionSource {
                 if let refusal = Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                     return .refused(refusal)
                 }
-                return .deletes(start: occurrence.startDate, end: occurrence.endDate)
+                return .deletesThroughFirstOccurrence(start: occurrence.startDate, end: occurrence.endDate, occurrenceID: first.id)
             }
             throw notFoundError(id: identifier)
         }
