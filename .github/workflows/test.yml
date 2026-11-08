@@ -80,9 +80,10 @@ jobs:
         run: bash scripts/tests/verify-release-ready-test.sh
 
       - name: plugin wrapper sidecar tests
-        # #483: the sidecar records the release actually installed (not the pin), and a
-        # sidecar that disagrees with the binary's --version does not stop the download.
-        # curl is stubbed and HOME is a temp dir; no network, no build. Seconds.
+        # #483: the wrapper decides from the binary's --version (older than the pin →
+        # download, newer → keep), records what is installed rather than the pin, and never
+        # downloads the same release twice. curl is stubbed and HOME is a temp dir; no
+        # network, no build. Seconds.
         run: bash scripts/tests/plugin-wrapper-test.sh
 
       - name: swift build

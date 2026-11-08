@@ -1,17 +1,23 @@
 #!/bin/bash
 # Tests for plugin/bin/che-ical-mcp-wrapper.sh, the plugin's auto-download wrapper (#483).
 #
-# The sidecar ~/bin/.CheICalMCP.version must record the release actually installed, not the
-# version plugin.json pins: after a fallback to releases/latest it holds the latest tag (or
-# `unknown`), so the pinned release is fetched once it exists. A sidecar that disagrees with
-# the binary's own `--version` must not stop the download.
+# What the wrapper must do:
+# - Decide from what the binary reports (`CheICalMCP --version`), not from the sidecar: download
+#   when the binary is missing, cannot report a version, or reports one OLDER than the version
+#   plugin.json pins; never replace a binary newer than the pin (--self-update, make install).
+# - The sidecar ~/bin/.CheICalMCP.version records what the installed binary reports, never the
+#   pin it wanted. After a fallback to releases/latest it holds what latest shipped, so the
+#   pinned release is fetched once it exists.
+# - Never download the same release twice: a release whose asset reports another version than
+#   its tag (or no version) is downloaded once and remembered in ~/bin/.CheICalMCP.release.
+# - Leave stdin alone (`--version` probes read /dev/null): stdin is the MCP channel.
 #
 # Hermetic: HOME is a temp dir (the wrapper installs to $HOME/bin), `curl` is a stub first on
-# PATH that serves canned release JSON and writes a fake CheICalMCP (a shell script that
-# answers `--version`), and the wrapper runs from a temp plugin root with its own plugin.json.
-# Nothing touches the network, the real ~/bin or any calendar.
+# PATH that serves canned release JSON and writes a fake CheICalMCP (a shell script that answers
+# `--version`), and the wrapper runs from a temp plugin root with its own plugin.json. Nothing
+# touches the network, the real ~/bin or any calendar.
 # Run: bash scripts/tests/plugin-wrapper-test.sh
-# WRAPPER_UNDER_TEST=<path> runs the same cases against another copy (e.g. the pre-#483 one).
+# WRAPPER_UNDER_TEST=<path> runs the same cases against another copy (e.g. an older one).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,27 +34,45 @@ bad() { echo "✗ $1"; FAIL=$((FAIL+1)); }
 check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$3', got '$2')"; fi; }
 has()   { if grep -qF -- "$3" "$2"; then ok "$1"; else bad "$1 (no '$3' in $(basename "$2"))"; fi; }
 hasnt() { if grep -qF -- "$3" "$2"; then bad "$1 ('$3' found in $(basename "$2"))"; else ok "$1"; fi; }
+count() { grep -cF -- "$2" "$1" 2>/dev/null | tr -d ' '; }
 
 REPO_PATH="PsychQuant/che-ical-mcp"
+mkdir -p "$TMP/stub"
 
-# fake_binary <path> <version> — a CheICalMCP stand-in: `--version` prints the real format,
-# anything else prints `RAN <version>` (the wrapper's final exec lands here).
-fake_binary() {
-    printf '#!/bin/bash\nif [ "${1:-}" = --version ]; then echo "CheICalMCP %s"; exit 0; fi\necho "RAN %s"\n' "$2" "$2" > "$1"
-    /bin/chmod u+x "$1"
-}
+# mkfake <path> <--version output> — a CheICalMCP stand-in. `--version` prints the given line
+# and swallows a line of stdin if one is there (a probe that does not read /dev/null eats the
+# MCP request); anything else prints `RAN <output> <first stdin line>`, which is where the
+# wrapper's final exec lands. Shared by the tests and the curl stub.
+cat > "$TMP/stub/mkfake" <<'EOF'
+#!/bin/bash
+cat > "$1" <<FAKE
+#!/bin/bash
+if [ "\${1:-}" = --version ]; then read -r -t 1 _ 2>/dev/null; echo "$2"; exit 0; fi
+read -r line
+echo "RAN $2 \$line"
+FAKE
+/bin/chmod u+x "$1"
+EOF
+/bin/chmod u+x "$TMP/stub/mkfake"
+fake_binary() { "$TMP/stub/mkfake" "$1" "CheICalMCP $2"; }
 
 # The curl stub. API URLs are answered from $RELEASES/<tag-vX.Y.Z|latest>.json (a missing file
-# answers GitHub's Not Found body); a releases/download URL with -o writes a fake binary of
-# that version, or fails when $DOWNLOAD_FAIL is set. Every call is logged; any other URL fails.
-mkdir -p "$TMP/stub"
+# answers GitHub's Not Found body). A releases/download/<tag>/CheICalMCP URL with -o writes a
+# fake binary whose --version prints `CheICalMCP <tag version>`, or the content of
+# $RELEASES/asset-<tag>.version when present. $RELEASES/asset-<tag>.http-error makes the asset
+# answer an HTTP error: with -f curl writes nothing and exits 22, without -f it writes the error
+# body and exits 0 (real curl behavior). $DOWNLOAD_FAIL fails every download. Every call is
+# logged; any other URL fails.
 cat > "$TMP/stub/curl" <<'EOF'
 #!/bin/bash
-url="" out=""
+url="" out="" fail_flag=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) out="$2"; shift ;;
+        --max-time) shift ;;
         http*) url="$1" ;;
+        -*) case "$1" in -*f*) [ "${1#--}" = "$1" ] && fail_flag=1 ;; esac
+            [ "$1" = --fail ] && fail_flag=1 ;;
     esac
     shift
 done
@@ -61,8 +85,14 @@ case "$url" in
     https://github.com/PsychQuant/che-ical-mcp/releases/download/*/CheICalMCP)
         [ -n "${DOWNLOAD_FAIL:-}" ] && exit 22
         [ -n "$out" ] || exit 2
-        v="${url%/CheICalMCP}"; v="${v##*/v}"
-        printf '#!/bin/bash\nif [ "${1:-}" = --version ]; then echo "CheICalMCP %s"; exit 0; fi\necho "RAN %s"\n' "$v" "$v" > "$out"
+        tag="${url%/CheICalMCP}"; tag="${tag##*/}"
+        if [ -f "$RELEASES/asset-$tag.http-error" ]; then
+            [ -n "$fail_flag" ] && exit 22
+            printf 'Not Found\n' > "$out"; exit 0
+        fi
+        report="CheICalMCP ${tag#v}"
+        [ -f "$RELEASES/asset-$tag.version" ] && report=$(cat "$RELEASES/asset-$tag.version")
+        "$(dirname "$0")/mkfake" "$out" "$report"
         exit 0 ;;
     *) echo "UNEXPECTED $url" >> "$CURL_LOG"; exit 99 ;;
 esac
@@ -104,23 +134,26 @@ setup() {
     SIDE="$C/home/bin/.CheICalMCP.version"
     : > "$C/curl.log"
 }
-install_existing() { mkdir -p "$C/home/bin"; fake_binary "$BIN" "$1"; echo "$2" > "$SIDE"; }
+install_existing() { mkdir -p "$C/home/bin"; fake_binary "$BIN" "$1"; [ -n "${2:-}" ] && echo "$2" > "$SIDE"; return 0; }
+# run_wrapper [ENV=VALUE ...] — one spawn, with an MCP request line on stdin.
 run_wrapper() {
-    HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" \
+    printf 'req\n' | env HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" "$@" \
         bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" mcp-arg > "$C/out" 2> "$C/err"
     RC=$?
 }
-bin_version() { "$BIN" --version 2>/dev/null | awk '{print $NF}'; }
+bin_version() { "$BIN" --version </dev/null 2>/dev/null | awk '{print $NF}'; }
 side() { tr -d '[:space:]' < "$SIDE" 2>/dev/null; }
+downloads() { count "$C/curl.log" "/releases/download/"; }
+calls() { wc -l < "$C/curl.log" | tr -d ' '; }
 
 # 1. The #483 repro: pinned tag unreleased, fallback to latest.
 setup fallback 1.23.0
 release_json "$C/releases/latest.json" 1.22.0
 run_wrapper
-check "fallback: wrapper ran the installed binary" "$(cat "$C/out")" "RAN 1.22.0"
+check "fallback: wrapper ran the installed binary, stdin intact" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
 check "fallback: binary is the latest release" "$(bin_version)" "1.22.0"
 check "fallback: sidecar records the release fetched, not the pin" "$(side)" "1.22.0"
-has "fallback: says the pin has no release" "$C/err" "v1.23.0 has no release"
+has "fallback: says the pin was not installed" "$C/err" "plugin wants v1.23.0"
 [ -e "$BIN.tmp" ] && bad "fallback: no .tmp left behind" || ok "fallback: no .tmp left behind"
 
 # 2. Same machine after the pinned release is published: the next spawn fetches it.
@@ -130,82 +163,82 @@ release_json "$C/releases/latest.json" 1.23.0
 run_wrapper
 check "after release: binary is the pinned release" "$(bin_version)" "1.23.0"
 check "after release: sidecar is the pinned release" "$(side)" "1.23.0"
-check "after release: wrapper ran the new binary" "$(cat "$C/out")" "RAN 1.23.0"
+check "after release: wrapper ran the new binary" "$(cat "$C/out")" "RAN CheICalMCP 1.23.0 req"
 has "after release: downloaded the pinned asset" "$C/curl.log" "/releases/download/v1.23.0/CheICalMCP"
 
-# 3. A machine left by the old wrapper: sidecar says the pin, binary is older, pin released.
+# 3. A machine left by the first #483 wrapper: sidecar says the pin, binary is older, pin released.
 setup repair 1.23.0
 install_existing 1.22.0 1.23.0
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
 run_wrapper
 check "repair: stale binary replaced" "$(bin_version)" "1.23.0"
 check "repair: sidecar matches binary" "$(side)" "1.23.0"
-has "repair: reason names the disagreement" "$C/err" "binary reports v1.22.0"
+has "repair: reason names what the binary reports" "$C/err" "binary reports v1.22.0"
 hasnt "repair: latest not consulted when the pin answers" "$C/curl.log" "releases/latest"
 
-# 4. During the gap, latest is already installed: no binary download, sidecar stays truthful.
+# 4. During the gap, latest is already installed: no download, at most two API calls.
 setup gap 1.23.0
 install_existing 1.22.0 1.22.0
 release_json "$C/releases/latest.json" 1.22.0
 run_wrapper
 check "gap: binary unchanged" "$(bin_version)" "1.22.0"
 check "gap: sidecar records what is installed" "$(side)" "1.22.0"
-hasnt "gap: no binary download" "$C/curl.log" "/releases/download/"
+check "gap: no binary download" "$(downloads)" "0"
+check "gap: two API calls" "$(calls)" "2"
 has "gap: warns the pin is unreleased" "$C/err" "v1.23.0 has no release yet"
-check "gap: wrapper ran the binary" "$(cat "$C/out")" "RAN 1.22.0"
+check "gap: wrapper ran the binary" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
 
-# 5. Old wrong sidecar during the gap: corrected without a download.
+# 5. Wrong sidecar during the gap: corrected without a download.
 setup gap-wrong-sidecar 1.23.0
 install_existing 1.22.0 1.23.0
 release_json "$C/releases/latest.json" 1.22.0
 run_wrapper
 check "gap+wrong sidecar: sidecar corrected" "$(side)" "1.22.0"
-hasnt "gap+wrong sidecar: no binary download" "$C/curl.log" "/releases/download/"
+check "gap+wrong sidecar: no binary download" "$(downloads)" "0"
 
-# 6. Up to date: sidecar, binary and pin agree → no network at all.
+# 6. Up to date: binary at the pin → no network at all.
 setup current 1.23.0
 install_existing 1.23.0 1.23.0
 run_wrapper
-check "current: curl never called" "$(wc -l < "$C/curl.log" | tr -d ' ')" "0"
-check "current: wrapper ran the binary" "$(cat "$C/out")" "RAN 1.23.0"
+check "current: curl never called" "$(calls)" "0"
+check "current: wrapper ran the binary" "$(cat "$C/out")" "RAN CheICalMCP 1.23.0 req"
 check "current: exit status of the binary" "$RC" "0"
 
-# 7. Fallback release without a readable tag → `unknown`, and the next run checks again.
+# 7. Fallback release body without tag_name: the sidecar still records what was installed,
+#    and the pinned release is fetched once it exists.
 setup no-tag 1.23.0
 release_json "$C/releases/latest.json" 1.22.0 no-tag
 run_wrapper
-check "no tag: sidecar is unknown" "$(side)" "unknown"
+check "no tag: sidecar is what the binary reports" "$(side)" "1.22.0"
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
 : > "$C/curl.log"
 run_wrapper
 check "no tag: next run fetches the pin" "$(bin_version)" "1.23.0"
 check "no tag: next run records it" "$(side)" "1.23.0"
 
-# 8. Pinned release body without tag_name: the pin is what was fetched.
+# 8. Pinned release body without tag_name.
 setup pinned-no-tag 1.23.0
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0 no-tag
 run_wrapper
 check "pinned, no tag: sidecar is the pin" "$(side)" "1.23.0"
-hasnt "pinned, no tag: no fallback warning" "$C/err" "has no release"
+hasnt "pinned, no tag: no warning" "$C/err" "WARNING"
 
 # 9. Download fails with a binary present: keep it, sidecar untouched, no .tmp.
 setup download-fails 1.23.0
 install_existing 1.22.0 1.22.0
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
-HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" DOWNLOAD_FAIL=1 \
-    bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" > "$C/out" 2> "$C/err"
+run_wrapper DOWNLOAD_FAIL=1
 check "download fails: binary kept" "$(bin_version)" "1.22.0"
 check "download fails: sidecar untouched" "$(side)" "1.22.0"
 has "download fails: warning" "$C/err" "download failed, keeping existing binary"
 [ -e "$BIN.tmp" ] && bad "download fails: .tmp removed" || ok "download fails: .tmp removed"
-check "download fails: still runs the binary" "$(cat "$C/out")" "RAN 1.22.0"
+check "download fails: still runs the binary" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
 
 # 10. Download fails with no binary: exit 1.
 setup download-fails-fresh 1.23.0
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
-HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" DOWNLOAD_FAIL=1 \
-    bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" > "$C/out" 2> "$C/err"
-check "download fails, fresh: exit 1" "$?" "1"
+run_wrapper DOWNLOAD_FAIL=1
+check "download fails, fresh: exit 1" "$RC" "1"
 has "download fails, fresh: error" "$C/err" "ERROR — download failed"
 
 # 11. No release anywhere: keep an existing binary; without one, exit 1.
@@ -219,7 +252,7 @@ run_wrapper
 check "no url, fresh: exit 1" "$RC" "1"
 has "no url, fresh: error" "$C/err" "ERROR — no download URL found"
 
-# 12. Sidecar matches the pin but the binary cannot answer --version: download.
+# 12. The binary cannot answer --version: treated as missing, replaced.
 setup unreadable 1.23.0
 mkdir -p "$C/home/bin"
 printf '#!/bin/bash\nexit 3\n' > "$BIN"; /bin/chmod u+x "$BIN"
@@ -228,20 +261,109 @@ release_json "$C/releases/tag-v1.23.0.json" 1.23.0
 run_wrapper
 check "unreadable --version: replaced" "$(bin_version)" "1.23.0"
 
-# 13. Sidecar missing, binary already at the pin: record it without downloading.
+# 13. Sidecar missing, binary already at the pin: recorded with no network.
 setup sidecar-missing 1.23.0
-mkdir -p "$C/home/bin"; fake_binary "$BIN" 1.23.0
+install_existing 1.23.0
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
 run_wrapper
 check "sidecar missing: recorded" "$(side)" "1.23.0"
-hasnt "sidecar missing: no binary download" "$C/curl.log" "/releases/download/"
+check "sidecar missing: curl never called" "$(calls)" "0"
 
 # 14. plugin.json unreadable, binary present: no download (unchanged behavior).
 setup no-pin 1.23.0
 rm "$C/plugin/.claude-plugin/plugin.json"
 install_existing 1.22.0 1.22.0
 run_wrapper
-check "no pin: curl never called" "$(wc -l < "$C/curl.log" | tr -d ' ')" "0"
+check "no pin: curl never called" "$(calls)" "0"
+
+# 15. MEDIUM 1: the pinned release's asset reports another version than its tag.
+#     Three spawns, one download; the sidecar holds what the binary reports.
+setup asset-mismatch 1.23.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "CheICalMCP 1.22.0" > "$C/releases/asset-v1.23.0.version"
+run_wrapper; run_wrapper; run_wrapper
+check "asset mismatch: one download over three spawns" "$(downloads)" "1"
+check "asset mismatch: binary is what the release ships" "$(bin_version)" "1.22.0"
+check "asset mismatch: sidecar is what the binary reports" "$(side)" "1.22.0"
+has "asset mismatch: says what the release ships" "$C/err" "ships v1.22.0"
+check "asset mismatch: still runs the binary" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
+
+# 16. Same, starting from an older installed binary.
+setup asset-mismatch-upgrade 1.23.0
+install_existing 1.21.0 1.21.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "CheICalMCP 1.22.0" > "$C/releases/asset-v1.23.0.version"
+run_wrapper; run_wrapper; run_wrapper
+check "asset mismatch from 1.21.0: one download" "$(downloads)" "1"
+check "asset mismatch from 1.21.0: binary is what the release ships" "$(bin_version)" "1.22.0"
+
+# 17. The fallback release's asset reports another version than its tag (during the gap).
+setup gap-asset-mismatch 1.23.0
+install_existing 1.20.0 1.20.0
+release_json "$C/releases/latest.json" 1.22.0
+echo "CheICalMCP 1.21.0" > "$C/releases/asset-v1.22.0.version"
+run_wrapper; run_wrapper; run_wrapper
+check "gap asset mismatch: one download over three spawns" "$(downloads)" "1"
+check "gap asset mismatch: sidecar is what the binary reports" "$(side)" "1.21.0"
+
+# 18. The pinned asset does not report a version at all: the existing binary is kept, and the
+#     same release is not downloaded again.
+setup asset-unusable 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "garbage" > "$C/releases/asset-v1.23.0.version"
+run_wrapper; run_wrapper; run_wrapper
+check "unusable asset: one download over three spawns" "$(downloads)" "1"
+check "unusable asset: existing binary kept" "$(bin_version)" "1.22.0"
+check "unusable asset: sidecar untouched" "$(side)" "1.22.0"
+[ -e "$BIN.tmp" ] && bad "unusable asset: .tmp removed" || ok "unusable asset: .tmp removed"
+has "unusable asset: warning" "$C/err" "does not report a version"
+
+# 19. MEDIUM 2: a binary newer than the pin (--self-update, make install) is kept.
+setup newer 1.23.0
+install_existing 1.24.0 1.23.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+run_wrapper
+check "newer: binary kept" "$(bin_version)" "1.24.0"
+check "newer: curl never called" "$(calls)" "0"
+check "newer: sidecar records what is installed" "$(side)" "1.24.0"
+has "newer: says it is newer than the pin" "$C/err" "newer than the plugin pin"
+check "newer: one stderr line" "$(wc -l < "$C/err" | tr -d ' ')" "1"
+check "newer: runs the newer binary" "$(cat "$C/out")" "RAN CheICalMCP 1.24.0 req"
+
+# 20. Numeric comparison: 1.10.0 is newer than 1.9.0.
+setup newer-numeric 1.9.0
+install_existing 1.10.0 1.10.0
+release_json "$C/releases/tag-v1.9.0.json" 1.9.0
+run_wrapper
+check "numeric: 1.10.0 kept over pin 1.9.0" "$(bin_version)" "1.10.0"
+check "numeric: curl never called" "$(calls)" "0"
+
+# 21. Older than the pin (sidecar already agreeing with the binary): replaced.
+setup older 1.23.0
+install_existing 1.22.5 1.22.5
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+run_wrapper
+check "older: replaced by the pin" "$(bin_version)" "1.23.0"
+check "older: sidecar" "$(side)" "1.23.0"
+
+# 22. Equal to the pin, sidecar disagreeing: kept, sidecar corrected, no network.
+setup equal 1.23.0
+install_existing 1.23.0 1.22.0
+run_wrapper
+check "equal: kept" "$(bin_version)" "1.23.0"
+check "equal: curl never called" "$(calls)" "0"
+check "equal: sidecar corrected" "$(side)" "1.23.0"
+
+# 23. LOW: the asset URL answers an HTTP error: the error body is never installed.
+setup asset-http-error 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+touch "$C/releases/asset-v1.23.0.http-error"
+run_wrapper
+check "http error: existing binary kept" "$(bin_version)" "1.22.0"
+if grep -q "Not Found" "$BIN" 2>/dev/null; then bad "http error: error body not installed"; else ok "http error: error body not installed"; fi
+has "http error: warning" "$C/err" "download failed, keeping existing binary"
 
 hasnt "no case reached an unexpected URL" <(cat "$TMP"/*/curl.log) "UNEXPECTED"
 
