@@ -641,9 +641,10 @@ enum DetachedOccurrenceSpan {
     /// count 5, with and without an edited occurrence): the last occurrence went, and the rule read
     /// back unchanged, also when it was written again in the same save. A rule with an end date and
     /// an open-ended one kept every occurrence, and span `future` was not run, so it counts.
-    /// Cluster verify r2 (LOW): not when there is no zone to clear (an all-day or floating series),
-    /// or when the same call clears the rule, as the count no longer applies; neither was measured to
-    /// drop anything.
+    /// Cluster verify r2, r3: not when the result is all-day (no zone to clear: #190 nils it
+    /// harmlessly), or when the same call clears the rule, as the count no longer applies. A floating
+    /// timed series still gets timeZone = nil, so it is refused. `occurrenceCounts` holds the stored
+    /// rules and the rule this call writes.
     static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int],
                                      hasZone: Bool = true, clearingRecurrence: Bool = false) -> Bool {
         clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
