@@ -92,12 +92,12 @@ final class UndoBatchWiringTests: XCTestCase {
 
     /// A batch undo moves a failed member to run last because every batch record holds deletes whose
     /// restores do not depend on each other (`mayRunLastAfterAFailure`). These pins keep the batch
-    /// records to the three builders that make them: `deleteEventSeriesBatch` (whole-event deletes),
+    /// records to the three builders that make them: `deleteEventSeriesBatch` (whole-event deletes only; a row through the first occurrence is not recorded, #436),
     /// `deleteEventsBatch` (`DeletedEventSnapshots.record(for:)` only) and the reminder batch delete
     /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
     func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
         let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) } + undoThroughFirstOccurrence))"), in: series))
+        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
         // Round 5, findings 5, 16: an `insert`, `+=` or reassignment passed the append count, so
@@ -105,6 +105,10 @@ final class UndoBatchWiringTests: XCTestCase {
         // emptiness check and the record.
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(series)).count, 4)
         XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [EventSnapshot] = []"), in: series))
+        // PR #465 verify r1: a row through the first occurrence cannot be undone, so it is kept out
+        // of the record and only reported: its array is not part of any record.
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bthroughFirstOccurrence\b"#, in: String(series)).count, 4,
+                       "the declaration, the one append, and the result's label and value")
 
         let events = Substring(try Self.body("func deleteEventsBatch(", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoOperations))"), in: events))

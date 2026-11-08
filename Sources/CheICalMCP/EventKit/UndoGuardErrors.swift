@@ -107,9 +107,13 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
     }
 
     let message: String
+    /// The fields named in `message` (#466: the undo of a move by copy reports them for the copy it
+    /// leaves, without reading them back from the text).
+    let changedFields: [String]
     var errorDescription: String? { message }
 
     init(verb: UndoHistoryVerb, kind: UndoPostState.Kind, title: String, changedFields: [String], situation: Situation? = nil) {
+        self.changedFields = changedFields
         let item = "\(kind.rawValue) '\(undoShownTitle(title))'"
         let fields = changedFields.joined(separator: ", ")
         let kept = verb == .undo ? "this history entry was kept" : "this redo entry was kept"
