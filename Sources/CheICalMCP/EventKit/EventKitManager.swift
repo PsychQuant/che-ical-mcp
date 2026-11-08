@@ -3594,7 +3594,7 @@ enum EventKitError: LocalizedError {
         case .reminderRemovalMayLand(let code):
             return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the reminders back now does not rule this out: seeing it does not mean it stays."
         case .listChangeMayLand(let code):
-            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
+            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes, and that change would have no undo record of its own: undo reverts the newest recorded operation, not this one. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
         case .listRemovalMayLand(let code):
             return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the lists back now does not rule this out: seeing it does not mean it stays."
         case .eventLookupFailed(let identifier):

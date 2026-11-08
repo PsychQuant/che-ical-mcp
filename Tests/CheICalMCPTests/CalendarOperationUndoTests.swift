@@ -31,7 +31,7 @@ final class CalendarOperationUndoTests: XCTestCase {
     /// which a shared or subscribed calendar's owner sets (#37).
     func testUndoIsRefusedPermanentlyAndDoesNotNameTheCalendar() throws {
         let expected: [CalendarOperationKind: (prefix: String, tool: String)] = [
-            .created: ("Cannot undo the creation of a calendar", "delete_calendar"),
+            .created: ("Cannot undo the creation of a calendar", "delete_calendar and require_empty: true"),
             .updated: ("Cannot undo the update of a calendar", "update_calendar"),
             .deleted: ("Cannot undo the deletion of a calendar", "create_calendar"),
         ]
