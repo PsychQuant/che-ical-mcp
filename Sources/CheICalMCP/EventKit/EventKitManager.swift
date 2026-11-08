@@ -1746,7 +1746,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// with deleteEventsBatch. One undo restores every series actually removed
     /// (partial failure: only the successes). Lives in the manager so undo
     /// bookkeeping never leaks into the server layer.
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
         var successCount = 0
@@ -1760,9 +1760,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = try freshEvent(id: id) else {
-                    // #436: as in deleteEventSeries, when the caller named the series' id: through the
+                    // #436: as in deleteEventSeries: through the
                     // occurrence that comes first, with span future, which reaches every occurrence left.
-                    if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id),
+                    if let first = try firstEditedOccurrenceID(of: id),
                        let occurrence = try freshEvent(id: first.id) {
                         if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                             failures.append((id, refusal))
@@ -1782,9 +1782,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
-                // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
-                // others go on.
-                if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
+                // #416: as in deleteEventSeries; a row refused, the others go on. By date range too (#427).
+                if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
                     failures.append((id, refusal))
                     continue
                 }

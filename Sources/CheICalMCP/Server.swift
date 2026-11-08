@@ -982,7 +982,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. By event_ids with span all, a row with the series' own identifier, when its first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, and that occurrence starts no later than the next occurrence's slot or another occurrence's shown start, deletes the series from that occurrence with span 'future', as delete_event does (#436). That delete cannot be undone: the dry-run row gives occurrence_id and an undo_note; the real call lists it under through_first_occurrence with an undo_note and leaves it out of the call's undo, which restores the other rows, or, when no other row was deleted, is refused and dropped as delete_event's is. When that occurrence reports recurrence rules of its own (not measured), the row is refused. By date range the row is not delegated. By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427). With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more, unless with span all its listed series' row takes it), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. With span all, a row with the series' own identifier, when its first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, and that occurrence starts no later than the next occurrence's slot or another occurrence's shown start, deletes the series from that occurrence with span 'future', as delete_event does (#436). That delete cannot be undone: the dry-run row gives occurrence_id and an undo_note; the real call lists it under through_first_occurrence with an undo_note and leaves it out of the call's undo, which restores the other rows, or, when no other row was deleted, is refused and dropped as delete_event's is. When that occurrence reports recurrence rules of its own (not measured), the row is refused. By date range, with span all, an occurrence edited on its own is refused the same way, in the dry run too, while another occurrence of its series is not listed (#427). When the series' own identifier is listed too and its row deletes on its own, an occurrence whose id has a /RID= part is left to that row, which deletes the series with it; otherwise the occurrence's row runs first, as by event_ids. By date range too, a series' row goes through its first occurrence as by event_ids, and the dry run marks it with occurrence_id and undo_note. With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -3066,7 +3066,7 @@ class CheICalMCPServer {
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
             let uniqueIds = DetachedOccurrenceSpan.occurrenceRowsFirst(items.map(\.identifier))
             let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(
-                identifiers: uniqueIds, refusingOccurrenceIdentifiers: mode == "by_event_ids")
+                identifiers: uniqueIds)
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -3136,48 +3136,8 @@ class CheICalMCPServer {
                 // #416: with span all the rows run as in the real call, occurrences' own ids first,
                 // and a bare id is judged with the occurrences before it gone, so the preview
                 // does not refuse a row the real call deletes.
-                let spanAll = spanStr == "all"
-                let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
-                let named = Set(eventIds)
-                var gone = Set<String>()
-                var preview: [[String: Any]] = []
-                for id in rows {
-                    do {
-                        let row = try await eventBatchDeletionSource.previewEventDeletion(
-                            identifier: id, span: spanStr == "future" ? .futureEvents : .thisEvent, spanAll: spanAll,
-                            namedInTheCall: named, goneInTheCall: gone)
-                        switch row {
-                        case .refused(let refusal):
-                            preview.append(["event_id": id, "error": refusal])
-                        case .deletes(let start, let end):
-                            if spanAll { gone.insert(id) }
-                            preview.append([
-                                "event_id": id,
-                                "start_date_local": localDateFormatter.string(from: start),
-                                "end_date_local": localDateFormatter.string(from: end)
-                            ])
-                        case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID):
-                            if spanAll { gone.insert(id) }
-                            preview.append([
-                                "event_id": id,
-                                "start_date_local": localDateFormatter.string(from: start),
-                                "end_date_local": localDateFormatter.string(from: end),
-                                "occurrence_id": occurrenceID,
-                                "undo_note": Self.batchPreviewThroughOccurrenceNote
-                            ])
-                        }
-                    } catch {
-                        preview.append([
-                            "event_id": id,
-                            // #335 item 6: the batch's own words for a refused series id.
-                            "error": EventKitErrorSanitizer.writeFailureLog(
-                                handler: "deleteEventsBatch",
-                                identifier: id,
-                                error: EventKitManager.batchRowError(error)
-                            )
-                        ])
-                    }
-                }
+                let rows = spanStr == "all" ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+                let preview = await previewDeletionRows(eventIds, spanStr: spanStr)
                 let response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_event_ids",
@@ -3229,10 +3189,22 @@ class CheICalMCPServer {
             let deletionItems = EventRangeQuery.deletionItems(
                 events.map { (identifier: $0.identifier, start: $0.start, slot: $0.slot) }, span: spanStr
             )
-            let batchItems = deletionItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
-            // #325 verify rounds 1-3: over a range wider than EventKit's old cut (every one-sided
-            // range is), refuse more than the ceiling of deletions before the dry run too, counted
-            // as this call deletes (span "all" once per series). A narrower range is not limited.
+            // #427 cluster verify: with span all an edited occurrence whose series is listed too is left
+            // to the series' row (`rowsTheSeriesRowDoesNotTake`).
+            var rowItems = deletionItems
+            if spanStr == "all" {
+                let named = Set(deletionItems.map(\.identifier))
+                var deleting = Set<String>()
+                for series in EventRangeQuery.seriesListedWithTheirOccurrences(deletionItems) {
+                    switch try? await eventBatchDeletionSource.previewEventDeletion(
+                        identifier: series, span: .thisEvent, spanAll: true, namedInTheCall: named, goneInTheCall: []) {
+                    case .deletes?, .deletesThroughFirstOccurrence?: deleting.insert(series)
+                    case .refused?, nil: break
+                    }
+                }
+                rowItems = EventRangeQuery.rowsTheSeriesRowDoesNotTake(deletionItems, seriesRowsThatDelete: deleting)
+            }
+            let batchItems = rowItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
             let deletions = EventRangeQuery.deletionOperations(batchItems.map(\.identifier), span: spanStr)
             try EventRangeQuery.checkDeletionSize(operations: deletions, searched: searched)
 
@@ -3244,19 +3216,39 @@ class CheICalMCPServer {
                 // stays — it's already whatever the caller specified.
                 let previewLimit = EventRangeQuery.previewLimit(searched: searched)
                 let previewed = previewLimit.map { Array(events.prefix($0)) } ?? events
+                // #427: with span all each row is previewed as the real call runs it (`previewDeletionRows`):
+                // a refused or failing row says so and is not counted, and a series' row that goes
+                // through its first occurrence says it cannot be undone. A listed occurrence left to
+                // its series' row shows that row's answer.
+                var rowAnswer: [String: [String: Any]] = [:]
+                if spanStr == "all" {
+                    var unique: [String] = []
+                    for id in batchItems.map(\.identifier) where !unique.contains(id) { unique.append(id) }
+                    for row in await previewDeletionRows(unique, spanStr: spanStr) {
+                        if let id = row["event_id"] as? String { rowAnswer[id] = row }
+                    }
+                }
+                let refusedRows = rowAnswer.values.filter { $0["error"] != nil }.count
+                func answer(for id: String) -> [String: Any]? {
+                    rowAnswer[id] ?? DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { rowAnswer[$0] }
+                }
                 let preview = previewed.map { event -> [String: Any] in
-                    [
+                    var row: [String: Any] = [
                         "event_id": event.identifier ?? "",
                         "start_date_local": localDateFormatter.string(from: event.start),
                         "end_date_local": localDateFormatter.string(from: event.end)
                     ]
+                    if let answer = answer(for: event.identifier ?? "") {
+                        for key in ["error", "occurrence_id", "undo_note"] { if let value = answer[key] { row[key] = value } }
+                    }
+                    return row
                 }
                 var response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_date_range",
                     "calendar": calendarName,
                     "total": events.count,
-                    "deletions": deletions,
+                    "deletions": deletions - refusedRows,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles."
                 ]
@@ -3268,13 +3260,64 @@ class CheICalMCPServer {
             }
 
             return try await deleteEventsWithSpan(
-                items: batchItems, slots: deletionItems.map(\.slot), spanStr: spanStr, mode: "by_date_range",
+                items: batchItems, slots: rowItems.map(\.slot), spanStr: spanStr, mode: "by_date_range",
                 extraFields: searchedFields.merging(["calendar": calendarName]) { $1 }
             )
 
         } else {
             throw ToolError.invalidParameter("Either event_ids or calendar_name (with before_date/after_date) is required")
         }
+    }
+
+    /// #416: the dry run's rows, run as in the real call: with span all occurrences' own ids first, and
+    /// a bare id judged with the occurrences before it gone, so the preview does not refuse a row the
+    /// real call deletes. Shared by both modes (#427 cluster verify): a row the real call deletes
+    /// through the first occurrence carries `occurrence_id` and `undo_note`, a refused or failing row
+    /// carries `error`.
+    private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {
+        let spanAll = spanStr == "all"
+        let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+        let named = Set(eventIds)
+        var gone = Set<String>()
+        var preview: [[String: Any]] = []
+        for id in rows {
+            do {
+                let row = try await eventBatchDeletionSource.previewEventDeletion(
+                    identifier: id, span: spanStr == "future" ? .futureEvents : .thisEvent, spanAll: spanAll,
+                    namedInTheCall: named, goneInTheCall: gone)
+                switch row {
+                case .refused(let refusal):
+                    preview.append(["event_id": id, "error": refusal])
+                case .deletes(let start, let end):
+                    if spanAll { gone.insert(id) }
+                    preview.append([
+                        "event_id": id,
+                        "start_date_local": localDateFormatter.string(from: start),
+                        "end_date_local": localDateFormatter.string(from: end)
+                    ])
+                case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID):
+                    if spanAll { gone.insert(id) }
+                    preview.append([
+                        "event_id": id,
+                        "start_date_local": localDateFormatter.string(from: start),
+                        "end_date_local": localDateFormatter.string(from: end),
+                        "occurrence_id": occurrenceID,
+                        "undo_note": Self.batchPreviewThroughOccurrenceNote
+                    ])
+                }
+            } catch {
+                preview.append([
+                    "event_id": id,
+                    // #335 item 6: the batch's own words for a refused series id.
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "deleteEventsBatch",
+                        identifier: id,
+                        error: EventKitManager.batchRowError(error)
+                    )
+                ])
+            }
+        }
+        return preview
     }
 
     /// Feature 9: Find duplicate events across calendars
