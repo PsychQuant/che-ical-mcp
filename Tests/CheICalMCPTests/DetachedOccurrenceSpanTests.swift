@@ -300,19 +300,28 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         for (one, other) in [(allowed, refusedKeys), (unrelated, refusedKeys), (ownTimeKeys, refusedKeys), (ownTimeKeys, allowed), (ownTimeKeys, unrelated)] {
             XCTAssertTrue(one.isDisjoint(with: other))
         }
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys.subtracting(["recurrence"]), holdsOwnTime: false), refusedKeys.intersection(keys))
+        for key in ownTimeKeys {
+            XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields([key, "event_id", "span"], shape: measured(), datesStayOnTheDay: true), [], key)
+        }
         XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys), refusedKeys.union(ownTimeKeys).intersection(keys))
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(keys, shape: measured()), refusedKeys.union(ownTimeKeys).intersection(keys),
+                       "all at once is no measured row")
     }
 
     func testAKeyNobodyClassifiedIsRefused() {
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["event_id", "title", "new_field"], holdsOwnTime: false), ["new_field"])
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["event_id", "title", "new_field"], shape: measured()), ["new_field"])
         XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true,
-                                                            fields: ["event_id", "new_field"], neighbours: noneEarlier),
+                                                            fields: ["event_id", "new_field"], neighbours: measured()),
                        DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
     }
 
-    private func ownTime(earlierRemain: Bool = false) -> DetachedOccurrenceSpan.Neighbours {
-        .init(earlierRemain: earlierRemain, othersRemain: true, own: .init(time: true))
+    /// The shape #428 measured: a timed weekly series with an end, the occurrence edited only in
+    /// title, notes, location or alarms, no other edited occurrence.
+    private func measured(earlierRemain: Bool = false, own: DetachedOccurrenceSpan.OwnValues = .init(),
+                          facts: DetachedOccurrenceSpan.SeriesTimeFacts = .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: true)) -> DetachedOccurrenceSpan.Neighbours {
+        var shape = DetachedOccurrenceSpan.Neighbours(earlierRemain: earlierRemain, othersRemain: true, own: own)
+        shape.seriesTime = facts
+        return shape
     }
 
     func testOnlyTheListedFieldsGoThroughWithSpanAll() {
@@ -320,14 +329,19 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
             DetachedOccurrenceSpan.updateRefusal(identifier: id, isDetached: isDetached, wholeSeries: true, fields: fields, neighbours: shape)
         }
         let reason = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
+        // verify r5: `noneEarlier` knows nothing of the first slot, so its text leaves out recurrence.
+        let unknownFirst = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true)
         for key in refusedKeys {
-            XCTAssertEqual(refusal(iCloudOccurrence, true, noneEarlier, ["event_id", "span", key]), reason, key)
-            XCTAssertEqual(refusal(iCloudOccurrence, true, earlier, [key]), reason, "the other routes do not take \(key)")
+            XCTAssertEqual(refusal(iCloudOccurrence, true, measured(), ["event_id", "span", key]), reason, key)
+            XCTAssertEqual(refusal(iCloudOccurrence, true, noneEarlier, ["event_id", "span", key]), unknownFirst, key)
+            XCTAssertEqual(refusal(iCloudOccurrence, true, earlier, [key]), DetachedOccurrenceSpan.updateReason, "verify r6: the split is answered first (\(key))")
             XCTAssertNil(refusal(series, false, noneEarlier, [key]), "the series' own id is not this path")
         }
-        XCTAssertEqual(refusal(iCloudOccurrence, false, noneEarlier, ["calendar_name"]), reason, "the /RID= arm")
-        XCTAssertEqual(refusal(otherSourceOccurrence, true, noneEarlier, ["calendar_name"]), reason, "the isDetached arm")
-        XCTAssertNil(refusal(iCloudOccurrence, true, noneEarlier, ["event_id", "span", "title", "notes", "location", "recurrence"]))
+        XCTAssertEqual(refusal(iCloudOccurrence, false, measured(), ["calendar_name"]), reason, "the /RID= arm")
+        XCTAssertEqual(refusal(otherSourceOccurrence, true, measured(), ["calendar_name"]), reason, "the isDetached arm")
+        XCTAssertNil(refusal(iCloudOccurrence, true, measured(), ["event_id", "span", "title", "notes", "location", "recurrence"]),
+                     "verify r4: a rule needs the series' first slot to be known there")
+        XCTAssertEqual(refusal(iCloudOccurrence, true, noneEarlier, ["recurrence"]), DetachedOccurrenceSpan.firstLeftRecurrenceReason, "nothing known: the side that refuses")
     }
 
     func testOnlyTheListedFieldsGoThroughWithSpanFutureAndSpanThisIsNotThisPath() {
@@ -344,35 +358,540 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     // MARK: - While the occurrence has the series' time, length and day (#428)
 
-    /// Measured on iCloud (2026-11-06): with the occurrence edited only in title, notes, location or
-    /// alarms, these did what they say. With a time, length or day of its own, the others took it.
-    func testTheDatesGoThroughOnlyWhileTheOccurrenceHoldsTheSeriesTime() {
-        for key in ownTimeKeys {
-            for (whole, future) in [(true, false), (false, true)] {
-                let held = DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: future,
-                                                                fields: [key], neighbours: noneEarlier)
-                XCTAssertNil(held, key)
-                XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: future,
-                                                                    fields: [key], neighbours: ownTime()),
-                               DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole), key)
+    private func dateRefusal(_ fields: Set<String>, whole: Bool = true, sameDay: Bool = true, _ shape: DetachedOccurrenceSpan.Neighbours?) -> String? {
+        DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: !whole,
+                                             fields: fields, datesStayOnTheDay: sameDay, neighbours: shape)
+    }
+
+    // MARK: - verify r2
+
+    /// verify r2 (MEDIUM): a later occurrence, span future, as the listing gives it: an earlier
+    /// occurrence left and its own slot not the series' first, while the series' first slot is
+    /// there. timezone, url and structured_location were measured clean there.
+    func testALaterOccurrenceWithSpanFutureTakesTheFirstRowFields() throws {
+        let first = Date(timeIntervalSinceReferenceDate: 0)
+        let third = edited(14)
+        let listing = [unedited(0), unedited(7), third, unedited(21), unedited(28)]
+        let own = UndoPostState.ownValues(one: UndoSnapshotFixtures.event(title: "Own", startDate: try XCTUnwrap(third.slot)),
+                                          slot: try XCTUnwrap(third.slot), firstStart: first,
+                                          series: UndoSnapshotFixtures.event(title: "Series", startDate: Date(timeIntervalSinceReferenceDate: 7 * day)))
+        XCTAssertTrue(own.firstSlotGone, "this occurrence's slot is not the first: that is what the flag says")
+        var shape = try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: third.eventIdentifier ?? "", slot: try XCTUnwrap(third.slot),
+                                                                   among: listing, coversWholeSeries: true, own: own))
+        shape.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts(of: third.eventIdentifier ?? "", among: listing, coversWholeSeries: true,
+                                                                  measuredRule: true, countBounded: true, firstStart: first)
+        XCTAssertTrue(shape.earlierRemain)
+        XCTAssertTrue(shape.seriesTime.firstSlotPresent)
+        for key in DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows {
+            XCTAssertNil(dateRefusal([key], whole: false, shape), key)
+        }
+        // The first deleted: the earliest listed slot is not the series' first start.
+        let left = Array(listing.dropFirst())
+        XCTAssertFalse(DetachedOccurrenceSpan.seriesTimeFacts(of: third.eventIdentifier ?? "", among: left, coversWholeSeries: true,
+                                                              measuredRule: true, countBounded: true, firstStart: first).firstSlotPresent)
+        var gone = shape
+        gone.seriesTime.firstSlotPresent = false
+        for key in DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows {
+            XCTAssertEqual(dateRefusal([key], whole: false, gone), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false), key)
+        }
+    }
+
+    /// verify r2 (MEDIUM): every measured start_time and end_time row moved the time on the same
+    /// day. Another day, or another weekday, was not run, and is refused.
+    func testADateOnAnotherDayIsRefused() {
+        for fields: Set<String> in [["start_time"], ["end_time"], ["start_time", "end_time"]] {
+            XCTAssertNil(dateRefusal(fields, sameDay: true, measured()), "\(fields)")
+            XCTAssertEqual(dateRefusal(fields, sameDay: false, measured()), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), "\(fields)")
+            XCTAssertEqual(dateRefusal(fields, whole: false, sameDay: false, measured()), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false), "\(fields)")
+        }
+        XCTAssertNil(dateRefusal(["url"], sameDay: false, measured()), "no date written: the day does not matter")
+        XCTAssertNil(dateRefusal(["all_day"], sameDay: false, measured()))
+    }
+
+    func testTheDayIsReadInTheEventsZone() throws {
+        let taipei = try XCTUnwrap(TimeZone(identifier: "Asia/Taipei"))
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2026-12-07T02:00:00Z")), end = try XCTUnwrap(iso.date(from: "2026-12-07T03:00:00Z")) // Mon 10-11
+        func stays(_ newStart: String?, _ newEnd: String?, zone: TimeZone? = nil) -> Bool {
+            DetachedOccurrenceSpan.datesStayOnTheDay(newStart: newStart.flatMap(iso.date(from:)), newEnd: newEnd.flatMap(iso.date(from:)),
+                                                     start: start, end: end, zone: zone ?? taipei)
+        }
+        XCTAssertTrue(stays(nil, nil))
+        XCTAssertTrue(stays("2026-12-07T01:00:00Z", nil), "09:00 the same day")
+        XCTAssertTrue(stays(nil, "2026-12-07T04:00:00Z"), "end 12:00")
+        XCTAssertTrue(stays("2026-12-07T01:00:00Z", "2026-12-07T02:00:00Z"))
+        XCTAssertFalse(stays("2026-12-08T02:00:00Z", nil), "a day later")
+        XCTAssertFalse(stays("2026-12-14T02:00:00Z", nil), "a week later, the same weekday")
+        XCTAssertFalse(stays(nil, "2026-12-08T04:00:00Z"), "an end on the next day")
+        XCTAssertFalse(stays("2026-12-07T15:30:00Z", nil), "23:30 keeps the hour of length: its end falls on the next day")
+        XCTAssertTrue(stays("2026-12-06T17:00:00Z", nil), "01:00 Monday in Taipei: the same day there")
+        XCTAssertFalse(stays("2026-12-06T17:00:00Z", nil, zone: try XCTUnwrap(TimeZone(identifier: "UTC"))), "read in UTC it is Sunday")
+    }
+
+    /// verify r2 (LOW): the shape where every remaining occurrence was edited is not taken, and
+    /// only a `/RID=` identifier under this series counts.
+    func testTheEarliestEditedNeedsTheMeasuredIdShape() {
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([edited(0, id: "\(series)/OTHER=1"), unedited(7)], identifier: series),
+                     "'/' without RID= was not measured")
+    }
+
+    /// verify r2 (LOW): reached through the series' id, the refusal says so and names no route
+    /// back to the series' id.
+    func testARefusalReachedThroughTheSeriesIdSaysSo() {
+        let reasons = [DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), DetachedOccurrenceSpan.sameValueReason(wholeSeries: true),
+                       DetachedOccurrenceSpan.carriedReason(wholeSeries: true), DetachedOccurrenceSpan.recurrenceDayReason,
+                       DetachedOccurrenceSpan.unknownReason(identifier: iCloudOccurrence, span: "'all'", suffix: "Nothing was written."),
+                       "something else"]
+        for reason in reasons {
+            let text = DetachedOccurrenceSpan.throughSeriesID(reason)
+            XCTAssertTrue(text.hasPrefix("event_id is the series' identifier, and the occurrence that comes first in this series was edited on its own, so update_event with span 'all' went through that occurrence"), text)
+            XCTAssertTrue(text.contains("Single occurrences take span 'this' with occurrence_date;"), text)
+            // verify r3: with every remaining occurrence edited the series' id reaches none of them
+            // with occurrence_date (#335 item 1), so the text names their own ids instead.
+            let allEdited = DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: true)
+            XCTAssertFalse(allEdited.contains("occurrence_date"), allEdited)
+            XCTAssertTrue(allEdited.contains("Single occurrences take the id list_events shows for each (it ends in /RID=...) with span 'this';"), allEdited)
+            XCTAssertFalse(text.contains("event_id names one occurrence"), text)
+            XCTAssertFalse(text.contains("This identifier names one occurrence"), text)
+            XCTAssertFalse(text.contains("Use the id list_events shows for an occurrence that was not edited on its own"), text)
+            XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+        }
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)).contains(DetachedOccurrenceSpan.measuredDateRows))
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.recurrenceDayReason).contains("days_of_week does not hold the day of the week of that occurrence's original date"))
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.sameValueReason(wholeSeries: true)).contains("already holds"))
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.carriedReason(wholeSeries: true)).contains("would start a new series"))
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.firstLeftRecurrenceReason).contains("a new recurrence is refused"))
+    }
+
+    /// verify r3 (MEDIUM): through the series' id, after the first occurrence was deleted, the save
+    /// starts a new series from a later slot; a rule written so was not measured there (a count from
+    /// a later slot came out short, #443), so it is refused. Title and notes were measured there.
+    func testARecurrenceThroughTheSeriesIdAfterADeletedFirstIsRefused() {
+        let firstLeft = measured(own: .init(firstSlotGone: true), facts: .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: false))
+        // `through`: the route, now the same refusal either way (verify r4); kept to name the case.
+        func refusal(_ fields: Set<String>, through: Bool, _ shape: DetachedOccurrenceSpan.Neighbours) -> String? {
+            DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: fields,
+                                                 neighbours: shape)
+        }
+        XCTAssertEqual(refusal(["recurrence"], through: true, firstLeft), DetachedOccurrenceSpan.firstLeftRecurrenceReason)
+        XCTAssertEqual(refusal(["recurrence", "title"], through: true, firstLeft), DetachedOccurrenceSpan.firstLeftRecurrenceReason)
+        XCTAssertNil(refusal(["title"], through: true, firstLeft), "measured (2026-11-08)")
+        XCTAssertNil(refusal(["notes"], through: true, firstLeft), "measured (2026-11-08)")
+        XCTAssertNil(refusal(["recurrence"], through: true, measured()), "the first occurrence there: no new series")
+        XCTAssertEqual(refusal(["recurrence"], through: false, firstLeft), DetachedOccurrenceSpan.firstLeftRecurrenceReason,
+                       "verify r4: its own id makes the same save from a later slot")
+        let third = measured(earlierRemain: true, own: .init(firstSlotGone: true))
+        XCTAssertNil(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: false, futureSpan: true,
+                                                          fields: ["recurrence"], neighbours: third), "span future from a later occurrence, the first there: #416")
+    }
+
+    /// verify r5 (MEDIUM): an all-day series' /RID= is the wall-clock date read as UTC, so read raw it
+    /// is not the series' first start (local midnight) in a zone other than UTC. Read as a rule slot,
+    /// the edited first occurrence is the first slot.
+    func testAnAllDayFirstSlotIsReadAsARuleSlot() throws {
+        for zoneID in ["America/Los_Angeles", "Asia/Taipei"] {
+            let zone = try XCTUnwrap(TimeZone(identifier: zoneID))
+            var local = Calendar(identifier: .gregorian); local.timeZone = zone
+            var utc = Calendar(identifier: .gregorian); utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+            let firstStart = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+            let rid = try XCTUnwrap(utc.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+            let next = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 12, day: 14)))
+            let firstEdited = FirstRemainingOccurrence.Candidate(eventIdentifier: "\(series)/RID=\(Int(rid.timeIntervalSince1970))", isDetached: true,
+                                                                 hasRecurrenceRules: false, start: firstStart, slot: rid, slotFromRID: true)
+            let unedited = FirstRemainingOccurrence.Candidate(eventIdentifier: series, isDetached: false, hasRecurrenceRules: true, start: next, slot: next)
+            func facts(allDay: Bool) -> DetachedOccurrenceSpan.SeriesTimeFacts {
+                DetachedOccurrenceSpan.seriesTimeFacts(of: firstEdited.eventIdentifier ?? "", among: [firstEdited, unedited], coversWholeSeries: true,
+                                                       measuredRule: false, countBounded: true, firstStart: firstStart, isAllDay: allDay, zone: zone)
+            }
+            XCTAssertTrue(facts(allDay: true).firstSlotPresent, zoneID)
+            XCTAssertTrue(UndoPostState.sameInstant(UndoPostState.ruleSlot(of: firstEdited, isAllDay: true, zone: zone), firstStart), zoneID)
+            XCTAssertTrue(UndoPostState.sameInstant(UndoPostState.ruleSlot(of: unedited, isAllDay: true, zone: zone), next), "no /RID=: as listed (\(zoneID))")
+        }
+    }
+
+    // MARK: - verify r7
+
+    /// verify r7 (MEDIUM): all_day from the first left after a deleted first occurrence saves from a
+    /// later slot, which #471 measured losing occurrences: refused by #428's own check, with its text.
+    func testAllDayAfterADeletedFirstIsRefused() {
+        let firstLeft = measured(own: .init(firstSlotGone: true), facts: .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: false))
+        XCTAssertEqual(dateRefusal(["all_day"], firstLeft), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true))
+        XCTAssertNil(dateRefusal(["all_day"], measured()), "the first occurrence there: measured")
+        for key in ["start_time", "end_time", "alarms_minutes_offsets"] {
+            XCTAssertNil(dateRefusal([key], firstLeft), "\(key): measured from the first left (2026-11-06, and on a started series 2026-11-08)")
+        }
+        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
+    }
+
+    /// verify r9 (LOW): through the first occurrence by slot, edited on its own (the #428 shapes), no
+    /// identifier takes a time zone change from a date on, so #478's route sentence is replaced
+    /// there; the cause stays.
+    func testTheZoneTextThroughTheFirstEditedOccurrenceNamesNoSpanFuture() {
+        let text = DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.zoneChangeReason)
+        XCTAssertTrue(text.contains("timezone cannot change from an occurrence that has already happened"), text)
+        XCTAssertTrue(text.contains("leave timezone out"), text)
+        XCTAssertFalse(text.contains("span 'future'"), text)
+        XCTAssertTrue(text.contains(DetachedOccurrenceSpan.firstEditedNoZoneRoute), text)
+        XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+        XCTAssertEqual(DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.pastStartReason), SeriesRuleWrite.pastStartReason)
+        XCTAssertTrue(DetachedOccurrenceSpan.addressesFirstBySlot(measured()))
+        XCTAssertFalse(DetachedOccurrenceSpan.addressesFirstBySlot(measured(earlierRemain: true)))
+        XCTAssertFalse(DetachedOccurrenceSpan.addressesFirstBySlot(nil))
+        let fields = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
+        XCTAssertTrue(fields.contains("except where the series' first occurrence was edited on its own, or deleted with the first one left edited on its own: no identifier takes that route there yet"), fields)
+    }
+
+    /// verify r10 (LOW): through the series' id the zone text is swapped twice (inner call, then the
+    /// series-id mapping); the composed text names the series-id routes, not the own-id sentence.
+    func testTheComposedZoneTextThroughTheSeriesIdNamesItsRoutes() {
+        let inner = DetachedOccurrenceSpan.firstEditedOccurrenceRoute(SeriesRuleWrite.zoneChangeReason)
+        for allEdited in [false, true] {
+            let text = DetachedOccurrenceSpan.throughSeriesIDStartedRule(inner, allEdited: allEdited)
+            XCTAssertFalse(text.contains(DetachedOccurrenceSpan.firstEditedNoZoneRoute), text)
+            XCTAssertFalse(text.contains("span 'future'"), text)
+            XCTAssertTrue(text.contains("timezone cannot change from an occurrence that has already happened"), text)
+            XCTAssertTrue(text.contains(allEdited ? "(it ends in /RID=...) with span 'this'" : "span 'this' with occurrence_date"), text)
+            XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+        }
+        XCTAssertTrue(DetachedOccurrenceSpan.firstEditedNoZoneRoute.contains("no identifier takes a time zone change from a later date on yet"))
+    }
+
+    /// verify r9 (LOW): span future with timezone from a later edited occurrence still to come is
+    /// refused in the #428 shape (the first occurrence edited too: another edited occurrence), as
+    /// measured; with the first occurrence not edited it went through (measured, 2026-11-08).
+    func testSpanFutureTimezoneFromALaterOccurrenceInThe428ShapeIsRefused() {
+        let otherEdited = measured(earlierRemain: true, facts: .init(measuredRule: true, hasEnd: true, otherEdited: true, firstSlotPresent: true))
+        XCTAssertEqual(dateRefusal(["timezone"], whole: false, otherEdited), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false))
+        XCTAssertNil(dateRefusal(["timezone"], whole: false, measured(earlierRemain: true)), "only that occurrence edited")
+    }
+
+    /// After #478: a time zone on a started series is #478's check in the inner call (zoneRefusal,
+    /// pinned in `SeriesIdRouteWiringTests`), measured refused through the series' id and the first
+    /// occurrence's own id with nothing changed (2026-11-08); #428's check no longer duplicates it.
+    func testATimeZoneIsNotRefusedByTheShapeCheck() {
+        XCTAssertNil(dateRefusal(["timezone"], measured()))
+        XCTAssertFalse(DetachedOccurrenceSpan.measuredDateRows.contains("timezone only on a series that has not started"))
+    }
+
+    /// verify r7/r8 (LOW): a #451 refusal reached through the series' id keeps its cause and its
+    /// valid routes; only the sentence that names span 'future' with occurrence_date, a route that
+    /// neither identifier offers in this shape, is replaced.
+    func testAStartedSeriesRefusalReachedThroughTheSeriesIdKeepsItsCause() {
+        func through(_ reason: String, allEdited: Bool = false) -> String {
+            DetachedOccurrenceSpan.throughSeriesIDStartedRule(reason, allEdited: allEdited)
+        }
+        XCTAssertEqual(through(SeriesRuleWrite.pastStartReason), SeriesRuleWrite.pastStartReason, "no such sentence: unchanged")
+        let kept: [(String, [String])] = [
+            (SeriesRuleWrite.startedRuleReason, ["may only keep the series' pattern", "To keep the series' rule, leave recurrence out.",
+                                                 "To end the series, give that rule an end_date after now"]),
+            (SeriesRuleWrite.countedSeriesReason, ["cannot tell whether any are still to come", "leaving recurrence out keeps the rule"]),
+            (SeriesRuleWrite.unwritableRuleReason, ["Leave recurrence out to keep the rule."]),
+            (SeriesRuleWrite.startPassesOccurrencesReason, ["may change only the time of day of its first occurrence", "leave start_time out"]),
+            // After #478: its route from an occurrence still to come is span 'future' with occurrence_date.
+            (SeriesRuleWrite.zoneChangeReason, ["timezone cannot change from an occurrence that has already happened", "leave timezone out"])]
+        for (reason, phrases) in kept {
+            for allEdited in [false, true] {
+                let text = through(reason, allEdited: allEdited)
+                for phrase in phrases { XCTAssertTrue(text.contains(phrase), "\(phrase): \(text)") }
+                XCTAssertFalse(text.contains("span 'future'"), text)
+                XCTAssertTrue(text.hasSuffix("Nothing was written."), text)
+                if reason.contains("span 'future'") {
+                    XCTAssertTrue(text.contains(allEdited ? "(it ends in /RID=...) with span 'this'" : "span 'this' with occurrence_date"), text)
+                }
             }
         }
-        XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["start_time"], neighbours: earlier),
-                       DetachedOccurrenceSpan.updateReason, "an earlier occurrence left: it would still split")
+        XCTAssertFalse(through(SeriesRuleWrite.countedSeriesReason).contains("would change"), "its own cause, not another")
+    }
+
+    /// verify r8 (LOW): all_day with span future from a later occurrence is refused by #451
+    /// (`allDayReason`, measured), so #428's check refuses it first and the texts do not offer it.
+    func testAllDayWithSpanFutureIsRefused() {
+        XCTAssertEqual(dateRefusal(["all_day"], whole: false, measured(earlierRemain: true)), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false))
+        XCTAssertNil(dateRefusal(["all_day"], measured()), "span all from the first occurrence: measured")
+        XCTAssertTrue(DetachedOccurrenceSpan.measuredDateRows.contains("all_day true only with span all while the series' first occurrence is still there"))
+    }
+
+    // MARK: - verify r6
+
+    /// Runs `body` with the process' zone set to `identifier`, as the server's zone is read by
+    /// default (`TimeZone.current`), and restores it.
+    private func withHostZone(_ identifier: String, _ body: () throws -> Void) rethrows {
+        let previous = ProcessInfo.processInfo.environment["TZ"]
+        setenv("TZ", identifier, 1); tzset(); NSTimeZone.resetSystemTimeZone()
+        defer {
+            if let previous { setenv("TZ", previous, 1) } else { unsetenv("TZ") }
+            tzset(); NSTimeZone.resetSystemTimeZone()
+        }
+        XCTAssertEqual(TimeZone.current.identifier, identifier)
+        try body()
+    }
+
+    /// verify r6 (MEDIUM): the production calls leave the zone at its default. With the host in a zone
+    /// other than the test's, an all-day first slot read in UTC or a fixed zone would fail here.
+    func testAnAllDayFirstSlotIsReadInTheHostZoneByDefault() throws {
+        for zoneID in ["America/Los_Angeles", "Asia/Tokyo"] {
+            try withHostZone(zoneID) {
+                let local = Calendar.gregorian(in: .current)
+                var utc = Calendar(identifier: .gregorian); utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+                let firstStart = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+                let rid = try XCTUnwrap(utc.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+                let next = try XCTUnwrap(local.date(from: DateComponents(year: 2026, month: 12, day: 14)))
+                let first = FirstRemainingOccurrence.Candidate(eventIdentifier: "\(series)/RID=\(Int(rid.timeIntervalSinceReferenceDate))", isDetached: true,
+                                                           hasRecurrenceRules: false, start: firstStart, slot: rid, slotFromRID: true)
+                let unedited = FirstRemainingOccurrence.Candidate(eventIdentifier: series, isDetached: false, hasRecurrenceRules: true, start: next, slot: next)
+                let facts = DetachedOccurrenceSpan.seriesTimeFacts(of: first.eventIdentifier ?? "", among: [first, unedited], coversWholeSeries: true,
+                                                                   measuredRule: false, countBounded: true, firstStart: firstStart, isAllDay: true)
+                XCTAssertTrue(facts.firstSlotPresent, zoneID)
+                XCTAssertFalse(FirstRemainingOccurrence.firstSlotDeleted(first, firstStart: firstStart, isAllDay: true), zoneID)
+                XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([first, unedited], identifier: series, isAllDay: true), 0, zoneID)
+                let shape = try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: first.eventIdentifier ?? "", slot: firstStart, among: [first, unedited],
+                                                                           coversWholeSeries: true, isAllDay: true))
+                XCTAssertFalse(shape.earlierRemain, zoneID)
+                XCTAssertFalse(shape.movedPastOthers, zoneID)
+            }
+        }
+    }
+
+    /// verify r6 (LOW): whether a slot is a /RID= one is carried from where the candidate is built,
+    /// not read from the event identifier: the external identifier can hold it too.
+    func testARuleSlotFollowsWhereTheSlotCameFrom() throws {
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let rid = try XCTUnwrap(utc.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+        let localMidnight = try XCTUnwrap(Calendar.gregorian(in: tokyo).date(from: DateComponents(year: 2026, month: 12, day: 7)))
+        let byExternal = FirstRemainingOccurrence.Candidate(eventIdentifier: "OTHER-STORE-ID", isDetached: true, hasRecurrenceRules: false,
+                                                            start: localMidnight, slot: rid, sameSeriesByExternalID: true, slotFromRID: true)
+        XCTAssertEqual(UndoPostState.ruleSlot(of: byExternal, isAllDay: true, zone: tokyo), localMidnight, "the RID was on the external id")
+        let noDigits = FirstRemainingOccurrence.Candidate(eventIdentifier: "\(series)/RID=abc", isDetached: true, hasRecurrenceRules: false,
+                                                          start: localMidnight, slot: localMidnight, slotFromRID: false)
+        XCTAssertEqual(UndoPostState.ruleSlot(of: noDigits, isAllDay: true, zone: tokyo), localMidnight, "an occurrenceDate is already local")
+        XCTAssertTrue(FirstRemainingOccurrence.slotIsFromRID(eventIdentifier: "OTHER", externalIdentifier: "\(series)/RID=12345"))
+        XCTAssertFalse(FirstRemainingOccurrence.slotIsFromRID(eventIdentifier: "\(series)/RID=abc", externalIdentifier: nil))
+    }
+
+    /// verify r6 (LOW, option A): through the occurrence's own id, the first by slot moved to start
+    /// after another occurrence takes no span 'all' or 'future' write, as the series' id does not:
+    /// such a save was not measured.
+    func testTheMovedFirstTakesNoWholeSeriesWriteThroughItsOwnId() throws {
+        let moved = edited(7, start: 15)
+        let listing = [moved, unedited(14), unedited(21)]
+        let shape = try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: moved.eventIdentifier ?? "", slot: try XCTUnwrap(moved.slot), among: listing,
+                                                                   coversWholeSeries: true))
+        XCTAssertFalse(shape.earlierRemain)
+        XCTAssertTrue(shape.movedPastOthers)
+        for whole in [true, false] {
+            XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: whole, futureSpan: !whole,
+                                                                fields: ["title"], neighbours: shape), DetachedOccurrenceSpan.movedFirstReason)
+        }
+        XCTAssertEqual(DetachedOccurrenceSpan.movedFirstDeleteRefusal(identifier: iCloudOccurrence, isDetached: true, neighbours: shape),
+                       DetachedOccurrenceSpan.movedFirstDeleteReason)
+        XCTAssertNil(DetachedOccurrenceSpan.movedFirstDeleteRefusal(identifier: iCloudOccurrence, isDetached: true, neighbours: noneEarlier))
+        XCTAssertNil(DetachedOccurrenceSpan.movedFirstDeleteRefusal(identifier: series, isDetached: false, neighbours: shape), "not an occurrence")
+        let shownBefore = try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: edited(0, start: 5).eventIdentifier ?? "", slot: Date(timeIntervalSinceReferenceDate: 0),
+                                                                         among: [edited(0, start: 5), edited(7, start: 3)], coversWholeSeries: true))
+        XCTAssertTrue(shownBefore.movedPastOthers, "another shown before its start")
+        XCTAssertFalse(try XCTUnwrap(DetachedOccurrenceSpan.neighbours(of: edited(0, start: 5).eventIdentifier ?? "", slot: Date(timeIntervalSinceReferenceDate: 0),
+                                                                       among: [edited(0, start: 5), unedited(7)], coversWholeSeries: true)).movedPastOthers)
+        for text in [DetachedOccurrenceSpan.movedFirstReason, DetachedOccurrenceSpan.movedFirstDeleteReason] {
+            XCTAssertTrue(text.contains("span 'this'"), text)
+            XCTAssertFalse(text.contains("Use the id list_events shows for an occurrence that was not edited on its own"), text)
+        }
+    }
+
+    /// verify r6 (LOW): with an earlier occurrence left, span 'all' through a later occurrence answers
+    /// the split first, so the fields text does not offer what that refusal then refuses.
+    func testASplitIsAnsweredBeforeTheFields() {
+        XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["url"],
+                                                            neighbours: measured(earlierRemain: true)), DetachedOccurrenceSpan.updateReason)
+    }
+
+    /// verify r5 (LOW): the fields text on the own-id route after a deleted first occurrence does not
+    /// offer recurrence either.
+    func testTheOwnIdFieldsTextAfterADeletedFirstLeavesOutRecurrence() {
+        let firstLeft = measured(own: .init(firstSlotGone: true), facts: .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: false))
+        let text = DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["recurrence", "url"],
+                                                        neighbours: firstLeft)
+        XCTAssertEqual(text, DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true))
+        XCTAssertTrue(DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true).contains("title, notes and location can be written"))
+        XCTAssertFalse(DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true).contains("location and recurrence can be written"))
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: true), firstDeleted: true)
+            .contains(DetachedOccurrenceSpan.measuredDateRows), "mapped like the other fields text")
+    }
+
+    /// verify r4 (LOW): span future in the date rows was measured only from a later occurrence with
+    /// the first there, a count, and no other edited occurrence.
+    func testSpanFutureDatesNeedTheMeasuredRow() {
+        for facts in [DetachedOccurrenceSpan.SeriesTimeFacts(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: false),
+                      .init(measuredRule: true, hasEnd: false, otherEdited: false, firstSlotPresent: true),
+                      .init(measuredRule: true, hasEnd: true, otherEdited: true, firstSlotPresent: true)] {
+            for key in ["start_time", "end_time", "all_day", "alarms_minutes_offsets"] {
+                XCTAssertEqual(dateRefusal([key], whole: false, measured(earlierRemain: true, facts: facts)), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false), "\(key) \(facts)")
+            }
+        }
+        XCTAssertNil(dateRefusal(["start_time"], whole: false, measured(earlierRemain: true)))
+    }
+
+    /// verify r4 (LOW): "a series with an end" for timezone, url and structured_location is a count:
+    /// the rows were series of 5; an end date was not run.
+    func testTheFirstRowFieldsNeedACountBound() {
+        let first = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertFalse(DetachedOccurrenceSpan.seriesTimeFacts(of: edited(0).eventIdentifier ?? "", among: [edited(0), unedited(7)], coversWholeSeries: true,
+                                                              measuredRule: true, countBounded: false, firstStart: first).hasEnd)
+    }
+
+    /// verify r4 (MEDIUM): the moved-past-next shape (first deleted, second moved after the third)
+    /// gets the edited-before hint, and its text states the condition the series' id route needs,
+    /// so it does not send the caller back to the call just refused. `notFoundError` itself reads the
+    /// store and has no seam; these are the decisions it is made of.
+    func testTheMovedPastNextShapeGetsAHintThatStatesTheCondition() {
+        let listing = [edited(7, start: 15), unedited(14), unedited(21)]
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited(listing, identifier: series))
+        XCTAssertTrue(FirstRemainingOccurrence.hintsEditedBefore(stored: true, refreshes: false, recurring: true, standInIgnoringTheRefusal: true))
+        let condition = "and its start is not later than any other occurrence's original or shown start"
+        for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason, EventKitManager.standInAllEditedReason] {
+            XCTAssertTrue(text.contains(condition), text)
+            XCTAssertTrue(text.contains("Otherwise"), text)
+        }
+    }
+
+    /// verify r4 (LOW): another occurrence shown before the first's start, the first not moved past
+    /// the next slot: not measured either.
+    func testTheEarliestEditedMustAlsoComeFirstByShownStart() {
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([edited(0, start: 5), edited(7, start: 3), unedited(14)], identifier: series))
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([edited(0, start: 5), unedited(14)], identifier: series), 0)
+    }
+
+    /// verify r4 (LOW): the fields text after a deleted first occurrence does not offer recurrence.
+    func testTheFieldsTextAfterADeletedFirstLeavesOutRecurrence() {
+        let reason = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
+        XCTAssertTrue(DetachedOccurrenceSpan.throughSeriesID(reason).contains("Through it title, notes, location and recurrence can be written."))
+        let gone = DetachedOccurrenceSpan.throughSeriesID(reason, firstDeleted: true)
+        XCTAssertTrue(gone.contains("Through it title, notes and location can be written."), gone)
+        XCTAssertFalse(gone.contains("and recurrence can be written"), gone)
+    }
+
+    /// verify r4 (LOW): a new days_of_week through an occurrence's id is read against its original
+    /// day before #454's exemptions, which read the series' stored rule.
+    func testANewRuleThroughAnOccurrenceIsCheckedAgainstTheOriginalDay() {
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesRecurrenceDay(originalWeekday: 2, requestedDays: [4]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesRecurrenceDay(originalWeekday: 2, requestedDays: [2, 4]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesRecurrenceDay(originalWeekday: nil, requestedDays: [4]), "not through an occurrence")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesRecurrenceDay(originalWeekday: 2, requestedDays: nil))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesRecurrenceDay(originalWeekday: 2, requestedDays: []))
+    }
+
+    /// verify r3 (INFO): a structured location rewrites the location text too, and no row had an
+    /// occurrence with its own location text and a place written.
+    func testAPlaceIsNotWrittenOverAnOwnLocation() {
+        XCTAssertEqual(dateRefusal(["structured_location"], measured(own: .init(location: true))), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
+        XCTAssertNil(dateRefusal(["start_time"], measured(own: .init(location: true))), "a date with its own location: measured")
+    }
+
+    /// verify r3 (LOW): the earliest edited occurrence counts only while it does not start after the
+    /// next one's slot: a delete from it with span future was measured only so.
+    func testTheEarliestEditedMustNotStartPastTheNextSlot() {
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([edited(7, start: 9), unedited(14)], identifier: series), 0, "moved, still before the next")
+        XCTAssertNil(FirstRemainingOccurrence.earliestEdited([edited(7, start: 15), unedited(14)], identifier: series), "moved past the next slot")
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([edited(7, start: 30)], identifier: series), 0, "nothing after it")
+    }
+
+    /// Measured on iCloud (2026-11-06): each field alone, with the occurrence edited only in title,
+    /// notes, location or alarms. With a time, length or day of its own, the others took it.
+    func testEachMeasuredFieldGoesThroughAloneInTheMeasuredShape() {
+        for key in ownTimeKeys {
+            for whole in [true, false] {
+                if key == "all_day", !whole { continue } // verify r8: refused with span future (#451)
+                XCTAssertNil(dateRefusal([key], whole: whole, measured()), key)
+                XCTAssertEqual(dateRefusal([key], whole: whole, measured(own: .init(time: true))), DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole), key)
+                XCTAssertEqual(dateRefusal([key], whole: whole, noneEarlier), DetachedOccurrenceSpan.fieldsReason(wholeSeries: whole, firstDeleted: whole),
+                               "\(key): nothing known about the series' rule")
+            }
+        }
+        XCTAssertNil(dateRefusal(["start_time", "end_time"], measured()), "measured together")
+        XCTAssertEqual(dateRefusal(["start_time"], measured(earlierRemain: true)), DetachedOccurrenceSpan.updateReason, "an earlier occurrence left: it would still split")
+    }
+
+    /// verify r1: every other pair, and a date beside an allowed field, was not run.
+    func testOnlyTheMeasuredCombinationsGoThrough() {
+        for fields: Set<String> in [["start_time", "title"], ["end_time", "notes"], ["start_time", "timezone"], ["all_day", "alarms_minutes_offsets"],
+                                    ["start_time", "location"], ["url", "structured_location"], ["start_time", "end_time", "all_day"],
+                                    ["start_time", "recurrence"], ["url", "recurrence"]] {
+            XCTAssertEqual(dateRefusal(fields, measured()), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), "\(fields)")
+        }
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["start_time", "recurrence"], shape: measured()), ["start_time"])
+        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["title", "recurrence"], shape: measured()), [])
+    }
+
+    /// verify r1: every row was a timed weekly series every week on at most one day. Another rule,
+    /// or an all-day series, takes none of these fields.
+    func testOnlyTheMeasuredSeriesTakesThem() {
+        let other = DetachedOccurrenceSpan.SeriesTimeFacts(measuredRule: false, hasEnd: true, otherEdited: false, firstSlotPresent: true)
+        for key in ownTimeKeys {
+            XCTAssertEqual(dateRefusal([key], measured(facts: other)), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), key)
+        }
+        func rule(_ frequency: EKRecurrenceFrequency, interval: Int = 1, days: [EKWeekday] = [], monthDays: [NSNumber]? = nil) -> EKRecurrenceRule {
+            EKRecurrenceRule(recurrenceWith: frequency, interval: interval,
+                             daysOfTheWeek: days.isEmpty ? nil : days.map { EKRecurrenceDayOfWeek($0) }, daysOfTheMonth: monthDays,
+                             monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil, end: nil)
+        }
+        XCTAssertTrue(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.weekly)]))
+        XCTAssertTrue(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.weekly, days: [.monday])]))
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: true, rules: [rule(.weekly)]), "all-day: its /RID= is a floating date")
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.weekly, days: [.monday, .wednesday, .friday])]),
+                       "a start on another of its days was not run")
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.weekly, interval: 2)]))
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.monthly, monthDays: [15])]))
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.daily)]))
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: []))
+        XCTAssertFalse(DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: false, rules: [rule(.weekly), rule(.weekly)]))
+    }
+
+    /// verify r1: timezone, url and structured_location ran only from an occurrence whose series'
+    /// first slot is there, on a series with an end and no other edited occurrence.
+    func testTimezoneUrlAndPlaceGoThroughOnlyInTheirRows() {
+        let shapes: [(String, DetachedOccurrenceSpan.Neighbours)] = [
+            ("first left", measured(own: .init(firstSlotGone: true), facts: .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: false))),
+            ("open-ended", measured(facts: .init(measuredRule: true, hasEnd: false, otherEdited: false, firstSlotPresent: true))),
+            ("another edited", measured(facts: .init(measuredRule: true, hasEnd: true, otherEdited: true, firstSlotPresent: true)))]
+        for (name, shape) in shapes {
+            for key in DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows {
+                XCTAssertEqual(dateRefusal([key], shape), DetachedOccurrenceSpan.fieldsReason(wholeSeries: true, firstDeleted: !shape.seriesTime.firstSlotPresent),
+                               "\(key), \(name)")
+            }
+            for key in ownTimeKeys.subtracting(DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows) {
+                if key == "all_day", !shape.seriesTime.firstSlotPresent {
+                    XCTAssertNotNil(dateRefusal([key], shape), "verify r7: all_day from the first left is refused")
+                    continue
+                }
+                XCTAssertNil(dateRefusal([key], shape), "\(key), \(name): measured there")
+            }
+        }
+        XCTAssertEqual(DetachedOccurrenceSpan.seriesTimeFieldsOfTheFirstRows, ["timezone", "url", "structured_location"])
+    }
+
+    /// verify r1: alarms of its own: an alarm write was not run then, a held or partly held value.
+    func testAnAlarmWriteNeedsTheSeriesAlarms() {
+        XCTAssertEqual(dateRefusal(["alarms_minutes_offsets"], measured(own: .init(other: true, alarms: true))),
+                       DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
+        XCTAssertNil(dateRefusal(["start_time"], measured(own: .init(other: true, alarms: true))), "a date with its own alarm: measured")
+    }
+
+    func testTheFactsAreReadFromTheListing() {
+        let first = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertEqual(DetachedOccurrenceSpan.seriesTimeFacts(of: edited(0).eventIdentifier ?? "", among: [edited(0), unedited(7)],
+                                                              coversWholeSeries: true, measuredRule: true, countBounded: true, firstStart: first),
+                       .init(measuredRule: true, hasEnd: true, otherEdited: false, firstSlotPresent: true))
+        XCTAssertEqual(DetachedOccurrenceSpan.seriesTimeFacts(of: edited(7).eventIdentifier ?? "", among: [edited(7), unedited(14), edited(21)],
+                                                              coversWholeSeries: false, measuredRule: false, countBounded: true, firstStart: first),
+                       .init(measuredRule: false, hasEnd: false, otherEdited: true, firstSlotPresent: false))
+        XCTAssertEqual(DetachedOccurrenceSpan.SeriesTimeFacts(), .init(measuredRule: false, hasEnd: false, otherEdited: true, firstSlotPresent: false), "the defaults refuse")
     }
 
     /// `all_day: false` on an all-day series gave the others another time and an extra occurrence.
     func testAllDayFalseIsRefused() {
         XCTAssertEqual(DetachedOccurrenceSpan.updateRefusal(identifier: iCloudOccurrence, isDetached: true, wholeSeries: true, fields: ["all_day"],
-                                                            turnsTimed: true, neighbours: noneEarlier),
+                                                            turnsTimed: true, neighbours: measured()),
                        DetachedOccurrenceSpan.fieldsReason(wholeSeries: true))
-    }
-
-    /// A date with a new rule was not measured.
-    func testADateWithARecurrenceIsRefused() {
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["start_time", "recurrence"], holdsOwnTime: false), ["start_time"])
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["url", "recurrence"], holdsOwnTime: false), ["url"])
-        XCTAssertEqual(DetachedOccurrenceSpan.refusedUpdateFields(["title", "recurrence"], holdsOwnTime: false), [])
     }
 
     func testOwnTimeIsReadFromTheOccurrenceAndAnUneditedOne() {
@@ -393,6 +912,51 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                       "a length of its own: the others took it (measured)")
     }
 
+    private func snapshot(start: String, end: String, zone: String = "Asia/Taipei", url: String? = nil,
+                          alarm: TimeInterval? = nil) -> EventSnapshot {
+        let event = EKEvent(eventStore: SharedTestStore.store)
+        event.calendar = EKCalendar(for: .event, eventStore: SharedTestStore.store)
+        event.title = "Event"
+        event.timeZone = TimeZone(identifier: zone)
+        event.startDate = ISO8601DateFormatter().date(from: start)
+        event.endDate = ISO8601DateFormatter().date(from: end)
+        event.url = url.flatMap(URL.init(string:))
+        if let alarm { event.addAlarm(EKAlarm(relativeOffset: alarm)) }
+        return EventSnapshot(from: event, includeRecurrence: false)
+    }
+
+    /// verify r1 (coincidence): the occurrence back at its slot, while the series moved to another
+    /// time or day, is not in the measured shape; nor is one with its own URL.
+    func testOwnTimeComparesTheSeriesTimeOfDayAndDayAndTheOtherFields() throws {
+        let unedited = snapshot(start: "2026-12-14T01:00:00Z", end: "2026-12-14T02:00:00Z") // Monday 09:00-10:00 in Taipei
+        let atSlot = snapshot(start: "2026-12-07T02:00:00Z", end: "2026-12-07T03:00:00Z")   // Monday 10:00-11:00
+        let slot = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-12-07T02:00:00Z"))
+        func time(_ one: EventSnapshot, _ all: EventSnapshot) -> Bool { UndoPostState.ownValues(one: one, slot: slot, firstStart: slot, series: all).time }
+        XCTAssertTrue(time(atSlot, unedited), "at its slot, but the series is at 09:00 now")
+        let sameTime = snapshot(start: "2026-12-14T02:00:00Z", end: "2026-12-14T03:00:00Z")
+        XCTAssertFalse(time(atSlot, sameTime))
+        XCTAssertTrue(time(atSlot, snapshot(start: "2026-12-16T02:00:00Z", end: "2026-12-16T03:00:00Z")), "the series moved to Wednesday")
+        XCTAssertTrue(time(snapshot(start: "2026-12-07T02:00:00Z", end: "2026-12-07T03:00:00Z", url: "https://example.com/a"), sameTime), "its own URL")
+        // Availability cannot be set on a test event (no source supports it, it reads -1), and a side
+        // that reports none is not compared (#245); `ownValues` reads it with `sameOccurrenceAvailability`.
+        let ownAlarm = UndoPostState.ownValues(one: snapshot(start: "2026-12-07T02:00:00Z", end: "2026-12-07T03:00:00Z", alarm: -900),
+                                               slot: slot, firstStart: slot, series: sameTime)
+        XCTAssertFalse(ownAlarm.time, "alarms of its own are in the measured shape")
+        XCTAssertTrue(ownAlarm.alarms)
+        XCTAssertTrue(UndoPostState.ownValues(one: atSlot, slot: slot, firstStart: slot, series: nil).alarms, "nothing to compare with")
+    }
+
+    /// verify r1 (LOW): a length across a DST change is the same wall-clock length.
+    func testALengthAcrossADSTChangeIsTheSeriesLength() throws {
+        // New York, overnight 22:00-06:00: seven hours of elapsed time on the night of 2027-03-14.
+        let overDST = snapshot(start: "2027-03-14T03:00:00Z", end: "2027-03-14T10:00:00Z", zone: "America/New_York")
+        let normal = snapshot(start: "2027-03-21T02:00:00Z", end: "2027-03-21T10:00:00Z", zone: "America/New_York")
+        let slot = try XCTUnwrap(ISO8601DateFormatter().date(from: "2027-03-14T03:00:00Z"))
+        XCTAssertFalse(UndoPostState.ownValues(one: overDST, slot: slot, firstStart: slot, series: normal).time)
+        XCTAssertTrue(UndoPostState.sameWallClock(overDST, normal, zone: TimeZone(identifier: "America/New_York")!))
+        XCTAssertFalse(UndoPostState.sameWallClock(overDST, normal, zone: TimeZone(identifier: "UTC")!), "read in UTC the lengths differ")
+    }
+
     // MARK: - The series' id with the first occurrence edited (#428)
 
     func testTheEarliestEditedOccurrenceIsPickedOnlyWhenItComesFirst() {
@@ -401,18 +965,29 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertNil(FirstRemainingOccurrence.earliestEdited([unedited(0), edited(7)], identifier: series), "an unedited occurrence first")
         XCTAssertNil(FirstRemainingOccurrence.earliestEdited([edited(0, id: "CAL-9:OTHER/RID=1"), unedited(7)], identifier: series), "not under this id: not measured")
         XCTAssertNil(FirstRemainingOccurrence.earliestEdited([], identifier: series))
-        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([unedited(7), edited(0, start: 9)], identifier: series), 1, "by slot, not by the time it shows")
+        XCTAssertEqual(FirstRemainingOccurrence.earliestEdited([unedited(7), edited(0, start: 5)], identifier: series), 1, "by slot, not by the time it shows")
     }
 
+    /// A source pin, and only that: the routing happens inside `EventKitManager` on the event store,
+    /// which no seam reaches. What it reports is tested on its own: the id through
+    /// `UpdatedIdentifierTests.testTheFirstOccurrenceRouteReportsTheSeriesOfTheSavedId`, the delete's
+    /// answer and that only span 'all' gets here through `EventDeletionHandlerTests`, and the first
+    /// occurrence it picks through `testTheEarliestEditedOccurrenceIsPickedOnlyWhenItComesFirst`. That
+    /// the routes do what they say (every occurrence updated or deleted, open-ended series included)
+    /// was measured on iCloud (2026-11-06 and 2026-11-08), not here.
     func testUpdateAndDeleteGoThroughTheFirstOccurrence() throws {
         let manager = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
-        XCTAssertTrue(manager.contains("if applyToAll, let first = firstEditedOccurrenceID(of: identifier) {"), "update")
-        XCTAssertTrue(manager.contains("return (saved.event, DetachedOccurrenceSpan.seriesIdentifier(of: saved.event.eventIdentifier ?? \"\") ?? identifier, saved.matchedOccurrence)"))
-        XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first, span: .futureEvents) return }"), "delete")
-        XCTAssertTrue(manager.contains("if let first = firstEditedOccurrenceID(of: id), let occurrence = freshEvent(id: first) {"), "the batch, by event_ids only")
-        XCTAssertTrue(manager.contains("try eventStore.remove(occurrence, span: .futureEvents)"), "the whole series, from the occurrence that comes first")
+        XCTAssertTrue(manager.contains("if applyToAll, let first = try firstEditedOccurrenceID(of: identifier) {"), "update")
+        XCTAssertTrue(manager.contains("} catch EventKitError.occurrenceAddressRefused(let reason) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted)) }"), "verify r2: the text says the series' id")
+                XCTAssertTrue(manager.contains("return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)"))
+        XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first.id, span: .futureEvents) return .firstEditedOccurrence(id: first.id) }"), "delete")
+        XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids and by date range (#427)")
+        XCTAssertTrue(manager.contains("if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) { failures.append((id, refusal)) continue } let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence) try eventStore.remove(occurrence, span: .futureEvents) successCount += 1 throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))"), "the batch: delete_event's refusals, then the whole series from the first occurrence, reported and kept out of the undo")
+        XCTAssertTrue(manager.contains("await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) })) } else if let refusingMarker { await CalendarUndoManager.shared.record(refusingMarker) }"), "PR #465 verify r1-r2: the batch's undo holds only the rows it can restore; with none, delete_event's refusing record")
         let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
-        XCTAssertTrue(preview.contains("if spanAll, let first = firstEditedOccurrenceID(of: identifier), let occurrence = freshEvent(id: first) { return .deletes(start: occurrence.startDate, end: occurrence.endDate) }"), preview)
+        XCTAssertTrue(preview.contains("if spanAll, let first = try firstEditedOccurrenceID(of: identifier, excluding: goneInTheCall), let occurrence = try freshEvent(id: first.id) { if let refusal = Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) { return .refused(refusal) } return .deletesThroughFirstOccurrence(start: occurrence.startDate, end: occurrence.endDate, occurrenceID: first.id) }"), preview)
+        let scan = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
+        XCTAssertTrue(scan.contains("case let candidates = listed.filter({ !gone.contains($0.eventIdentifier ?? \"\") }), let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id, isAllDay: stored.isAllDay)"), "PR #465 verify r1: the dry run's first occurrence leaves out the rows already deleted in the call")
     }
 
     /// Every update route ends here and not at another call, and says no more: each longer version
@@ -428,8 +1003,8 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         }
         XCTAssertTrue(DetachedOccurrenceSpan.updateReason.contains("If that is refused, this shape has no tested way yet."), DetachedOccurrenceSpan.updateReason)
         for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
-            XCTAssertTrue(text.contains("Anything else has no tested way yet."), text)
-            XCTAssertTrue(text.contains("for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace"), text)
+            XCTAssertTrue(text.contains("A write from a date on through the series' id has no tested way yet;"), text)
+            XCTAssertFalse(text.contains("Anything else has no tested way yet."), "verify r1: the series' id takes more now: \(text)")
         }
         for reason in [DetachedOccurrenceSpan.fieldsReason(wholeSeries: true), DetachedOccurrenceSpan.fieldsReason(wholeSeries: false),
                        DetachedOccurrenceSpan.sameValueReason(wholeSeries: true), DetachedOccurrenceSpan.carriedReason(wholeSeries: false),
@@ -438,11 +1013,26 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         }
     }
 
+    /// The words of `seriesTimeAllowed`: every condition the code reads, and the one-way all_day.
+    func testTheMeasuredRowsTextNamesEveryCondition() {
+        let text = DetachedOccurrenceSpan.measuredDateRows
+        for phrase in ["a timed series repeating weekly, every week, on at most one day",
+                       "each in a call of its own with nothing else written (start_time with end_time may go together)",
+                       "at its original start and differing from an occurrence not edited on its own only in title, notes, location or alarms",
+                       "start_time and end_time only as a new time of day, the start and the end staying on the dates they are on",
+                       "alarms while it has the series' alarms",
+                       "timezone, url and structured_location only in a series that ends after a number of occurrences, whose first occurrence is still there and which has no other occurrence edited on its own",
+                       "all_day true has no way back through this id: all_day false is refused, and so are dates on an all-day series.",
+                       "later dates through it are refused."] {
+            XCTAssertTrue(text.contains(phrase), phrase)
+        }
+    }
+
     func testTheFieldsRefusalNamesOnlyRoutesThatWereRun() {
         let all = DetachedOccurrenceSpan.fieldsReason(wholeSeries: true)
         for phrase in ["with span 'all' through it title, notes, location and recurrence can be written.",
-                       "start_time, end_time, all_day true, timezone, url, alarms and structured_location can too, without recurrence, while it has the series' time, length and day.",
-                       "Any other field is refused, even one that changes nothing.",
+                       DetachedOccurrenceSpan.measuredDateRows,
+                       "Any other field or combination is refused, even one that changes nothing.",
                        "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'.",
                        "Occurrences edited on their own keep what was edited, so they may need span 'this' after that.",
                        noTestedWay,
@@ -544,7 +1134,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                        .init(time: true), "title and time are not carried")
         XCTAssertTrue(own(series, slot: later, first: start, against: series).firstSlotGone)
         XCTAssertEqual(own(series, slot: later, first: start),
-                       .init(firstSlotGone: true, location: true, other: true, time: true), "nothing to compare with: the side that refuses")
+                       .init(firstSlotGone: true, location: true, other: true, time: true, alarms: true), "nothing to compare with: the side that refuses")
     }
 
     /// A source where an edited occurrence keeps the series' identifier (not measured): the series'
@@ -750,11 +1340,13 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
                        "a slot that is no number comes after the numbered ones, before the bare ids; two series side by side")
     }
 
-    /// #416 measured that the occurrence which comes first reaches the series through its own id,
-    /// so the hint for a bare id says so, in words a batch caller can use too.
+    /// #416 measured that the occurrence which comes first reaches the series through its own id, and
+    /// #428 sends span 'all' through the series' id there (measured, iCloud 2026-11-06 and -08), so
+    /// the hint names that route, in words a batch caller can use too.
     func testTheEditedBeforeHintsNameTheOwnIdRoute() {
         for text in [EventKitManager.standInEditedBeforeReason, EventKitManager.standInEditedBeforeBatchReason] {
-            XCTAssertTrue(text.contains("The occurrence that comes first in the series reaches it through its own id: update_event with span 'all' for a new title, notes, location or recurrence, unless it holds values of its own that the call does not replace, and delete_event with span 'future' (which cannot be undone)."), text)
+            XCTAssertTrue(text.contains("When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it: update_event writes the fields its description lists for such an occurrence, and delete_event deletes every occurrence, which cannot be undone."), text)
+            XCTAssertTrue(text.contains("span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."), text)
         }
     }
 
@@ -786,7 +1378,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testUpdateEventChecksBeforeItTakesTheSnapshotOrWrites() throws {
         let head = try collapsed("func updateEvent(", upTo: "let oldSnapshot = EventSnapshot(from: masterEvent)", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(head.contains("if let refusal = DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, turnsTimed: isAllDay == false, neighbours: occurrenceNeighbours(of: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
+        XCTAssertTrue(head.contains("if let refusal = try DetachedOccurrenceSpan.updateRefusal( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, fields: fields, repeatsOccurrenceValue: DetachedOccurrenceSpan.repeatsOccurrenceValue( title: title, notes: notes, location: location, occurrenceTitle: masterEvent.title, occurrenceNotes: masterEvent.notes, occurrenceLocation: masterEvent.location), writesLocation: location != nil, turnsTimed: isAllDay == false, datesStayOnTheDay: DetachedOccurrenceSpan.datesStayOnTheDay( newStart: startDate, newEnd: endDate, start: masterEvent.startDate, end: masterEvent.endDate, zone: masterEvent.timeZone ?? .current), neighbours: ownNeighbours) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), head)
     }
 
     /// Before the first field is assigned, as #373 requires of every refusal.
@@ -801,7 +1393,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     /// day: measured, a rule on the day a moved first occurrence shows left two occurrences there.
     func testTheWeekdayCheckReadsTheEventsOwnRulesAndTheOriginalDay() throws {
         let body = try updateBody()
-        XCTAssertTrue(body.contains("let rules = detachedWrite ? seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules,"), body)
+        XCTAssertTrue(body.contains("let storedRule = clearRecurrence ? nil : (detachedWrite ? try seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules)?.first"), body)
         XCTAssertTrue(body.contains("let originalDay = startDate != nil ? nil : DetachedOccurrenceSpan.originalDay( identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents, externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)"), body)
         XCTAssertTrue(body.contains("of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate"), body)
         XCTAssertTrue(body.contains("if originalDay != nil, effectiveRule != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }"), body)
@@ -831,7 +1423,10 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier, occurrenceDate: occurrence.occurrenceDate, isAllDay: series.isAllDay)"), body)
         XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window).map(\\.end).max()"), body)
         XCTAssertTrue(body.contains("own: UndoPostState.ownValues(of: occurrence, slot: slot, firstStart: firstStart, series: listed.first { !$0.isDetached })"), body)
-        XCTAssertTrue(body.contains("coversWholeSeries: DetachedOccurrenceSpan.coversWholeSeries( rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init), firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current))"), body)
+        XCTAssertTrue(body.contains("let covers = DetachedOccurrenceSpan.coversWholeSeries( rules: rules.map(DetachedOccurrenceSpan.RuleExtent.init), firstStart: firstStart, scannedTo: scannedTo, calendar: Calendar.gregorian(in: series.timeZone ?? .current))"), body)
+        XCTAssertTrue(body.contains("let rules = series.recurrenceRules ?? []"), body)
+        // #428 verify r1: the facts of the series' rule come from the same series object and listing.
+        XCTAssertTrue(body.contains("known?.seriesTime = DetachedOccurrenceSpan.seriesTimeFacts( of: id, among: candidates, coversWholeSeries: covers, measuredRule: DetachedOccurrenceSpan.isMeasuredSeries(isAllDay: series.isAllDay, rules: rules), countBounded: !rules.isEmpty && rules.allSatisfy { ($0.recurrenceEnd?.occurrenceCount ?? 0) > 0 }, firstStart: firstStart, isAllDay: series.isAllDay)"), body)
     }
 
     /// Covered on a device only until round 3: each would fail silently.
@@ -840,7 +1435,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) { matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent)) }"), manager)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
         XCTAssertTrue(source.contains("return [occurrence.startDate, slot].contains {"), "the shown day or the original one")
-        XCTAssertTrue(source.contains("neighbours: occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
+        XCTAssertTrue(source.contains("neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
         XCTAssertTrue(source.contains("namedInTheCall: namedInTheCall)"))
     }
 
@@ -851,9 +1446,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(single.contains("if let refusal = seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
+        XCTAssertTrue(single.contains("if let refusal = try seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
         let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String])", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(batch.contains("if let refusal = seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
+        XCTAssertTrue(batch.contains("if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
     /// The preview by `event_ids` walks the rows as the real call does and does not list what the
@@ -864,9 +1459,9 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(server.contains("let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds"), "the real call's order")
         XCTAssertTrue(server.contains("identifier: id, span: spanStr == \"future\" ? .futureEvents : .thisEvent, spanAll: spanAll, namedInTheCall: named, goneInTheCall: gone"), server)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
-        XCTAssertTrue(source.contains("guard let event = freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else {"), source)
+        XCTAssertTrue(source.contains("guard let event = try freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll), goneInTheCall: goneInTheCall)?.event else {"), source)
         XCTAssertTrue(source.contains("if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }"), source)
-        XCTAssertTrue(source.contains("if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) { return .refused(refusal) }"), source)
+        XCTAssertTrue(source.contains("if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) { return .refused(refusal) }"), source)
         let scan = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
         XCTAssertTrue(scan.contains("FirstRemainingOccurrence.pick(candidates, identifier: id, refuseWhenEditedBefore: refuseWhenEditedBefore, goneInTheCall: goneInTheCall)"), scan)
     }

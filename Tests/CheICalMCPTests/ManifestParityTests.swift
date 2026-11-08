@@ -421,22 +421,34 @@ final class ManifestParityTests: XCTestCase {
     /// id as they were measured.
     func testTheWritesRefusedThroughAnOccurrenceIdentifierSaySo() throws {
         let update = try descriptions(of: "update_event")
-        XCTAssertTrue(update.declared.contains("in three cases only"), update.declared)
+        XCTAssertTrue(update.declared.contains("in four cases only"), update.declared)
+        // #428 verify r1: the series' id reaching its first edited occurrence is the fourth case.
+        XCTAssertTrue(update.declared.contains("span 'all' through the series' identifier, when the series' first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, goes through that occurrence's identifier and answers it after the save as occurrence_id"), update.declared)
         XCTAssertFalse(update.declared.contains("a known behavior"), update.declared)
         XCTAssertTrue(update.declared.contains("span 'all' with the identifier of an occurrence edited on its own would split the series while an earlier occurrence remains, so it is then refused and writes nothing (#416)"), update.declared)
         XCTAssertTrue(update.declared.contains("the first occurrence left, after the first was deleted"), update.declared)
         XCTAssertFalse(update.declared.contains("Use occurrence_id only with span 'this'"), update.declared)
         XCTAssertTrue(update.declared.contains("A series whose first occurrence was deleted has no whole-series update unless its first occurrence left was edited on its own (#326)."), update.declared)
-        XCTAssertTrue(update.declared.contains("With span 'all' or 'future' through such an identifier, title, notes, location and recurrence can be written, and start_time, end_time, all_day true, timezone, url, alarms and structured_location while it has the series' time, length and day; for anything else use span 'this', or the id of an occurrence not edited on its own."), update.declared)
-        XCTAssertTrue(update.declared.contains("A value the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms."), update.declared)
+        XCTAssertTrue(update.declared.contains("With span 'all' or 'future' through such an identifier, and with span 'all' through the series' identifier in the shape just named, title, notes, location and recurrence can be written (not recurrence with span 'all' after the series' first occurrence was deleted, through either identifier); start_time, end_time, all_day true, alarms, timezone, url and structured_location only in the shapes that were measured, which the refusal lists"), update.declared)
+        XCTAssertTrue(update.declared.contains("all_day true there cannot be turned back through that identifier."), update.declared)
+        XCTAssertTrue(update.declared.contains("On a series that has started, these routes take the started-series rules below (#451), as the series' identifier goes through that occurrence's own; timezone among them (#478)."), "after #471: \(update.declared)")
+        XCTAssertFalse(update.declared.contains("refused once the series has started"), "the #428 refusal gave way to #451's rules: \(update.declared)")
+        XCTAssertTrue(update.declared.contains("one field per call, or start_time with end_time, as a new time of day on the same date;"), "verify r2: \(update.declared)")
+        XCTAssertFalse(update.declared.contains("while it has the series' time, length and day"), "verify r1: wider than what was measured: \(update.declared)")
+        XCTAssertTrue(update.declared.contains("A title, notes or location the occurrence already holds is refused too, as it would reach no other occurrence, and so is a write that would start a new series from an occurrence holding its own location or alarms."), update.declared)
         XCTAssertFalse(update.declared.contains("recurrence, clear_recurrence"), update.declared)
         XCTAssertTrue(update.declared.contains("With span 'this' or 'future' occurrence_date must be that occurrence's day."), update.declared)
         XCTAssertFalse(update.declared.contains("with any span"), update.declared)
-        XCTAssertTrue(update.summary.contains("with span all or future through it title, notes, location and recurrence can be written, dates and a few others only while it has the series' time and length"), update.summary)
+        XCTAssertTrue(update.summary.contains("with span all or future through it title, notes, location and recurrence can be written, dates and a few others only in the measured shapes the refusal lists"), update.summary)
+        XCTAssertTrue(update.summary.contains("span all through the series' id goes through its first occurrence when that one was edited on its own, with occurrence_id"), update.summary)
         XCTAssertFalse(update.declared.contains("the series' earliest occurrence"), update.declared)
         XCTAssertTrue(update.summary.contains("span all through an occurrence edited on its own is refused while an earlier occurrence remains"), update.summary)
         let single = try descriptions(of: "delete_event")
         XCTAssertTrue(single.declared.contains("With span 'this' or 'future' through such an identifier occurrence_date must be that occurrence's day."), single.declared)
+        // #428 verify r1: that delete cannot be undone, and the description no longer promises it.
+        XCTAssertTrue(single.declared.contains("the response adds occurrence_id and undo_note, as that delete cannot be undone."), single.declared)
+        XCTAssertTrue(single.declared.contains("(that case, or span 'all' outside the shape named above) recreates the series"), single.declared)
+        XCTAssertTrue(single.summary.contains("span all through the series' id deletes from its first occurrence when that one was edited on its own, which cannot be undone"), single.summary)
         XCTAssertTrue(single.declared.contains("Span 'all' through the identifier of an occurrence edited on its own would delete that occurrence only, so it is refused and deletes nothing while another occurrence remains (#416)"), single.declared)
         XCTAssertTrue(single.summary.contains("span all through an occurrence edited on its own is refused while another occurrence remains"), single.summary)
         let batch = try descriptions(of: "delete_events_batch")
@@ -701,6 +713,21 @@ final class ManifestParityTests: XCTestCase {
         let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "update_reminder" }?["description"] as? String ?? ""
         XCTAssertTrue(summary.contains("alarms_note"), summary)
+    }
+
+    /// #433: the manifest says what Reminders.app's list shows for each tool that writes the offsets.
+    func testTheManifestDescribesTheAlarmDisplay() throws {
+        let data = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let tools = manifest?["tools"] as? [[String: Any]] ?? []
+        for name in ["create_reminder", "update_reminder", "create_reminders_batch"] {
+            let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertTrue(summary.contains("earliest alarm time"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("not the due time"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("the one notification checked showed it too"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("when the earliest alarm is off the due time"), "\(name): \(summary)")
+            XCTAssertTrue(summary.contains("alarms_note"), "\(name): \(summary)")
+        }
     }
 
     /// PR #420 verify round 1: update_reminder names recurrence and clear_recurrence, and that a

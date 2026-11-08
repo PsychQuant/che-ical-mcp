@@ -5,12 +5,23 @@ enum EventCopyOperation {
         let undo: UndoOperation?
     }
 
+    /// `copyRecord` gives the saved copy's identifier and post-write state. #466: the undo record of
+    /// a move by copy is `.moveByCopy`, holding the source and the copy, so its undo restores the
+    /// source and then removes the copy when it is unchanged (before, the copy stayed and the event
+    /// was there twice). See `MoveByCopyUndo`.
+    /// `sourceIsOccurrence`: the source is one occurrence split out of a series, whose undo restores
+    /// it as an occurrence delete's undo does (PR #474 round 2); `sourceNotCarriedOver` as that
+    /// record holds it.
     static func execute<Value>(source: EventSnapshot?, saveCopy: () throws -> Value,
-                               removeSource: () throws -> Void) throws -> Outcome<Value> {
+                               sourceIsOccurrence: Bool, sourceNotCarriedOver: [String],
+                               removeSource: () throws -> Void,
+                               copyRecord: (Value) -> (id: String, created: EventSnapshot)) throws -> Outcome<Value> {
         let value = try saveCopy()
         if let source {
             try removeSource()
-            return Outcome(value: value, undo: .deleteEvent(snapshot: source))
+            let copy = copyRecord(value)
+            return Outcome(value: value, undo: .moveByCopy(original: source, isSplit: sourceIsOccurrence, notCarriedOver: sourceNotCarriedOver,
+                                                         copyID: copy.id, copy: copy.created))
         }
         return Outcome(value: value, undo: nil)
     }

@@ -196,6 +196,19 @@ enum UndoPostState {
         return local.date(from: day) ?? rid
     }
 
+    /// #428 verify r5: a listed candidate's slot as the rule gives it. The candidate's `slot` is the
+    /// raw `/RID=` instant (`originalSlot`), which for an all-day series is the wall-clock date read
+    /// as UTC; reinterpreted in `zone` as `ruleSlot` does. Whether it came from a `/RID=` is carried
+    /// in `slotFromRID` (verify r6), set where the candidate is built; otherwise the slot is the
+    /// local `occurrenceDate`, or the start.
+    static func ruleSlot(of candidate: FirstRemainingOccurrence.Candidate, isAllDay: Bool, zone: TimeZone = .current) -> Date {
+        let raw = candidate.slot ?? candidate.start
+        guard isAllDay, candidate.slotFromRID else { return raw }
+        var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
+        var local = Calendar(identifier: .gregorian); local.timeZone = zone
+        return local.date(from: utc.dateComponents([.year, .month, .day], from: raw)) ?? raw
+    }
+
     /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
     /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {
@@ -242,16 +255,37 @@ enum UndoPostState {
     /// the series' place name they are a geocode, not an edit (`samePlace`).
     static func ownValues(one: EventSnapshot, slot: Date, firstStart: Date, series: EventSnapshot?) -> DetachedOccurrenceSpan.OwnValues {
         let firstSlotGone = !sameInstant(slot, firstStart)
-        guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true, time: true) }
-        let length = { (event: EventSnapshot) in event.endDate.timeIntervalSince(event.startDate) }
+        guard let all = series else { return .init(firstSlotGone: firstSlotGone, location: true, other: true, time: true, alarms: true) }
+        let ownAlarms = !sameAlarms(all.alarms, one.alarms)
+        let ownPlace = one.structuredLocationLat != nil && !EventSnapshot.samePlace(recorded: all, current: one)
+        let ownZone = !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
+        let ownAvailability = !sameOccurrenceAvailability(one.availability, all.availability)
         return .init(firstSlotGone: firstSlotGone,
                      location: (one.location ?? "") != (all.location ?? "") || !EventSnapshot.samePlace(recorded: all, current: one),
-                     other: !sameAlarms(all.alarms, one.alarms) || one.isAllDay != all.isAllDay
-                         || (one.structuredLocationLat != nil && !EventSnapshot.samePlace(recorded: all, current: one))
-                         || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
-                         || !sameOccurrenceAvailability(one.availability, all.availability),
-                     time: !sameInstant(one.startDate, slot) || abs(length(one) - length(all)) >= 1 || one.isAllDay != all.isAllDay
-                         || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate))
+                     other: ownAlarms || one.isAllDay != all.isAllDay || ownPlace || ownZone || ownAvailability,
+                     time: !sameInstant(one.startDate, slot) || one.isAllDay != all.isAllDay || ownZone || ownPlace || ownAvailability
+                         || (one.url?.absoluteString ?? "") != (all.url?.absoluteString ?? "")
+                         || !sameWallClock(one, all, zone: one.timeZone ?? all.timeZone ?? .current),
+                     alarms: ownAlarms)
+    }
+
+    /// #428 verify: the time of day, day of the week and length of two events, read in `zone`, so
+    /// that a DST change between them is no difference, while a series moved to another time or day
+    /// after the occurrence was edited is one.
+    static func sameWallClock(_ a: EventSnapshot, _ b: EventSnapshot, zone: TimeZone) -> Bool {
+        let calendar = Calendar.gregorian(in: zone)
+        func clock(_ date: Date) -> DateComponents { calendar.dateComponents([.weekday, .hour, .minute, .second], from: date) }
+        // The wall-clock readings rebuilt in UTC, so that their difference is the length the
+        // clock shows, not the elapsed time.
+        let utc = Calendar.gregorian(in: TimeZone(identifier: "UTC") ?? zone)
+        func wall(_ date: Date) -> Date? {
+            utc.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date))
+        }
+        func length(_ event: EventSnapshot) -> TimeInterval? {
+            guard let start = wall(event.startDate), let end = wall(event.endDate) else { return nil }
+            return end.timeIntervalSince(start)
+        }
+        return clock(a.startDate) == clock(b.startDate) && length(a) == length(b)
     }
 
     /// `ownValues` of an occurrence `occurrence_date` found, against the series it was found in.
@@ -336,6 +370,11 @@ extension UndoOperation {
             return .reminderCompletion(id: completion.id, title: completion.title, state: completion.written,
                                        restoring: completion.identityConfirmed ? completion.undoWrites : nil)
         case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .deleteReminder, .batch, .updateRecurringEvent:
+            return nil
+        case .moveByCopy:
+            // #466: the source is recreated; the copy is checked inside the undo arm, through its
+            // create record, after the source is back, and a failed check leaves the copy instead
+            // of refusing.
             return nil
         }
     }

@@ -21,9 +21,9 @@ final class SelfDisclaimDecisionTests: XCTestCase {
         path: "/Applications/Visual Studio Code.app/Contents/MacOS/Electron",
         isSelf: false))
     private let claudeCode = ResponsibleProcessResult.resolved(ResponsibleProcess(
-        pid: 9664, path: "/Users/u/.local/share/claude/versions/2.1.309", isSelf: false))
+        pid: 9664, path: "\(NSHomeDirectory())/.local/share/claude/versions/2.1.309", isSelf: false))
     private let claudeCodeApp = ResponsibleProcessResult.resolved(ResponsibleProcess(
-        pid: 9665, path: "/Users/u/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude", isSelf: false))
+        pid: 9665, path: "\(NSHomeDirectory())/.local/share/claude/ClaudeCode.app/Contents/MacOS/claude", isSelf: false))
     private let bareExecutable = ResponsibleProcessResult.resolved(ResponsibleProcess(
         pid: 1, path: "/sbin/launchd", isSelf: false))
     private let noPath = ResponsibleProcessResult.resolved(ResponsibleProcess(
@@ -90,6 +90,61 @@ final class SelfDisclaimDecisionTests: XCTestCase {
             XCTAssertEqual(
                 decide(env: ["CHE_ICAL_MCP_DISCLAIMED": "1"], responsible: host),
                 .skip(.disclaimIneffective), "host \(host)")
+        }
+    }
+
+    /// The guard asks only whether the sentinel is set. The value is now the record, so it has to
+    /// hold for that, and for anything else a parent could leave there: a narrower check would
+    /// re-exec again on a disclaim that had no effect, which is the loop this exists to stop.
+    func testTheLoopGuardHoldsForEveryValue() {
+        let record = SelfDisclaimRecord(reason: .hostGrantUnusable, calendar: .denied, reminders: .denied, host: .claudeCode)
+        for value in [record.encoded, "1", "garbage", String(repeating: "x", count: 5000)] {
+            XCTAssertEqual(decide(env: [SelfDisclaim.disclaimedSentinel: value], responsible: selfResponsible),
+                           .skip(.alreadyDisclaimed), value)
+            for host in everyOtherHost {
+                XCTAssertEqual(decide(env: [SelfDisclaim.disclaimedSentinel: value], responsible: host),
+                               .skip(.disclaimIneffective), "\(value) \(host)")
+            }
+        }
+        // Empty counts as unset (`isSet`), so it is not the guard's value: the decision goes on.
+        XCTAssertNotEqual(decide(env: [SelfDisclaim.disclaimedSentinel: ""], responsible: selfResponsible),
+                          .skip(.alreadyDisclaimed))
+    }
+
+    /// `isPossible` is a copy of what `decide` can reach, so they are compared here, both ways: every
+    /// re-exec it decides is a record the next image can read, and every other combination of a
+    /// status pair, reason and flag is one `decide` does not produce. If `decide` gains a case, the
+    /// real image's record would read as not written by this binary, with no other test failing.
+    func testIsPossibleIsWhatDecideCanReach() throws {
+        let statuses: [EKAuthorizationStatus] = [.notDetermined, .restricted, .denied, .fullAccess, .writeOnly]
+        var reached = Set<String>()
+        for calendar in statuses {
+            for reminders in statuses {
+                for (arguments, environment) in [(["CheICalMCP"], [String: String]()),
+                                                 (["CheICalMCP"], [SelfDisclaim.forceVariable: "1"]),
+                                                 (["CheICalMCP", "--setup"], [String: String]())] {
+                    var read: HostAuthorization?
+                    let decision = SelfDisclaim.decide(arguments: arguments, environment: environment, responsible: everyOtherHost[0],
+                                                       hostAuthorization: {
+                                                           read = HostAuthorization(calendar: calendar, reminders: reminders)
+                                                           return read!
+                                                       })
+                    guard case .reexec(let reason) = decision else { continue }
+                    let record = SelfDisclaimRecord(reason: reason, host: read, kind: .claudeCode(version: nil))
+                    XCTAssertTrue(record.isPossible, record.encoded)
+                    XCTAssertEqual(SelfDisclaimRecord.decode(record.encoded), record, record.encoded)
+                    reached.insert(record.encoded)
+                }
+            }
+        }
+        let reachable = statuses.map(SelfDisclaimRecord.Status.init)
+        for reason in SelfDisclaimRecord.Reason.allCases {
+            for calendar in reachable + [.notRead] {
+                for reminders in reachable + [.notRead] {
+                    let record = SelfDisclaimRecord(reason: reason, calendar: calendar, reminders: reminders, host: .claudeCode)
+                    XCTAssertEqual(record.isPossible, reached.contains(record.encoded), record.encoded)
+                }
+            }
         }
     }
 
