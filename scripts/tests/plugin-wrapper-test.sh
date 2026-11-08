@@ -16,6 +16,8 @@
 # PATH that serves canned release JSON and writes a fake CheICalMCP (a shell script that answers
 # `--version`), and the wrapper runs from a temp plugin root with its own plugin.json. Nothing
 # touches the network, the real ~/bin or any calendar.
+# The wrapper always runs under /bin/bash (its shebang interpreter, bash 3.2 on macOS), not
+# whatever bash is first on PATH.
 # Run: bash scripts/tests/plugin-wrapper-test.sh
 # WRAPPER_UNDER_TEST=<path> runs the same cases against another copy (e.g. an older one).
 set -u
@@ -69,7 +71,7 @@ url="" out="" fail_flag=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) out="$2"; shift ;;
-        --max-time) shift ;;
+        --max-time) max_time="$2"; shift ;;
         http*) url="$1" ;;
         -*) case "$1" in -*f*) [ "${1#--}" = "$1" ] && fail_flag=1 ;; esac
             [ "$1" = --fail ] && fail_flag=1 ;;
@@ -77,6 +79,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 echo "$url" >> "$CURL_LOG"
+echo "${max_time:-none} $url" >> "$CURL_LOG.max-time"
 case "$url" in
     https://api.github.com/repos/PsychQuant/che-ical-mcp/releases/tags/*)
         f="$RELEASES/tag-${url##*/}.json" ;;
@@ -92,6 +95,16 @@ case "$url" in
         fi
         report="CheICalMCP ${tag#v}"
         [ -f "$RELEASES/asset-$tag.version" ] && report=$(cat "$RELEASES/asset-$tag.version")
+        if [ -n "${SLOW_ASSET:-}" ]; then
+            # Two stages, like a real slow download: half the file, a pause, the rest.
+            "$(dirname "$0")/mkfake" "$out.full.$$" "$report"
+            size=$(wc -c < "$out.full.$$" | tr -d ' ')
+            head -c $((size / 2)) "$out.full.$$" > "$out"
+            sleep "$SLOW_ASSET"
+            tail -c +$((size / 2 + 1)) "$out.full.$$" >> "$out"
+            /bin/chmod u+x "$out"; rm -f "$out.full.$$"
+            exit 0
+        fi
         "$(dirname "$0")/mkfake" "$out" "$report"
         exit 0 ;;
     *) echo "UNEXPECTED $url" >> "$CURL_LOG"; exit 99 ;;
@@ -138,9 +151,17 @@ install_existing() { mkdir -p "$C/home/bin"; fake_binary "$BIN" "$1"; [ -n "${2:
 # run_wrapper [ENV=VALUE ...] — one spawn, with an MCP request line on stdin.
 run_wrapper() {
     printf 'req\n' | env HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" "$@" \
-        bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" mcp-arg > "$C/out" 2> "$C/err"
+        /bin/bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" mcp-arg > "$C/out" 2> "$C/err"
     RC=$?
 }
+# spawn_bg <tag> [ENV=VALUE ...] — one spawn in the background (output in $C/out.<tag>).
+spawn_bg() {
+    local tag="$1"; shift
+    printf 'req\n' | env HOME="$C/home" PATH="$TMP/stub:$PATH" CURL_LOG="$C/curl.log" RELEASES="$C/releases" "$@" \
+        /bin/bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" mcp-arg > "$C/out.$tag" 2> "$C/err.$tag" &
+}
+release_record() { cat "$C/home/bin/.CheICalMCP.release" 2>/dev/null; }
+leftovers() { ls -A "$C/home/bin" | grep -vxE 'CheICalMCP|\.CheICalMCP\.version|\.CheICalMCP\.release' | tr '\n' ' '; }
 bin_version() { "$BIN" --version </dev/null 2>/dev/null | awk '{print $NF}'; }
 side() { tr -d '[:space:]' < "$SIDE" 2>/dev/null; }
 downloads() { count "$C/curl.log" "/releases/download/"; }
@@ -154,7 +175,7 @@ check "fallback: wrapper ran the installed binary, stdin intact" "$(cat "$C/out"
 check "fallback: binary is the latest release" "$(bin_version)" "1.22.0"
 check "fallback: sidecar records the release fetched, not the pin" "$(side)" "1.22.0"
 has "fallback: says the pin was not installed" "$C/err" "plugin wants v1.23.0"
-[ -e "$BIN.tmp" ] && bad "fallback: no .tmp left behind" || ok "fallback: no .tmp left behind"
+check "fallback: no .tmp left behind" "$(leftovers)" ""
 
 # 2. Same machine after the pinned release is published: the next spawn fetches it.
 release_json "$C/releases/tag-v1.23.0.json" 1.23.0
@@ -231,7 +252,7 @@ run_wrapper DOWNLOAD_FAIL=1
 check "download fails: binary kept" "$(bin_version)" "1.22.0"
 check "download fails: sidecar untouched" "$(side)" "1.22.0"
 has "download fails: warning" "$C/err" "download failed, keeping existing binary"
-[ -e "$BIN.tmp" ] && bad "download fails: .tmp removed" || ok "download fails: .tmp removed"
+check "download fails: .tmp removed" "$(leftovers)" ""
 check "download fails: still runs the binary" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
 
 # 10. Download fails with no binary: exit 1.
@@ -316,7 +337,7 @@ run_wrapper; run_wrapper; run_wrapper
 check "unusable asset: one download over three spawns" "$(downloads)" "1"
 check "unusable asset: existing binary kept" "$(bin_version)" "1.22.0"
 check "unusable asset: sidecar untouched" "$(side)" "1.22.0"
-[ -e "$BIN.tmp" ] && bad "unusable asset: .tmp removed" || ok "unusable asset: .tmp removed"
+check "unusable asset: .tmp removed" "$(leftovers)" ""
 has "unusable asset: warning" "$C/err" "does not report a version"
 
 # 19. MEDIUM 2: a binary newer than the pin (--self-update, make install) is kept.
@@ -364,6 +385,112 @@ run_wrapper
 check "http error: existing binary kept" "$(bin_version)" "1.22.0"
 if grep -q "Not Found" "$BIN" 2>/dev/null; then bad "http error: error body not installed"; else ok "http error: error body not installed"; fi
 has "http error: warning" "$C/err" "download failed, keeping existing binary"
+
+# 24. Round 2, MEDIUM 1: an `unusable` record does not protect a binary that no longer reports
+#     a version (replaced from outside by a non-reporting executable): the wrapper downloads.
+setup unusable-then-broken 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "garbage" > "$C/releases/asset-v1.23.0.version"
+run_wrapper
+has "unusable then broken: record says unusable" "$C/home/bin/.CheICalMCP.release" "unusable"
+printf '#!/bin/bash\nexit 3\n' > "$BIN"; /bin/chmod u+x "$BIN"
+rm "$C/releases/asset-v1.23.0.version"
+run_wrapper
+check "unusable then broken: downloaded again" "$(downloads)" "2"
+check "unusable then broken: repaired" "$(bin_version)" "1.23.0"
+
+# 25. Round 2, MEDIUM 2: two spawns download at once (slow two-stage asset): one download, the
+#     new binary, no `unusable` record, no temp file or lock left, both run the new binary.
+setup concurrent 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=2; sleep 0.3; spawn_bg b SLOW_ASSET=2; wait
+check "concurrent: new binary" "$(bin_version)" "1.23.0"
+check "concurrent: one download" "$(downloads)" "1"
+check "concurrent: record" "$(release_record)" "1.23.0 1.23.0"
+check "concurrent: no temp file or lock left" "$(leftovers)" ""
+check "concurrent: first spawn runs the new binary" "$(cat "$C/out.a")" "RAN CheICalMCP 1.23.0 req"
+check "concurrent: second spawn runs the new binary" "$(cat "$C/out.b")" "RAN CheICalMCP 1.23.0 req"
+
+# 26. Same, on a fresh install.
+setup concurrent-fresh 1.23.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=2; sleep 0.3; spawn_bg b SLOW_ASSET=2; wait
+check "concurrent fresh: new binary" "$(bin_version)" "1.23.0"
+check "concurrent fresh: one download" "$(downloads)" "1"
+check "concurrent fresh: no temp file or lock left" "$(leftovers)" ""
+check "concurrent fresh: second spawn runs the new binary" "$(cat "$C/out.b")" "RAN CheICalMCP 1.23.0 req"
+
+# 27. The lock is held by another wrapper the whole time: after a bounded wait, run the
+#     existing binary without downloading, and leave the other wrapper's lock alone.
+setup lock-held 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+mkdir "$C/home/bin/.CheICalMCP.lock"
+run_wrapper
+check "lock held: no download" "$(downloads)" "0"
+check "lock held: runs the existing binary" "$(cat "$C/out")" "RAN CheICalMCP 1.22.0 req"
+has "lock held: says why" "$C/err" "another wrapper"
+[ -d "$C/home/bin/.CheICalMCP.lock" ] && ok "lock held: other wrapper's lock left alone" || bad "lock held: other wrapper's lock left alone"
+
+# 28. Lock held and no binary at all: exit 1 with a message, nothing to run.
+setup lock-held-fresh 1.23.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+mkdir -p "$C/home/bin/.CheICalMCP.lock"
+run_wrapper
+check "lock held, fresh: exit 1" "$RC" "1"
+has "lock held, fresh: error" "$C/err" "ERROR"
+
+# 29. A lock older than ten minutes is stale: removed, and the download goes ahead.
+setup lock-stale 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+mkdir "$C/home/bin/.CheICalMCP.lock"
+touch -t "$(date -v-1H +%Y%m%d%H%M.%S)" "$C/home/bin/.CheICalMCP.lock"
+run_wrapper
+check "stale lock: downloaded" "$(bin_version)" "1.23.0"
+check "stale lock: removed" "$(leftovers)" ""
+
+# 30. LOW 1: during the gap, latest (1.22.0) is older than the installed 1.22.5: kept, two
+#     spawns, nothing downloaded.
+setup gap-older-latest 1.23.0
+install_existing 1.22.5 1.22.5
+release_json "$C/releases/latest.json" 1.22.0
+run_wrapper; run_wrapper
+check "older latest: binary kept" "$(bin_version)" "1.22.5"
+check "older latest: no download" "$(downloads)" "0"
+check "older latest: sidecar" "$(side)" "1.22.5"
+
+# 31. LOW 1: the pinned asset reports 1.21.0, older than the installed 1.22.0: kept, recorded,
+#     one stderr line, not downloaded again.
+setup pinned-older-asset 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "CheICalMCP 1.21.0" > "$C/releases/asset-v1.23.0.version"
+run_wrapper
+check "older asset: binary kept" "$(bin_version)" "1.22.0"
+check "older asset: record" "$(release_record)" "1.23.0 1.21.0"
+check "older asset: one line about it" "$(grep -c "older than the installed" "$C/err" | tr -d ' ')" "1"
+check "older asset: no temp file left" "$(leftovers)" ""
+run_wrapper
+check "older asset: not downloaded again" "$(downloads)" "1"
+check "older asset: still kept" "$(bin_version)" "1.22.0"
+
+# 32. LOW 2: during the gap, latest's body has no tag_name (the tag comes from the asset URL):
+#     latest is already installed, two spawns, nothing downloaded.
+setup gap-no-tag 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/latest.json" 1.22.0 no-tag
+run_wrapper; run_wrapper
+check "gap, no tag: no download" "$(downloads)" "0"
+check "gap, no tag: binary kept" "$(bin_version)" "1.22.0"
+
+# 33. LOW 4: API calls give up after 5 s each; the asset download keeps its long timeout.
+api_slow=$(cat "$TMP"/*/curl.log.max-time | grep " https://api.github.com/" | grep -cv "^5 " | tr -d ' ')
+check "API calls use --max-time 5" "$api_slow" "0"
+asset_mt=$(cat "$TMP"/*/curl.log.max-time | grep "/releases/download/" | awk '{print $1}' | sort -u | tr '\n' ' ')
+check "asset download uses --max-time 300" "$asset_mt" "300 "
 
 hasnt "no case reached an unexpected URL" <(cat "$TMP"/*/curl.log) "UNEXPECTED"
 

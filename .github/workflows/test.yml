@@ -82,8 +82,8 @@ jobs:
       - name: plugin wrapper sidecar tests
         # #483: the wrapper decides from the binary's --version (older than the pin →
         # download, newer → keep), records what is installed rather than the pin, and never
-        # downloads the same release twice. curl is stubbed and HOME is a temp dir; no
-        # network, no build. Seconds.
+        # downloads the same release twice; one spawn downloads at a time (lock). curl is
+        # stubbed and HOME is a temp dir; no network, no build. About 25 s (lock waits).
         run: bash scripts/tests/plugin-wrapper-test.sh
 
       - name: swift build
