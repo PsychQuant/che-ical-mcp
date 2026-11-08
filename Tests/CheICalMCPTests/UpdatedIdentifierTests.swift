@@ -124,6 +124,28 @@ final class UpdatedIdentifierTests: XCTestCase {
         XCTAssertFalse(reason.contains(where: { "&<>".contains($0) }), reason)
     }
 
+    // MARK: - #426: a new calendar on one occurrence, within one account
+
+    /// Measured on iCloud: span this with a calendar of the same account answered updated and every
+    /// occurrence moved, through the series' id plus occurrence_date and through the occurrence's id.
+    func testANewCalendarOnOneOccurrenceIsRefusedWithinOneAccountToo() {
+        XCTAssertTrue(EventKitManager.refusesCalendarOnOccurrence(onOccurrence: true, span: .thisEvent, applyToAll: false, changesCalendar: true))
+        XCTAssertFalse(EventKitManager.refusesCalendarOnOccurrence(onOccurrence: true, span: .thisEvent, applyToAll: false, changesCalendar: false), "the calendar it is in")
+        XCTAssertFalse(EventKitManager.refusesCalendarOnOccurrence(onOccurrence: false, span: .thisEvent, applyToAll: false, changesCalendar: true), "a one-off")
+        XCTAssertFalse(EventKitManager.refusesCalendarOnOccurrence(onOccurrence: true, span: .futureEvents, applyToAll: false, changesCalendar: true), "not this check")
+        let reason = EventKitManager.occurrenceCalendarReason
+        for phrase in ["moves the whole series", "use move_events_batch with span 'all'", "with its occurrence_dates and span 'this'", "leave calendar_name out", "Nothing was written."] {
+            XCTAssertTrue(reason.contains(phrase), reason)
+        }
+    }
+
+    func testTheCalendarRefusalComesBeforeTheFirstWrite() throws {
+        let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
+        let refusal = try XCTUnwrap(source.range(of: "if Self.refusesCalendarOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, applyToAll: applyToAll, changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false) { throw EventKitError.moveRefused(reason: Self.occurrenceCalendarReason) }"))
+        let write = try XCTUnwrap(source.range(of: "if let t = title { event.title = t }"))
+        XCTAssertLessThan(refusal.lowerBound, write.lowerBound)
+    }
+
     // MARK: - #434 verify: the rule of a series is not changed through one occurrence
 
     /// Measured on iCloud: a rule saved on one occurrence (span this) left that occurrence as a

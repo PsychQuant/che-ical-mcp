@@ -45,6 +45,13 @@ enum EventMovePolicy {
         case refuse(String)
     }
 
+    /// #426: whether a move takes the rules of a recurring event. An occurrence edited on its own,
+    /// by its own id, has no rules of its own, and read as a one-off it was moved in place, which
+    /// moves the whole series whatever the span (device).
+    static func movesAsRecurring(hasRules: Bool, identifier: String, isDetached: Bool) -> Bool {
+        hasRules || DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: isDetached)
+    }
+
     static func plan(_ input: Input) -> Plan {
         // Argument contradictions first, so the answer does not depend on where the event
         // currently is (verify round 2 #1).
