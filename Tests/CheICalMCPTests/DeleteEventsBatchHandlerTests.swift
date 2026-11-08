@@ -262,6 +262,26 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertEqual(real["total"] as? Int, 1)
     }
 
+    /// #436 (PR #465 verify r1): a series row deleted from its first occurrence edited on its own
+    /// cannot be undone, so the response names it and says the call's undo leaves it out.
+    func testARowThroughTheFirstOccurrenceIsReportedWithItsUndoNote() async throws {
+        var result = BatchDeleteResult(successCount: 2, failedCount: 0, failures: [])
+        result.throughFirstOccurrence = [(identifier: "S1", occurrenceID: "S1/RID=1")]
+        let fake = BatchDeletionFake(listed: [], result: result)
+        let real = try await call(fake, ["event_ids": .array([.string("S1"), .string("S2")]), "span": .string("all"),
+                                         "dry_run": .bool(false)])
+        let rows = try XCTUnwrap(real["through_first_occurrence"] as? [[String: String]])
+        XCTAssertEqual(rows, [["event_id": "S1", "occurrence_id": "S1/RID=1"]])
+        XCTAssertEqual(real["undo_note"] as? String, CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote)
+        XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("cannot be undone"))
+        XCTAssertTrue(CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote.contains("restores only the other rows"))
+
+        let plain = try await call(BatchDeletionFake(listed: [], result: BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])),
+                                   ["event_ids": .array([.string("S2")]), "span": .string("all"), "dry_run": .bool(false)])
+        XCTAssertNil(plain["undo_note"], "no note when no row went through a first occurrence")
+        XCTAssertNil(plain["through_first_occurrence"])
+    }
+
     func testSpanFutureCountsTheSeriesOnceAndSendsEveryOccurrenceInSlotOrder() async throws {
         // Listed in start order; the second one was moved earlier than its slot, so slot order
         // differs from start order.
@@ -484,9 +504,10 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         try await assertSameAnswer(shape, ids: [series], deletes: 1, left: 0)
     }
 
-    /// An unedited occurrence first: the bare id reaches no occurrence of its own, and is refused as
-    /// it was, in both modes. Here the edited one is not first, so nothing is delegated.
-    func testTheBareIdIsRefusedWhenAnUneditedOccurrenceComesFirstAndAnEditedOneBlocks() async throws {
+    /// An occurrence matched only by its external identifier is not the series' first edited
+    /// occurrence (`earliestEdited` leaves it out), though it comes first by slot: the bare id
+    /// reaches no occurrence of its own and is refused, in both modes.
+    func testAnExternalIdMatchIsNotTheFirstEditedOccurrence() async throws {
         let shape = [unedited(7), .init(eventIdentifier: "unrelated", isDetached: true, hasRecurrenceRules: false,
                                         start: base, slot: base, sameSeriesByExternalID: true)]
         try await assertSameAnswer(shape, ids: [series], deletes: 0, left: 2)

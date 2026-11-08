@@ -1711,6 +1711,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return .series
     }
 
+    /// #436 (PR #465 verify r1): what the batch's route through the first occurrence refuses, as
+    /// `delete_event` would through that id with span future: the moved-first refusal, and an
+    /// occurrence that reports rules of its own, which delete_event refuses without occurrence_date
+    /// (on iCloud an edited occurrence has none; Google and Exchange are not measured).
+    static func throughFirstOccurrenceRefusal(_ occurrence: EKEvent, movedFirst: String?) -> String? {
+        if let movedFirst { return movedFirst }
+        return occurrence.hasRecurrenceRules ? batchOccurrenceDateRequired : nil
+    }
+
     /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no
     /// date is passed, so every bare recurring id gets this; its dry run says the same (#416).
     static let batchOccurrenceDateRequired = "For recurring events, occurrence_date is required"
@@ -1725,7 +1734,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var successCount = 0
         var failures: [(String, String)] = []
         var undoSnapshots: [EventSnapshot] = []
-        var undoThroughFirstOccurrence: [UndoOperation] = []
+        var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
 
         for id in identifiers {
             do {
@@ -1736,15 +1745,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     // occurrence that comes first, with span future, which reaches every occurrence left.
                     if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id),
                        let occurrence = try freshEvent(id: first.id) {
-                        if let refusal = try movedFirstDeleteRefusal(occurrence, id: first.id) {
+                        if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                             failures.append((id, refusal))
                             continue
                         }
-                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
-                        undoThroughFirstOccurrence.append(snapshots.record(for: snapshots.kind(
-                            span: .futureEvents, seriesResolves: { seriesResolves(identifier: first.id) })))
+                        throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))
                         continue
                     }
                     failures.append((id, notFoundReason(id: id)))
@@ -1775,13 +1782,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         markNeedsRefresh()
-        if !undoSnapshots.isEmpty || !undoThroughFirstOccurrence.isEmpty {
-            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) } + undoThroughFirstOccurrence))
+        if !undoSnapshots.isEmpty {
+            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
         }
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,
-            failures: failures
+            failures: failures,
+            throughFirstOccurrence: throughFirstOccurrence
         )
     }
 
@@ -3709,6 +3717,10 @@ struct BatchDeleteResult {
     var mayLandCount: Int = 0
     /// Span "future" items an earlier removal of their series already reached (#325).
     var coveredCount: Int = 0
+    /// #436 (PR #465 verify r1): series rows deleted from their first occurrence edited on its own,
+    /// with span future. That delete cannot be undone, so it is kept out of the batch's undo record
+    /// (which it would make refused as a whole) and reported per row instead.
+    var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
 }
 
 struct DuplicatePair: Sendable {
