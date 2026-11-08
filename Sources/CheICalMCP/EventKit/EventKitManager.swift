@@ -1985,25 +1985,39 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // and ids an earlier row deleted whole. The event_ids dry run goes through the same sequence.
         var sequence = BatchRowSequence(span: span)
         var coveredCount = 0
+        var followingOccurrencesDeleted: [String] = []
+        // #452 review r1 items 1-2: by event_ids a row an earlier cut reaches counts as already removed
+        // only when it resolved before the call; a stale or mistyped id fails as not found.
+        if span == .futureEvents {
+            for item in items where item.occurrenceDate == nil && item.identifier.contains("/RID=") {
+                // A lookup that raises (#288) is not known to resolve: a later miss of that row then
+                // fails as not found instead of being counted. The row's own lookup reports the raise.
+                let resolves: Bool
+                do {
+                    resolves = try freshEventWithOrigin(
+                        id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span)) != nil
+                } catch {
+                    resolves = false
+                }
+                if resolves { sequence.resolvedBeforeTheCall(item.identifier) }
+            }
+        }
 
         for (index, item) in items.enumerated() {
             // `slots` is index-aligned with `items` (the by-date-range handler); absent, nothing is skipped.
             let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
-            switch sequence.before(identifier: item.identifier, slot: slot) {
-            case .deletedEarlier:
-                failures.append((item.identifier, Self.batchRowDeletedEarlier))
+            if BatchRowSequence.settle(sequence.before(identifier: item.identifier, listed: item.occurrenceDate, slot: slot),
+                                       identifier: item.identifier, failures: &failures, coveredCount: &coveredCount) {
                 continue
-            case .alreadyRemoved:
-                coveredCount += 1
-                continue
-            case .lookUp:
-                break
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
                 guard let masterEvent = try freshEventWithOrigin(
                     id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
-                    failures.append((item.identifier, notFoundReason(id: item.identifier)))
+                    _ = BatchRowSequence.settle(
+                        sequence.notFound(identifier: item.identifier, listed: item.occurrenceDate,
+                                          reason: { notFoundReason(id: item.identifier) }),
+                        identifier: item.identifier, failures: &failures, coveredCount: &coveredCount)
                     continue
                 }
                 let hadRules = masterEvent.hasRecurrenceRules
@@ -2035,6 +2049,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         sequence.deletedWhole(identifier: item.identifier, requested: item.occurrenceDate, requestedSlot: slot,
                                               removedStart: removedStart, removedSlot: removedSlot)
                     }
+                    // Review r1 item 3: its undo record refuses the whole batch's undo; the response says so.
+                    if item.occurrenceDate == nil, BatchRowSequence.deletesLaterOccurrences(identifier: item.identifier, span: span) {
+                        followingOccurrencesDeleted.append(item.identifier)
+                    }
                 }
                 successCount += 1
                 let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: item.identifier) })
@@ -2061,7 +2079,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             successCount: successCount,
             failedCount: failures.count,
             failures: failures,
-            coveredCount: coveredCount
+            coveredCount: coveredCount,
+            followingOccurrencesDeleted: followingOccurrencesDeleted
         )
     }
 
@@ -3791,6 +3810,9 @@ struct BatchDeleteResult {
     var mayLandCount: Int = 0
     /// Span "future" items an earlier removal of their series already reached (#325).
     var coveredCount: Int = 0
+    /// #452 review r1 item 3: rows named by id that deleted an occurrence and the later ones of its
+    /// series (span future on `<series>/RID=...`); their undo refuses the whole batch's undo.
+    var followingOccurrencesDeleted: [String] = []
     /// #436 (PR #465 verify r1): series rows deleted from their first occurrence edited on its own,
     /// with span future. That delete cannot be undone, so it is kept out of the batch's undo record
     /// (which it would make refused as a whole) and reported per row instead.

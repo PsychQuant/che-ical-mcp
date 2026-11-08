@@ -618,10 +618,14 @@ end、notes、location、alarms。
 1. 一次性事件 A：`event_ids: [A, A]`、span `this`，dry run 第二列 `error` 是 `Event not found: an earlier row of this call
    deleted it` → 實際呼叫 `succeeded: 1`、`failed: 1`，`failures` 的那一列同一句；
 2. 每週 5 場的系列，單獨改第 2 場與第 4 場的標題 → `list_events` 取兩者自己的 id（`/RID=`）→ `event_ids: [第 2 場, 第 4 場]`、
-   span `future`：dry run 第一列有 `also_deletes_later_occurrences: true`、第二列 `already_removed: true`、頂層
-   `already_removed: 1` → 實際呼叫 `succeeded: 1`、`failed: 0`、`already_removed: 1` → `list_events` 只剩第 1 場；
+   span `future`：dry run 第一列有 `also_deletes_later_occurrences: true` 與 `undo_note`、第二列 `already_removed: true`
+   （帶日期，因為先查詢）、頂層 `already_removed: 1` → 實際呼叫 `succeeded: 1`、`failed: 0`、`already_removed: 1`、
+   `following_occurrences_deleted` 只列第 2 場、有 `undo_note` → `list_events` 只剩第 1 場；
 3. 同樣的系列，順序反過來（`[第 4 場, 第 2 場]`）：兩列都刪除，兩邊都沒有 `already_removed`，只剩第 1 場；
 4. 同樣的系列，span `this`、`[第 2 場, 第 4 場]`：兩列都刪除、沒有標記，剩 3 場。
+5. 同樣的系列（新建），`[第 2 場, 第 2 場的 id 把 /RID= 後的數字加一週的秒數再加 1]`、span `future`：第二個 id 從來不存在，
+   dry run 第二列是 `error`、沒有 `already_removed` → 實際呼叫 `succeeded: 1`、`failed: 1`、沒有 `already_removed`。
+   若實際呼叫把它算進 `already_removed`，就是呼叫前的查詢讓不存在的 `/RID=` 解析成別的東西，要回報。
 
 若第 2 步的實際呼叫回 `failed: 1`、`Event not found`（不是 `already_removed`），就是 `/RID=` 的時段比對在該來源不成立，
 要回報到 #452。2026-11-09 已在 iCloud 用 repo 內 build 的 binary（Developer ID 簽章、`--cli`）做過第 1–4 步，四步都如上（結果見 #452 的 Implementation Complete）；出版前用出版的 binary 再做一次。結果記在 #452。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次。

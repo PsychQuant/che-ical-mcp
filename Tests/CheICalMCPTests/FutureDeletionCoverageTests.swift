@@ -139,7 +139,8 @@ final class FutureDeletionCoverageTests: XCTestCase {
         let to = try XCTUnwrap(source.range(of: "func findDuplicateEvents(", range: from.upperBound..<source.endIndex))
         let body = String(source[from.lowerBound..<to.lowerBound])
         let skip = try XCTUnwrap(body.range(of: "sequence.before("))
-        let lookup = try XCTUnwrap(body.range(of: "freshEventWithOrigin("))
+        // The row's lookup (#452 review r1: a pass before the loop notes which ids resolve).
+        let lookup = try XCTUnwrap(body.range(of: "guard let masterEvent = try freshEventWithOrigin("))
         XCTAssertLessThan(skip.lowerBound, lookup.lowerBound)
         let remove = try XCTUnwrap(body.range(of: "try eventStore.remove(occurrence, span: span)"))
         let record = try XCTUnwrap(body.range(of: "sequence.deletedOccurrence("))
