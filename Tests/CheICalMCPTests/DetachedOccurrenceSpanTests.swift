@@ -1000,22 +1000,30 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     /// Read from the reach (span future from the first occurrence is the same whole-series save,
     /// cluster verify), so it comes after `reach` and the #326 stand-in check, and before any write.
-    /// Cluster verify r2: fail closed past the scan, but not for every open-ended series.
-    func testAnEditedOccurrenceIsUnknownOnlyPastWhatIsListed() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000), year: TimeInterval = 366 * 86_400
-        XCTAssertTrue(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false, listedTo: now, now: now),
-                      "an open-ended series that started years ago: recent edits are not seen")
-        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false, listedTo: now.addingTimeInterval(2 * year), now: now),
-                       "a recent open-ended series is listed well past now")
-        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: true, listedTo: now, now: now),
-                       "the scan covers the whole series")
-        XCTAssertTrue(DetachedOccurrenceSpan.allDayUnknownReason.hasSuffix("Nothing was written."))
+    /// Cluster verify r3: fail closed whenever the scan does not cover the whole series; an edit
+    /// past the scan (year six of a recent open-ended series) is not seen either.
+    func testAnEditedOccurrenceIsUnknownWheneverTheScanDoesNotCoverTheSeries() {
+        XCTAssertTrue(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false))
+        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: true))
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: true, listed: true), DetachedOccurrenceSpan.allDayChangeReason)
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: false, listed: true), DetachedOccurrenceSpan.allDayUnknownReason)
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: false, listed: false), DetachedOccurrenceSpan.allDayUnlistedReason,
+                       "a series that could not be listed is not said to reach past the scan")
+        for reason in [DetachedOccurrenceSpan.allDayUnknownReason, DetachedOccurrenceSpan.allDayUnlistedReason] {
+            XCTAssertTrue(reason.hasSuffix("Nothing was written."))
+        }
+    }
+
+    /// Cluster verify r3 (LOW): clearing the rule in the same call leaves one event.
+    func testClearingTheRuleTakesAnAllDayChange() {
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesAllDayChange(wholeSeries: true, hasRules: true, requested: true, current: false,
+                                                                  clearingRecurrence: true, hasEditedOccurrence: true))
     }
 
     func testTheAllDayRefusalComesBeforeTheFirstWrite() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) { throw EventKitError.occurrenceAddressRefused(reason: allDayFacts?.edited == false ? DetachedOccurrenceSpan.allDayUnknownReason : DetachedOccurrenceSpan.allDayChangeReason) }"
+        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, clearingRecurrence: clearRecurrence, hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayRefusalReason( edited: allDayFacts?.edited ?? true, listed: allDayFacts?.listed ?? true)) }"
         let at = try XCTUnwrap(flat.range(of: refusal), flat)
         for earlier in ["let reach = SeriesRuleWrite.reach(", "throw EventKitError.standInRefused(reason: Self.standInSplitReason)"] {
             XCTAssertLessThan(try XCTUnwrap(flat.range(of: earlier), earlier).lowerBound, at.lowerBound, earlier)

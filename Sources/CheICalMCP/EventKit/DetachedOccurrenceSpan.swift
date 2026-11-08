@@ -612,21 +612,28 @@ enum DetachedOccurrenceSpan {
     /// occurrence's original slot back as an extra occurrence, answered `updated`. `all_day: false`
     /// was not measured and counts too. `hasEditedOccurrence` is read only when the answer depends
     /// on it: it scans the series, about five years from its start.
+    /// Cluster verify r3 (LOW): not when the same call clears the rule, which leaves one event.
     static func refusesAllDayChange(wholeSeries: Bool, hasRules: Bool, requested: Bool?, current: Bool,
+                                    clearingRecurrence: Bool = false,
                                     hasEditedOccurrence: @autoclosure () -> Bool) -> Bool {
-        guard wholeSeries, hasRules, let requested, requested != current else { return false }
+        guard wholeSeries, hasRules, !clearingRecurrence, let requested, requested != current else { return false }
         return hasEditedOccurrence()
     }
 
-    /// #442 (cluster verify r2): an edited occurrence cannot be ruled out when the series reaches
-    /// past what the scan lists and the listing ends less than a year after `now`: a series that
-    /// started more than about four years ago, open-ended, where recent edits are not seen. A series
-    /// whose listing reaches a year past now, or that the scan covers whole, is read as listed.
-    static func editedOccurrenceUnknown(coversWholeSeries: Bool, listedTo: Date, now: Date) -> Bool {
-        !coversWholeSeries && listedTo < now.addingTimeInterval(366 * 86_400)
+    /// #442 (cluster verify r3): an edited occurrence cannot be ruled out whenever the scan does
+    /// not cover the whole series (open-ended, or ending past what the scan lists): one edited past
+    /// the scan is not seen, and the write still reaches it. Fail closed, whatever the series' age.
+    static func editedOccurrenceUnknown(coversWholeSeries: Bool) -> Bool {
+        !coversWholeSeries
     }
 
-    static let allDayUnknownReason = "This series reaches past what can be listed (about five years from its start), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+    static let allDayUnknownReason = "This series reaches past what can be listed (about five years from its start, or no end), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static let allDayUnlistedReason = "This series' occurrences could not be listed, so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static func allDayRefusalReason(edited: Bool, listed: Bool) -> String {
+        edited ? allDayChangeReason : (listed ? allDayUnknownReason : allDayUnlistedReason)
+    }
 
     static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
 

@@ -238,19 +238,19 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
-    /// #442 (cluster verify r2): whether the series has an occurrence edited on its own, and whether
-    /// the scan cannot rule one out: the series could not be listed, or it reaches past what the
-    /// scan lists (`DetachedOccurrenceSpan.editedOccurrenceUnknown`).
-    func allDayEditFacts(of stale: EKEvent, id: String, now: Date = Date()) -> (edited: Bool, unknown: Bool) {
+    /// #442 (cluster verify r2, r3): whether the series has an occurrence edited on its own, and
+    /// whether the scan cannot rule one out: the series could not be listed (`listed` false), or the
+    /// scan does not cover it whole (`DetachedOccurrenceSpan.editedOccurrenceUnknown`).
+    func allDayEditFacts(of stale: EKEvent, id: String) -> (edited: Bool, unknown: Bool, listed: Bool) {
         guard let (_, candidates) = seriesOccurrences(of: stale, id: id), let window = seriesScanWindow(of: stale),
               let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
-            return (false, true)
+            return (false, true, false)
         }
-        if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false) }
+        if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false, true) }
         let covers = DetachedOccurrenceSpan.coversWholeSeries(
             rules: (stale.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
             firstStart: stale.startDate, scannedTo: listedTo, calendar: Calendar.gregorian(in: stale.timeZone ?? .current))
-        return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers, listedTo: listedTo, now: now))
+        return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
