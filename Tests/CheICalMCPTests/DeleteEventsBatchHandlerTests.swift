@@ -70,11 +70,15 @@ private actor SeriesModel: EventBatchDeletionSource {
     private let series: String
     private var occurrences: [FirstRemainingOccurrence.Candidate]
     private let listed: [BatchDeletionListedEvent]
+    /// false: an open-ended series, where the scan cannot show it ends (#427 cluster verify).
+    private let coversWholeSeries: Bool
 
-    init(series: String, occurrences: [FirstRemainingOccurrence.Candidate], listed: [BatchDeletionListedEvent] = []) {
+    init(series: String, occurrences: [FirstRemainingOccurrence.Candidate], listed: [BatchDeletionListedEvent] = [],
+         coversWholeSeries: Bool = true) {
         self.series = series
         self.occurrences = occurrences
         self.listed = listed
+        self.coversWholeSeries = coversWholeSeries
     }
 
     var left: Int { occurrences.count }
@@ -95,7 +99,7 @@ private actor SeriesModel: EventBatchDeletionSource {
         return DetachedOccurrenceSpan.seriesDeleteRefusal(
             identifier: id, isDetached: own.isDetached, batch: true,
             neighbours: DetachedOccurrenceSpan.neighbours(of: id, slot: own.slot ?? own.start, among: occurrences,
-                                                          coversWholeSeries: true, namedInTheCall: named))
+                                                          coversWholeSeries: coversWholeSeries, namedInTheCall: named))
     }
 
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
@@ -461,7 +465,71 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         let occurrences = [unedited(0), unedited(7), editedOccurrence(14)]
         let dry = try await call(SeriesModel(series: series, occurrences: occurrences, listed: listing),
                                  args(after: first.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true))
-        XCTAssertEqual(dry["deletions"] as? Int, 2, "\(dry)")
+        XCTAssertEqual(dry["deletions"] as? Int, 1, "the occurrence is left to the series' row: \(dry)")
+    }
+
+    /// #427 cluster verify: an open-ended series, where the scan cannot show it ends. Judged on its
+    /// own the occurrence's row was refused while the series' row deleted it anyway; it is left to
+    /// the series' row, in both modes, and only that row reaches the delete.
+    func testAnOpenEndedSeriesListedTooTakesItsEditedOccurrence() async throws {
+        let first = base, slot = base.addingTimeInterval(14 * day)
+        let listing = [BatchDeletionListedEvent(identifier: series, start: first, end: first, slot: first),
+                       BatchDeletionListedEvent(identifier: ownId(14), start: slot, end: slot, slot: slot, isDetached: true)]
+        let occurrences = [unedited(0), unedited(7), editedOccurrence(14), unedited(21)]
+        let range = args(after: first.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true)
+        let dry = try await call(SeriesModel(series: series, occurrences: occurrences, listed: listing, coversWholeSeries: false), range)
+        XCTAssertEqual(dry["deletions"] as? Int, 1, "\(dry)")
+        let rows = try XCTUnwrap(dry["events_to_delete"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2, "both listed occurrences are shown")
+        XCTAssertTrue(rows.allSatisfy { $0["error"] == nil }, "\(rows)")
+        let model = SeriesModel(series: series, occurrences: occurrences, listed: listing, coversWholeSeries: false)
+        var real = range; real["dry_run"] = .bool(false)
+        let answer = try await call(model, real)
+        XCTAssertEqual(answer["failed"] as? Int, 0, "\(answer)")
+        let left = await model.left
+        XCTAssertEqual(left, 0)
+        let fake = BatchDeletionFake(listed: listing)
+        _ = try await call(fake, real)
+        let calls = await fake.seriesCalls
+        XCTAssertEqual(calls, [[series]], "the occurrence's row is not sent")
+    }
+
+    /// #427 cluster verify: by date range too, a series' row that the real call deletes through its
+    /// first occurrence says so in the dry run, as by event_ids.
+    func testARangeRowThroughTheFirstOccurrenceCarriesItsUndoNote() async throws {
+        let first = base
+        let listing = [BatchDeletionListedEvent(identifier: series, start: first, end: first, slot: first)]
+        let fake = BatchDeletionFake(listed: listing, previewRow: .deletesThroughFirstOccurrence(
+            start: first, end: first, occurrenceID: ownId(0)))
+        let dry = try await call(fake, args(after: first.addingTimeInterval(-day), before: first.addingTimeInterval(day), span: "all", dryRun: true))
+        let row = try XCTUnwrap((dry["events_to_delete"] as? [[String: Any]])?.first)
+        XCTAssertEqual(row["occurrence_id"] as? String, ownId(0))
+        XCTAssertEqual(row["undo_note"] as? String, CheICalMCPServer.batchPreviewThroughOccurrenceNote)
+        XCTAssertEqual(dry["deletions"] as? Int, 1)
+    }
+
+    /// #427 cluster verify: an identifier with `/RID=` names one occurrence whatever `isDetached`
+    /// says, as the real call reads it (`addressesOneOccurrence`).
+    func testARangeRowWithASlotInItsIdIsJudgedWithoutIsDetached() async throws {
+        let slot = base.addingTimeInterval(14 * day)
+        let own = FirstRemainingOccurrence.Candidate(eventIdentifier: ownId(14), isDetached: false, hasRecurrenceRules: false,
+                                                     start: slot, slot: slot)
+        let listing = [BatchDeletionListedEvent(identifier: ownId(14), start: slot, end: slot, slot: slot, isDetached: false)]
+        let dry = try await call(SeriesModel(series: series, occurrences: [unedited(0), unedited(7), own], listed: listing),
+                                 args(after: slot.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true))
+        XCTAssertEqual(dry["deletions"] as? Int, 0, "\(dry)")
+        XCTAssertEqual((dry["events_to_delete"] as? [[String: Any]])?.first?["error"] as? String, DetachedOccurrenceSpan.seriesDeleteBatchReason)
+    }
+
+    /// #427 cluster verify: a row whose preview throws shows the error, as by event_ids, and is not
+    /// counted; it used to be dropped with try? and counted.
+    func testARangeRowWhosePreviewFailsShowsTheError() async throws {
+        let slot = base.addingTimeInterval(14 * day)
+        let listing = [BatchDeletionListedEvent(identifier: ownId(14), start: slot, end: slot, slot: slot, isDetached: true)]
+        let dry = try await call(SeriesModel(series: series, occurrences: [unedited(0)], listed: listing),
+                                 args(after: slot.addingTimeInterval(-day), before: slot.addingTimeInterval(day), span: "all", dryRun: true))
+        XCTAssertEqual(dry["deletions"] as? Int, 0, "\(dry)")
+        XCTAssertNotNil((dry["events_to_delete"] as? [[String: Any]])?.first?["error"])
     }
 
     // MARK: - #416: the event_ids dry run and the real call agree
