@@ -102,7 +102,14 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
         do {
             _ = try await run(restoreAvailable: true, verify: refused, split: none, steps: steps)
             XCTFail("the refusal must stand")
-        } catch is UndoRestoreDestinationMissingError {}
+        } catch let error as UndoBatchRestoreAvailableRefusal {
+            // PR #496 round 2: the caller already passed restore_available, so the refusal does not
+            // tell it to, and says why it did not help.
+            XCTAssertFalse(error.message.contains("restore_available set to true"), error.message)
+            XCTAssertTrue(error.message.contains("restore_available was passed, but when the calendars and lists were read again for it, no item had its calendar or list in place"), error.message)
+            XCTAssertTrue(error.message.hasPrefix("Cannot undo this batch: 2 of its 5 deleted items cannot be restored"), error.message)
+            XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "the record is kept whole")
+        }
         XCTAssertTrue(steps.ran.isEmpty)
     }
 
@@ -204,6 +211,10 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
             XCTAssertTrue(stopped.message.contains("kept with only the 4 items whose calendar or list is missing or read-only"),
                           stopped.message)
             XCTAssertFalse(stopped.message.contains("was discarded"), stopped.message)
+            // PR #496 round 2.
+            XCTAssertTrue(stopped.message.contains("no item confirmed restored"), stopped.message)
+            XCTAssertTrue(stopped.message.contains("what it says about this history entry is superseded by this message: rollback failed"), stopped.message)
+            XCTAssertTrue(stopped.message.contains("Not attempted, because their calendar or list is missing or read-only: "), stopped.message)
         }
     }
 
@@ -227,8 +238,10 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
         do {
             _ = try await run(restoreAvailable: true, verify: refused, runFails: subset, steps: steps)
             XCTFail("the refusal must surface")
-        } catch let error as UndoRestoreDestinationMissingError {
-            XCTAssertEqual(error.message, refused.message)
+        } catch let error as UndoBatchRestoreAvailableRefusal {
+            XCTAssertTrue(error.message.hasPrefix("Cannot undo this batch: 2 of its 5 deleted items cannot be restored"), error.message)
+            XCTAssertFalse(error.message.contains("restore_available set to true"), error.message)
+            XCTAssertTrue(error.message.contains("restore_available was passed, but by the time of their writes a calendar or list of the items to restore was missing or read-only"), error.message)
         }
     }
 
@@ -258,6 +271,9 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
             let member = try XCTUnwrap(stopped.message.range(of: "eventkit_error_1"))
             XCTAssertLessThan(note.lowerBound, member.lowerBound, stopped.message)
             XCTAssertTrue(stopped.message.contains("so the entry holds 3 items"), stopped.message)
+            // PR #496 round 2: a plain undo refuses the entry while the kept items' calendar or list
+            // is missing, so the retry needs the argument again.
+            XCTAssertTrue(stopped.message.contains("run undo again with restore_available set to true"), stopped.message)
         }
     }
 
@@ -271,6 +287,7 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
             XCTFail("the part-way failure must surface")
         } catch let stopped as UndoBatchPartialRestoreStoppedError {
             XCTAssertTrue(stopped.message.contains("R1") && stopped.message.contains("due"), stopped.message)
+            XCTAssertTrue(stopped.message.contains("what it says about this history entry is superseded by this message: gone"), stopped.message)
         }
     }
 }

@@ -44,7 +44,8 @@ enum UndoBatchPartialRestore {
 
     /// The steps of a batch undo. `verify` is #248 B's pre-check; when it refuses and the caller
     /// asked, `split` reads the calendars and lists once more, and only the restorable members run.
-    /// The refusal stands when the caller did not ask, or when no member can be restored; when every
+    /// The refusal stands when the caller did not ask, or when no member can be restored (then as
+    /// `UndoBatchRestoreAvailableRefusal`, which says the second read found nothing restorable); when every
     /// destination is back by the time of the split, the whole batch runs. A part-way failure on the
     /// restorable members keeps #248 A's remainder and the blocked members too
     /// (`UndoBatchPartialRestoreStoppedError`). `kept` is the split when members were kept.
@@ -64,7 +65,7 @@ enum UndoBatchPartialRestore {
         guard let refusal = refused else { return (try await runMembers(members), nil) }
         guard restoreAvailable else { throw refusal }
         let parts = try await split()
-        guard !parts.restorable.isEmpty else { throw refusal }
+        guard !parts.restorable.isEmpty else { throw UndoBatchRestoreAvailableRefusal(refusal, reason: .nothingRestorable) }
         guard !parts.blocked.isEmpty else { return (try await runMembers(members), nil) }
         do {
             return (try await runMembers(parts.restorable), parts)
@@ -73,7 +74,7 @@ enum UndoBatchPartialRestore {
         } catch is UndoRestoreDestinationMissingError {
             // PR #496 round 1: a calendar or list gone between the split and the subset's own check;
             // nothing was written, and the answer is the whole entry's refusal.
-            throw refusal
+            throw UndoBatchRestoreAvailableRefusal(refusal, reason: .goneBeforeTheWrites)
         } catch let permanent as UnrecoverableUndoError {
             // PR #496 round 1: #248 A passes a permanent error on alone when nothing was restored and
             // no other member waits (one restorable member); `handleUndo` would discard the whole
@@ -184,12 +185,15 @@ struct UndoBatchPartialRestoreStoppedError: LocalizedError, Sendable {
                 + loss + notAttempted
                 + " The entry was kept with only \(those) whose calendar or list is missing or read-only, under the same id; run undo again once their calendar or list is back."
                 + Self.giveUp(those)
-                + " The dropped item's own error follows: \(partial.memberError)"
+                + " The dropped item's own error follows; what it says about this history entry is superseded by this message: \(partial.memberError)"
         } else {
             // #248 A's text counts only its own remainder; the blocked items are kept too, before the
             // member's own error (PR #496 round 1).
             let total = partial.remaining.count + count
+            // PR #496 round 2: with those kept, a plain undo refuses the entry whole, so the retry
+            // that #248 A's text describes needs the argument again.
             let note = notAttempted + " Besides the items not yet restored counted above, \(those) are kept in this history entry too, first, so they run after the others, so the entry holds \(total) items; giving up with discard_id drops them as well."
+                + " While their calendar or list is missing or read-only a plain undo refuses this entry whole: to retry the items not yet restored, run undo again with restore_available set to true."
             let marker = " The failed item's own error follows;"
             if let range = partial.message.range(of: marker) {
                 message = partial.message[..<range.lowerBound] + note + partial.message[range.lowerBound...]
@@ -207,11 +211,12 @@ struct UndoBatchPartialRestoreStoppedError: LocalizedError, Sendable {
         let count = kept.blocked.count
         let those = count == 1 ? "the 1 item" : "the \(count) items"
         let restorable = kept.restorable.count == 1 ? "the 1 item whose calendar or list is in place" : "the \(kept.restorable.count) items whose calendar or list is in place"
-        message = "Undo of this batch stopped with no item restored: restoring \(restorable) failed in a way no retry can restore, so \(kept.restorable.count == 1 ? "it was" : "they were") dropped from this history entry."
-            + " " + UndoBatchPartialRestore.describe(kept.findings) + "."
+        // PR #496 round 2: "confirmed", since a failed series restore may leave the series written.
+        message = "Undo of this batch stopped with no item confirmed restored: restoring \(restorable) failed in a way no retry can restore, so \(kept.restorable.count == 1 ? "it was" : "they were") dropped from this history entry."
+            + " Not attempted, because their calendar or list is missing or read-only: " + UndoBatchPartialRestore.describe(kept.findings) + "."
             + " The entry was kept with only \(those) whose calendar or list is missing or read-only, under the same id; run undo again once their calendar or list is back."
             + Self.giveUp(those)
-            + " The failed item's own error follows: \(permanent.message)"
+            + " The failed item's own error follows; what it says about this history entry is superseded by this message: \(permanent.message)"
         remaining = kept.blocked
     }
 
@@ -221,6 +226,38 @@ struct UndoBatchPartialRestoreStoppedError: LocalizedError, Sendable {
 }
 
 extension UndoBatchPartialRestoreStoppedError: TrustedErrorMessage {}
+
+/// PR #496 round 2: #248 B's whole-entry refusal, answered to a caller who passed
+/// `restore_available`, so it does not tell them to pass it and says why it did not help. Nothing
+/// was written; `handleUndo` keeps the record whole (not an `UnrecoverableUndoError`).
+///
+/// The message is the refusal's (a trusted message), with its last sentence, which names the
+/// argument, left out, plus author-controlled text.
+struct UndoBatchRestoreAvailableRefusal: LocalizedError, Sendable {
+    enum Reason: Sendable {
+        /// The second read, for the split, found no item with its calendar or list in place.
+        case nothingRestorable
+        /// The restorable items' own pre-check, just before their writes, found a calendar or list
+        /// missing or read-only.
+        case goneBeforeTheWrites
+    }
+
+    let message: String
+    var errorDescription: String? { message }
+
+    init(_ refusal: UndoRestoreDestinationMissingError, reason: Reason) {
+        // The refusal's sentence that names the argument is its last (`init(findings:total:)`).
+        let base = refusal.message.range(of: " To restore the ").map { String(refusal.message[..<$0.lowerBound]) } ?? refusal.message
+        switch reason {
+        case .nothingRestorable:
+            message = base + " restore_available was passed, but when the calendars and lists were read again for it, no item had its calendar or list in place, so nothing was restored."
+        case .goneBeforeTheWrites:
+            message = base + " restore_available was passed, but by the time of their writes a calendar or list of the items to restore was missing or read-only, so nothing was written; run undo with restore_available again to restore the items whose calendar or list is in place then."
+        }
+    }
+}
+
+extension UndoBatchRestoreAvailableRefusal: TrustedErrorMessage {}
 
 extension EventKitManager {
     /// #287: the split of a refused batch, from the calendars and lists the restore reads (#269's
