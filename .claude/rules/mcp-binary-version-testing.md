@@ -203,6 +203,68 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 
 結果記在 #236。結束後刪掉拋棄式日曆與清單。
 
+## Release gate：長期系列的整個系列刪除 undo 與重複防護（#319、#321）
+
+#319 的視窗位置（`SeriesExceptionsPlanner.deleteWindow`）與 #321 的重複防護（系列識別碼與規則時段，
+`SeriesRecreations`）只有純函式、記憶體內 store 與原始碼結構的測試。依賴而沒量過的裝置行為：開始於
+多年前的系列，刪除前後的場次能在一次查詢內列出且 `/RID=` 照舊；整個系列 undo 重建的系列，其場次讀回
+的 identifier 是新系列的 id、`occurrenceDate` 等於規則時段（`OccurrenceSlotGuard.holder` 用它）。undo 是
+stateful 的，`--cli` 走不到（見上表），所以**出 #319／#321 的那個版本打 tag 之前**，在重啟後的 session
+MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或 `#321` 的拋棄式日曆。每一步建的系列用自己的
+標題（例如「#321 step 4」），因為 `create_event` 會把同一日曆裡 30 秒內同標題同開始的事件當成重複而略過；
+每次建立都確認回應是 created、不是 skipped：
+
+1. **#319 舊系列**：`create_event` 建一個開始於約六年前、不設結束的每週系列 → 用 `--cli` 刪掉一個
+   未來兩週內的場次（span `this`），再用 `--cli` 改另一個未來兩週內的場次的標題（span `this`，它要留在視窗內；兩個寫入都不進 session
+   的 undo stack）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除、1 個編輯過的場次
+   以一次性事件回來，視窗起訖約為刪除前三年到一年後，並說系列在視窗前後都有場次；`list_events` 讀回：
+   被刪的那天沒有場次，被改的那天只有一個（一次性事件，改過的標題）。修正前的 binary 會兩個都依規則回來。
+2. **#321 同名的另一個系列**：同一拋棄式日曆建同標題的每週系列 A，再建 B，B 的開始比 A 早一週（S - 7 天，
+   之後的場次與 A 同時）；`create_event` 會把 30 秒內同標題同開始的事件當成重複而略過，所以 B 不可與 A 同一個
+   開始時間，**確認 B 的回應是 created、不是 skipped** → `delete_event` 刪 A 的第二個場次（span `this`）→ `undo`：
+   要寫回一次性事件（修正前回「already restored by its series」、什麼都沒寫）；`list_events` 讀回那個時間有 B 的
+   場次與一次性事件各一個。
+3. **#321 先 undo 整個系列，再 undo 單一場次（例外擷取到的形狀）**：建每週 ×4 系列 → 刪第三場（span `this`）→
+   `delete_event` span `all` → `undo`（系列回來、第三場維持刪除）→ `undo`：第三場以一次性事件回來；讀回第三場那天
+   只有一個事件。
+4. **#321 由重建系列的新 id 擋下重複（id 比對的佔用分支，唯一能在裝置上走到的形狀）**：建一個開始於約六年前、
+   不設結束的每週系列 → session：`delete_event` span `this` 刪掉一個約五年前的場次（它的時段落在
+   [刪除 - 1094 天, 刪除 + 366 天) 與其前後一年之外，整個系列刪除時不會列到）→ `delete_event` span `all` →
+   `undo`（系列依規則回來，那個五年前的時段也回來）→ `undo`：回應是「already restored by its series」、什麼都
+   沒寫；讀回那天只有重建系列的一個場次。記下這次 `undo` 的耗時（它會列出時段前後兩年的行事曆）。
+5. **#321 被搬走的場次（第 4 步的變形）**：同第 4 步，但在最後一個 `undo` 之前，用 `--cli` 的 `update_event`
+   （重建系列的 id、那天的 `occurrence_date`、span `this`）把那個場次改到三天後 → session 的 `list_events` 先確認
+   那個場次確實在三天後（session 看得到這次搬移；看不到就停下來，這一步不算數）→ session `undo`：回應是
+   「already restored by its series」、什麼都沒寫；讀回原本那天沒有事件、三天後只有被搬走的那一個場次。
+6. **#321 finding 22（rule-less `.deleteEvent` 的防護）**：建一個每週、**有結束日**的系列（自己的標題），開始於刪除前約
+   1750 天、結束於刪除後約 30 天（全長約 1780 天；不設結束的系列過不了 #416 的檢查，那一列一定被拒絕）→ 用 `--cli`
+   改它開始後約 200 天的一個場次的標題（span `this`）。這個時段在「結束日 - 1460 天」之前，所以在新的視窗之外、
+   在 #319 之前的視窗之內 → session：`delete_events_batch` 的 `event_ids` 帶 `[那個場次自己的 id（含 /RID=）, 系列 id]`、
+   span `all`（兩列都要 deleted）→ `undo`。
+   - 新 binary：系列依規則回來、那個時段也回來，場次自己的紀錄找到系列已佔住它，批次訊息說那個編輯過的場次沒寫入、
+     它的編輯沒有回來；讀回那天一個事件（系列依規則的場次，原標題）。
+   - v1.23.0：系列的擷取把那個時段算成單獨刪除，場次的紀錄寫回一次性事件（改過的標題）；讀回那天也是一個事件。
+   兩版那天的事件數相同，所以這一步**以回應文字**區分兩版；兩個回應都記下來（並記下那天事件的標題）。新 binary 在這個
+   形狀會失去那次編輯：有結束日、開始超過三年的系列以舊的例外換刪除後一年的涵蓋，是設計上的取捨（CHANGELOG）。
+   這條防護路徑另有單元測試（`SeriesExceptionsUndoTests`、`UndoBatchRestoreTests`），本步是它唯一的裝置檢查。
+7. **#319 多個星期幾的次數規則**：建一個開始於約十二年前、每週一三五、共 450 次的系列 → 用 `--cli` 刪掉它的
+   第 100 個場次（span `this`）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除，讀回該天
+   沒有場次。對照：PR #494 第一輪的 binary（branch 上的 commit `8648c70` build 出來的，上界按 450 週算）回應會說依規則
+   重建；#319 之前的 binary（v1.23.0）也會套用例外（它的視窗從第一個場次起，涵蓋整個系列）。
+8. **split move**：`move_events_batch` span `this` 把每週系列的一個場次移到另一個拋棄式日曆 → `undo`：場次以一次性
+   事件回到原日曆、複本被移除（與 #466 相同；#321 只改了防護的比對方式）。
+9. **split move 的時段已被佔用（PR #494 第五輪）**：建一個開始於約六年前、不設結束的每週系列（自己的標題）→ session：
+   `move_events_batch` span `this`、`occurrence_date` 為約五年前的一天，把那個場次移到另一個拋棄式日曆 B →
+   `delete_event` span `all`（系列）→ `undo`（系列依規則回來，那個五年前的時段也回來）→ `undo`（搬移）：回應說
+   「was not recreated in its original calendar: its series already holds its original slot there」，複本留在 B、沒有
+   被查找或移除。變形：另建一個這樣的系列，搬移前先用 `--cli` 的 `update_event` span `this` 改那個場次的標題，其餘
+   相同 → 最後的 `undo` 回應說「the copy the move made (id …) is the only version with that edit」。
+
+另外記錄、不算通過條件的：在 Google（或其他存檔後會換 id 的來源）上做第 4 步時，若重建系列存檔後 id 變了，
+第 4 步會寫出第二個事件（已知限制，CHANGELOG 的 Not covered）；有大量事件的拋棄式日曆時，做一次刪掉約 20 個
+場次的 `delete_events_batch`（span `this`）再 `undo`，記下耗時。結果記在 #319 與 #321。結束後刪掉拋棄式日曆，
+隔一分鐘再 `list_calendars` 一次確認沒有殘留。
+
 ## Release gate：timed → all-day 只帶 start_time 的天數（#374）
 
 #374 的規則（只帶 `start_time` 把 timed 事件改成 all-day 時，保留 timed 範圍碰到的天數）只有

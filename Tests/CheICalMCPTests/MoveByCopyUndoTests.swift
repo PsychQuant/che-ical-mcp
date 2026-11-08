@@ -148,7 +148,8 @@ final class MoveByCopyUndoTests: XCTestCase {
 
         let text = MoveByCopyUndo.message(restore: .slotAlreadyHeld, title: "Standup", copyID: "COPY-1", copy: .keptSlotHeld)
         XCTAssertTrue(text.hasPrefix("Undone: the moved occurrence of 'Standup' was not recreated in its original calendar"), text)
-        XCTAssertTrue(text.contains("an occurrence of a recurring event with its title already holds its time there"), text)
+        // PR #494 round 2: by series and slot (#321), not a title match.
+        XCTAssertTrue(text.contains("its series already holds its original slot there"), text)
         // Round 4: the copy was not looked up, so the text does not say where it is.
         XCTAssertTrue(text.contains("this undo did not look up or remove the copy the move made (id COPY-1); if it is still in the calendar it was moved to"), text)
         XCTAssertFalse(text.contains("was kept in the calendar"), text)
@@ -238,7 +239,7 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertEqual(record.description,
                        "Moved event: Standup (by copy: undo restores it in its original calendar and removes the copy if unchanged)")
         XCTAssertEqual(split.description,
-                       "Moved occurrence of event: Standup (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)")
+                       "Moved occurrence of event: Standup (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if its series there already holds its original slot, nothing is recreated and the copy stays)")
     }
 
     /// Round 1 LOW: redo answered the generic batch line, which points at create_event and

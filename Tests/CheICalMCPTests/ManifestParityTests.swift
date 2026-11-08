@@ -531,8 +531,8 @@ final class ManifestParityTests: XCTestCase {
              "Undo of a delete of one occurrence restores it as a one-off event",
              "a deleted occurrence comes back as a one-off event"),
             ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
-             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the scan window",
-             "a series deleted whole comes back from its rules with its exceptions inside the scan window restored"),
+             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the checked window",
+             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete; for a count, also the four years from its first occurrence) restored"),
             ("#261: a single delete_reminder undo names the fields the store holds differently (the batch clause follows)",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
@@ -650,6 +650,27 @@ final class ManifestParityTests: XCTestCase {
         let declared = CheICalMCPServer.defineTools().first { $0.name == tool }?.description ?? ""
         let summary = entries.first { $0["name"] as? String == tool }?["description"] as? String ?? ""
         return (declared, summary)
+    }
+
+    /// #319: the checked window is placed around the delete, and #321: the slot of an occurrence
+    /// is matched by its series and original slot, not by title. Every surface a client reads
+    /// before the undo says both, and none keeps the window "from one day before the first
+    /// occurrence to the end of the rule" (#285), which lay in the past for a long-running series.
+    func testUndoSurfacesPlaceTheWindowAroundTheDeleteAndMatchTheSlotBySeries() throws {
+        let manifestData = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(description.contains("from three years before the delete") || description.contains("around the time of the delete"),
+                          "defineTools() \(name): \(description)")
+            XCTAssertTrue(description.contains("not by title"), "defineTools() \(name) lost the #321 match: \(description)")
+            XCTAssertFalse(description.contains("from one day before the first occurrence to the end of the rule"), "defineTools() \(name)")
+        }
+        let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("around the time of the delete"), summary)
+        XCTAssertTrue(summary.contains("not by title"), summary)
     }
 
     /// #285: undo of a whole-series delete recreates the series from its rules and restores its
@@ -788,5 +809,30 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(text.contains("alarms_minutes_offsets"), "\(place): \(text)")
             XCTAssertTrue(text.contains("alarms_note"), "\(place): \(text)")
         }
+    }
+
+    /// PR #494 round 4: the `move_events_batch` description says the split undo's slot check is by
+    /// series and original slot (#321), not by title, and that a held edited occurrence keeps the
+    /// copy as the only version with its edit.
+    func testTheMoveDescriptionSaysTheSplitSlotCheckIsBySeries() {
+        let description = CheICalMCPServer.defineTools().first { $0.name == "move_events_batch" }?.description ?? ""
+        XCTAssertFalse(description.contains("with the split occurrence's title"), description)
+        XCTAssertTrue(description.contains("not by title"), description)
+        XCTAssertTrue(description.contains("moved off its slot"), description)
+        XCTAssertTrue(description.contains("the only version with that edit"), description)
+    }
+
+    /// PR #494 round 5: the delete and undo surfaces name the extra window of a count.
+    func testTheDeleteAndUndoSurfacesNameTheCountWindow() throws {
+        let manifestData = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(description.contains("for a count, also the four years from its first occurrence"), "defineTools() \(name): \(description)")
+        }
+        let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("for a count, also the four years from its first occurrence"), summary)
     }
 }

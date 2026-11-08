@@ -11,10 +11,12 @@ enum UndoSnapshotFixtures {
 
     /// `calendarTitle` names the event's calendar; `weeklyOccurrences` makes it a weekly series of
     /// that many, whose delete-undo recreates it from its rules (#278).
+    /// `calendar` puts it in that calendar (`newCalendar()`), so two snapshots share one; by default
+    /// each gets its own.
     static func event(title: String = "Event", calendarTitle: String? = nil, weeklyOccurrences: Int? = nil,
-                      startDate: Date? = nil, allDay: Bool = false) -> EventSnapshot {
+                      startDate: Date? = nil, allDay: Bool = false, calendar: EKCalendar? = nil) -> EventSnapshot {
         let event = EKEvent(eventStore: store)
-        event.calendar = EKCalendar(for: .event, eventStore: store)
+        event.calendar = calendar ?? EKCalendar(for: .event, eventStore: store)
         if let calendarTitle { event.calendar.title = calendarTitle }
         event.title = title
         event.isAllDay = allDay
@@ -26,6 +28,9 @@ enum UndoSnapshotFixtures {
         }
         return EventSnapshot(from: event)
     }
+
+    /// An in-memory event calendar, never saved, for `event(calendar:)`.
+    static func newCalendar() -> EKCalendar { EKCalendar(for: .event, eventStore: store) }
 
     static func reminder(title: String = "Reminder", due: DateComponents? = nil) -> ReminderSnapshot {
         let reminder = EKReminder(eventStore: store)

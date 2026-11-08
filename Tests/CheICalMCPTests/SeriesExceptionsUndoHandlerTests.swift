@@ -99,9 +99,14 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         XCTAssertEqual(after.entries.map(\.description), ["Created event: Older"], "discarded; the older record is on top")
     }
 
+    /// #321: the record ties the occurrence to series S at its rule slot.
+    private func origin(_ week: Int) -> OccurrenceOrigin {
+        OccurrenceOrigin(series: .init(eventIdentifier: "S", externalIdentifier: "X-S"), slot: slot(week))
+    }
+
     func testUndoOfAnOccurrenceDeleteWhoseSlotTheSeriesHoldsWritesNothing() async throws {
         let store = FakeSeriesExceptionsStore()
-        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: slot(1))
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: slot(1)).withOccurrenceOrigin(origin(1))
         store.addSeries(id: "S", calendar: occurrence.calendarIdentifier, title: "Standup", slots: [slot(0), slot(1)])
         let history = await history(with: .deleteOccurrence(snapshot: occurrence, notCarriedOver: []))
 
@@ -117,7 +122,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
 
     func testUndoOfAnOccurrenceDeleteWithAFreeSlotWritesAOneOff() async throws {
         let store = FakeSeriesExceptionsStore()
-        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: slot(1))
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: slot(1)).withOccurrenceOrigin(origin(1))
         let history = await history(with: .deleteOccurrence(snapshot: occurrence, notCarriedOver: []))
 
         let result = try await undo(history, on: store)

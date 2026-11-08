@@ -350,7 +350,8 @@ final class UndoCalendarMissingTests: XCTestCase {
         let undoDelete = try body("static func undoDeleteEvent<", in: seam)
         XCTAssertTrue(undoDelete.contains("let event = store.makeEvent() store.apply(snapshot, to: event, calendar: calendar) try store.save(event)"), undoDelete)
         let undoOccurrence = try body("static func undoDeleteOccurrence<", in: seam)
-        XCTAssertTrue(undoOccurrence.contains("if seriesHoldsSlot(of: snapshot, calendar: calendar, in: store) {"), undoOccurrence)
+        // #321: the guard reads the recorded origin, in the calendar read above.
+        XCTAssertTrue(undoOccurrence.contains("if let origin = snapshot.occurrenceOrigin, seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {"), undoOccurrence)
         XCTAssertTrue(undoOccurrence.contains("store.apply(snapshot, to: event, calendar: calendar)"), undoOccurrence)
         let production = try body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift")
         XCTAssertTrue(production.contains("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), production)

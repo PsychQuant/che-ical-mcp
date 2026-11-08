@@ -132,9 +132,15 @@ enum UndoPostState {
     /// The scan window of `event`'s series: from the series' first start to the end of its rules.
     /// Any open-ended (or count-based) rule leaves the series open (`seriesScanWindow`).
     static func seriesScanWindow(of event: EKEvent) -> DateInterval {
+        seriesScanWindow(firstStart: event.startDate, ruleEnd: seriesRuleEnd(of: event))
+    }
+
+    /// The latest end date of `event`'s rules; nil when any rule is open-ended or count-based. The
+    /// end `seriesScanWindow(of:)` cuts at (create-undo, #259). The delete-undo window reads a
+    /// series' end through `SeriesExceptionsPlanner.seriesEnd` instead, which bounds a count (#319).
+    static func seriesRuleEnd(of event: EKEvent) -> Date? {
         let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
-        let ruleEnd = ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
-        return seriesScanWindow(firstStart: event.startDate, ruleEnd: ruleEnd)
+        return ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()
     }
 
     /// The identifiers that tie an occurrence to its series.

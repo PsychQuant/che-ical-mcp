@@ -45,8 +45,10 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     private(set) var refreshMarks = 0
     /// The slots a series saved into this store generates (its own start first).
     var seriesSlots: [Date] = []
-    /// `scanWindow(of:)`; the production default for a series starting at the event's start otherwise.
-    var window: DateInterval?
+    /// #319: `seriesEnd(of:)` of every series.
+    var seriesEnd: SeriesExceptionsPlanner.SeriesEnd = .open
+    /// #319: how many occurrences `observed(_:)` built a snapshot for.
+    private(set) var observedCount = 0
     /// Saves of events with these titles throw (after taking an identifier, as a save that may have
     /// written would leave it).
     var failingSaveTitles: Set<String> = []
@@ -81,16 +83,15 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func hasCalendar(_ event: Event) -> Bool { event.calendar != nil }
 
-    func scanWindow(of series: Event) -> DateInterval {
-        window ?? UndoPostState.seriesScanWindow(firstStart: series.start, ruleEnd: nil)
-    }
+    func seriesEnd(of series: Event) -> SeriesExceptionsPlanner.SeriesEnd { seriesEnd }
 
     func startDate(of event: Event) -> Date { event.start }
 
     func slot(of occurrence: Event) -> Date { occurrence.occurrenceDate ?? occurrence.start }
 
     func observed(_ occurrence: Event) -> SeriesExceptionsPlanner.ObservedOccurrence {
-        SeriesExceptionsPlanner.ObservedOccurrence(
+        observedCount += 1
+        return SeriesExceptionsPlanner.ObservedOccurrence(
             ids: identifiers(of: occurrence), isDetached: occurrence.detached, occurrenceDate: occurrence.occurrenceDate,
             startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start))
     }
@@ -169,12 +170,27 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func markNeedsRefresh() { refreshMarks += 1 }
 
-    func slotHolders(for snapshot: EventSnapshot, in calendar: String) -> [OccurrenceSlotGuard.Holder] {
+    func slotHolders(at slot: Date, length: TimeInterval, in calendar: String) -> [OccurrenceSlotGuard.SeriesHolder] {
         log.append("holders")
-        let end = max(snapshot.endDate, snapshot.startDate.addingTimeInterval(60))
+        let range = OccurrenceSlotGuard.listingRange(slot: slot, length: length)
         return events
-            .filter { $0.calendar == calendar && $0.start >= snapshot.startDate && $0.start < end }
-            .map { OccurrenceSlotGuard.Holder(title: $0.title, startDate: $0.start, hasRecurrenceRules: $0.hasRules) }
+            .filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
+            .compactMap { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
+                                                     occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start,
+                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached) }
+    }
+
+    /// #321: what `noteRecreation` was told, in order.
+    private(set) var recreationLog = SeriesRecreations()
+    private(set) var notedRecreations: [(recorded: UndoPostState.OccurrenceIDs, recreated: UndoPostState.OccurrenceIDs)] = []
+
+    func noteRecreation(of recorded: UndoPostState.OccurrenceIDs, as recreated: UndoPostState.OccurrenceIDs) {
+        notedRecreations.append((recorded, recreated))
+        recreationLog.note(recorded, recreatedAs: recreated)
+    }
+
+    func recreations(of recorded: UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs] {
+        recreationLog.recreations(of: recorded)
     }
 
     /// The starts of what the store holds under `id`, sorted.

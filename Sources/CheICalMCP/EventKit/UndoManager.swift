@@ -108,10 +108,40 @@ struct EventSnapshot {
     /// every other record and when they could not be listed. Set through `withExceptions`.
     private(set) var exceptions: SeriesExceptions? = nil
 
+    /// #321: for the snapshot of one occurrence of a series (an occurrence delete, a split move, or
+    /// the whole-series delete of an occurrence edited on its own addressed by its own identifier),
+    /// the series it belonged to and the slot its rule gave it, which the duplicate guard of its
+    /// undo compares (`OccurrenceSlotGuard`). Nil for every other snapshot, and when the occurrence
+    /// had no identifier or slot (its undo then writes the one-off). Set through `withOccurrenceOrigin`.
+    private(set) var occurrenceOrigin: OccurrenceOrigin? = nil
+    /// PR #494 round 1: this snapshot is of one occurrence of a series (set with its origin, which
+    /// may be nil), so a rule-less `.deleteEvent` of it is told from a one-off event's.
+    private(set) var isOccurrenceRecord = false
+    /// #321: for the snapshot of a series deleted whole, the series' identifiers, under which its
+    /// undo notes the series it recreates (`SeriesRecreations`). Set through `withSeriesIdentity`.
+    private(set) var seriesIdentity: UndoPostState.OccurrenceIDs? = nil
+
     /// A copy of this snapshot carrying `exceptions`; this one is unchanged.
     func withExceptions(_ exceptions: SeriesExceptions?) -> EventSnapshot {
         var copy = self
         copy.exceptions = exceptions
+        return copy
+    }
+
+    /// A copy of this snapshot recorded as one occurrence of a series, carrying `origin` (#321;
+    /// nil when no identifier or slot could be read); this one is unchanged. Called only for an
+    /// occurrence's snapshot.
+    func withOccurrenceOrigin(_ origin: OccurrenceOrigin?) -> EventSnapshot {
+        var copy = self
+        copy.occurrenceOrigin = origin
+        copy.isOccurrenceRecord = true
+        return copy
+    }
+
+    /// A copy of this snapshot carrying `identity` (#321); this one is unchanged.
+    func withSeriesIdentity(_ identity: UndoPostState.OccurrenceIDs?) -> EventSnapshot {
+        var copy = self
+        copy.seriesIdentity = identity
         return copy
     }
 
@@ -439,9 +469,10 @@ enum UndoOperation {
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
             var restore = ""
             if snapshot.restoresFromRules {
-                restore = snapshot.exceptions == nil
-                    ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
-                    : " (undo recreates the series and its exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote))"
+                // #319: a single record names its window by its instants (PR #494 round 1).
+                restore = snapshot.exceptions.map {
+                    " (undo recreates the series and its exceptions within the checked window\($0.extraWindows.isEmpty ? "" : "s") (\(UndoOperation.windowRanges($0.windows))): \(UndoOperation.seriesExceptionsListingNote))"
+                } ?? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
             }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):
@@ -456,7 +487,7 @@ enum UndoOperation {
             return "Moved event: \(undoVisibleTitle(title))"
         case .moveByCopy(let original, let isSplit, _, _, _):
             if isSplit {
-                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)"
+                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if its series there already holds its original slot, nothing is recreated and the copy stays)"
             }
             return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):
@@ -488,7 +519,7 @@ enum UndoOperation {
                 parts.append("undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote)")
             }
             if withExceptions > 0 {
-                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote)")
+                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window or windows: \(UndoOperation.seriesExceptionsListingNote)")
             }
             return "Batch (\(operations); \(parts.joined(separator: "; ")))"
         }
