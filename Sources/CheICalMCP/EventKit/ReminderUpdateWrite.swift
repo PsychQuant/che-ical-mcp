@@ -12,6 +12,11 @@ import Foundation
 /// the reminder untouched; the reminder object lives on in the server's store, so a change left
 /// on it would be written by whatever saves it next.
 enum ReminderUpdateWrite {
+    /// #486: a value with the flag that clears it, refused before any write, as
+    /// `ReminderRecurrenceWrite.bothMessage` is for the rule. The clear used to win silently.
+    static let locationTriggerBothMessage = "Cannot specify both location_trigger and clear_location_trigger"
+    static let tagsBothMessage = "Cannot specify both tags and clear_tags"
+
     /// The reminder an update starts from, re-read first (PR #256 verify rounds 2 and 3): the
     /// server's store caches it, and without `refresh()` an edit made in Reminders.app since then
     /// would be overwritten, and recorded wrongly for undo. `refresh() == false` means it is gone:
@@ -57,6 +62,9 @@ enum ReminderUpdateWrite {
         // rely on that.
         try checkRealign(request, existingDue: reminder.dueDateComponents)
         try checkAlarms(request, existingDue: reminder.dueDateComponents)
+        if request.locationTrigger != nil && request.clearLocationTrigger {   // #486, as in the server
+            throw ToolError.invalidParameter(locationTriggerBothMessage)
+        }
         try ReminderRecurrenceWrite.check(request, existingDue: reminder.dueDateComponents,
                                           repeats: reminder.hasRecurrenceRules, isCompleted: reminder.isCompleted)   // #354
         if let title = request.title { reminder.title = title }

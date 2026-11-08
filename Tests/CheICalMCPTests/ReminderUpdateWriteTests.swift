@@ -259,6 +259,28 @@ final class ReminderUpdateWriteTests: XCTestCase {
         XCTAssertEqual(saves, 0)
     }
 
+    /// #486: a location trigger with clear_location_trigger is refused inside `apply` too, before
+    /// anything is written; the clear used to win and the trigger was dropped.
+    func testApplyRefusesALocationTriggerWithClearLocationTriggerBeforeWriting() {
+        let reminder = EKReminder(eventStore: SharedTestStore.store)
+        reminder.title = "Old"
+        let location = EKAlarm()
+        location.structuredLocation = EKStructuredLocation(title: "Home")
+        reminder.addAlarm(location)
+        var saves = 0
+        let trigger = LocationTriggerInput(title: "Office", latitude: 25.04, longitude: 121.61, radius: 100, proximity: .enter)
+
+        XCTAssertThrowsError(try ReminderUpdateWrite.apply(
+            ReminderUpdateRequest(identifier: "r", title: "New", locationTrigger: trigger, clearLocationTrigger: true),
+            to: reminder, calendar: nil, save: { saves += 1 }, reload: { true }, rollback: {})) { error in
+            XCTAssertEqual("\(error)", "\(ToolError.invalidParameter(ReminderUpdateWrite.locationTriggerBothMessage))")
+        }
+
+        XCTAssertEqual(reminder.title, "Old")
+        XCTAssertEqual(reminder.alarms?.compactMap(\.structuredLocation?.title), ["Home"])
+        XCTAssertEqual(saves, 0)
+    }
+
     func testAReminderThatCannotBeReadBackAfterTheSaveIsNotAligned() throws {
         let reminder = divergedReminder()
 
