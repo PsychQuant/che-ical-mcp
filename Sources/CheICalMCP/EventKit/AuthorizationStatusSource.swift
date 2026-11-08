@@ -33,9 +33,9 @@ protocol AuthorizationStatusSource {
     func authorizationStatus(for entityType: EKEntityType) -> EKAuthorizationStatus
 
     /// Request full access (triggers TCC dialog if `.notDetermined`).
-    /// Only called by `AuthorizationGate.ensureAccess` when status is `.notDetermined`, which hands
-    /// it its own isolation (#482): a nonisolated async requirement would run off the caller's
-    /// actor (SE-0338). `SetupModel.grant` passes `nil`.
+    /// Called by `AuthorizationGate.ensureAccess` when status is `.notDetermined`, with the caller's
+    /// isolation (#482): a nonisolated async requirement would run on the generic executor
+    /// (SE-0338). Also called by `SetupModel.grant` (the --setup window, its own store), with `nil`.
     func requestFullAccess(for entityType: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool
 }
 
