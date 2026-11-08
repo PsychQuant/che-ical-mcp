@@ -109,7 +109,7 @@
     },
     {
       "name": "move_events_batch",
-      "description": "Move events between calendars in place (keeps recurrence, attendees and the identifier within an account); span this/all for recurring events; reports method and fields not carried over; recorded for undo"
+      "description": "Move events between calendars in place (keeps recurrence and attendees; the identifier can change, see id_changed); span this/all for recurring events; reports method and fields not carried over; recorded for undo"
     },
     {
       "name": "delete_events_batch",

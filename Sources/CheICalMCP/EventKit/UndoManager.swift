@@ -399,6 +399,32 @@ enum UndoOperation {
     case calendarOperation(kind: CalendarOperationKind, title: String)
     case batch([UndoOperation])
 
+    /// #435: this record with `new` where it named the event `old`. Records that hold no identifier,
+    /// and reminders, are returned as they are.
+    func replacingEventIdentifier(_ old: String, with new: String) -> UndoOperation {
+        func swapped(_ id: String) -> String { id == old ? new : id }
+        switch self {
+        case .createEvent(let id, let title, let created):
+            return .createEvent(id: swapped(id), title: title, created: created)
+        case .updateEvent(let id, let oldSnapshot, let saved):
+            return .updateEvent(id: swapped(id), oldSnapshot: oldSnapshot, saved: saved)
+        case .updateRecurringEvent(let id, let title, let kind):
+            return .updateRecurringEvent(id: swapped(id), title: title, kind: kind)
+        case .moveEvent(let id, let from, let to, let title, let isSeries):
+            return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
+        case .batch(let operations):
+            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+        case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
+            // #466 and #435: the copy is the live event this record names; a later move of it that
+            // changed its identifier is followed, so the undo can still find and remove it. The
+            // original is a removed event's snapshot, which no move can reach.
+            return .moveByCopy(original: original, isSplit: isSplit, notCarriedOver: notCarriedOver,
+                               copyID: swapped(copyID), copy: copy)
+        default:
+            return self
+        }
+    }
+
     /// Human-readable description of this operation. **Surfaces verbatim
     /// through the `undo_history` MCP tool's response field**, so any
     /// user-controlled title here flows through the same wire path as
@@ -580,6 +606,24 @@ actor CalendarUndoManager {
             undoStack.removeFirst()
         }
         redoStack.removeAll()
+    }
+
+    /// #435: a move gave an event a new identifier. Older records of that event keep working: they
+    /// named it by the identifier it had. The record of the move itself is recorded after this, or
+    /// is the one being undone.
+    func replaceEventIdentifier(_ old: String, with new: String) {
+        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+        // Cluster verify r2: the redo stack too. An undo calls this after popUndo moved its own
+        // record there, so a redo of that move finds the event under the identifier it has now.
+        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+    }
+
+    /// #435: whether a write gave the event a new identifier. Through a stand-in the series'
+    /// identifier `S` resolves to an occurrence's own `S/RID=…`, which is the same series, not a
+    /// new identifier (cluster verify r2).
+    static func identifierChanged(from old: String, to new: String) -> Bool {
+        guard !new.isEmpty else { return false }
+        return (DetachedOccurrenceSpan.seriesIdentifier(of: new) ?? new) != (DetachedOccurrenceSpan.seriesIdentifier(of: old) ?? old)
     }
 
     /// Pop the most recent operation for undoing.
