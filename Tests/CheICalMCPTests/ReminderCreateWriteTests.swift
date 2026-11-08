@@ -183,6 +183,61 @@ final class ReminderCreateWriteTests: XCTestCase {
     /// `createReminder` writes the timed due through the seam, judges every dated create with real
     /// store closures after the save, and records the undo entry only after that, so
     /// `postWriteSnapshot` records what a fallback save left.
+    // MARK: - alarm read-back (PR #438 verify)
+
+    private func timedCreate(offsets: [Int], reloaded: Bool, storeDiffers: [String] = []) throws -> (reminder: EKReminder, report: ReminderDateSync.Report) {
+        let reminder = newReminder()
+        let written = ReminderCreateWrite.writeTimedDue(reminder, components: nineInNewYork())
+        ReminderRelativeAlarms.replace(on: reminder, with: offsets)
+        let report = try XCTUnwrap(ReminderCreateWrite.readBack(reminder, report: written, storeDiffers: storeDiffers, save: {},
+                                                                reload: { reloaded }, rollback: {}, log: { _ in }))
+        return (reminder, report)
+    }
+
+    func testAFailedReadBackReportsNoAlarms() throws {
+        let (reminder, report) = try timedCreate(offsets: [15], reloaded: false)
+        XCTAssertEqual(report.reread, false)
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: [15], saved: reminder, dateSync: report, storeDiffers: []),
+                       .init(stored: nil, listShowsAlarmTime: false))
+    }
+
+    func testAConfirmedReadBackReportsTheAlarms() throws {
+        let (reminder, report) = try timedCreate(offsets: [15], reloaded: true)
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: [15], saved: reminder, dateSync: report, storeDiffers: []),
+                       .init(stored: [15], listShowsAlarmTime: true))
+    }
+
+    /// The object may still hold the list as asked, so reading it would repeat the request. Only
+    /// `alarm count` says that; another field does not.
+    func testAnAlarmCountTheStoreHoldsDifferentlyIsNotConfirmed() throws {
+        XCTAssertTrue(NewObjectSave.reminderFieldNames.contains("alarm count"), "the name the store reports")
+        let (reminder, report) = try timedCreate(offsets: [15], reloaded: true, storeDiffers: ["notes", "alarm count"])
+        XCTAssertEqual(report.reread, true, "the reload itself succeeded")
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: [15], saved: reminder, dateSync: report, storeDiffers: ["notes", "alarm count"]),
+                       .init(stored: nil, listShowsAlarmTime: false))
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: [15], saved: reminder, dateSync: report, storeDiffers: ["notes"]),
+                       .init(stored: [15], listShowsAlarmTime: true))
+    }
+
+    func testACreateWithoutOffsetsOrWithoutADueReportsWhatItHolds() throws {
+        let (timed, report) = try timedCreate(offsets: [], reloaded: true)
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: nil, saved: timed, dateSync: report, storeDiffers: []),
+                       .init(stored: nil, listShowsAlarmTime: false))
+        XCTAssertEqual(ReminderCreateWrite.alarmReadBack(offsets: [], saved: newReminder(), dateSync: nil, storeDiffers: []),
+                       .init(stored: [], listShowsAlarmTime: false), "no due, no read-back, and `[]` is all it can hold")
+    }
+
+    func testCreateReminderUsesTheAlarmReadBackAfterTheReadBack() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
+        let flat = SourceScan.collapsingWhitespace(body)
+        XCTAssertTrue(flat.contains("let alarms = ReminderCreateWrite.alarmReadBack(offsets: alarmOffsets, saved: reminder, dateSync: dateSync, storeDiffers: storeDiffers)"), flat)
+        XCTAssertTrue(flat.contains("storedRelativeAlarms: alarms.stored"), flat)
+        XCTAssertTrue(flat.contains("listShowsAlarmTime: alarms.listShowsAlarmTime"), flat)
+        let readBack = try XCTUnwrap(flat.range(of: "ReminderCreateWrite.readBack("))
+        let alarms = try XCTUnwrap(flat.range(of: "ReminderCreateWrite.alarmReadBack("))
+        XCTAssertLessThan(readBack.lowerBound, alarms.lowerBound, "read off the re-read reminder")
+    }
+
     func testCreateReminderReadsBackBeforeTheUndoRecord() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func createReminder(", in: try SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = SourceScan.collapsingWhitespace(body)

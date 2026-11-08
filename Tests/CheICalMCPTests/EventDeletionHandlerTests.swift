@@ -20,8 +20,9 @@ private actor DeletionFake: EventDeletionSource {
     func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws {
         deletes.append(Delete(identifier: identifier, span: span, occurrenceDate: occurrenceDate))
     }
-    func deleteEventSeries(identifier: String) async throws {
+    func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {
         seriesDeletes.append(identifier)
+        return identifier == "first-edited" ? .firstEditedOccurrence(id: "first-edited/RID=1") : .series
     }
 }
 
@@ -31,9 +32,11 @@ final class EventDeletionHandlerTests: XCTestCase {
     private let newYorkMidnight: Date? = TestZones.midnight("2026-12-06",
         in: TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-12-06")))
 
-    private func delete(_ fake: DeletionFake, _ args: [String: Value]) async throws {
+    @discardableResult
+    private func delete(_ fake: DeletionFake, _ args: [String: Value]) async throws -> [String: Any] {
         let server = try await CheICalMCPServer(eventDeletionSource: fake)
-        _ = try await server.executeToolCall(name: "delete_event", arguments: args)
+        let text = try await server.executeToolCall(name: "delete_event", arguments: args)
+        return (try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]) ?? [:]
     }
 
     func testADateOnlyOccurrenceDateReachesTheDeleteInTheEventsZone() async throws {
@@ -82,5 +85,35 @@ final class EventDeletionHandlerTests: XCTestCase {
         let series = await fake.seriesDeletes
         XCTAssertEqual(deletes, [])
         XCTAssertEqual(series, [])
+    }
+
+    /// #428 verify r1 (HIGH, refuted): only span 'all' reaches the series delete, so the route
+    /// through the first edited occurrence (a `.futureEvents` delete from it) cannot widen a span
+    /// 'this' or 'future' call. Those reach `deleteEvent` with their own span.
+    func testOnlySpanAllReachesTheSeriesDelete() async throws {
+        for span in ["this", "future"] {
+            let fake = DeletionFake()
+            try await delete(fake, ["event_id": .string("first-edited"), "occurrence_date": .string("2026-12-06"), "span": .string(span)])
+            let series = await fake.seriesDeletes
+            let deletes = await fake.deletes
+            XCTAssertEqual(series, [], span)
+            XCTAssertEqual(deletes.map(\.span), [span == "this" ? .thisEvent : .futureEvents], span)
+        }
+    }
+
+    /// #428 verify r1: a series deleted through its first edited occurrence says so and that undo
+    /// cannot bring it back; any other series delete answers as before.
+    func testADeleteThroughTheFirstEditedOccurrenceSaysUndoCannotRestoreIt() async throws {
+        let through = try await delete(DeletionFake(), ["event_id": .string("first-edited"), "span": .string("all")])
+        XCTAssertEqual(through["action"] as? String, "deleted")
+        XCTAssertEqual(through["id"] as? String, "first-edited")
+        XCTAssertEqual(through["occurrence_id"] as? String, "first-edited/RID=1")
+        XCTAssertEqual(through["undo_note"] as? String, CheICalMCPServer.seriesDeletedThroughOccurrenceNote)
+        let plain = try await delete(DeletionFake(), ["event_id": .string("ny-series"), "span": .string("all")])
+        XCTAssertNil(plain["occurrence_id"])
+        XCTAssertNil(plain["undo_note"])
+        XCTAssertTrue(CheICalMCPServer.seriesDeletedThroughOccurrenceNote.contains("cannot be undone"))
+        XCTAssertTrue(CheICalMCPServer.seriesDeletedThroughOccurrenceNote.hasPrefix("The occurrence that comes first in this series was edited on its own"),
+                      "verify r2: also after a deleted first occurrence")
     }
 }

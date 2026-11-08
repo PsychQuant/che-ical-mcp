@@ -25,13 +25,13 @@ enum ReminderCreateWrite {
 
     /// Judges a created reminder after its save, or returns nil for a create without a due date
     /// (nothing to judge; it is not re-read). `save` writes to the store, `reload` re-reads the
-    /// reminder (`EKObject.refresh()`), `rollback` discards unsaved changes (`EKObject.rollback()`).
+    /// reminder (`EKObject.refresh()`), `rollback` is `EKObject.rollback()`.
     ///
     /// A timed due that read back without its time or zone runs the #237 fallback, which saves the
     /// reminder a second time. A failed second save calls `rollback` and is reported as
-    /// `aligned: false`, never thrown, since the create itself is saved. Whether `rollback()`
-    /// drops the pending change of an object that is already in the store has not been seen on a
-    /// device (#274 open question; release-gate step in `.claude/rules/mcp-binary-version-testing.md`).
+    /// `aligned: false`, never thrown, since the create itself is saved. `rollback` does not
+    /// drop the change (#274, `ExistingReminderSave`), so that second save may still land with the
+    /// next save; what it writes is the due date the caller asked for.
     /// A date-only due never runs the fallback.
     ///
     /// `storeDiffers` is what `saveNewReminder` returned. Non-empty means the first save threw and a
@@ -49,5 +49,19 @@ enum ReminderCreateWrite {
         guard let report else { return nil }
         return ReminderDateSync.confirmSaved(reminder, report: report, save: save, reload: reload, rollback: rollback,
                                              tool: "create_reminder", fallback: storeDiffers.isEmpty, log: log)
+    }
+
+    /// PR #438 verify: what a create may say about the alarms it wrote. Not confirmed when the
+    /// read-back failed, or when `storeDiffers` says the store holds another number of alarms: a
+    /// save that threw may leave the object with the list as asked (`NewObjectSave`, not covered on
+    /// a device), so reading it would only repeat the request. A create without a due date has no
+    /// read-back, and an empty list is all it can hold.
+    static func alarmReadBack(offsets: [Int]?, saved reminder: EKReminder, dateSync: ReminderDateSync.Report?,
+                              storeDiffers: [String]) -> ReminderUpdateWrite.AlarmReadBack {
+        guard offsets != nil, dateSync?.reread != false, !storeDiffers.contains("alarm count") else {
+            return .init(stored: nil, listShowsAlarmTime: false)
+        }
+        return .init(stored: ReminderRelativeAlarms.storedMinutesBefore(reminder),
+                     listShowsAlarmTime: ReminderRelativeAlarms.listShowsAlarmTime(saved: reminder))
     }
 }

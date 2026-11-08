@@ -338,9 +338,14 @@ final class UndoCalendarMissingTests: XCTestCase {
         XCTAssertTrue(occurrence.contains("return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver).text"), occurrence)
         let wrappers = "EventKit/EventKitManager+SeriesExceptions.swift"
         let readDelete = try body("private func undoDeletedEvent<", in: wrappers)
-        XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeleted) return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)"), readDelete)
+        // #466 (PR #474 round 2): the kind is passed in, so the source of a move by copy is refused in
+        // a move's words; the delete arms take the defaults, pinned below.
+        XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)"), readDelete)
+        let wrapperSource = SourcePins.code(try SourcePins.source(wrappers))
+        XCTAssertEqual(SourcePins.ranges(of: "func undoDeletedEvent(_ snapshot: EventSnapshot, kind: EventRestoreKind = .recreateDeleted)", in: wrapperSource).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "kind: EventRestoreKind = .recreateDeletedOccurrence)", in: wrapperSource).count, 1)
         let readOccurrence = try body("private func undoDeletedOccurrence<", in: wrappers)
-        XCTAssertTrue(readOccurrence.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: .recreateDeletedOccurrence) return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)"), readOccurrence)
+        XCTAssertTrue(readOccurrence.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)"), readOccurrence)
         let seam = "EventKit/SeriesExceptionsUndo.swift"
         let undoDelete = try body("static func undoDeleteEvent<", in: seam)
         XCTAssertTrue(undoDelete.contains("let event = store.makeEvent() store.apply(snapshot, to: event, calendar: calendar) try store.save(event)"), undoDelete)

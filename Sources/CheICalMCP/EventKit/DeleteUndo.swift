@@ -43,6 +43,13 @@ enum EventRemovalKind: String, Sendable, Hashable, CaseIterable {
         guard hadRules, fromFirstOccurrence, !seriesResolves() else { return .followingOccurrences }
         return .wholeEvent
     }
+
+    /// #288: a lookup that failed says nothing about the series, so it counts as still resolving:
+    /// `of` then answers `.followingOccurrences`, and the undo cannot recreate a whole series that
+    /// may still be there.
+    static func seriesResolves(_ lookup: () throws -> Bool) -> Bool {
+        (try? lookup()) ?? true
+    }
 }
 
 /// What a delete may record, all taken before the removal: the event the identifier resolved to
@@ -122,7 +129,7 @@ extension UndoOperation {
     /// discard (D2), because a kept entry would refuse every time and block the stack until
     /// `discard_id`. Author-controlled text; the store-derived title passes `undoShownTitle`.
     static func followingOccurrencesDeleteRefusal(title: String) -> UnrecoverableUndoError {
-        UnrecoverableUndoError(message: "Cannot undo the delete of the recurring event '\(undoShownTitle(title))': it deleted an occurrence and the following occurrences of the series. Undo does not restore them, because EventKit cannot put occurrences back into a series, and recreating them would add a second series beside the one that is left. Nothing was written. This history entry was discarded so earlier operations remain undoable. If they should come back, restore them in Calendar (for example by moving the end of the series' repetition back).")
+        UnrecoverableUndoError(message: "Cannot undo the delete of the recurring event '\(undoShownTitle(title))': it deleted an occurrence and the following occurrences of the series (when it started at the first occurrence, every occurrence). Undo does not restore them, because EventKit cannot put occurrences back into a series, and recreating them would add a second series beside any part of it that is left. Nothing was written. This history entry was discarded so earlier operations remain undoable. If they should come back, restore them in Calendar (where part of the series is left, for example by moving the end of its repetition back).")
     }
 
     /// D3: a member that can never be restored refuses the whole batch before any member writes,
@@ -255,6 +262,10 @@ extension UndoOperation {
             return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
             return members.flatMap(\.undoDisclosures)
+        case .moveByCopy(let original, _, _, _, _):
+            // #466: the source is restored as `.deleteEvent` or `.deleteOccurrence` restores it; its
+            // snapshot holds no rules, so neither discloses anything.
+            return UndoOperation.deleteEvent(snapshot: original).undoDisclosures
         case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
             return []
@@ -272,6 +283,6 @@ extension EventKitManager {
     /// 1, finding 17), so the single and the batch delete read it the same way.
     func seriesResolves(identifier: String) -> Bool {
         markNeedsRefresh()
-        return freshEvent(id: identifier) != nil
+        return EventRemovalKind.seriesResolves { try freshEvent(id: identifier) != nil }
     }
 }
