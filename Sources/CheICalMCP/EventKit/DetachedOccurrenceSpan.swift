@@ -627,7 +627,7 @@ enum DetachedOccurrenceSpan {
         !coversWholeSeries
     }
 
-    static let allDayUnknownReason = "This series reaches past what can be listed (about five years from its start, or no end), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+    static let allDayUnknownReason = "The scan cannot show where this series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
 
     static let allDayUnlistedReason = "This series' occurrences could not be listed, so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
 
@@ -650,7 +650,7 @@ enum DetachedOccurrenceSpan {
         clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
     }
 
-    static let clearTimezoneReason = "This series ends by a count of occurrences, and clearing its time zone drops the last one. A series with an end date, or with no end, takes it while it has not started (a started series is refused for its time zone, #478). Nothing was written."
+    static let clearTimezoneReason = "This series, or the recurrence this call writes, ends by a count of occurrences, and clearing the time zone of such a series dropped its last occurrence. To clear the zone, leave out the count (an end date, or no end), or leave out clear_timezone; a series that has started is refused for its time zone anyway (#478). Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call

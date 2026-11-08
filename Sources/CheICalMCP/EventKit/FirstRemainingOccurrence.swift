@@ -246,6 +246,8 @@ extension EventKitManager {
               let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
             return (false, true, false)
         }
+        // Cluster verify r4 (LOW): an empty listing is not 'no edited occurrence' (as #285's capture reads it).
+        guard !candidates.isEmpty else { return (false, true, false) }
         if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false, true) }
         let covers = DetachedOccurrenceSpan.coversWholeSeries(
             rules: (stale.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
