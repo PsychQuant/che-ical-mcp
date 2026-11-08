@@ -1,0 +1,14 @@
+## 1. Spike
+
+- [x] 1.1 讀 Claude Code hooks 參考文件：`Stop` hook 的 `additionalContext` 讓對話繼續，受 `stop_hook_active` 與連續 8 次上限保護；`CLAUDE_PLUGIN_DATA` 是 plugin 的持久資料目錄。驗證：design 引用讀過的章節。
+- [ ] 1.2 在實際的 Claude Code session 裡，於有專案層設定檔的虛構旅程資料夾改一個檔案、結束一個回合。驗證：提醒出現一次、Claude 回應它、session 沒有第二次被延續。需要有人在鍵盤前操作，尚未做。
+
+## 2. Hook
+
+- [x] 2.1 `plugin/hooks/itinerary-reminder.sh` 與 `itinerary_reminder.py`，在 `SessionStart` 註冊 `start`、在 `Stop` 註冊 `stop`，timeout 10 秒（A changed trip folder brings one reminder per session；走訪資料夾有上限；Session 開始時間放在 `${CLAUDE_PLUGIN_DATA}`）。驗證：`bash scripts/tests/itinerary-reminder-test.sh` 通過，且 CI workflow 會跑它。
+- [x] 2.2 設定鍵 `itinerary_check` 與 `itinerary_ignore`（The reminder is on by default and can be turned off or narrowed；設定鍵不用 YAML 函式庫讀）。驗證：hook 測試涵蓋 `off`、`"off"`、`'off'`、`false`、行尾註解、`on`、區塊清單與行內清單。
+
+## 3. Skill 與文件
+
+- [x] 3.1 `plugin/skills/itinerary-check/SKILL.md`（The check lists differences and changes nothing until the user agrees；檢查本身不寫入：`allowed-tools` 只列讀取工具）。驗證：spec 的每個 requirement 在 skill 裡都有對應文字，逐一對照情境審閱。
+- [x] 3.2 `plugin/CLAUDE.md`、`plugin/README.md`、`plugin/CHANGELOG.md`，以及 `plugin/rules/event-modules.md` 的一行指引。驗證：`ItineraryCheckDocsTests` 通過。

@@ -9,6 +9,8 @@ macOS Calendar & Reminders MCP server with native EventKit integration. Binary s
 - **calendar-management** — Primary guide for using the 29 MCP tools (event CRUD, reminder CRUD, batch operations, search, conflict detection, duplicate finding, --cli mode). Reference for what each tool does and when to use it.
 - **troubleshoot-tcc** — TCC permission diagnostic walkthrough. Use when user reports calendar tools failing silently / permission denied / missing dialog after upgrade. Wraps the v1.9.0 `--print-tcc-path` diagnostic flag into a 6-step fix flow (covers both the binary layer and the host-app / responsible-process layer, #168; from v1.23.0, the server is its own responsible process whenever the host has no full Calendar and Reminders access of its own, #343).
 
+- **itinerary-check** — Compare the calendar with what just changed about a trip (registration, payment, program, lodging, transport), list every difference, and change nothing until the user agrees (#341). Reached from the trip-folder reminder below, from trip work, or by hand. Read tools only; a program revision goes through the conference module, a stay through the lodging module.
+
 ### Commands (`commands/`)
 
 - `/today` — Today's events + pending reminders, grouped by time
@@ -28,6 +30,7 @@ macOS Calendar & Reminders MCP server with native EventKit integration. Binary s
 
 - `check-mcp.sh` — Validate MCP server availability on session start
 - `verify-weekday.sh` — Sanity-check weekday calculations
+- `itinerary-reminder.sh` (+ `itinerary_reminder.py`) — Trip-folder reminder (#341): `start` on SessionStart records the session's start in `${CLAUDE_PLUGIN_DATA}`; `stop` on Stop, when files changed since then in the folder of the nearest **project-level** `.claude/.ical/config.yaml` (the user-level one does not count), adds one `additionalContext` asking to run `itinerary-check`. Once per session, never a block, always exit 0. `itinerary_check: off` turns it off, `itinerary_ignore:` skips globs. Tested by `scripts/tests/itinerary-reminder-test.sh`
 
 ### Binary distribution (`bin/`)
 

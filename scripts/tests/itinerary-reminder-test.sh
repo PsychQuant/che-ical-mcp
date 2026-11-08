@@ -1,0 +1,202 @@
+#!/bin/bash
+# Tests for plugin/hooks/itinerary-reminder.sh, the trip-folder reminder (#341).
+#
+# What the hook must do (Decision, spectra-discuss 2026-10-28, on #341):
+# - `start` (SessionStart): record when the session started, once; a resume, /clear or compaction
+#   keeps the first record.
+# - `stop` (Stop): when the working directory has a PROJECT-level .claude/.ical/config.yaml (found by
+#   plugin/bin/find-ical-config.sh; the user-level ~/.claude/.ical/config.yaml does not count) and
+#   files in that folder changed since the session started, print one JSON object whose
+#   hookSpecificOutput.additionalContext names the files and says to run `itinerary-check`.
+#   At most once per session; silent when stop_hook_active is true, when `itinerary_check` is off,
+#   for files matching `itinerary_ignore`, and for anything under .git/ or .claude/.
+# - Never block: exit 0 in every case, print nothing it cannot stand behind, never write outside
+#   $CLAUDE_PLUGIN_DATA.
+#
+# Hermetic: HOME, CLAUDE_PLUGIN_DATA and the trip folders are temp dirs. Nothing reads a calendar,
+# mail or reminders; the hook never calls the MCP server.
+# Run: bash scripts/tests/itinerary-reminder-test.sh
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+HOOK="$PROJECT_DIR/plugin/hooks/itinerary-reminder.sh"
+[ -f "$HOOK" ] || { echo "hook not found: $HOOK"; exit 2; }
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/itinerary-reminder-test.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT
+TMP="$(cd "$TMP" && pwd -P)"
+PASS=0
+FAIL=0
+ok()  { echo "✓ $1"; PASS=$((PASS+1)); }
+bad() { echo "✗ $1"; FAIL=$((FAIL+1)); }
+check() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (expected '$3', got '$2')"; fi; }
+has()   { if printf '%s' "$2" | grep -qF -- "$3"; then ok "$1"; else bad "$1 (no '$3' in output)"; fi; }
+hasnt() { if printf '%s' "$2" | grep -qF -- "$3"; then bad "$1 ('$3' found in output)"; else ok "$1"; fi; }
+
+export HOME="$TMP/home"
+export CLAUDE_PLUGIN_DATA="$TMP/data"
+mkdir -p "$HOME" "$CLAUDE_PLUGIN_DATA"
+OLD=202001010000   # touch -t stamp for files that predate every session
+
+trip() {  # trip <dir> [config text]: a folder with a project-level config, all files old
+  mkdir -p "$1/.claude/.ical"
+  printf '%s\n' "${2:-calendar_routing: []}" > "$1/.claude/.ical/config.yaml"
+  chmod 600 "$1/.claude/.ical/config.yaml"; chmod 700 "$1/.claude" "$1/.claude/.ical"
+  echo "old" > "$1/README.md"
+  touch -t "$OLD" "$1/README.md" "$1/.claude/.ical/config.yaml"
+}
+json() {  # json <session_id> <cwd> [stop_hook_active]
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"x","stop_hook_active":%s}' "$1" "$2" "${3:-false}"
+}
+RC=0
+run() {  # run <mode> <stdin>; sets OUT and RC
+  OUT=$(printf '%s' "$2" | bash "$HOOK" "$1" 2>"$TMP/stderr"); RC=$?
+}
+context() { printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); h=d["hookSpecificOutput"]; assert h["hookEventName"]=="Stop"; print(h["additionalContext"])' 2>/dev/null; }
+
+# --- start ------------------------------------------------------------------------------
+T1="$TMP/trips/kyoto"; trip "$T1"
+run start "$(json s1 "$T1")"
+check "start exits 0" "$RC" 0
+check "start prints nothing" "$OUT" ""
+[ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/s1.start" ] && ok "start records the session" || bad "start records the session"
+first=$(cat "$CLAUDE_PLUGIN_DATA/itinerary-sessions/s1.start" 2>/dev/null)
+run start "$(json s1 "$T1")"
+check "a second start (resume) keeps the first record" "$(cat "$CLAUDE_PLUGIN_DATA/itinerary-sessions/s1.start" 2>/dev/null)" "$first"
+
+# --- nothing changed --------------------------------------------------------------------
+run stop "$(json s1 "$T1")"
+check "no change: exit 0" "$RC" 0
+check "no change: silent" "$OUT" ""
+[ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/s1.reminded" ] && bad "no change: not marked as reminded" || ok "no change: not marked as reminded"
+
+# --- a changed file ---------------------------------------------------------------------
+mkdir -p "$T1/mail"; echo "paid" > "$T1/mail/2026-11-02 receipt.md"
+mkdir -p "$T1/.git" "$T1/.claude/.ical/state"; echo x > "$T1/.git/index"; echo '{}' > "$T1/.claude/.ical/state/archives.json"
+run stop "$(json s1 "$T1")"
+check "changed: exit 0" "$RC" 0
+ctx=$(context "$OUT")
+[ -n "$ctx" ] && ok "changed: one Stop additionalContext JSON object" || bad "changed: one Stop additionalContext JSON object (got: $OUT)"
+has "changed: names the file relative to the trip folder" "$ctx" "mail/2026-11-02 receipt.md"
+has "changed: says to run itinerary-check" "$ctx" "itinerary-check"
+has "changed: names the way to turn it off" "$ctx" "itinerary_check: off"
+hasnt "changed: .git is skipped" "$ctx" ".git/index"
+hasnt "changed: .claude is skipped" "$ctx" "archives.json"
+hasnt "changed: unchanged files are not listed" "$ctx" "README.md"
+hasnt "changed: no decision block" "$OUT" '"decision"'
+
+# --- once per session -------------------------------------------------------------------
+echo "more" > "$T1/mail/second.md"
+run stop "$(json s1 "$T1")"
+check "second stop in the session: silent" "$OUT" ""
+check "second stop in the session: exit 0" "$RC" 0
+
+# --- stop_hook_active -------------------------------------------------------------------
+run start "$(json s2 "$T1")"; touch "$T1/mail/second.md"
+run stop "$(json s2 "$T1" true)"
+check "stop_hook_active: silent" "$OUT" ""
+run stop "$(json s2 "$T1")"
+[ -n "$(context "$OUT")" ] && ok "a later stop of that session still reminds" || bad "a later stop of that session still reminds"
+
+# --- a subfolder of the trip folder -----------------------------------------------------
+run start "$(json s3 "$T1")"; mkdir -p "$T1/admin/forms"; echo x > "$T1/admin/forms/a.pdf"
+run stop "$(json s3 "$T1/admin/forms")"
+has "cwd in a subfolder: path is relative to the trip folder" "$(context "$OUT")" "admin/forms/a.pdf"
+
+# --- no config / user-level config only -------------------------------------------------
+N="$TMP/plain"; mkdir -p "$N"; echo x > "$N/notes.md"
+run start "$(json s4 "$N")"; echo y > "$N/notes.md"
+run stop "$(json s4 "$N")"
+check "no config: silent" "$OUT" ""
+mkdir -p "$HOME/.claude/.ical" "$HOME/work"; echo "calendar_routing: []" > "$HOME/.claude/.ical/config.yaml"
+chmod 600 "$HOME/.claude/.ical/config.yaml"; chmod 700 "$HOME/.claude" "$HOME/.claude/.ical"
+run start "$(json s5 "$HOME/work")"; echo y > "$HOME/work/notes.md"
+run stop "$(json s5 "$HOME/work")"
+check "user-level config only: silent" "$OUT" ""
+check "user-level config only: exit 0" "$RC" 0
+
+# --- itinerary_check off ----------------------------------------------------------------
+i=0
+for v in 'off' '"off"' "'off'" 'false' 'Off  # quiet'; do
+  i=$((i+1)); T="$TMP/trips/off$i"; trip "$T" "itinerary_check: $v"
+  run start "$(json off$i "$T")"; echo x > "$T/new.md"
+  run stop "$(json off$i "$T")"
+  check "itinerary_check: $v turns it off" "$OUT" ""
+done
+T="$TMP/trips/on"; trip "$T" "itinerary_check: on"
+run start "$(json on1 "$T")"; echo x > "$T/new.md"
+run stop "$(json on1 "$T")"
+[ -n "$(context "$OUT")" ] && ok "itinerary_check: on keeps it on" || bad "itinerary_check: on keeps it on"
+
+# --- itinerary_ignore -------------------------------------------------------------------
+T="$TMP/trips/ign"; trip "$T" "$(printf 'itinerary_ignore:\n  - drafts/\n  - "*.tmp"\nother_key: 1')"
+run start "$(json ign1 "$T")"
+mkdir -p "$T/drafts/deep"; echo x > "$T/drafts/deep/plan.md"; echo x > "$T/scratch.tmp"; echo x > "$T/mail.tmp"
+run stop "$(json ign1 "$T")"
+check "only ignored files changed: silent" "$OUT" ""
+echo x > "$T/program.md"
+run stop "$(json ign1 "$T")"
+ctx=$(context "$OUT")
+has "a file outside the ignore list is listed" "$ctx" "program.md"
+hasnt "a directory pattern skips files under it" "$ctx" "drafts/"
+hasnt "a name pattern skips matching files" "$ctx" ".tmp"
+T="$TMP/trips/ign2"; trip "$T" 'itinerary_ignore: [drafts/, "*.log"]'
+run start "$(json ign2 "$T")"; mkdir -p "$T/drafts"; echo x > "$T/drafts/a.md"; echo x > "$T/run.log"
+run stop "$(json ign2 "$T")"
+check "inline ignore list" "$OUT" ""
+
+# --- many files -------------------------------------------------------------------------
+T="$TMP/trips/many"; trip "$T"
+run start "$(json many "$T")"; mkdir -p "$T/m"; for n in $(seq 1 25); do echo x > "$T/m/f$n.md"; done
+run stop "$(json many "$T")"
+ctx=$(context "$OUT")
+has "more than 20 files: says how many more" "$ctx" "and 5 more"
+
+# --- symlinks are not followed ----------------------------------------------------------
+T="$TMP/trips/link"; trip "$T"; mkdir -p "$TMP/outside"
+run start "$(json link "$T")"; echo x > "$TMP/outside/secret.md"; ln -s "$TMP/outside" "$T/out"
+run stop "$(json link "$T")"
+hasnt "a symlinked directory is not followed" "$(context "$OUT")" "secret.md"
+
+# --- no start record, no data dir, bad input --------------------------------------------
+T="$TMP/trips/nostart"; trip "$T"; echo x > "$T/new.md"
+run stop "$(json never "$T")"
+check "no start record (session older than the hook): silent" "$OUT" ""
+( unset CLAUDE_PLUGIN_DATA; printf '%s' "$(json s9 "$T1")" | bash "$HOOK" start >/dev/null 2>&1; echo "rc=$?" ) > "$TMP/nodata"
+check "CLAUDE_PLUGIN_DATA unset: exit 0" "$(cat "$TMP/nodata")" "rc=0"
+run stop "not json"
+check "malformed input: exit 0" "$RC" 0; check "malformed input: silent" "$OUT" ""
+run stop ""
+check "empty input: exit 0" "$RC" 0
+run start "$(json '../../escape' "$T1")"
+check "a session id with a path in it: exit 0" "$RC" 0
+[ -e "$TMP/escape.start" ] || [ -e "$CLAUDE_PLUGIN_DATA/../escape.start" ] && bad "a session id with a path in it writes nothing outside" || ok "a session id with a path in it writes nothing outside"
+run nonsense "$(json s1 "$T1")"
+check "unknown mode: exit 0" "$RC" 0; check "unknown mode: silent" "$OUT" ""
+
+# --- speed ------------------------------------------------------------------------------
+T="$TMP/trips/big"; trip "$T"
+for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done
+touch -t "$OLD" "$T"/d*/f*
+run start "$(json big "$T")"
+s=$(python3 -c 'import time; print(time.time())')
+run stop "$(json big "$T")"
+e=$(python3 -c "import time; print(time.time()-$s < 3)")
+check "2000 unchanged files: done within 3 s" "$e" "True"
+
+# --- hooks.json -------------------------------------------------------------------------
+python3 - "$PROJECT_DIR/plugin/hooks/hooks.json" <<'PY' && ok "hooks.json registers start on SessionStart and stop on Stop, with a timeout" || bad "hooks.json registers start on SessionStart and stop on Stop, with a timeout"
+import json, sys
+h = json.load(open(sys.argv[1]))["hooks"]
+def cmds(ev):
+    return [x for g in h.get(ev, []) for x in g["hooks"]]
+s = [x for x in cmds("SessionStart") if "itinerary-reminder.sh" in x["command"]]
+t = [x for x in cmds("Stop") if "itinerary-reminder.sh" in x["command"]]
+assert len(s) == 1 and s[0]["command"].endswith(" start") and s[0].get("timeout", 99) <= 10
+assert len(t) == 1 and t[0]["command"].endswith(" stop") and t[0].get("timeout", 99) <= 10
+PY
+
+echo
+echo "$PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

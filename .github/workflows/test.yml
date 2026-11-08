@@ -87,6 +87,12 @@ jobs:
         # stubbed and HOME is a temp dir; no network, no build. About 35 s (lock waits, slow assets).
         run: bash scripts/tests/plugin-wrapper-test.sh
 
+      - name: itinerary reminder hook tests
+        # #341: the Stop hook reminds once per session when files changed in a folder with a
+        # project-level config, never blocks, and honours itinerary_check / itinerary_ignore.
+        # HOME, CLAUDE_PLUGIN_DATA and the trip folders are temp dirs; no calendar is read.
+        run: bash scripts/tests/itinerary-reminder-test.sh
+
       - name: swift build
         run: swift build
 
