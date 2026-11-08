@@ -54,6 +54,8 @@ class CheICalMCPServer {
     private let eventBatchDeletionSource: any EventBatchDeletionSource
     private let duplicateSearchSource: any DuplicateSearchSource
     private let eventRangeReadSource: any EventRangeReadSource
+    /// #490: `list_calendars`, as values copied on the manager's actor.
+    private let calendarListSource: any CalendarListSource
     private let reminderWriteSource: any ReminderWriteSource
     private let reminderReadSource: any ReminderReadSource
     private let undoManager: CalendarUndoManager
@@ -91,6 +93,7 @@ class CheICalMCPServer {
          eventBatchDeletionSource: any EventBatchDeletionSource = EventKitManager.shared,
          duplicateSearchSource: any DuplicateSearchSource = EventKitManager.shared,
          eventRangeReadSource: any EventRangeReadSource = EventKitManager.shared,
+         calendarListSource: any CalendarListSource = EventKitManager.shared,
          reminderWriteSource: any ReminderWriteSource = EventKitManager.shared,
          undoManager: CalendarUndoManager = .shared,
          reminderCompletionSource: any ReminderCompletionSource = EventKitManager.shared,
@@ -109,6 +112,7 @@ class CheICalMCPServer {
         self.eventBatchDeletionSource = eventBatchDeletionSource
         self.duplicateSearchSource = duplicateSearchSource
         self.eventRangeReadSource = eventRangeReadSource
+        self.calendarListSource = calendarListSource
 
         dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime]
@@ -1284,19 +1288,9 @@ class CheICalMCPServer {
         default: throw ToolError.invalidParameter("type must be 'event' or 'reminder'")
         }
 
-        let calendars = try await eventKitManager.listCalendars(for: entityType)
-        let result = calendars.map { calendar -> [String: Any] in
-            [
-                "id": calendar.calendarIdentifier,
-                "title": calendar.title,
-                "type": calendar.type.rawValue,
-                "allowsContentModifications": calendar.allowsContentModifications,
-                "isSubscribed": calendar.isSubscribed,
-                "source": calendar.source.title,
-                "source_type": sourceTypeString(calendar.source.sourceType)
-            ]
-        }
-        return try formatJSON(result)
+        // #490: values copied on the manager's actor.
+        let calendars = try await calendarListSource.listCalendarValues(for: entityType)
+        return try formatJSON(calendars.map(\.listedRow))
     }
 
     private func handleCreateCalendar(arguments: [String: Value]) async throws -> String {
@@ -1371,41 +1365,46 @@ class CheICalMCPServer {
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)
 
-        var events = try await eventRangeReadSource.listEvents(
+        // #490: values copied on the manager's actor.
+        // PR #495 round 1: filter, sort and limit run on the manager's actor over light keys
+        // (start, end, all-day), and only the kept rows are copied whole.
+        let searched = EventRangeQuery.Span(start: startDate, end: endDate)
+        let picked = try await eventRangeReadSource.listEventValues(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
+        ) { keys -> (keep: [Int], info: (totalInRange: Int, totalAfterFilter: Int, defaultLimit: Int?)) in
+            var events = keys
+            let now = Date()
 
-        let totalInRange = events.count
-        let now = Date()
+            // Apply filter
+            switch filterMode {
+            case "past":
+                events = events.filter { $0.end < now }
+            case "future":
+                events = events.filter { $0.start > now }
+            case "all_day":
+                events = events.filter { $0.isAllDay }
+            default:
+                break
+            }
 
-        // Apply filter
-        switch filterMode {
-        case "past":
-            events = events.filter { $0.endDate < now }
-        case "future":
-            events = events.filter { $0.startDate > now }
-        case "all_day":
-            events = events.filter { $0.isAllDay }
-        default:
-            break
+            // Apply sort
+            if sortMode == "desc" {
+                events.sort { $0.start > $1.start }
+            } else {
+                events.sort { $0.start < $1.start }
+            }
+
+            // Apply limit. #332: over a wide range (`wideRangeDays`), no caller limit means at most
+            // `EventRangeQuery.defaultWideOutput` rows. `truncated` says rows were left out, whoever
+            // cut them; `default_limit` that the default did.
+            let (rows, defaultLimit) = EventRangeQuery.bounded(events, requested: limit, searched: searched)
+            return (rows.map(\.index), (keys.count, events.count, defaultLimit))
         }
-
-        let totalAfterFilter = events.count
-
-        // Apply sort
-        if sortMode == "desc" {
-            events.sort { $0.startDate > $1.startDate }
-        } else {
-            events.sort { $0.startDate < $1.startDate }
-        }
-
-        // Apply limit. #332: over a wide range (`wideRangeDays`), no caller limit means at most
-        // `EventRangeQuery.defaultWideOutput` rows. `truncated` says rows were left out, whoever
-        // cut them; `default_limit` that the default did.
-        let (rows, defaultLimit) = EventRangeQuery.bounded(events, requested: limit, searched: .init(start: startDate, end: endDate))
+        let rows = picked.values
+        let (totalInRange, totalAfterFilter, defaultLimit) = picked.info
 
         let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
@@ -2556,20 +2555,24 @@ class CheICalMCPServer {
         let effectiveStart = userStartDate ?? defaults.start
         let effectiveEnd = userEndDate ?? defaults.end
 
-        let events = try await eventRangeReadSource.searchEvents(
+        // Apply limit. #332: this tool has no sort, so any cut, a caller's limit or the default,
+        // keeps the rows closest to today and the answer says so. PR #495 round 1: the cut runs on
+        // the manager's actor over light keys, and only the kept rows are copied whole.
+        let searched = EventRangeQuery.Span(start: effectiveStart, end: effectiveEnd)
+        let picked = try await eventRangeReadSource.searchEventValues(
             keywords: keywords,
             matchMode: matchMode,
             startDate: effectiveStart,
             endDate: effectiveEnd,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
-
-        // Apply limit. #332: this tool has no sort, so any cut, a caller's limit or the default,
-        // keeps the rows closest to today and the answer says so.
-        let totalCount = events.count
-        let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(events, requested: limit, searched: .init(start: effectiveStart, end: effectiveEnd),
-                                                                  now: now, start: { $0.startDate })
+        ) { keys -> (keep: [Int], info: (totalCount: Int, defaultLimit: Int?)) in
+            let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(keys, requested: limit, searched: searched,
+                                                                      now: now, start: { $0.start })
+            return (rows.map(\.index), (keys.count, defaultLimit))
+        }
+        let rows = picked.values
+        let (totalCount, defaultLimit) = picked.info
 
         let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
@@ -2616,18 +2619,19 @@ class CheICalMCPServer {
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
         let fields = try InputValidation.parseFieldsFilter(arguments)
 
-        var events = try await eventKitManager.listEvents(
+        // #490: through the range seam, as values copied on the manager's actor.
+        // Apply limit. PR #495 round 1: on the manager's actor, over light keys.
+        let picked = try await eventRangeReadSource.listEventValues(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
-
-        // Apply limit
-        let totalCount = events.count
-        if let limit = limit, events.count > limit {
-            events = Array(events.prefix(limit))
+        ) { keys -> (keep: [Int], info: Int) in
+            let kept = limit.map { Array(keys.prefix($0)) } ?? keys
+            return (kept.map(\.index), keys.count)
         }
+        let events = picked.values
+        let totalCount = picked.info
 
         let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
@@ -2885,9 +2889,10 @@ class CheICalMCPServer {
         let calendarSource = arguments["calendar_source"]?.stringValue
         let excludeEventId = arguments["exclude_event_id"]?.stringValue
 
-        let conflicts: [EKEvent]
+        // #490: values copied on the manager's actor.
+        let conflicts: [EventReadValue]
         do {
-            conflicts = try await eventKitManager.checkConflicts(
+            conflicts = try await eventRangeReadSource.checkConflictValues(
                 startDate: startDate,
                 endDate: endDate,
                 calendarName: calendarName,
@@ -3453,10 +3458,9 @@ class CheICalMCPServer {
     /// Shared event dict builder for all event-returning handlers.
     /// Includes attendees and organizer when present.
     ///
-    /// Generic over `EventFormattingSource` (#103) — accepts both real `EKEvent`
-    /// and test `FakeFormattableEvent`. Emission rules unchanged (key set + conditional
-    /// branches preserved); only the type signature changed for runtime-anchored
-    /// drift detection. Wire format is identical.
+    /// Generic over `EventFormattingSource` (#103) — the handlers pass `EventReadValue`s copied on
+    /// the manager's actor (#490), tests also `FakeFormattableEvent` and in-memory events. Emission
+    /// rules unchanged (key set + conditional branches preserved); wire format is identical.
     func formatEventDict(
         _ event: some EventFormattingSource,
         detailLevel: String = "standard",
@@ -3508,19 +3512,6 @@ class CheICalMCPServer {
     }
 
     // MARK: - Helpers
-
-    /// Convert EKSourceType to human-readable string
-    private func sourceTypeString(_ sourceType: EKSourceType) -> String {
-        switch sourceType {
-        case .local: return "Local"
-        case .exchange: return "Exchange"
-        case .calDAV: return "CalDAV"
-        case .mobileMe: return "iCloud"
-        case .subscribed: return "Subscribed"
-        case .birthdays: return "Birthdays"
-        @unknown default: return "Unknown"
-        }
-    }
 
     /// Parse a flexible date string (`FlexibleDate.parse`: ISO8601 with an offset, a date-time
     /// without one, a bare date, or a time today). When `defaultTimezone` is provided and the
