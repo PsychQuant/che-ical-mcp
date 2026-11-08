@@ -63,6 +63,9 @@ enum ToolArgumentCheck {
         return nil
     }
 
+    /// Why text sent as a string was not read as one (#448, #473).
+    static let dataURLReading = "text of the form data:<type>,<content> is read as a data URL, not as text, so reword its start"
+
     /// What `value` should have been, where a handler's read returns nil on a mismatch. Booleans have
     /// a strict check of their own (#184). A whole-number double is an integer, as in
     /// `InputValidation.requireIntIfPresent`. Elements are checked where `items.type` is `string` or
@@ -73,7 +76,7 @@ enum ToolArgumentCheck {
         guard value != .null, let type = schema.objectValue?["type"]?.stringValue else { return nil }
         switch type {
         case "string":
-            if case .data = value { return "a string; text of the form data:<type>,<content> is read as a data URL, not as text, so reword its start" }
+            if case .data = value { return "a string; \(dataURLReading)" }
             return value.stringValue == nil ? "a string" : nil
         case "array":
             let items = schema.objectValue?["items"]
@@ -85,7 +88,10 @@ enum ToolArgumentCheck {
             }
             guard let array = value.arrayValue else { return name }
             guard name != "an array", let items else { return nil }
-            return array.contains { $0 == .null || expectedType($0, schema: items) != nil } ? name : nil
+            guard let bad = array.firstIndex(where: { $0 == .null || expectedType($0, schema: items) != nil }) else { return nil }
+            // #473: an element the SDK read as a data URL gets the reason the top-level string check gives.
+            if name == "an array of strings", case .data = array[bad] { return "\(name); element \(bad) is not one: \(dataURLReading)" }
+            return name
         case "integer":
             return value.intValue != nil || value.doubleValue.flatMap({ Int(exactly: $0) }) != nil ? nil : "an integer"
         case "number": return InputValidation.number(value) == nil ? "a number" : nil
