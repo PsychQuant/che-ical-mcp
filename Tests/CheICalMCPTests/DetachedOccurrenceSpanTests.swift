@@ -973,7 +973,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(refused(requested: false, current: true), "not measured: refused too")
         XCTAssertFalse(refused(edited: false), "no edited occurrence: measured clean")
         scans = 0
-        XCTAssertFalse(refused(whole: false), "span this or future")
+        XCTAssertFalse(refused(whole: false), "span this, or span future from a later occurrence")
         XCTAssertFalse(refused(rules: false), "a one-off")
         XCTAssertFalse(refused(requested: nil), "all_day not given")
         XCTAssertFalse(refused(requested: false, current: false), "no change")
@@ -981,9 +981,19 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(DetachedOccurrenceSpan.allDayChangeReason.hasSuffix("Nothing was written."))
     }
 
+    /// Read from the reach (span future from the first occurrence is the same whole-series save,
+    /// cluster verify), so it comes after `reach` and the #326 stand-in check, and before any write.
     func testTheAllDayRefusalComesBeforeTheFirstWrite() throws {
-        let head = try collapsed("func updateEvent(", upTo: "let oldSnapshot = EventSnapshot(from: masterEvent)", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(head.contains("if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: applyToAll, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason) }"), head)
+        let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
+        let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason) }"
+        let at = try XCTUnwrap(flat.range(of: refusal), flat)
+        for earlier in ["let reach = SeriesRuleWrite.reach(", "throw EventKitError.standInRefused(reason: Self.standInSplitReason)"] {
+            XCTAssertLessThan(try XCTUnwrap(flat.range(of: earlier), earlier).lowerBound, at.lowerBound, earlier)
+        }
+        for write in ["event.isAllDay = ", "event.timeZone = ", "event.startDate = ", "eventStore.save("] {
+            if let first = flat.range(of: write) { XCTAssertLessThan(at.lowerBound, first.lowerBound, write) }
+        }
     }
 
     // MARK: - The series' id with the first occurrence edited (#428)

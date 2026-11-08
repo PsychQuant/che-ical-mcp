@@ -1188,12 +1188,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             neighbours: ownNeighbours) {
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
-        // #442: it answered updated and an occurrence nobody created appeared (device).
-        if DetachedOccurrenceSpan.refusesAllDayChange(
-            wholeSeries: applyToAll, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
-            hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason)
-        }
         // #326: the series' first occurrence was deleted, so `masterEvent` is its first remaining
         // occurrence, and saving the whole series from it splits it into a new series with a new
         // identifier (device, iCloud). Refused rather than done silently; the other writes
@@ -1354,6 +1348,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             applyToAll: applyToAll, futureSpan: span == .futureEvents, repeats: masterEvent.hasRecurrenceRules,
             ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },
             seriesStart: seriesStart, occurrenceSlot: wholeFromSeries ? seriesStart : eventSlot)
+        // #442: it answered updated and an occurrence nobody created appeared (device). Read from the
+        // reach, so span future from the first occurrence (the same save over the whole series) is
+        // refused too (cluster verify); still before the first write.
+        if DetachedOccurrenceSpan.refusesAllDayChange(
+            wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
+            hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason)
+        }
         let now = Date()
         let happened = reach.anchor.map {
             SeriesRuleWrite.hasHappened(slot: $0, shownStart: wholeFromSeries ? seriesStart : shownStart, now: now)
