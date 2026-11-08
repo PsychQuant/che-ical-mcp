@@ -1295,13 +1295,13 @@ final class UndoBatchRestoreTests: XCTestCase {
         let calendar = UndoSnapshotFixtures.newCalendar()
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: "S", externalIdentifier: "X-S")
         let occurrence = UndoSnapshotFixtures.event(title: "Standup moved", startDate: exceptionsSlot(2).addingTimeInterval(1800), calendar: calendar)
-            .withOccurrenceOrigin(OccurrenceOrigin(series: seriesIDs, slot: exceptionsSlot(2)))
+            .withOccurrenceOrigin(OccurrenceOrigin(series: seriesIDs, slot: exceptionsSlot(2), edited: true))
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart, calendar: calendar)
             .withSeriesIdentity(seriesIDs)
 
         let (_, events) = try await runOnStore([.deleteEvent(snapshot: occurrence), .deleteEvent(snapshot: series)], store)
 
-        XCTAssertEqual(events, [.seriesFromRules, .occurrenceAlreadyHeld])
+        XCTAssertEqual(events, [.seriesFromRules, .editedOccurrenceAlreadyHeld], "round 2: as production records it (edited)")
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 0, "no second copy of the occurrence")
         XCTAssertEqual(store.events.filter { $0.title == "Standup" }.count, 4)
     }
@@ -1416,6 +1416,40 @@ final class UndoBatchRestoreTests: XCTestCase {
         } catch {
             XCTAssertTrue(error is UnrecoverableUndoError, "\(error)")
             XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        }
+    }
+
+    // MARK: - PR #494 round 2, MEDIUM 2: an unchecked slot in a batch
+
+    /// Both record kinds that can lack an origin (an occurrence delete, and the rule-less delete of
+    /// an occurrence edited on its own): the batch text says their slots were not checked.
+    func testABatchSaysWhenOccurrencesCameBackWithoutTheSlotCheck() async throws {
+        let store = FakeSeriesExceptionsStore()
+        let members: [UndoOperation] = [
+            .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "A", startDate: exceptionsSlot(1)), notCarriedOver: []),
+            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "B", startDate: exceptionsSlot(2)).withOccurrenceOrigin(nil)),
+        ]
+
+        let (_, events) = try await runOnStore(members, store)
+
+        XCTAssertEqual(events, [.occurrenceOneOffSlotUnchecked(notCarriedOver: []), .occurrenceOneOffSlotUnchecked(notCarriedOver: [])])
+        let message = UndoOperation.batchUndoneMessage(count: 2, events: events)
+        XCTAssertTrue(message.contains("2 deleted occurrences came back as one-off events without checking whether their series already hold their times again"), message)
+    }
+
+    /// The part-way error names it for the members restored before the failure.
+    func testAPartWayErrorSaysWhenARestoredOccurrenceWasNotChecked() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.failingSaveTitles = ["Fails"]
+        do {
+            _ = try await runOnStore([deleted("Fails"),
+                                      .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "A", startDate: exceptionsSlot(1)),
+                                                        notCarriedOver: ["absolute_alarms"])], store)
+            XCTFail("the failure must surface")
+        } catch {
+            let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(error)")
+            XCTAssertTrue(partial.message.contains("1 deleted occurrence came back as a one-off event without checking whether its series already holds its time again"), partial.message)
+            XCTAssertTrue(partial.message.contains("Not carried over: absolute_alarms"), partial.message)
         }
     }
 }

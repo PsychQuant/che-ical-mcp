@@ -172,9 +172,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func slotHolders(at slot: Date, length: TimeInterval, in calendar: String) -> [OccurrenceSlotGuard.SeriesHolder] {
         log.append("holders")
-        let end = slot.addingTimeInterval(max(length, 60))
+        let range = OccurrenceSlotGuard.listingRange(slot: slot, length: length)
         return events
-            .filter { $0.calendar == calendar && $0.start >= slot && $0.start < end }
+            .filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
             .map { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
                                               occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start) }
     }

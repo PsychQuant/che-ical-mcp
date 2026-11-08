@@ -226,6 +226,12 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
    的 `event_ids` 帶 `[第二場自己的 id（含 /RID=）, 系列 id]`、span `all` → `undo`：讀回第二場那天只有一個事件
    （修正前會有兩個）。記下回應是寫回一次性事件還是「already restored by its series」：前者表示擷取到了例外，
    後者表示系列只依規則重建、防護擋下重複；兩者都算通過，重複才算失敗。
+5a. **#321 被搬走的場次（PR #494 第二輪）**：接第 3 步的形狀，但 `undo` 整個系列之後、undo 單一場次之前，用
+   `--cli` 的 `update_event` span `this` 把系列裡第三場的那天改成三天後 → session `undo`（單一場次）：回應是
+   「already restored by its series」、什麼都沒寫；讀回那個時段附近只有被搬走的那一個場次。
+5b. **#319 多個星期幾的次數規則**：建一個開始於約十二年前、每週一三五、共 450 次的系列 → 用 `--cli` 刪掉它的
+   第 100 個場次（span `this`）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除，讀回該天
+   沒有場次。修正前的 binary 回應會說依規則重建（視窗落在系列結束之後）。
 5. **split move**：`move_events_batch` span `this` 把每週系列的一個場次移到另一個拋棄式日曆 → `undo`：場次以一次性
    事件回到原日曆、複本被移除（與 #466 相同；#321 只改了防護的比對方式）。
 

@@ -422,7 +422,7 @@ final class DeleteUndoTests: XCTestCase {
             XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
         let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"var\s+text\s*=\s*UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let\s+text\s*=\s*UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 
     /// The batch arm of `executeUndo` reports through that text (it needs an authorized store to

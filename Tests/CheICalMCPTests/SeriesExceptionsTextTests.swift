@@ -208,12 +208,28 @@ final class SeriesExceptionsTextTests: XCTestCase {
     /// did not come back.
     func testTheBatchTextSaysAHeldEditedOccurrenceLostItsEdit() {
         let message = UndoOperation.batchUndoneMessage(count: 2, events: [.occurrenceAlreadyHeld, .editedOccurrenceAlreadyHeld])
-        XCTAssertTrue(message.contains("2 deleted occurrences were already restored by their series, so nothing was written for them"), message)
-        XCTAssertTrue(message.contains("1 of them had been edited on its own, and its series holds it as its rules give it, so that edit did not come back"), message)
+        // Round 2: the held edited occurrence is not counted as "already restored".
+        XCTAssertTrue(message.contains("1 deleted occurrence was already restored by its series, so nothing was written for it"), message)
+        XCTAssertTrue(message.contains("1 deleted occurrence that had been edited on its own was not written: its restored series holds its slot as its rules give it, so its edit did not come back"), message)
+        XCTAssertFalse(message.contains("2 deleted occurrences were already restored"), message)
     }
 
     /// A split move's source held by its series keeps the copy, edited or not.
     func testAMoveByCopyRestoreTreatsAHeldEditedOccurrenceAsHeld() {
         XCTAssertEqual(MoveByCopyUndo.Restore(text: "x", outcome: .editedOccurrenceAlreadyHeld), .slotAlreadyHeld)
+    }
+
+    /// Round 2 (LOW): the move-by-copy text of a held slot names the series, not a title match.
+    func testTheMoveByCopyHeldSlotTextNamesTheSeries() {
+        let message = MoveByCopyUndo.message(restore: .slotAlreadyHeld, title: "Standup", copyID: "C1", copy: .keptSlotHeld)
+        XCTAssertFalse(message.contains("with its title"), message)
+        XCTAssertFalse(message.contains("another series of the same title"), message)
+        XCTAssertTrue(message.contains("its series already holds its original slot there"), message)
+    }
+
+    func testTheSplitMoveHistoryLineNamesTheSeries() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup")
+        let line = UndoOperation.moveByCopy(original: snapshot, isSplit: true, notCarriedOver: [], copyID: "C1", copy: snapshot).description
+        XCTAssertTrue(line.contains("if its series there already holds its original slot, nothing is recreated and the copy stays"), line)
     }
 }

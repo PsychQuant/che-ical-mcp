@@ -152,9 +152,9 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func slotHolders(at slot: Date, length: TimeInterval, in calendar: EKCalendar) -> [OccurrenceSlotGuard.SeriesHolder] {
         refreshIfNeeded()
-        let end = slot.addingTimeInterval(max(length, 60))
+        let range = OccurrenceSlotGuard.listingRange(slot: slot, length: length)
         var holders: [OccurrenceSlotGuard.SeriesHolder] = []
-        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: slot, end: end,
+        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
                                                                            calendars: [calendar])) { event, _ in
             holders.append(OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,
                                                       externalIdentifier: event.calendarItemExternalIdentifier,

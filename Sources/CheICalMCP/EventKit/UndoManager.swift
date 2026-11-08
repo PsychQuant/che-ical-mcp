@@ -469,7 +469,7 @@ enum UndoOperation {
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
             var restore = ""
             if snapshot.restoresFromRules {
-                // #319: a single record names its window by its days.
+                // #319: a single record names its window by its instants (PR #494 round 1).
                 restore = snapshot.exceptions.map {
                     " (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowRange($0.window))): \(UndoOperation.seriesExceptionsListingNote))"
                 } ?? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
@@ -487,7 +487,7 @@ enum UndoOperation {
             return "Moved event: \(undoVisibleTitle(title))"
         case .moveByCopy(let original, let isSplit, _, _, _):
             if isSplit {
-                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)"
+                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if its series there already holds its original slot, nothing is recreated and the copy stays)"
             }
             return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):

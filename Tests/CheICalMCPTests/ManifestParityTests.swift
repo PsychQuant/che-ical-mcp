@@ -649,14 +649,6 @@ final class ManifestParityTests: XCTestCase {
         return (declared, summary)
     }
 
-    /// #285: undo of a whole-series delete recreates the series from its rules and restores its
-    /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
-    /// one edited on its own comes back as a separate one-off event, and exceptions outside the
-    /// window come back from the rules alone. Every place a client reads about the undo before it
-    /// runs states it in the same words (#244 verify rounds 4-6: the manifest summary too), and
-    /// none keeps the earlier claim that an occurrence deleted on its own comes back and an edit is
-    /// lost, or the "not yet checked" hedge that went with it. The negative checks catch those
-    /// phrases only, not every rewording: the positive clauses are the guard.
     /// #319: the checked window is placed around the delete, and #321: the slot of an occurrence
     /// is matched by its series and original slot, not by title. Every surface a client reads
     /// before the undo says both, and none keeps the window "from one day before the first
@@ -678,6 +670,14 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("not by title"), summary)
     }
 
+    /// #285: undo of a whole-series delete recreates the series from its rules and restores its
+    /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
+    /// one edited on its own comes back as a separate one-off event, and exceptions outside the
+    /// window come back from the rules alone. Every place a client reads about the undo before it
+    /// runs states it in the same words (#244 verify rounds 4-6: the manifest summary too), and
+    /// none keeps the earlier claim that an occurrence deleted on its own comes back and an edit is
+    /// lost, or the "not yet checked" hedge that went with it. The negative checks catch those
+    /// phrases only, not every rewording: the positive clauses are the guard.
     func testUndoSurfacesSayAWholeSeriesRestoreKeepsItsExceptions() throws {
         let restored = "an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event"
         let window = "exceptions outside that window"

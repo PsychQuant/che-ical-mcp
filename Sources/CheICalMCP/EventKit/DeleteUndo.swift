@@ -274,7 +274,7 @@ extension UndoOperation {
     }
 
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
-    /// limit is stated because an exception outside it was never listed. #319: by its days, with
+    /// limit is stated because an exception outside it was never listed. #319: by its instants, with
     /// the side(s) on which the series has occurrences outside it, when the record holds them.
     static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome, exceptions: SeriesExceptions? = nil) -> String {
         if outcome.notApplied {

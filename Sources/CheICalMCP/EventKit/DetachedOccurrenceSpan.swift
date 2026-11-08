@@ -151,6 +151,10 @@ enum DetachedOccurrenceSpan {
         /// Days of the week: a filter on a daily, monthly or yearly rule, but not on a weekly one,
         /// where every week holds them.
         let hasDaysOfTheWeek: Bool
+        /// PR #494 round 2: how many days of the week the rule names (0 when none). Read only by
+        /// the delete-undo window (`SeriesExceptionsPlanner.seriesEnd`); `lastPossibleSlot` does not
+        /// use it, so the #442/#455 refusals keep their bound.
+        let weekdayCount: Int
 
         init(_ rule: EKRecurrenceRule) {
             endDate = rule.recurrenceEnd?.endDate
@@ -160,6 +164,7 @@ enum DetachedOccurrenceSpan {
             hasFilter = rule.daysOfTheMonth != nil || rule.daysOfTheYear != nil || rule.weeksOfTheYear != nil
                 || rule.monthsOfTheYear != nil || rule.setPositions != nil
             hasDaysOfTheWeek = rule.daysOfTheWeek != nil
+            weekdayCount = rule.daysOfTheWeek?.count ?? 0
         }
     }
 

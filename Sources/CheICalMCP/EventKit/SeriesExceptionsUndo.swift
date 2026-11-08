@@ -16,27 +16,53 @@ enum SeriesExceptionsUndo {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
-        let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: store.seriesEnd(of: series),
+        let seriesEnd = store.seriesEnd(of: series)
+        let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: seriesEnd,
                                                           deletedAt: now)
         let window = placed.window
+        let observed = observedOccurrences(of: series, ids: seriesIDs, over: window, in: store)
+        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else {
+            // Round 2 (LOW): a count whose end cannot be shown is placed as open-ended, so for one
+            // that ended long ago the window holds none of it; it is listed from its first
+            // occurrence then, as before #319.
+            guard case .unknown = seriesEnd else { return nil }
+            return captureFromFirstOccurrence(of: series, ids: seriesIDs, in: store)
+        }
+        exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
+        exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
+        exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
+        return exceptions
+    }
+
+    /// The series' own occurrences, listed over `window` and a year on each side, as separate
+    /// queries: an occurrence edited on its own is matched by its current time, so one moved out of
+    /// the window is only found there (PR #318 verify B1; round 2, A: the four-year limit is per
+    /// query). #319: only this series' occurrences are snapshotted; the listing covers the calendar.
+    private static func observedOccurrences<Store: SeriesExceptionsStoreSource>(of series: Store.Event, ids seriesIDs: UndoPostState.OccurrenceIDs,
+                                                                                over window: DateInterval, in store: Store)
+        -> [SeriesExceptionsPlanner.ObservedOccurrence] {
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
-        // Listed over the window and a year on each side, as separate queries: an occurrence edited
-        // on its own is matched by its current time, so one moved out of the window is only found
-        // there (PR #318 verify B1; round 2, A: the four-year limit is per query).
         var seen = Set<String>()
         for range in SeriesExceptionsPlanner.listingRanges(for: window) {
             for occurrence in store.events(in: range, inCalendarOf: series) {
-                // #319: only this series' occurrences are snapshotted; the listing covers the whole calendar.
                 let occurrenceIDs = store.identifiers(of: occurrence)
                 guard UndoPostState.isOccurrence(occurrenceIDs, of: seriesIDs) else { continue }
                 let key = "\(occurrenceIDs.eventIdentifier ?? "")|\(store.startDate(of: occurrence).timeIntervalSinceReferenceDate)"
                 if seen.insert(key).inserted { observed.append(store.observed(occurrence)) }
             }
         }
-        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
-        exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
-        exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
-        exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
+        return observed
+    }
+
+    /// The capture over the window from the series' first occurrence (the create-undo window,
+    /// `UndoPostState.seriesScanWindow`, uncut): a count whose end cannot be shown, when the window
+    /// around the delete found none of it. Its occurrences after that window are not known.
+    private static func captureFromFirstOccurrence<Store: SeriesExceptionsStoreSource>(of series: Store.Event, ids seriesIDs: UndoPostState.OccurrenceIDs,
+                                                                                       in store: Store) -> SeriesExceptions? {
+        let window = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
+        guard var exceptions = SeriesExceptionsPlanner.capture(observedOccurrences(of: series, ids: seriesIDs, over: window, in: store),
+                                                               of: seriesIDs, window: window) else { return nil }
+        exceptions.seriesMayContinueAfterWindow = true
         return exceptions
     }
 
@@ -176,11 +202,15 @@ enum SeriesExceptionsUndo {
         if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {
             store.noteRecreation(of: recorded, as: store.identifiers(of: event))
         }
-        var text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+        let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                       exceptionsOutcome: outcome)
-        // PR #494 round 1: an occurrence's record that could not name its series says so, as `.deleteOccurrence` does.
-        if !snapshot.restoresFromRules, snapshot.isOccurrenceRecord, snapshot.occurrenceOrigin == nil {
-            text += ". " + UndoOperation.occurrenceSlotUncheckedNote
+        // PR #494 round 1: an occurrence's record that could not name its series says so, as
+        // `.deleteOccurrence` does; round 2: and returns it as the outcome, so a batch says it too.
+        if !snapshot.restoresFromRules, snapshot.isOccurrenceRecord {
+            guard snapshot.occurrenceOrigin != nil else {
+                return (text + ". " + UndoOperation.occurrenceSlotUncheckedNote, .occurrenceOneOffSlotUnchecked(notCarriedOver: []))
+            }
+            return (text, .occurrenceOneOff(notCarriedOver: []))
         }
         guard snapshot.restoresFromRules else { return (text, nil) }
         return (text, outcome.map(UndoEventOutcome.seriesWithExceptions) ?? .seriesFromRules)
@@ -206,9 +236,12 @@ enum SeriesExceptionsUndo {
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
-        var text = UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+        let text = UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                            notCarriedOver: notCarriedOver)
-        if snapshot.occurrenceOrigin == nil { text += ". " + UndoOperation.occurrenceSlotUncheckedNote }
+        // Round 2: the unchecked slot travels in the outcome, so a batch says it too.
+        guard snapshot.occurrenceOrigin != nil else {
+            return (text + ". " + UndoOperation.occurrenceSlotUncheckedNote, .occurrenceOneOffSlotUnchecked(notCarriedOver: notCarriedOver))
+        }
         return (text, .occurrenceOneOff(notCarriedOver: notCarriedOver))
     }
 }

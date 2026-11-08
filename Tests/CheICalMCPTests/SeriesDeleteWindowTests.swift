@@ -129,8 +129,9 @@ final class SeriesDeleteWindowTests: XCTestCase {
         let lastPossible = first.addingTimeInterval(70 * day)
         let result = window(first: -3000, .endsBy(lastPossible))
 
-        XCTAssertEqual(result.window.start, first.addingTimeInterval(-day))
-        XCTAssertEqual(result.window.end, lastPossible.addingTimeInterval(day))
+        // Round 2: a count's bound moves the window earlier, never cuts it: the window is the old one.
+        XCTAssertEqual(result.window, UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil))
+        XCTAssertGreaterThan(result.window.end, lastPossible)
         XCTAssertFalse(result.seriesStartsBefore)
         XCTAssertFalse(result.seriesContinuesAfter)
         XCTAssertFalse(result.seriesMayContinueAfter)
@@ -141,7 +142,7 @@ final class SeriesDeleteWindowTests: XCTestCase {
     func testACountSeriesInsideTheWindowHasNoneAfterIt() {
         let result = window(first: -10, .endsBy(days(60)))
 
-        XCTAssertEqual(result.window.end, days(61))
+        XCTAssertEqual(result.window, UndoPostState.seriesScanWindow(firstStart: days(-10), ruleEnd: nil), "not cut at the bound (round 2)")
         XCTAssertFalse(result.seriesContinuesAfter)
         XCTAssertFalse(result.seriesMayContinueAfter)
     }
@@ -228,5 +229,59 @@ final class SeriesDeleteWindowTests: XCTestCase {
         XCTAssertEqual(end([dated, counted]), .endsBy(days(400)), "the later of the two, an upper bound")
         XCTAssertEqual(end([counted, dated]), .endsBy(days(400)))
         XCTAssertEqual(end([dated, extent(.weekly, end: EKRecurrenceEnd(end: days(500)))]), .endsAt(days(500)))
+    }
+
+    // MARK: - PR #494 round 2
+
+    private func weekly(_ days: [EKWeekday], count: Int) -> DetachedOccurrenceSpan.RuleExtent {
+        DetachedOccurrenceSpan.RuleExtent(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1,
+                                                           daysOfTheWeek: days.map { EKRecurrenceDayOfWeek($0) },
+                                                           daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
+                                                           daysOfTheYear: nil, setPositions: nil, end: EKRecurrenceEnd(occurrenceCount: count)))
+    }
+
+    /// MEDIUM 3: a weekly count on three weekdays reaches 3 occurrences a week, so 450 of them end
+    /// within ceil(450 / 3) + 1 weeks, not 450 weeks.
+    func testAMultiDayWeeklyCountIsBoundedByItsWeekdays() {
+        let first = days(-4380)
+        XCTAssertEqual(SeriesExceptionsPlanner.seriesEnd(rules: [weekly([.monday, .wednesday, .friday], count: 450)], firstStart: first, calendar: calendar),
+                       .endsBy(first.addingTimeInterval((7 * 150 + 7) * day)))
+    }
+
+    /// MEDIUM 3: MWF, 450 occurrences, deleted twelve years after it began: the series ended around
+    /// day 1050, so the window is the old one from its first occurrence (the loose bound put it at
+    /// days 1691 to 3151, holding none of it).
+    func testAMultiDayWeeklyCountThatEndedLongAgoIsListedFromItsFirstOccurrence() {
+        let first = days(-4380)
+        let end = SeriesExceptionsPlanner.seriesEnd(rules: [weekly([.monday, .wednesday, .friday], count: 450)], firstStart: first, calendar: calendar)
+        let result = SeriesExceptionsPlanner.deleteWindow(firstStart: first, end: end, deletedAt: now)
+        XCTAssertEqual(result.window, UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil))
+        XCTAssertTrue(result.window.contains(first.addingTimeInterval(1046 * day)))
+        XCTAssertFalse(result.seriesMayContinueAfter)
+    }
+
+    /// The same rule still running: begun 500 days before the delete, it keeps the old window.
+    func testAMultiDayWeeklyCountStillRunningKeepsTheOldWindow() {
+        let first = days(-500)
+        let end = SeriesExceptionsPlanner.seriesEnd(rules: [weekly([.monday, .wednesday, .friday], count: 450)], firstStart: first, calendar: calendar)
+        let result = SeriesExceptionsPlanner.deleteWindow(firstStart: first, end: end, deletedAt: now)
+        XCTAssertEqual(result.window, UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil))
+        XCTAssertFalse(result.seriesMayContinueAfter, "it ends before the window does")
+    }
+
+    /// `lastPossibleSlot`, which the #442 and #455 refusals read, is not tightened by this.
+    func testTheSharedLastPossibleSlotIsUnchanged() {
+        let rule = weekly([.monday, .wednesday, .friday], count: 450)
+        XCTAssertEqual(DetachedOccurrenceSpan.lastPossibleSlot(of: rule, firstStart: now, calendar: calendar), days(7 * 450))
+    }
+
+    /// LOW: an end date within a day before the window's end leaves no occurrence after the window
+    /// (the rule's last occurrence is at most its end date).
+    func testAnEndDateJustBeforeTheWindowEndHasNoneAfterIt() {
+        let first = days(-10)
+        let cap = first.addingTimeInterval(1459 * day)
+        let result = window(first: -10, .endsAt(cap.addingTimeInterval(-0.5 * day)))
+        XCTAssertFalse(result.seriesContinuesAfter)
+        XCTAssertTrue(window(first: -10, .endsAt(cap.addingTimeInterval(2 * day))).seriesContinuesAfter, "an end past the window still continues")
     }
 }

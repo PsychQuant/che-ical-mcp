@@ -113,7 +113,7 @@ enum MoveByCopyUndo {
         let used = " This history entry is used up: running undo again undoes the operation before it, not this copy."
         let both = "and the event is now in both calendars: remove the copy there if it should go."
         guard case .written(let restored) = restore else {
-            return "Undone: the moved occurrence of '\(undoVisibleTitle(title))' was not recreated in its original calendar: an occurrence of a recurring event with its title already holds its time there, which may be another series of the same title. So this undo did not look up or remove the copy the move made\(id); if it is still in the calendar it was moved to, check the original calendar, and remove the copy if the occurrence there is this one." + used
+            return "Undone: the moved occurrence of '\(undoVisibleTitle(title))' was not recreated in its original calendar: its series already holds its original slot there (the series, or one an undo recreated from it, matched by identifier, #321). So this undo did not look up or remove the copy the move made\(id); if it is still in the calendar it was moved to, the occurrence is now in both calendars: remove the copy there if it should go." + used
         }
         switch copy {
         case .removed:
