@@ -957,6 +957,31 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertFalse(UndoPostState.sameWallClock(overDST, normal, zone: TimeZone(identifier: "UTC")!), "read in UTC the lengths differ")
     }
 
+    // MARK: - clear_timezone on a series with a count (#455)
+
+    func testClearingTheTimeZoneIsRefusedOnlyOnASeriesWithACount() throws {
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [0]), "an end date or no end: measured clean")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: []), "a one-off")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: false, occurrenceCounts: [5]), "one occurrence")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: false, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], hasZone: false),
+                       "an all-day result: no zone to clear")
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [0, 5]),
+                      "a count rule written in the same call (cluster verify r3)")
+        // Cluster verify r5: a stored count is not lifted by a rule without one in the same call, and
+        // the reason gives the two-call route that works.
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5, 0]),
+                      "stored count, this call writes an end date")
+        XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.contains("in a separate call"), DetachedOccurrenceSpan.clearTimezoneReason)
+        XCTAssertFalse(DetachedOccurrenceSpan.clearTimezoneReason.contains("leave out clear_timezone"), "not a way to clear the zone")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], clearingRecurrence: true),
+                       "the rule goes in the same call")
+        XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.hasSuffix("Nothing was written."))
+        let body = try updateBody()
+        XCTAssertTrue(body.contains("occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 } + [recurrenceRule?.occurrenceCount ?? 0], hasZone: !(isAllDay ?? event.isAllDay), clearingRecurrence: clearRecurrence) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason) }"), "the rule this call writes counts too (cluster verify r3)")
+    }
+
     // MARK: - all_day on a series with an edited occurrence (#442)
 
     /// Measured: an edited occurrence's original slot came back as an extra occurrence, whatever

@@ -1254,6 +1254,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
+        // #455: it answered updated and the last occurrence went (device).
+        if DetachedOccurrenceSpan.refusesClearTimezone(
+            clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents,
+            // Cluster verify r3: the rule this call writes counts too (a count rule written in the
+            // same save was the measured shape); either one with a count refuses (fail closed). Only
+            // an all-day result has no zone to clear: a floating series still gets timeZone = nil.
+            occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }
+                + [recurrenceRule?.occurrenceCount ?? 0],
+            hasZone: !(isAllDay ?? event.isAllDay), clearingRecurrence: clearRecurrence) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason)
+        }
+
         // Series-level properties through the stand-in (verify rounds 6-7), decided before the
         // first field of the event is assigned, so nothing is half-written when it throws. A new
         // calendar moves the whole series even with span this (device), so one of another account

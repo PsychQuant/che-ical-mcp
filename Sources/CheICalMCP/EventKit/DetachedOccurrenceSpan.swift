@@ -637,6 +637,21 @@ enum DetachedOccurrenceSpan {
 
     static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
 
+    /// #455: `clear_timezone` on a series bounded by a count. Measured on iCloud (weekly and daily,
+    /// count 5, with and without an edited occurrence): the last occurrence went, and the rule read
+    /// back unchanged, also when it was written again in the same save. A rule with an end date and
+    /// an open-ended one kept every occurrence, and span `future` was not run, so it counts.
+    /// Cluster verify r2, r3: not when the result is all-day (no zone to clear: #190 nils it
+    /// harmlessly), or when the same call clears the rule, as the count no longer applies. A floating
+    /// timed series still gets timeZone = nil, so it is refused. `occurrenceCounts` holds the stored
+    /// rules and the rule this call writes.
+    static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int],
+                                     hasZone: Bool = true, clearingRecurrence: Bool = false) -> Bool {
+        clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
+    }
+
+    static let clearTimezoneReason = "This series, or the recurrence this call writes, ends by a count of occurrences, and clearing the time zone of such a series dropped its last occurrence. A rule given in the same call does not lift a count the series already has. On a series that has not started, first change its rule to an end date in a separate call, without clear_timezone (the last occurrence's date keeps the same occurrences), then send clear_timezone. A recurrence with a count cannot be written together with clear_timezone, and a series that has started takes no clear_timezone (#478), so do not change its rule for this. Nothing was written."
+
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call
     /// as deleted, so the result must not depend on the order: with the series' row first and the
