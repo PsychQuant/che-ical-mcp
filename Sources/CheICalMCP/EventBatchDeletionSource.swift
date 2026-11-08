@@ -9,7 +9,8 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     let start: Date
     let end: Date
     let slot: Date?
-    /// #427: an occurrence edited on its own, by its own identifier.
+    /// #427: an occurrence edited on its own, by its own identifier. Read by tests and filled by the
+    /// listing only: the handler judges a row through `previewEventDeletion` (cluster verify r2).
     var isDetached = false
 }
 

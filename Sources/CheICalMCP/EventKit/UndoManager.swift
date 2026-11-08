@@ -606,6 +606,17 @@ actor CalendarUndoManager {
     /// is the one being undone.
     func replaceEventIdentifier(_ old: String, with new: String) {
         undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+        // Cluster verify r2: the redo stack too. An undo calls this after popUndo moved its own
+        // record there, so a redo of that move finds the event under the identifier it has now.
+        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+    }
+
+    /// #435: whether a write gave the event a new identifier. Through a stand-in the series'
+    /// identifier `S` resolves to an occurrence's own `S/RID=…`, which is the same series, not a
+    /// new identifier (cluster verify r2).
+    static func identifierChanged(from old: String, to new: String) -> Bool {
+        guard !new.isEmpty else { return false }
+        return (DetachedOccurrenceSpan.seriesIdentifier(of: new) ?? new) != (DetachedOccurrenceSpan.seriesIdentifier(of: old) ?? old)
     }
 
     /// Pop the most recent operation for undoing.
