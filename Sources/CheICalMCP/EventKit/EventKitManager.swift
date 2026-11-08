@@ -1736,7 +1736,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// PR #465 verify r2: the row has no occurrence_date to give, so the text names a call that works.
-    static let throughFirstOccurrenceHasRulesReason = "This series' first occurrence was edited on its own and reports recurrence rules of its own, which was not measured, so this row does not delete the series through it. Use delete_event with that occurrence's id and occurrence_date, or with span 'future'. This row deleted nothing."
+    static let throughFirstOccurrenceHasRulesReason = "This series' first occurrence was edited on its own and reports recurrence rules of its own, which was not measured, so this row does not delete the series through it. This shape has no tested way to delete the whole series through this tool yet; delete it in Calendar. This row deleted nothing."
 
     /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no
     /// date is passed, so every bare recurring id gets this; its dry run says the same (#416).
