@@ -107,7 +107,9 @@ final class SetupModel: ObservableObject {
     /// Framework error text is sanitized at the boundary (#146).
     func grant(_ entity: EKEntityType) async {
         do {
-            _ = try await probe.requestFullAccess(for: entity)
+            // #482: `nil` keeps where this ran before the requirement took an isolation (the
+            // generic executor); this window's source owns its own store, which no actor shares.
+            _ = try await probe.requestFullAccess(for: entity, isolation: nil)
         } catch {
             let safe = EventKitErrorSanitizer.escapeForStderr(error.localizedDescription)
             set(entity, .error(safe))

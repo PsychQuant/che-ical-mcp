@@ -38,7 +38,7 @@ final class AuthorizationGateTests: XCTestCase {
 
         func authorizationStatus(for: EKEntityType) -> EKAuthorizationStatus { status }
 
-        func requestFullAccess(for: EKEntityType) async throws -> Bool {
+        func requestFullAccess(for: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool {
             requestCallCount += 1
             if let err = requestError { throw err }
             return requestResult
