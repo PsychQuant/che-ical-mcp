@@ -267,6 +267,19 @@ enum EventRangeQuery {
             .map(\.element)
     }
 
+    /// #427 cluster verify: by date range with span "all", the row of an occurrence edited on its own
+    /// (`<series>/RID=…`) whose series' own identifier is listed too is left to that series' row,
+    /// which deletes the whole series, the occurrence included, as before #427. Judged on its own,
+    /// that row was refused whenever the scan could not show the series ends (an open-ended one),
+    /// while the series' row deleted it anyway. If the series' row is refused, the occurrence stays.
+    /// An identifier without `/RID=` names no series and keeps its row.
+    static func rowsTheSeriesRowDoesNotTake(_ items: [DeletionItem]) -> [DeletionItem] {
+        let listed = Set(items.map(\.identifier))
+        return items.filter { item in
+            DetachedOccurrenceSpan.seriesIdentifier(of: item.identifier).map { !listed.contains($0) } ?? true
+        }
+    }
+
     /// The deletions these items make, at most: span "all" deletes each series once, whole, and
     /// span "future" each series once from its earliest listed slot. An occurrence edited on its
     /// own that has its own identifier (`<series>/RID=…` on iCloud) counts as one more, even when
