@@ -690,7 +690,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove location trigger from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the reminder's location trigger. Cannot be combined with location_trigger (which replaces it): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "tags": .object([
                             "type": .string("array"),
@@ -699,7 +699,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_tags": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove all tags from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove all tags from the reminder. Cannot be combined with tags (which replaces them): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ])
                     ]),
                     "required": .array([.string("reminder_id")])
@@ -1963,6 +1963,10 @@ class CheICalMCPServer {
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
+        // #486: the clear used to win and the tags were dropped with a success answer.
+        if newTags != nil && clearTags {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.tagsBothMessage)
+        }
         let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
         if clearDueDate && due != nil {
@@ -1978,6 +1982,10 @@ class CheICalMCPServer {
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
         let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
+        // #486: the clear used to win and the trigger was dropped with a success answer.
+        if locationTrigger != nil && clearLocationTrigger {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.locationTriggerBothMessage)
+        }
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
         // #354: the rule; both together, or a rule with clear_due_date, are refused here.
