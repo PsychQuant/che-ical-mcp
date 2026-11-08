@@ -5,7 +5,7 @@ import XCTest
 /// functions (Swift 5 mode, SE-0338), so after their first `await` the synchronous closures the
 /// caller formed on its actor ran off it: `invalidate` (in production `markNeedsRefresh`, which
 /// writes the actor's refresh state) and the closures that read the calendars. The seams now run on
-/// the caller's actor (`#isolation`), and the probe traps (`assertIsolated`) if any of them runs
+/// the caller's actor (`#isolation`), and the probe traps (`preconditionIsolated`, which also checks in -O builds) if any of them runs
 /// anywhere else, as PR #474's `testTheCheckAndTheRemovalRunOnTheCallersActor` does.
 final class UndoRestoreSeamIsolationTests: XCTestCase {
     func testTheRestoreCalendarSeamRunsItsClosuresOnTheCallersActor() async throws {
@@ -54,7 +54,7 @@ private actor RestoreSeamProbe {
     }
 
     private func note(_ step: String) {
-        assertIsolated("\(step) must run on the actor that formed it")
+        preconditionIsolated("\(step) must run on the actor that formed it")
         steps.append("\(step) (isolated)")
     }
 
