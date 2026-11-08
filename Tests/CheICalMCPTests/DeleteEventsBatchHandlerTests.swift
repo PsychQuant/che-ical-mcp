@@ -741,10 +741,11 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     }
 
     /// Span `future` on an occurrence's own id removes the series from its slot on. A later
-    /// occurrence's own id of the same series is then already removed: the real call counts it in
-    /// `already_removed` (it used to fail it as not found) and the dry run shows it so, and the
-    /// first row says it also deletes the later occurrences.
-    func testSpanFutureShowsTheLaterOccurrenceAsAlreadyRemoved() async throws {
+    /// occurrence's own id of the same series is then removed with it: the real call counts it in
+    /// `already_removed` (before #452 it failed as not found), the dry run marks it
+    /// `covered_by_earlier_row` (it cannot see the earlier delete), and the first row says it also
+    /// deletes the later occurrences.
+    func testSpanFutureMarksTheLaterOccurrenceCoveredByTheEarlierRow() async throws {
         let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
         let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "future")
         XCTAssertNil(answer.dry[0]["error"], "\(answer.dry)")
@@ -778,7 +779,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testSpanFutureInTheOtherOrderDeletesBoth() async throws {
         let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
         let answer = try await dryRunAndRealCall(shape, ids: [ownId(21), ownId(7)], span: "future")
-        XCTAssertEqual(answer.dry.filter { $0["error"] == nil && $0["already_removed"] == nil }.count, 2, "\(answer.dry)")
+        XCTAssertEqual(answer.dry.filter { $0["error"] == nil && $0["covered_by_earlier_row"] == nil }.count, 2, "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
         XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
         XCTAssertEqual(answer.left, 1)
@@ -788,7 +789,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testSpanThisDeletesOnlyTheNamedOccurrences() async throws {
         let shape = [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
         let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "this")
-        XCTAssertTrue(answer.dry.allSatisfy { $0["error"] == nil && $0["already_removed"] == nil
+        XCTAssertTrue(answer.dry.allSatisfy { $0["error"] == nil && $0["covered_by_earlier_row"] == nil
                                               && $0["also_deletes_later_occurrences"] == nil }, "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
         XCTAssertEqual(answer.left, 3)
@@ -800,15 +801,20 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         [unedited(0), editedOccurrence(7), unedited(14), editedOccurrence(21), unedited(28)]
     }
 
-    /// Item 1: a covered occurrence that the earlier row's cut left (not seen on iCloud) is looked up
-    /// and deleted by the real call, not skipped and counted while it stays. The dry run cannot see
-    /// the cut and still shows it as already removed; in both the event ends up gone.
+    /// Review r1 item 1: a covered occurrence that the earlier row's cut left (not seen on iCloud) is
+    /// looked up and deleted by the real call as a row of its own, not skipped and counted while it
+    /// stays. The dry run cannot see the cut and marks it `covered_by_earlier_row`, without
+    /// `also_deletes_later_occurrences`; the real call, which deleted it with span future, also lists
+    /// it under `following_occurrences_deleted` (review r3 item 2, as the description says).
     func testACoveredOccurrenceThatSurvivesTheCutIsDeleted() async throws {
         let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(21)], span: "future",
                                                  cutReachesEditedOccurrences: false)
         XCTAssertEqual(answer.dry[1]["covered_by_earlier_row"] as? Bool, true, "\(answer.dry)")
+        XCTAssertNil(answer.dry[1]["also_deletes_later_occurrences"], "\(answer.dry)")
+        XCTAssertNil(answer.dry[1]["undo_note"], "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
         XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
+        XCTAssertEqual(answer.real["following_occurrences_deleted"] as? [String], [ownId(7), ownId(21)], "\(answer.real)")
         XCTAssertEqual(answer.left, 1, "the surviving occurrence was deleted")
     }
 
@@ -866,7 +872,10 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
 
     /// MEDIUM: the counts relate as the description says. The dry run's rows without an error (its
     /// deletions and its covered rows) are the real call's `succeeded` plus `already_removed`, whether
-    /// the store removes the covered occurrence with the earlier row's series or keeps it.
+    /// the store removes the covered occurrence with the earlier row's series or keeps it, when no row
+    /// fails for another reason. The real side runs on `SeriesModel`, not on EventKit; the manager's
+    /// loop is tied to the same calls by the source pins in `BatchRowSequenceTests`. Only occurrences
+    /// edited in place are modelled; a cutting occurrence moved before a later row's shown start is not.
     func testTheDryRunAndRealCountsRelateAsDescribed() async throws {
         for reaches in [true, false] {
             let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(21), "one-off"], span: "future",

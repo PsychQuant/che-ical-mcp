@@ -171,6 +171,10 @@ final class BatchRowSequenceTests: XCTestCase {
         XCTAssertFalse(body.contains("case .alreadyRemoved") || body.contains("case .failed"), "no switch of its own")
         XCTAssertFalse(body.contains("FutureDeletionCoverage("), "the coverage is not kept beside the sequence")
         XCTAssertTrue(body.contains("followingOccurrencesDeleted.append("), "the rows whose undo refuses the batch are reported")
+        // Review r3 item 5: the first pass runs before the row loop.
+        let firstPass = try XCTUnwrap(body.range(of: ".resolvedBeforeTheCall("), "first pass")
+        let rowLoop = try XCTUnwrap(body.range(of: "for (index, item) in items.enumerated()"), "row loop")
+        XCTAssertLessThan(firstPass.lowerBound, rowLoop.lowerBound, "the ids that resolve are noted before any row runs")
     }
 
     /// Review r2 LOW 1: an occurrence's own id that resolves to an event with rules is not a row the
@@ -203,5 +207,18 @@ final class BatchRowSequenceTests: XCTestCase {
         for id in [rid(14), rid(21), rid(0)] {
             XCTAssertEqual(sequence.before(identifier: id, listed: nil, slot: nil), .lookUp, id)
         }
+    }
+
+    /// Review r3 item 4: a `/RID=` slot before 2001 is a negative number, which
+    /// `UndoPostState.originalSlot` does not parse (`UndoRefusalTests` keeps it malformed). Such a cut
+    /// then covers nothing: a later row of that series is looked up, and when it is gone it fails as
+    /// not found instead of being counted.
+    func testAPre2001SlotIsNotParsedSoTheCutCoversNothing() {
+        var sequence = BatchRowSequence(span: .futureEvents)
+        sequence.resolvedBeforeTheCall("S/RID=-500", hasRecurrenceRules: false)
+        sequence.deletedWhole(identifier: "S/RID=-1000", requested: nil, requestedSlot: nil,
+                              removedStart: Date(timeIntervalSinceReferenceDate: -1000), removedSlot: nil)
+        XCTAssertFalse(sequence.removedByAnEarlierRow(identifier: "S/RID=-500"))
+        XCTAssertEqual(sequence.notFound(identifier: "S/RID=-500", listed: nil, reason: { self.notFound }), .failed(notFound))
     }
 }

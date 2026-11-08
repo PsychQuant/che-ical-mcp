@@ -16,7 +16,12 @@ import EventKit
 /// before any lookup, as since #325. A row named by id (`event_ids`, no occurrence date) is looked
 /// up first (review r1 item 1): it is counted in `already_removed` only when the lookup finds
 /// nothing, the cut reaches its slot, and it resolved before the call. A covered row that still
-/// resolves is handled as any other row, so an event is never skipped while it stays.
+/// resolves is handled as any other row, so an event is never skipped while it stays ("removed"
+/// rests on a lookup not finding it, as `EventRemovalKind` does).
+///
+/// The cut is read from the slot in the id (`UndoPostState.originalSlot`), which does not parse a
+/// negative slot (before 2001): such a delete covers no later row, which is then looked up and, when
+/// gone, fails as not found (review r3 item 4; `UndoRefusalTests` keeps `/RID=-5` malformed).
 struct BatchRowSequence {
     enum Answer: Equatable {
         /// The row is looked up and run.

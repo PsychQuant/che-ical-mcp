@@ -612,7 +612,7 @@ end、notes、location、alarms。
 
 #452 讓 `delete_events_batch` 以 `event_ids` 搭配 span `this` / `future` 時，dry run 與實際呼叫走同一個
 `BatchRowSequence`。單元測試只到 handler 與 `SeriesModel`；「場次自己的 id 以 span `future` 刪除後，系列從該時段起
-被刪掉、較晚場次自己的 id 不再解析得到」只在依日期範圍時於 iCloud 量過（2026-10-20）。這是 stateless 的，**出 #452 的
+被刪掉、較晚場次自己的 id 不再解析得到」原本只在依日期範圍時於 iCloud 量過（2026-10-20）；依 `event_ids` 在 2026-11-09 用 repo 內 build 的 binary 量過（見本節末），用出版的 binary 重跑還沒做。這是 stateless 的，**出 #452 的
 那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表），只在名稱含 `#452` 的拋棄式日曆上，每個形狀用新的系列：
 
 1. 一次性事件 A：`event_ids: [A, A]`、span `this`，dry run 第二列 `error` 是 `Event not found: an earlier row of this call
@@ -632,6 +632,10 @@ end、notes、location、alarms。
    `failures` 的 `error` 原文，兩邊都要失敗、都沒有 `already_removed`。第 5 步只在系列還留著時試不存在的 id；這一步在系列
    整個被刪掉之後試，若不存在的 `/RID=` 在其中一種狀態下解析成系列本身，兩邊的原文會不同（例如 `For recurring events,
    occurrence_date is required` 對 `Event not found`），要回報。
+7. **沒有量過**：場次被移離原本的時段，使顯示的開始時間與時段的先後不同（例如把第 4 場移到第 2 場的前一天，再
+   `[第 2 場, 第 4 場]`、span `future`；或把負責刪除的第 2 場移到第 4 場顯示的開始時間之後）。
+   dry run 的 `covered_by_earlier_row` 與實際呼叫的 `already_removed` 是否仍對得上，`SeriesModel` 沒有建模；有空時量一次，
+   記下兩邊的列，對不上就回報。
 
 若第 2 步的實際呼叫回 `failed: 1`、`Event not found`（不是 `already_removed`），就是 `/RID=` 的時段比對在該來源不成立，
 要回報到 #452。2026-11-09 已在 iCloud 用 repo 內 build 的 binary（Developer ID 簽章、`--cli`）做過第 1–4 步；verify r1 修正後（先查詢再算 `already_removed`、`undo_note`）重做第 1–5 步，五步都如上；verify r2 修正後（`covered_by_earlier_row`）重做第 2、5、6 步，都如上；第 5 步與第 6(b) 步兩邊的原文都是 dry run `Event not found: <id>`、實際呼叫 `Event not found`（結果見 #452 的 Verify-fix）；出版前用出版的 binary 再做一次。結果記在 #452。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次。
