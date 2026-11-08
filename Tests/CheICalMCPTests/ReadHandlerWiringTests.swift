@@ -15,9 +15,10 @@ final class ReadHandlerWiringTests: XCTestCase {
         SourcePins.code(try SourcePins.source(file))
     }
 
-    /// No code in `Server.swift` names an EventKit event or calendar object, so no handler can read
-    /// one's properties (comments and strings blanked; `EKEventStore`, `EKSpan` and the like are
-    /// other types and are allowed).
+    /// No code in `Server.swift` names the types `EKEvent` or `EKCalendar` (comments and strings
+    /// blanked; `EKEventStore`, `EKSpan` and the like are other types and are allowed). This is a
+    /// type-name check only: an inferred type slips past it. That the reads the handlers await
+    /// return values is checked on the seams (`testTheSeamsReturnValuesBuiltOnTheActor`).
     func testTheServerHoldsNoEventKitEventOrCalendar() throws {
         let server = try Self.code("Server.swift")
         for type in ["EKEvent", "EKCalendar"] {
@@ -47,10 +48,10 @@ final class ReadHandlerWiringTests: XCTestCase {
         XCTAssertTrue(range.contains("-> [CalendarReadValue]"))
         let file = try SourcePins.source("EventRangeReadSource.swift")
         let manager = String(file[try XCTUnwrap(file.range(of: "extension EventKitManager:")).lowerBound...])
-        for method in ["func checkConflictValues(", "func listCalendarValues("] {
+        for (method, pattern) in [("func checkConflictValues(", ".map(EventReadValue.init)"),
+                                  ("func listCalendarValues(", ".map(CalendarReadValue.init)")] {
             let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)
-            XCTAssertTrue(body.contains("EventRowsPicked.picking(") || body.contains(".map(EventReadValue.init)")
-                          || body.contains(".map(CalendarReadValue.init)"), "\(method) builds values inside the actor")
+            XCTAssertTrue(body.contains(pattern), "\(method) builds values inside the actor with \(pattern)")
         }
         for method in ["func listEventValues<", "func searchEventValues<"] {
             let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)

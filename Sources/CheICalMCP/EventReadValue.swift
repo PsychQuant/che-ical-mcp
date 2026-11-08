@@ -6,8 +6,9 @@ import Foundation
 /// reads only `EventFormattingSource`, so this value holds what each accessor answered when it was
 /// built, and a response formatted from it is byte-identical to one formatted from the live event.
 ///
-/// `@unchecked Sendable`: the fragments are `[String: Any]` holding only strings, numbers and
-/// booleans (and arrays and dictionaries of them), built once from the event and never mutated.
+/// `@unchecked Sendable`: the fragments are `[String: Any]` holding only strings, numbers,
+/// booleans, `NSNull`, and arrays and dictionaries of them, built once from the event and never
+/// mutated.
 /// Everything else is a Sendable value.
 struct EventReadValue: EventFormattingSource, @unchecked Sendable {
     let formatID: String?
@@ -106,7 +107,7 @@ struct CalendarReadValue: Sendable, Equatable {
 
     /// Reads the calendar where it is called: on the manager's actor. `source` is implicitly
     /// unwrapped (`null_unspecified`); a calendar without one lists `""` and `Unknown` instead of
-    /// trapping, as the handler did before (PR #495 round 1).
+    /// trapping, which the handler did before (PR #495 round 1).
     init(_ calendar: EKCalendar) {
         let source: EKSource? = calendar.source
         self.init(identifier: calendar.calendarIdentifier, title: calendar.title, typeRawValue: calendar.type.rawValue,
