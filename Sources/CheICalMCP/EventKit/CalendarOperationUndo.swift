@@ -46,7 +46,7 @@ enum CalendarOperationKind: String, Sendable, Hashable {
     fileprivate var remedy: String {
         switch self {
         case .created:
-            return "If the calendar should go and is empty, delete it with delete_calendar and require_empty: true, which refuses while it holds events or reminders; deleting it with what it holds is for the user to decide."
+            return "If the calendar should go and is empty, delete it with delete_calendar and require_empty: true, which refuses while it holds events or reminders it can see (see delete_calendar); deleting it with what it holds is for the user to decide."
         case .updated:
             return "If the change should be reverted, revert it in Calendar (or with update_calendar)."
         case .deleted:
