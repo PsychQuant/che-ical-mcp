@@ -267,7 +267,8 @@ extension UndoOperation {
             // snapshot holds no rules, so neither discloses anything.
             return UndoOperation.deleteEvent(snapshot: original).undoDisclosures
         case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
-             .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+             .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder,
+             .calendarOperation:
             return []
         }
     }
