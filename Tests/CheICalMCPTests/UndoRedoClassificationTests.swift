@@ -33,6 +33,9 @@ final class UndoRedoClassificationTests: XCTestCase {
             .deleteReminder(snapshot: reminder),
             .updateReminder(id: "REM-1", oldSnapshot: reminder, saved: reminder),
             .moveByCopy(original: event, isSplit: false, notCarriedOver: [], copyID: "EVT-1", copy: event),
+            .calendarOperation(kind: .created, title: "Standup"),   // #273
+            .calendarOperation(kind: .updated, title: "Standup"),
+            .calendarOperation(kind: .deleted, title: "Standup"),
         ]
     }
 
@@ -59,7 +62,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// identifier (stale after an update-undo across accounts, #246), and says nothing was written.
     func testInstructionsNameTheTitleAndToolNotTheIdentifier() throws {
         let expectedTool = ["create_event", "delete_event", "delete_event", nil, "update_event", nil, "move_events_batch",
-                            "create_reminder", "delete_reminder", "update_reminder", "move_events_batch"]
+                            "create_reminder", "delete_reminder", "update_reminder", "move_events_batch", nil, nil, nil]
         // `zip` stops at the shorter list, so a kind added to one list only would be skipped
         // silently (PR #282 round 3, finding 37).
         XCTAssertEqual(instructionOnly.count, expectedTool.count)

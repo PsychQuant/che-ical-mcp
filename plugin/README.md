@@ -107,15 +107,15 @@ Or just ask naturally:
 
 ### Calendars (4)
 - `list_calendars` - List all calendars
-- `create_calendar` - Create new calendar
-- `update_calendar` - Update calendar metadata
-- `delete_calendar` - Delete calendar or reminder list (not undoable); `require_empty: true` refuses a non-empty one (#328)
+- `create_calendar` - Create new calendar (not undoable: its `undo` is refused and the entry discarded, #273)
+- `update_calendar` - Update calendar metadata (not undoable: its `undo` is refused and the entry discarded, #273)
+- `delete_calendar` - Delete calendar or reminder list (cannot be undone, with everything in it: its `undo` is refused and the entry discarded, so the next `undo` reverts the operation recorded before it, #273); `require_empty: true` refuses a non-empty one (#328)
 
 ### Events (12)
 - `list_events` / `list_events_quick` — list by range or shortcut
 - `search_events` — keyword search
 - `create_event` / `update_event` / `delete_event` — single ops
-- `copy_event` — copy an event across calendars; `delete_original` moves it like `move_events_batch` and refuses recurring events (#226)
+- `copy_event` — copy an event across calendars; `delete_original` moves it like `move_events_batch` and refuses recurring events (#226); `undo` of a plain copy deletes the copy (#273)
 - `check_conflicts` — time-overlap detection
 - `create_events_batch` / `move_events_batch` / `delete_events_batch` — batch ops; `move_events_batch` moves in place (keeps recurrence and attendees), takes `span` / `occurrence_dates`, and reports `method` / `id_changed` per event (#226)
 - `find_duplicate_events` — surface duplicates for cleanup
