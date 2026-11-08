@@ -600,7 +600,7 @@ end、notes、location、alarms。
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
    訊息裡「一個場次留在已刪除」與實際還原的是同一個場次（這個順序的 undo 沒有在裝置上跑過）。第 1 場刪掉、第 2 場只改標題的
    形狀同樣走一次。span `this` 帶系列 id：dry run 與實際都回 `occurrence_date` 那一句；
-   **#436 經第一場刪除（session MCP）**：先做一筆可 undo 的建立，再建一個一次性事件與一個第 1 場只改標題的系列；`delete_events_batch` 的 `event_ids` 帶 [系列 id, 一次性事件]、span `all`：dry run 那一列有 `occurrence_id` 與 `undo_note`，實際回應有 `through_first_occurrence` 與 `undo_note`；`undo` 一次只把一次性事件還原、系列不回來。再建一個同形狀的系列，只帶 [系列 id]：第一次 `undo` 要被拒絕並丟棄這筆，第二次 `undo` 才還原最早那筆建立（沒在裝置上跑過）；
+   **#436 經第一場刪除（session MCP）**：先在 session 裡做一筆可 undo 的建立，再用 `--cli` 建一個一次性事件與一個系列、用 `--cli` 只改第 1 場的標題（都不進 session 的 undo stack）；`delete_events_batch` 的 `event_ids` 帶 [系列 id, 一次性事件]、span `all`：dry run 那一列有 `occurrence_id` 與 `undo_note`，實際回應有 `through_first_occurrence` 與 `undo_note`；`undo` 一次只把一次性事件還原、系列不回來。再用 `--cli` 建一個同形狀的系列，只帶 [系列 id]：第一次 `undo` 要被拒絕並丟棄這筆，第二次 `undo` 才還原最早那筆建立（沒在裝置上跑過）；
 7. 超出掃描範圍：開始日超過五年前的每週開放式系列，單獨改最近一場 → 用它的 id 的 `update_event` span `all`、`delete_event`
    span `all`、`delete_events_batch`（含 dry run）：都拒絕、系列不變，訊息是「past what can be listed」；用系列 id 帶 span `all`
    更新 `location` 與 `start_time`，再刪除：都走得通（2026-11-06，2020 年開始的系列）。
