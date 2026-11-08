@@ -1022,7 +1022,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// span `all` get here no more when the first occurrence was edited (#428): they go through
     /// that occurrence. Span `future` and the batch do, and so does a series whose first left is
     /// not edited, which the text's condition leaves out (verify r1: it named only the old routes).
-    private static let editedBeforeWays = "When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it: update_event writes the fields its description lists for such an occurrence, and delete_event deletes every occurrence, which cannot be undone. delete_events_batch by event_ids with span 'all' takes the same route for the series' row, and that row cannot be undone either. Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) nothing else updates or deletes the series as a whole yet. A write from a date on through the series' id has no tested way yet; span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."
+    private static let editedBeforeWays = "When the occurrence that comes first in the series was edited on its own and its start is not later than any other occurrence's original or shown start, update_event and delete_event with span 'all' through the series' id go through it: update_event writes the fields its description lists for such an occurrence, and delete_event deletes every occurrence, which cannot be undone. Otherwise (it starts later than another occurrence, or its identifier does not name it as an occurrence of this series) nothing else updates or deletes the series as a whole yet. A write from a date on through the series' id has no tested way yet; span 'future' through the id of a later occurrence edited on its own takes title, notes, location and recurrence."
 
     static let standInEditedBeforeReason = "This series' first occurrence was deleted or edited on its own, with an occurrence edited on its own before the rest, so this call cannot act on the series as a whole or from a date on. You can delete or update a single occurrence with occurrence_date and span 'this', move the series within its account, or copy one of its occurrences (a copy is a single event, not a series). \(editedBeforeWays)"
     /// #335 item 6: `standInEditedBeforeReason` as a `delete_events_batch` row (and its `dry_run`
@@ -1732,8 +1732,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = try freshEvent(id: id) else {
-                    // #436: as in deleteEventSeries, when the caller named the series' id.
-                    if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {
+                    // #436: as in deleteEventSeries, when the caller named the series' id: through the
+                    // occurrence that comes first, with span future, which reaches every occurrence left.
+                    if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id),
+                       let occurrence = try freshEvent(id: first.id) {
+                        if let refusal = try movedFirstDeleteRefusal(occurrence, id: first.id) {
+                            failures.append((id, refusal))
+                            continue
+                        }
                         let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
@@ -2189,8 +2195,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     try self.eventStore.save(copy, span: .thisEvent)
                     return copy
                 }
-            }, removeSource: {
+            }, sourceIsOccurrence: isSplit, sourceNotCarriedOver: planned.notCarriedOver, removeSource: {
                 try self.eventStore.remove(subject, span: .thisEvent)
+            }, copyRecord: { copy in
+                // An empty identifier is recorded as such; its undo restores the source and says the
+                // copy was not looked up (#466).
+                let copyID = copy.eventIdentifier ?? ""
+                return (copyID, self.postWriteSnapshot(eventID: copyID, saved: copy))
             })
             undo = outcome.undo
             return (outcome.value.eventIdentifier ?? "",
@@ -2972,6 +2983,40 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
+        case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
+            // #466: the source first, through the delete-undo's own code (its calendar check, its
+            // refusals, its new ID in the text); its error is thrown and nothing of the copy touched.
+            // A split's source is one occurrence and goes through the occurrence undo, so #285's slot
+            // check writes nothing when the series holds the slot again; a fallback copy's one-off
+            // through the event undo. A missing calendar is refused in a move's words (round 2).
+            // Then the copy, checked as the undo of a created event checks it (#236), and removed
+            // only when found unchanged; otherwise it stays. Nothing after the restore throws
+            // (`MoveByCopyUndo.run`), so the record is used up once the source is back.
+            // PR #474 round 2: `run` is nonisolated, so the check and the removal are one async
+            // closure formed here: it runs on this actor, and nothing suspends between the check
+            // and the removal (the guard's only await is its access check, before the comparison;
+            // the create-undo arm's order). That excludes this server's other calls, not a change
+            // another process saves in between. A synchronous removal closure called from `run`
+            // after the check ran off the actor.
+            let undone = try await MoveByCopyUndo.run(
+                copyID: copyID,
+                restoreOriginal: {
+                    guard isSplit else { return .written(try await self.undoDeletedEvent(original, kind: .undoMoveByCopy).text) }
+                    let undone = try await self.undoDeletedOccurrence(original, notCarriedOver: notCarriedOver, kind: .undoMoveByCopy)
+                    // Round 3: a held slot recreated nothing, so the copy is kept (`Restore`).
+                    return MoveByCopyUndo.Restore(text: undone.text, outcome: undone.outcome)
+                },
+                checkAndRemove: {
+                    let event = try await self.verifiedEvent(of: .createEvent(id: copyID, title: copy.title, created: copy), verb: .undo)
+                    // Round 3: attendees are not in the #236 compare; a copy that has them now is kept.
+                    guard !event.hasAttendees else { throw MoveByCopyUndo.CopyHasAttendees() }
+                    try MoveByCopyUndo.removing({ try self.removeMoveCopy(event) }, describe: {
+                        EventKitErrorSanitizer.writeFailureLog(handler: "undo.moveByCopy", identifier: copyID, error: $0)
+                    })
+                })
+            markNeedsRefresh()
+            return MoveByCopyUndo.message(restore: undone.restore, title: original.title, copyID: copyID, copy: undone.copy)
+
         case .createReminder(_, let title, _):
             // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:
             // the record is kept and the message names discard_id), as for events since #182;
@@ -3007,6 +3052,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .batch(let ops):
             return try await undoBatch(ops).message
         }
+    }
+
+    /// #466: removes the copy a move by copy made, after its #236 check passed. The check found it
+    /// unchanged, so it has no rules (the copy was saved as a one-off) and span `this` removes it alone.
+    func removeMoveCopy(_ copy: EKEvent) throws {
+        try eventStore.remove(copy, span: .thisEvent)
     }
 
     /// The undo of a batch record: its message, and what the stores of the reminders it recreated
@@ -3091,7 +3142,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
-             .updateRecurringEvent, .moveEvent, .createReminder, .deleteReminder, .updateReminder:
+             .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder:
             // #247: these write nothing on redo. `handleRedo` answers them itself and drops the
             // entry from the redo stack (`CalendarUndoManager.beginRedo`); this is a fallback with
             // the same text, and it writes nothing either.
@@ -3560,6 +3611,9 @@ enum EventKitError: LocalizedError {
             case .moveBack:
                 which = "the move of an event\(named): the calendar it was moved from"
                 loss = "Giving up this undo cannot be reversed; the event stays in the calendar it was moved to"
+            case .undoMoveByCopy:
+                which = "the move of an event\(named): the calendar it was moved from"
+                loss = "Giving up this undo cannot be reversed; the copy the move made stays in the calendar it was moved to, if it is still there"
             }
             let state = hasIdentifier
                 ? "is not available (deleted, or its account turned off or still syncing); it was not found under its recorded identifier"

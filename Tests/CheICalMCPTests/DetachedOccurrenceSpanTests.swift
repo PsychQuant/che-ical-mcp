@@ -981,11 +981,11 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("} catch EventKitError.occurrenceAddressRefused(let reason) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted)) }"), "verify r2: the text says the series' id")
                 XCTAssertTrue(manager.contains("return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)"))
         XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first.id, span: .futureEvents) return .firstEditedOccurrence(id: first.id) }"), "delete")
-        // #436: the batch by event_ids, and its dry run, take the same route.
         XCTAssertTrue(manager.contains("if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids only")
+        XCTAssertTrue(manager.contains("if let refusal = try movedFirstDeleteRefusal(occurrence, id: first.id) { failures.append((id, refusal)) continue }"), "the batch keeps the moved-first refusal")
         XCTAssertTrue(manager.contains("try eventStore.remove(occurrence, span: .futureEvents)"), "the whole series, from the occurrence that comes first")
         let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
-        XCTAssertTrue(preview.contains("if spanAll, let first = try firstEditedOccurrenceID(of: identifier), let occurrence = try freshEvent(id: first.id) { return .deletes(start: occurrence.startDate, end: occurrence.endDate) }"), preview)
+        XCTAssertTrue(preview.contains("if spanAll, let first = try firstEditedOccurrenceID(of: identifier), let occurrence = try freshEvent(id: first.id) { if let refusal = try movedFirstDeleteRefusal(occurrence, id: first.id) { return .refused(refusal) } return .deletes(start: occurrence.startDate, end: occurrence.endDate) }"), preview)
     }
 
     /// Every update route ends here and not at another call, and says no more: each longer version

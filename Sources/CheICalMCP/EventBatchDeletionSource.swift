@@ -62,6 +62,7 @@ extension EventKitManager: EventBatchDeletionSource {
             goneInTheCall: goneInTheCall)?.event else {
             // #436: what the real row does when the series reaches only its first occurrence.
             if spanAll, let first = try firstEditedOccurrenceID(of: identifier), let occurrence = try freshEvent(id: first.id) {
+                if let refusal = try movedFirstDeleteRefusal(occurrence, id: first.id) { return .refused(refusal) }
                 return .deletes(start: occurrence.startDate, end: occurrence.endDate)
             }
             throw notFoundError(id: identifier)
