@@ -531,8 +531,8 @@ final class ManifestParityTests: XCTestCase {
              "Undo of a delete of one occurrence restores it as a one-off event",
              "a deleted occurrence comes back as a one-off event"),
             ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
-             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the scan window",
-             "a series deleted whole comes back from its rules with its exceptions inside the scan window restored"),
+             "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the checked window",
+             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete) restored"),
             ("#261: a single delete_reminder undo names the fields the store holds differently (the batch clause follows)",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
@@ -628,6 +628,27 @@ final class ManifestParityTests: XCTestCase {
     /// none keeps the earlier claim that an occurrence deleted on its own comes back and an edit is
     /// lost, or the "not yet checked" hedge that went with it. The negative checks catch those
     /// phrases only, not every rewording: the positive clauses are the guard.
+    /// #319: the checked window is placed around the delete, and #321: the slot of an occurrence
+    /// is matched by its series and original slot, not by title. Every surface a client reads
+    /// before the undo says both, and none keeps the window "from one day before the first
+    /// occurrence to the end of the rule" (#285), which lay in the past for a long-running series.
+    func testUndoSurfacesPlaceTheWindowAroundTheDeleteAndMatchTheSlotBySeries() throws {
+        let manifestData = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(description.contains("from a year before the delete") || description.contains("around the time of the delete"),
+                          "defineTools() \(name): \(description)")
+            XCTAssertTrue(description.contains("not by title"), "defineTools() \(name) lost the #321 match: \(description)")
+            XCTAssertFalse(description.contains("from one day before the first occurrence to the end of the rule"), "defineTools() \(name)")
+        }
+        let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("around the time of the delete"), summary)
+        XCTAssertTrue(summary.contains("not by title"), summary)
+    }
+
     func testUndoSurfacesSayAWholeSeriesRestoreKeepsItsExceptions() throws {
         let restored = "an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event"
         let window = "exceptions outside that window"

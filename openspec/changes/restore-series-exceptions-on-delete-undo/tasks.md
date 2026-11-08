@@ -47,3 +47,11 @@
 - [x] 9.3 後續項目已開成 issue（不在本 PR 處理）：#319 長期系列的掃描視窗整段在過去（含每次刪除的列舉成本）、#320 沒有 `/RID=` 的來源的編輯場次時段、#321 重複防護以標題與開始時間比對、#322 記錄點與批次成員的 handler 測試縫、#323 批次 undo 文字無法逐系列說明、#324 Google／DST／非台北時區驗證（即 8.3）。
 - [x] 9.5 PR #318 第三輪 verify 修正（FAIL）：視窗成員判斷改半開（起點含、終點不含；EventKit 查詢不回傳開始於終點的事件，實機確認），解決開放式每日系列整個還原失效；一致性檢查也核對 `detached` 時段；擷取只在視窗內找到該系列場次時才有效；工具描述／manifest／`undo_history` 列表補上第一場、移出一年以外、對不上三種限制；文件與過時註解對齊。驗證：`SeriesExceptionsTests`／`SeriesExceptionsRestorerTests` 新增 5 項，mutation check 5 項失敗後還原；實機：開放式每日系列（`window.end` 落在真實場次上）例外正確還原。
 - [x] 9.6 PR #318 第四輪 verify 修正（無 HIGH；MEDIUM 一條為第三輪回歸）：全天事件的 `/RID=` 是浮動日期（牆上日期被當成 UTC，實機 `RID=863049600` = 2028-05-08 00:00 UTC），編輯時段檢查因此對全天系列永遠對不上、整個還原不套用；`ruleSlot` 對全天事件把 RID 重新詮釋為主機時區的當地午夜。manifest／批次描述把『移出一年以外的編輯場次』從『依規則回來』改為『不還原、時段算成已刪除』；spec／docs 的 `undo_history` 引用字串、永久錯誤敘述、擷取為 nil 的原因對齊。驗證：`SeriesExceptionsTests` 新增 2 項（全天 RID、計時事件不變），mutation check 失敗後還原；實機（全天每週系列）見留言。
+
+## 10. #319 與 #321 後續（2026-11-09）
+
+- [x] 10.1 #319：整個系列刪除的檢查視窗改由 `SeriesExceptionsPlanner.deleteWindow` 決定（最長 1460 天、一次查詢；從刪除前一年起算，若第一個場次前一天較晚就從那天起；規則較早結束時往前移，讓視窗結束在規則結束後一天）。`UndoPostState.seriesScanWindow` 不變（create-undo 與 stand-in 掃描仍用它）。還原時，第一個時段只在視窗內才要求被產生。擷取時只為該系列的場次建快照。驗證：`SeriesDeleteWindowTests`、`SeriesExceptionsUndoTests`（舊系列的擷取、只快照自己的場次）、`SeriesExceptionsRestorerTests`（視窗不含第一場）先紅後綠。
+- [x] 10.2 #319：還原訊息以起訖日寫出視窗、說明系列在視窗前後還有場次；`undo_history` 單筆列出起訖日；批次訊息寫出視窗的放置規則。spec 場景「Occurrences outside the checked window」「Delete of a whole series restores its exceptions」「Recorded exceptions do not match」已改。驗證：`SeriesExceptionsTextTests`。
+- [x] 10.3 #321：場次刪除紀錄帶 `OccurrenceOrigin`（系列識別碼與規則時段），系列刪除紀錄帶 `seriesIdentity`；整個系列刪除的 undo 把「紀錄的系列 → 重建的系列」記在 `EventKitManager.seriesRecreations`（記憶體內，與 undo history 同壽命）。重複防護只認該系列或其重建系列在該時段的場次，不比標題；紀錄沒有系列資訊時寫回並說明。以場次自己 id 刪除的編輯場次（finding 22）與 split move 的來源也走同一個防護。驗證：`OccurrenceOriginTests`、`OccurrenceSlotGuardTests`、`SeriesExceptionsUndoTests`、`UndoBatchRestoreTests`、`OccurrenceOriginWiringTests`。
+- [ ] 10.4 實機（重啟後的 session MCP，拋棄式日曆）：見 `.claude/rules/mcp-binary-version-testing.md` 的 #319／#321 release gate。
+
