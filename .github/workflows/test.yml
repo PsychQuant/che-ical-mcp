@@ -79,6 +79,12 @@ jobs:
         # tags and creation dates must not decide it. Throwaway git repositories, no build.
         run: bash scripts/tests/verify-release-ready-test.sh
 
+      - name: plugin wrapper sidecar tests
+        # #483: the sidecar records the release actually installed (not the pin), and a
+        # sidecar that disagrees with the binary's --version does not stop the download.
+        # curl is stubbed and HOME is a temp dir; no network, no build. Seconds.
+        run: bash scripts/tests/plugin-wrapper-test.sh
+
       - name: swift build
         run: swift build
 
