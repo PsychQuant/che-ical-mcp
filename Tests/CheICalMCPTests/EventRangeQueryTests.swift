@@ -574,9 +574,9 @@ final class EventRangeQueryTests: XCTestCase {
     /// #322 (PR #400 verify round 1): `SeriesExceptionsStoreSource.events(in:inCalendarOf:)` runs
     /// one EventKit query over whatever range it is given, so the allow-list above would admit a
     /// caller range through it. Its only callers are the two in `SeriesExceptionsUndo`, and each
-    /// passes a bounded form: a listing range of the series' scan window
+    /// passes a bounded form: a listing range of the series' delete window
     /// (`SeriesExceptionsPlanner.listingRanges(for:)`: the window, at most 1460 days, and 366 days on
-    /// each side) or the recorded window (`exceptions.window`, a scan window). A new caller, or a
+    /// each side; #319) or the recorded window (`exceptions.window`, a delete window). A new caller, or a
     /// caller passing another range, fails here.
     func testTheExceptionsRangePrimitiveOnlyGetsTheBoundedWindows() throws {
         // PR #400 verify round 2: every `inCalendarOf:` label in Sources is enumerated (comments and
@@ -612,13 +612,13 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertEqual(calls.sorted(), [
             "SeriesExceptionsUndo.swift: exceptions.window,",
             "SeriesExceptionsUndo.swift: range,",
-        ], "a listing range of the scan window, or the recorded window")
+        ], "a listing range of the delete window, or the recorded window")
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in SeriesExceptionsPlanner\.listingRanges\(for: window\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: capture).count, 1,
                        "the capture's range is a listing range of the series' delete window")
         // #319: the delete window, one query long (`SeriesDeleteWindowTests.testNoWindowIsLongerThanOneQuery`).
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), ruleEnd: store\.ruleEnd\(of: series\),\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), end: store\.seriesEnd\(of: series\),\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
     }
 
     /// `delete_events_batch` by date range takes its range from `deletionRange`, checks the size,

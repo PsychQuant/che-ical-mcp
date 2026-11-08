@@ -19,9 +19,10 @@ protocol SeriesExceptionsStoreSource {
     func identifiers(of event: Event) -> UndoPostState.OccurrenceIDs
     /// Whether the event has a calendar (a series without one is not listed or restored).
     func hasCalendar(_ event: Event) -> Bool
-    /// #319: the end of a series' rules (`UndoPostState.seriesRuleEnd(of:)`): nil for an open-ended
-    /// or count-based rule. With the series' start it places `SeriesExceptionsPlanner.deleteWindow`.
-    func ruleEnd(of series: Event) -> Date?
+    /// #319: how a series' rules end (`SeriesExceptionsPlanner.seriesEnd`): open, by end date, by a
+    /// count's last possible slot, or unknown. With the series' start it places
+    /// `SeriesExceptionsPlanner.deleteWindow`.
+    func seriesEnd(of series: Event) -> SeriesExceptionsPlanner.SeriesEnd
     func startDate(of event: Event) -> Date
     /// The slot the rules gave an occurrence: its `occurrenceDate`, else its start.
     func slot(of occurrence: Event) -> Date
@@ -99,7 +100,11 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func hasCalendar(_ event: EKEvent) -> Bool { event.calendar != nil }
 
-    func ruleEnd(of series: EKEvent) -> Date? { UndoPostState.seriesRuleEnd(of: series) }
+    func seriesEnd(of series: EKEvent) -> SeriesExceptionsPlanner.SeriesEnd {
+        // In the event's zone, where the rule runs (as `DetachedOccurrenceSpan.coversWholeSeries`' callers read it).
+        SeriesExceptionsPlanner.seriesEnd(rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
+                                          firstStart: series.startDate, calendar: Foundation.Calendar.gregorian(in: series.timeZone ?? .current))
+    }
 
     func startDate(of event: EKEvent) -> Date { event.startDate }
 

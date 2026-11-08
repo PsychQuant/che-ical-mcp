@@ -18,6 +18,8 @@ struct SeriesExceptions {
     /// #319: the series has, or may have, occurrences after `window` (open-ended, count-based, or a
     /// rule that ends later), which come back from the rules alone.
     var seriesContinuesAfterWindow: Bool = false
+    /// #319 r1: the series may have occurrences after `window` (see `DeleteWindow`).
+    var seriesMayContinueAfterWindow: Bool = false
 }
 
 /// An occurrence edited on its own: undo recreates it as a one-off event (EventKit cannot put an
@@ -37,32 +39,84 @@ enum SeriesExceptionsPlanner {
         let window: DateInterval
         let seriesStartsBefore: Bool
         let seriesContinuesAfter: Bool
+        /// #319 r1: the series may have occurrences after the window (a count bound past it, or a
+        /// count whose end cannot be shown); false when `seriesContinuesAfter`.
+        var seriesMayContinueAfter: Bool = false
+    }
+
+    /// #319 r1: how a series ends, as far as its rules show.
+    enum SeriesEnd: Equatable {
+        /// An open-ended rule: the series goes on.
+        case open
+        /// Every rule has an end date; the latest.
+        case endsAt(Date)
+        /// A count rule (with or without end dates beside it): the latest slot it can reach
+        /// (`DetachedOccurrenceSpan.lastPossibleSlot`), an upper bound.
+        case endsBy(Date)
+        /// A count rule whose end cannot be shown (a filter, a day after the 28th).
+        case unknown
+    }
+
+    /// How `rules` end, from `firstStart` (`calendar` in the event's zone): any open-ended rule
+    /// makes the series open; else any count whose end cannot be shown makes it unknown; else the
+    /// latest of the end dates and the counts' last possible slots
+    /// (`DetachedOccurrenceSpan.lastPossibleSlot`, an upper bound), `endsBy` when a count is among
+    /// them. Before PR #494 round 1 a count was read as open-ended (`UndoPostState.seriesRuleEnd`),
+    /// which placed the window of a count series that ended long ago after its last occurrence.
+    static func seriesEnd(rules: [DetachedOccurrenceSpan.RuleExtent], firstStart: Date, calendar: Calendar) -> SeriesEnd {
+        guard !rules.isEmpty else { return .open }
+        if rules.contains(where: { $0.endDate == nil && $0.occurrenceCount <= 0 }) { return .open }
+        var latest: Date?
+        var counted = false
+        for rule in rules {
+            guard let last = DetachedOccurrenceSpan.lastPossibleSlot(of: rule, firstStart: firstStart, calendar: calendar) else { return .unknown }
+            if rule.endDate == nil { counted = true }
+            latest = latest.map { max($0, last) } ?? last
+        }
+        guard let latest else { return .open }
+        return counted ? .endsBy(latest) : .endsAt(latest)
     }
 
     /// #319: the window of a whole-series delete. It is one EventKit query long (1460 days), as
-    /// the restore lists it in one query, and placed around the time of the delete: from a year
-    /// before the delete, or from one day before the series' first occurrence when that is later,
-    /// and moved earlier when the rule ends sooner, so that it ends one day after the rule's end.
-    /// A series that ended long before the delete is so listed over its last four years.
+    /// the restore lists it in one query, and placed around the time of the delete: from three
+    /// years (1094 days) before the delete, or from one day before the series' first occurrence
+    /// when that is later, and moved earlier when the rule ends sooner, so that it ends one day
+    /// after the rule's end (a count's last possible slot). It so reaches at least a year past the
+    /// delete; a series begun within about three years of the delete gets the window it had
+    /// before #319, and a series that ended long before the delete is listed over its last four years.
     ///
     /// Before #319 this was the create-undo window (`UndoPostState.seriesScanWindow`, #259),
     /// anchored at the first occurrence; for a series begun more than about four years before the
-    /// delete it lay entirely in the past, so the exceptions that mattered were never listed. A
-    /// series begun less than a year before the delete still gets exactly that window. The
-    /// create-undo window is unchanged: a series it checks was just created.
-    static func deleteWindow(firstStart: Date, ruleEnd: Date?, deletedAt: Date) -> DeleteWindow {
+    /// delete it lay entirely in the past, so the exceptions that mattered were never listed. The
+    /// create-undo window is unchanged: a series it checks was just created. PR #494 round 1: the
+    /// look-back was one year, which lost the older exceptions of a series begun one to four years
+    /// before the delete that the old window held.
+    static func deleteWindow(firstStart: Date, end: SeriesEnd, deletedAt: Date) -> DeleteWindow {
         let day: TimeInterval = 86_400
         let length = 1460 * day
         let fromFirst = firstStart.addingTimeInterval(-day)
-        let ruleLimit = ruleEnd.map { $0.addingTimeInterval(day) }
-        var anchor = deletedAt.addingTimeInterval(-366 * day)
+        let ruleLimit: Date?
+        switch end {
+        case .endsAt(let date), .endsBy(let date): ruleLimit = date.addingTimeInterval(day)
+        case .open, .unknown: ruleLimit = nil
+        }
+        var anchor = deletedAt.addingTimeInterval(-1094 * day)
         if let ruleLimit { anchor = min(anchor, ruleLimit.addingTimeInterval(-length)) }
         let start = max(fromFirst, anchor)
         let cap = start.addingTimeInterval(length)
-        let end = max(start, ruleLimit.map { min($0, cap) } ?? cap)
-        return DeleteWindow(window: DateInterval(start: start, end: end),
-                            seriesStartsBefore: start.timeIntervalSince(fromFirst) >= 1,
-                            seriesContinuesAfter: ruleLimit.map { $0.timeIntervalSince(end) >= 1 } ?? true)
+        let windowEnd = max(start, ruleLimit.map { min($0, cap) } ?? cap)
+        let past = ruleLimit.map { $0.timeIntervalSince(windowEnd) >= 1 } ?? false
+        let continues: Bool, may: Bool
+        switch end {
+        case .open: (continues, may) = (true, false)
+        case .unknown: (continues, may) = (false, true)
+        case .endsAt: (continues, may) = (past, false)
+        case .endsBy: (continues, may) = (false, past)
+        }
+        // Round 1 (LOW): occurrences before the window are those before the first occurrence.
+        return DeleteWindow(window: DateInterval(start: start, end: windowEnd),
+                            seriesStartsBefore: start.timeIntervalSince(firstStart) >= 1,
+                            seriesContinuesAfter: continues, seriesMayContinueAfter: may)
     }
 
     /// One occurrence as the enumeration of the series' window reports it.
@@ -232,7 +286,7 @@ enum SeriesExceptionsRestorer {
         let generatedSlots = generated.map(\.slot)
         func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
         // #319: the window may start after the series' first occurrence (a series begun more than a
-        // year before the delete), where the listing cannot show it; it is required only inside.
+        // few years before the delete), where the listing cannot show it; it is required only inside.
         let firstSlotChecked = SeriesExceptionsPlanner.inWindow(seriesStart, exceptions.window)
         guard !firstSlotChecked || isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
               exceptions.detached.allSatisfy({ isGenerated($0.slot) }) else {
@@ -303,17 +357,21 @@ enum SeriesExceptionsRestorer {
 struct OccurrenceOrigin: Equatable {
     let series: UndoPostState.OccurrenceIDs
     let slot: Date
+    /// #321 r1: the occurrence was edited on its own before its delete (detached, or a `/RID=`
+    /// identifier): a series that holds its slot holds it without that edit.
+    var edited: Bool = false
 
     /// From an occurrence's identifiers: the series is the part before a `/RID=` suffix
     /// (`DetachedOccurrenceSpan.seriesIdentifier`), the slot the rule slot (`UndoPostState.ruleSlot`:
     /// the RID when there is one, otherwise `occurrenceDate`). Nil without either: nothing ties the
     /// occurrence to its series, and the guard cannot decide.
     static func of(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
-                   zone: TimeZone = .current) -> OccurrenceOrigin? {
+                   isDetached: Bool = false, zone: TimeZone = .current) -> OccurrenceOrigin? {
         guard let series = seriesIDs(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
               let slot = UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
                                                 occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) else { return nil }
-        return OccurrenceOrigin(series: series, slot: slot)
+        let rid = UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier, occurrenceDate: nil)
+        return OccurrenceOrigin(series: series, slot: slot, edited: isDetached || rid != nil)
     }
 
     /// The identifiers of the series an occurrence belongs to: each without its `/RID=` suffix.

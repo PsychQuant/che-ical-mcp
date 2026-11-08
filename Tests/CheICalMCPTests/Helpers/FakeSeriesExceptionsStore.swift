@@ -45,8 +45,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     private(set) var refreshMarks = 0
     /// The slots a series saved into this store generates (its own start first).
     var seriesSlots: [Date] = []
-    /// #319: `ruleEnd(of:)` of every series (nil: open-ended).
-    var ruleEnd: Date?
+    /// #319: `seriesEnd(of:)` of every series.
+    var seriesEnd: SeriesExceptionsPlanner.SeriesEnd = .open
     /// #319: how many occurrences `observed(_:)` built a snapshot for.
     private(set) var observedCount = 0
     /// Saves of events with these titles throw (after taking an identifier, as a save that may have
@@ -83,7 +83,7 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func hasCalendar(_ event: Event) -> Bool { event.calendar != nil }
 
-    func ruleEnd(of series: Event) -> Date? { ruleEnd }
+    func seriesEnd(of series: Event) -> SeriesExceptionsPlanner.SeriesEnd { seriesEnd }
 
     func startDate(of event: Event) -> Date { event.start }
 

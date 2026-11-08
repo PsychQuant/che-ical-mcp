@@ -14,6 +14,9 @@ enum UndoEventOutcome: Sendable, Equatable {
     case occurrenceOneOff(notCarriedOver: [String])
     /// A deleted occurrence whose slot its series already held: nothing was written (#285).
     case occurrenceAlreadyHeld
+    /// #321 r1: the same for an occurrence edited on its own before its delete: the series holds
+    /// its slot as its rules give it, so the edit did not come back.
+    case editedOccurrenceAlreadyHeld
 }
 
 extension UndoOperation {
@@ -29,11 +32,19 @@ extension UndoOperation {
         if alarmsMoved {
             notes.append("Not carried over: absolute_alarms (an absolute-date alarm of a series is now an alarm at its restored occurrence's start)")
         }
-        let held = events.filter { $0 == .occurrenceAlreadyHeld }.count
+        let editedHeld = events.filter { $0 == .editedOccurrenceAlreadyHeld }.count
+        let held = events.filter { $0 == .occurrenceAlreadyHeld }.count + editedHeld
         if held > 0 {
-            notes.append(held == 1
+            var note = held == 1
                 ? "1 deleted occurrence was already restored by its series, so nothing was written for it"
-                : "\(held) deleted occurrences were already restored by their series, so nothing was written for them")
+                : "\(held) deleted occurrences were already restored by their series, so nothing was written for them"
+            // PR #494 round 1: an edited one is held as the rules give it; its edit did not come back.
+            if editedHeld > 0 {
+                note += editedHeld == 1
+                    ? "; 1 of them had been edited on its own, and its series holds it as its rules give it, so that edit did not come back"
+                    : "; \(editedHeld) of them had been edited on their own, and their series hold them as their rules give them, so those edits did not come back"
+            }
+            notes.append(note)
         }
         let fromRules = events.filter { $0 == .seriesFromRules }.count
         if fromRules == 1 { notes.append(seriesRulesRestoreNote) }

@@ -24,7 +24,7 @@ enum MoveByCopyUndo {
 
         /// From the occurrence or event undo's text and outcome.
         init(text: String, outcome: UndoEventOutcome?) {
-            self = outcome == .occurrenceAlreadyHeld ? .slotAlreadyHeld : .written(text)
+            self = outcome == .occurrenceAlreadyHeld || outcome == .editedOccurrenceAlreadyHeld ? .slotAlreadyHeld : .written(text)
         }
     }
 

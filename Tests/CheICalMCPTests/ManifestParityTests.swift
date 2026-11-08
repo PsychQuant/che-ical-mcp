@@ -639,7 +639,7 @@ final class ManifestParityTests: XCTestCase {
         let declared = CheICalMCPServer.defineTools()
         for name in ["delete_event", "delete_events_batch", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
-            XCTAssertTrue(description.contains("from a year before the delete") || description.contains("around the time of the delete"),
+            XCTAssertTrue(description.contains("from three years before the delete") || description.contains("around the time of the delete"),
                           "defineTools() \(name): \(description)")
             XCTAssertTrue(description.contains("not by title"), "defineTools() \(name) lost the #321 match: \(description)")
             XCTAssertFalse(description.contains("from one day before the first occurrence to the end of the rule"), "defineTools() \(name)")

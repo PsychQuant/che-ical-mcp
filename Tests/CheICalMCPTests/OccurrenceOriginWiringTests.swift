@@ -14,7 +14,7 @@ final class OccurrenceOriginWiringTests: XCTestCase {
     func testTheDeleteSnapshotsCarryTheOriginAndTheSeriesIdentity() throws {
         let source = try SourcePins.source("EventKit/DeleteUndo.swift")
         let initBody = try XCTUnwrap(SourcePins.body(of: "init(series: EKEvent, removed: EKEvent, span: EKSpan = .thisEvent", in: source))
-        XCTAssertEqual(count(".withOccurrenceOrigin(hadRules || isDetached ? OccurrenceOrigin.of(removed) : nil)", in: initBody), 1)
+        XCTAssertEqual(count("occurrence = hadRules || isDetached ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed)) : removedSnapshot", in: initBody), 1)
         XCTAssertEqual(count(".withSeriesIdentity(hadRules ? OccurrenceOrigin.seriesIDs(of: series) : nil)", in: initBody), 1)
     }
 
@@ -25,14 +25,16 @@ final class OccurrenceOriginWiringTests: XCTestCase {
         let source = try SourcePins.source("EventKit/DeleteUndo.swift")
         let body = try XCTUnwrap(SourcePins.body(of: "static func recordingSeriesDelete(of event: EKEvent", in: source))
         XCTAssertEqual(count(".withSeriesIdentity(event.hasRecurrenceRules ? OccurrenceOrigin.seriesIDs(of: event) : nil)", in: body), 1)
-        XCTAssertEqual(count(".withOccurrenceOrigin(!event.hasRecurrenceRules && event.isDetached ? OccurrenceOrigin.of(event) : nil)", in: body), 1)
+        XCTAssertEqual(count("return !event.hasRecurrenceRules && event.isDetached ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event)) : snapshot", in: body), 1)
     }
 
     /// A move that split one occurrence out records its origin, so its undo's slot check (#466 runs
     /// it through the occurrence undo) is the same as an occurrence delete's.
     func testASplitMoveRecordsTheOccurrencesOrigin() throws {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
-        XCTAssertEqual(count(".withOccurrenceOrigin(isSplit ? OccurrenceOrigin.of(subject) : nil)", in: SourcePins.code(source)), 1)
+        XCTAssertEqual(count("let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject)) : copied", in: SourcePins.code(source)), 1)
+        XCTAssertEqual(count("isDetached: occurrence.isDetached)", in: SourcePins.code(try SourcePins.source("EventKit/DeleteUndo.swift"))), 1,
+                       "the origin says whether the occurrence was edited")
     }
 
     /// The production store notes and reads recreations on the manager's own log, and builds its

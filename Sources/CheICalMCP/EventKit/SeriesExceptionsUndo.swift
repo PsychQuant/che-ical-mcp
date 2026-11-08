@@ -16,7 +16,7 @@ enum SeriesExceptionsUndo {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
-        let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), ruleEnd: store.ruleEnd(of: series),
+        let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: store.seriesEnd(of: series),
                                                           deletedAt: now)
         let window = placed.window
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
@@ -36,6 +36,7 @@ enum SeriesExceptionsUndo {
         guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
         exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
+        exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
         return exceptions
     }
 
@@ -130,6 +131,14 @@ enum SeriesExceptionsUndo {
                                    by: store.slotHolders(at: origin.slot, length: length, in: calendar))
     }
 
+    /// The answer when the series holds the slot: an occurrence edited on its own before its delete
+    /// is held as the rules give it, so its text and outcome say its edit did not come back
+    /// (PR #494 round 1).
+    private static func held(_ snapshot: EventSnapshot, _ origin: OccurrenceOrigin) -> (text: String, outcome: UndoEventOutcome) {
+        (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title, edited: origin.edited),
+         origin.edited ? .editedOccurrenceAlreadyHeld : .occurrenceAlreadyHeld)
+    }
+
     /// The length the slot is listed for: the occurrence's own (an edited one may be shorter than
     /// the series'; an event that overlaps the slot's first minute is listed either way).
     private static func slotLength(of snapshot: EventSnapshot) -> TimeInterval {
@@ -154,7 +163,7 @@ enum SeriesExceptionsUndo {
                                                                     in store: Store) throws -> (text: String, outcome: UndoEventOutcome?) {
         if !snapshot.restoresFromRules, let origin = snapshot.occurrenceOrigin,
            seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {
-            return (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title), .occurrenceAlreadyHeld)
+            return held(snapshot, origin)
         }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
@@ -167,8 +176,12 @@ enum SeriesExceptionsUndo {
         if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {
             store.noteRecreation(of: recorded, as: store.identifiers(of: event))
         }
-        let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+        var text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                       exceptionsOutcome: outcome)
+        // PR #494 round 1: an occurrence's record that could not name its series says so, as `.deleteOccurrence` does.
+        if !snapshot.restoresFromRules, snapshot.isOccurrenceRecord, snapshot.occurrenceOrigin == nil {
+            text += ". " + UndoOperation.occurrenceSlotUncheckedNote
+        }
         guard snapshot.restoresFromRules else { return (text, nil) }
         return (text, outcome.map(UndoEventOutcome.seriesWithExceptions) ?? .seriesFromRules)
     }
@@ -187,7 +200,7 @@ enum SeriesExceptionsUndo {
                                                                          calendar: Store.Calendar, in store: Store) throws -> (text: String, outcome: UndoEventOutcome) {
         if let origin = snapshot.occurrenceOrigin,
            seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {
-            return (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title), .occurrenceAlreadyHeld)
+            return held(snapshot, origin)
         }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)

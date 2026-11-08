@@ -98,4 +98,12 @@ final class OccurrenceOriginTests: XCTestCase {
         log.note(ids("", ""), recreatedAs: ids("S2"))
         XCTAssertEqual(log.recreations(of: ids("", "")), [])
     }
+
+    /// PR #494 round 1: the origin says whether the occurrence had been edited on its own.
+    func testTheOriginSaysWhetherTheOccurrenceWasEdited() throws {
+        XCTAssertFalse(try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: slot, isAllDay: false)).edited)
+        XCTAssertTrue(try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid, externalIdentifier: nil, occurrenceDate: slot, isAllDay: false)).edited)
+        XCTAssertTrue(try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: slot, isAllDay: false,
+                                                        isDetached: true)).edited)
+    }
 }

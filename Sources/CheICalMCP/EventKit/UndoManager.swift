@@ -114,6 +114,9 @@ struct EventSnapshot {
     /// undo compares (`OccurrenceSlotGuard`). Nil for every other snapshot, and when the occurrence
     /// had no identifier or slot (its undo then writes the one-off). Set through `withOccurrenceOrigin`.
     private(set) var occurrenceOrigin: OccurrenceOrigin? = nil
+    /// PR #494 round 1: this snapshot is of one occurrence of a series (set with its origin, which
+    /// may be nil), so a rule-less `.deleteEvent` of it is told from a one-off event's.
+    private(set) var isOccurrenceRecord = false
     /// #321: for the snapshot of a series deleted whole, the series' identifiers, under which its
     /// undo notes the series it recreates (`SeriesRecreations`). Set through `withSeriesIdentity`.
     private(set) var seriesIdentity: UndoPostState.OccurrenceIDs? = nil
@@ -125,10 +128,13 @@ struct EventSnapshot {
         return copy
     }
 
-    /// A copy of this snapshot carrying `origin` (#321); this one is unchanged.
+    /// A copy of this snapshot recorded as one occurrence of a series, carrying `origin` (#321;
+    /// nil when no identifier or slot could be read); this one is unchanged. Called only for an
+    /// occurrence's snapshot.
     func withOccurrenceOrigin(_ origin: OccurrenceOrigin?) -> EventSnapshot {
         var copy = self
         copy.occurrenceOrigin = origin
+        copy.isOccurrenceRecord = true
         return copy
     }
 
@@ -460,7 +466,7 @@ enum UndoOperation {
             if snapshot.restoresFromRules {
                 // #319: a single record names its window by its days.
                 restore = snapshot.exceptions.map {
-                    " (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowDays($0.window))): \(UndoOperation.seriesExceptionsListingNote))"
+                    " (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowRange($0.window))): \(UndoOperation.seriesExceptionsListingNote))"
                 } ?? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
             }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"

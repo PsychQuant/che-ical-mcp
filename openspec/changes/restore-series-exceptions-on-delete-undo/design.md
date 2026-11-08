@@ -38,7 +38,7 @@
 
 在 `EventSnapshot` 加一個選用欄位 `exceptions: SeriesExceptions?`（init 參數預設 `nil`，既有呼叫點不必改）。`SeriesExceptions` 是純值型別：
 
-- `window: DateInterval`：掃描視窗，沿用 `UndoPostState.seriesScanWindow(firstStart:ruleEnd:)`；
+- `window: DateInterval`：檢查視窗。原本沿用 `UndoPostState.seriesScanWindow(firstStart:ruleEnd:)`（從第一個場次前一天起，最長 1460 天）；#319 起改為 `SeriesExceptionsPlanner.deleteWindow`：長度不變，但放在刪除時間附近（從刪除前三年起，若第一個場次前一天較晚就從那天起；規則較早結束時往前移，讓視窗結束在規則結束後一天，以次數結束的規則取其最晚可能的時段）。原本的視窗對多年前開始的系列整段落在過去。`seriesScanWindow` 本身不變，create-undo 與 stand-in 掃描仍用它；
 - `keptSlots: [Date]`：視窗內、刪除前存在且**未分離**的場次的時段；
 - `detached: [DetachedOccurrence]`：視窗內每個 detached 場次，含一份去掉規則的一次性 `EventSnapshot` 與它的原始時段（`UndoPostState.originalSlot`，即 `/RID=`）。
 
@@ -70,7 +70,7 @@
 
 ### 重複防護：時段已被系列場次佔用就不寫入
 
-`.deleteOccurrence` 分支寫入一次性事件前，在快照的日曆內查找同一時段（`sameInstant` 的開始時間）、同標題、且 `hasRecurrenceRules` 的事件；有就**不寫入**，訊息說明「該場次已由系列還原」，紀錄照常用掉（這次 undo 的結果就是「已經在了」，不是失敗）。判斷依據是時間與標題，極少數情況（同日曆、同時段、同標題的另一個重複事件）可能誤判，這個限制寫在訊息之外的 spec 場景裡。
+`.deleteOccurrence` 分支寫入一次性事件前，在快照的日曆內查找同一時段的場次；有就**不寫入**，訊息說明「該場次已由系列還原」，紀錄照常用掉（這次 undo 的結果就是「已經在了」，不是失敗）。最初的判斷依據是時間與標題（同時段、同標題、`hasRecurrenceRules`），會被同日曆、同時段、同標題的另一個系列誤判。#321 起改為系列身分：紀錄帶該場次所屬系列的識別碼與規則時段（`OccurrenceOrigin`），整個系列刪除的 undo 把「紀錄的系列 → 重建的系列」記在記憶體裡（`SeriesRecreations`），只有該系列或其重建系列在該規則時段的場次才算佔用，不比標題；紀錄沒有系列資訊時寫回並說明沒能檢查。單獨編輯過的場次被佔用時，訊息說明它的編輯沒有回來。以場次自己 id 刪除的編輯場次（rule-less `.deleteEvent`）與 split move 的來源走同一個防護。
 
 ### 揭露：訊息與說明如實反映視窗
 
@@ -134,4 +134,4 @@
 - **尾端刪除已驗證（task 1.1，2026-10-12，iCloud）。** 刪最後一場後規則 `count` 從 4 變成 3，列出 3 場；刪中間一場則規則維持 4、列出 3 場。所以尾端刪除由規則攜帶、快照本來就有，差集（展開結果減 `keptSlots`）不會多排除；只有中間刪除成為規則之外的例外。
 - **擷取時的狀態是快照。** 刪除之後別處造成的例外不在其中；undo 與刪除之間隔多久都一樣。
 - **寫入量。** 一次 undo 可能做 N 次排除加 M 次建立，都在一次 undo 呼叫內；補償與批次語意（#248）已涵蓋失敗，但成功路徑的耗時隨例外數增加。
-- **重複防護是啟發式。** 以時間、標題與「是重複事件」判斷佔用，極少數情況可能誤判。
+- **重複防護只認本行程記得的重建。** #321 起以系列識別碼與規則時段判斷佔用；在行事曆裡手動重建的系列、還原例外失敗且補償刪除也失敗而留下的系列（`rollbackFailed`）、以及之後被搬移而換了 id 的系列，都不會被認出，場次會寫在旁邊（看得到的重複，不是遺失）。

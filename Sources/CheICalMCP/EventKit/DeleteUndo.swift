@@ -96,8 +96,8 @@ struct DeletedEventSnapshots {
         // A one-off, or a detached occurrence by its own identifier, keeps its own (as a move does).
         let alarms = EventKitManager.copyOutAlarms(of: removed, isSplit: hadRules)
         // #321: the occurrence is tied to its series and rule slot, which its undo's guard compares.
-        occurrence = EventSnapshot(from: removed, includeRecurrence: false, alarms: alarms.alarms)
-            .withOccurrenceOrigin(hadRules || isDetached ? OccurrenceOrigin.of(removed) : nil)
+        let removedSnapshot = EventSnapshot(from: removed, includeRecurrence: false, alarms: alarms.alarms)
+        occurrence = hadRules || isDetached ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed)) : removedSnapshot
         occurrenceNotCarriedOver = alarms.notCarriedOver
     }
 
@@ -127,9 +127,9 @@ extension EventSnapshot {
     /// addressed by its own identifier (no rules of its own on iCloud), carries its origin, so its
     /// undo is guarded like an occurrence's (PR #318 round 3, finding 22).
     static func recordingSeriesDelete(of event: EKEvent, capture: () -> SeriesExceptions?) -> EventSnapshot {
-        EventSnapshot(from: event).withExceptions(event.hasRecurrenceRules ? capture() : nil)
+        let snapshot = EventSnapshot(from: event).withExceptions(event.hasRecurrenceRules ? capture() : nil)
             .withSeriesIdentity(event.hasRecurrenceRules ? OccurrenceOrigin.seriesIDs(of: event) : nil)
-            .withOccurrenceOrigin(!event.hasRecurrenceRules && event.isDetached ? OccurrenceOrigin.of(event) : nil)
+        return !event.hasRecurrenceRules && event.isDetached ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event)) : snapshot
     }
 }
 
@@ -137,7 +137,7 @@ extension OccurrenceOrigin {
     /// #321: the origin of `occurrence` as EventKit reads it (`of(eventIdentifier:...)`).
     static func of(_ occurrence: EKEvent) -> OccurrenceOrigin? {
         of(eventIdentifier: occurrence.eventIdentifier, externalIdentifier: occurrence.calendarItemExternalIdentifier,
-           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay)
+           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay, isDetached: occurrence.isDetached)
     }
 
     /// #321: the identifiers of the series `event` is, or belongs to (`seriesIDs(eventIdentifier:...)`).
@@ -192,8 +192,14 @@ extension UndoOperation {
 
     /// #285: the undo of an occurrence delete found its slot already held by the recreated series
     /// and wrote nothing. Success: the occurrence is back, and a second copy would be wrong.
-    static func occurrenceAlreadyRestoredMessage(title: String) -> String {
-        "Undone: the deleted occurrence of '\(undoVisibleTitle(title))' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)"
+    /// PR #494 round 1: `edited`, the occurrence had been edited on its own before its delete. The
+    /// series holds its slot as the rules give it, so its edit did not come back; the text says so
+    /// rather than that the occurrence is restored.
+    static func occurrenceAlreadyRestoredMessage(title: String, edited: Bool = false) -> String {
+        if edited {
+            return "Undone: nothing was written for the deleted occurrence of '\(undoVisibleTitle(title))': its restored series already holds that occurrence's slot (a one-off event beside it would have been a duplicate). The occurrence had been edited on its own before it was deleted, and the series holds it as its rules give it, so its own edit did not come back"
+        }
+        return "Undone: the deleted occurrence of '\(undoVisibleTitle(title))' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)"
     }
 
     /// Verify round 3, findings 3/7/9 (#285): a recurring event comes back from the rules in its
@@ -241,12 +247,30 @@ extension UndoOperation {
     }
 
     /// #319: how the checked window is placed, in the words every text uses.
-    static let seriesExceptionsWindowRule = "at most four years, from a year before the delete, or from the first occurrence when that is later, moved earlier for a rule that ends sooner"
+    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner"
 
-    /// #319: the window's first and last day, in the host zone (its end is exclusive).
-    static func windowDays(_ window: DateInterval) -> String {
-        let last = max(window.start, window.end.addingTimeInterval(-1))
-        return "\(EventKitManager.formatExclusionDay(window.start, timezone: nil)) to \(EventKitManager.formatExclusionDay(last, timezone: nil))"
+    /// #319: the window by its two instants, to the minute, in the host zone; the end is exclusive.
+    /// PR #494 round 1: by instants, not days: the edges fall at the time of day of the delete or of
+    /// the first occurrence, so a first or last day named alone was only partly checked.
+    static func windowRange(_ window: DateInterval) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return "from \(formatter.string(from: window.start)) up to \(formatter.string(from: window.end))"
+    }
+
+    /// #319: on which side(s) the series has, or may have, occurrences outside its window; nil when
+    /// it has none.
+    static func outsideWindowNote(_ exceptions: SeriesExceptions) -> String? {
+        let before = exceptions.seriesStartsBeforeWindow
+        switch (before, exceptions.seriesContinuesAfterWindow, exceptions.seriesMayContinueAfterWindow) {
+        case (true, true, _): return "This series has occurrences outside that window, before and after it"
+        case (false, true, _): return "This series has occurrences outside that window, after it"
+        case (true, false, true): return "This series has occurrences before that window and may have occurrences after it"
+        case (false, false, true): return "This series may have occurrences after that window"
+        case (true, false, false): return "This series has occurrences outside that window, before it"
+        case (false, false, false): return nil
+        }
     }
 
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
@@ -256,13 +280,9 @@ extension UndoOperation {
         if outcome.notApplied {
             return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
         }
-        let window = exceptions.map { "\(windowDays($0.window)); \(seriesExceptionsWindowRule)" } ?? seriesExceptionsWindowRule
+        let window = exceptions.map { "\(windowRange($0.window)); \(seriesExceptionsWindowRule)" } ?? seriesExceptionsWindowRule
         var note = "Restored from the series rules with its exceptions inside the checked window: \(outcome.stayedDeleted) occurrence(s) deleted on their own earlier stayed deleted, \(outcome.oneOffs) occurrence(s) edited on their own came back as separate one-off events that no longer belong to the series. Exceptions outside the checked window (\(window)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
-        if let exceptions, exceptions.seriesStartsBeforeWindow || exceptions.seriesContinuesAfterWindow {
-            let sides = exceptions.seriesStartsBeforeWindow && exceptions.seriesContinuesAfterWindow ? "before and after it"
-                : exceptions.seriesStartsBeforeWindow ? "before it" : "after it"
-            note += ". This series has occurrences outside that window, \(sides)"
-        }
+        if let outside = exceptions.flatMap(outsideWindowNote) { note += ". " + outside }
         if outcome.firstOccurrenceKeptFromRule {
             note += ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
         }

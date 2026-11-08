@@ -50,7 +50,7 @@
 
 ## 10. #319 與 #321 後續（2026-11-09）
 
-- [x] 10.1 #319：整個系列刪除的檢查視窗改由 `SeriesExceptionsPlanner.deleteWindow` 決定（最長 1460 天、一次查詢；從刪除前一年起算，若第一個場次前一天較晚就從那天起；規則較早結束時往前移，讓視窗結束在規則結束後一天）。`UndoPostState.seriesScanWindow` 不變（create-undo 與 stand-in 掃描仍用它）。還原時，第一個時段只在視窗內才要求被產生。擷取時只為該系列的場次建快照。驗證：`SeriesDeleteWindowTests`、`SeriesExceptionsUndoTests`（舊系列的擷取、只快照自己的場次）、`SeriesExceptionsRestorerTests`（視窗不含第一場）先紅後綠。
+- [x] 10.1 #319：整個系列刪除的檢查視窗改由 `SeriesExceptionsPlanner.deleteWindow` 決定（最長 1460 天、一次查詢；從刪除前三年（1094 天）起算，若第一個場次前一天較晚就從那天起；規則較早結束時往前移，讓視窗結束在規則結束後一天；以次數結束的規則取其最晚可能的時段，算不出的視為不結束。PR #494 第一輪 verify 由一年改為三年，並納入次數規則）。`UndoPostState.seriesScanWindow` 不變（create-undo 與 stand-in 掃描仍用它）。還原時，第一個時段只在視窗內才要求被產生。擷取時只為該系列的場次建快照。驗證：`SeriesDeleteWindowTests`、`SeriesExceptionsUndoTests`（舊系列的擷取、只快照自己的場次）、`SeriesExceptionsRestorerTests`（視窗不含第一場）先紅後綠。
 - [x] 10.2 #319：還原訊息以起訖日寫出視窗、說明系列在視窗前後還有場次；`undo_history` 單筆列出起訖日；批次訊息寫出視窗的放置規則。spec 場景「Occurrences outside the checked window」「Delete of a whole series restores its exceptions」「Recorded exceptions do not match」已改。驗證：`SeriesExceptionsTextTests`。
 - [x] 10.3 #321：場次刪除紀錄帶 `OccurrenceOrigin`（系列識別碼與規則時段），系列刪除紀錄帶 `seriesIdentity`；整個系列刪除的 undo 把「紀錄的系列 → 重建的系列」記在 `EventKitManager.seriesRecreations`（記憶體內，與 undo history 同壽命）。重複防護只認該系列或其重建系列在該時段的場次，不比標題；紀錄沒有系列資訊時寫回並說明。以場次自己 id 刪除的編輯場次（finding 22）與 split move 的來源也走同一個防護。驗證：`OccurrenceOriginTests`、`OccurrenceSlotGuardTests`、`SeriesExceptionsUndoTests`、`UndoBatchRestoreTests`、`OccurrenceOriginWiringTests`。
 - [ ] 10.4 實機（重啟後的 session MCP，拋棄式日曆）：見 `.claude/rules/mcp-binary-version-testing.md` 的 #319／#321 release gate。

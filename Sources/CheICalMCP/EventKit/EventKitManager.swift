@@ -2253,8 +2253,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // occurrence rather than duplicating the original series (#208), with the alarms
             // the copy was given.
             // #321: a split occurrence is tied to its series, which its undo's slot check compares.
-            let snapshot = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
-                .withOccurrenceOrigin(isSplit ? OccurrenceOrigin.of(subject) : nil)
+            let copied = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
+            let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject)) : copied
             let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // A refused copy names its location, email or sound alarms; the source is removed
