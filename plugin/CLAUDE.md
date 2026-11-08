@@ -8,6 +8,7 @@ macOS Calendar & Reminders MCP server with native EventKit integration. Binary s
 
 - **calendar-management** — Primary guide for using the 29 MCP tools (event CRUD, reminder CRUD, batch operations, search, conflict detection, duplicate finding, --cli mode). Reference for what each tool does and when to use it.
 - **troubleshoot-tcc** — TCC permission diagnostic walkthrough. Use when user reports calendar tools failing silently / permission denied / missing dialog after upgrade. Wraps the v1.9.0 `--print-tcc-path` diagnostic flag into a 6-step fix flow (covers both the binary layer and the host-app / responsible-process layer, #168; from v1.23.0, the server is its own responsible process whenever the host has no full Calendar and Reminders access of its own, #343).
+- **quota** — Use-it-or-lose-it quotas (#327): declarations in `~/.claude/.ical/quotas.yaml` (found by `bin/find-ical-config.sh --quotas`, no walk-up), dates from `bin/quota-dates.sh`, one reminder per quota (or one per period when no single recurrence rule fits), notes ending in `quota-module: <id>`. Operations: declare, update (in place), retire (asks first), list, sync.
 
 ### Commands (`commands/`)
 
