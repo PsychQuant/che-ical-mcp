@@ -2000,14 +2000,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             for item in items where item.occurrenceDate == nil && item.identifier.contains("/RID=") {
                 // A lookup that raises (#288) is not known to resolve: a later miss of that row then
                 // fails as not found instead of being counted. The row's own lookup reports the raise.
-                let resolves: Bool
+                let resolved: EKEvent?
                 do {
-                    resolves = try freshEventWithOrigin(
-                        id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span)) != nil
+                    resolved = try freshEventWithOrigin(
+                        id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event
                 } catch {
-                    resolves = false
+                    resolved = nil
                 }
-                if resolves { sequence.resolvedBeforeTheCall(item.identifier) }
+                if let resolved {
+                    sequence.resolvedBeforeTheCall(item.identifier, hasRecurrenceRules: resolved.hasRecurrenceRules)
+                }
             }
         }
 

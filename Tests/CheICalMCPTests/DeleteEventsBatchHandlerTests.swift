@@ -88,6 +88,12 @@ private actor SeriesModel: EventBatchDeletionSource {
     /// An occurrence's own id resolves while the model holds it.
     private func holds(_ id: String) -> Bool { occurrences.contains { $0.eventIdentifier == id } }
 
+    /// An id other than the series' that resolves to an event with rules (r2 LOW 1): the manager's
+    /// row is refused for want of a date, as a bare recurring id is.
+    private func ownHasRules(_ id: String) -> Bool {
+        id != series && occurrences.contains { $0.eventIdentifier == id && $0.hasRecurrenceRules }
+    }
+
     var left: Int { occurrences.count }
 
     /// nil when the row goes ahead; a refusal; or a throw, as the bare id's edited-before refusal.
@@ -113,6 +119,7 @@ private actor SeriesModel: EventBatchDeletionSource {
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
         if !spanAll {
             if identifier.contains("/RID="), !holds(identifier) { throw EventKitError.eventNotFound(identifier: identifier) }
+            if ownHasRules(identifier) { return .refused(EventKitManager.batchOccurrenceDateRequired) }
             if let refusal = try judgeOneRow(identifier, span: span) { return .refused(refusal) }
         } else if let refusal = try judge(identifier, named: namedInTheCall, gone: goneInTheCall) {
             return .refused(refusal)
@@ -166,7 +173,7 @@ private actor SeriesModel: EventBatchDeletionSource {
         var following: [String] = []
         var sequence = BatchRowSequence(span: span)
         for item in items where item.occurrenceDate == nil && holds(item.identifier) {
-            sequence.resolvedBeforeTheCall(item.identifier)
+            sequence.resolvedBeforeTheCall(item.identifier, hasRecurrenceRules: ownHasRules(item.identifier))
         }
         for (index, item) in items.enumerated() {
             let slot = slots.flatMap { index < $0.count ? $0[index] : nil }
@@ -177,6 +184,10 @@ private actor SeriesModel: EventBatchDeletionSource {
             do {
                 if let reason = try judgeOneRow(item.identifier, span: span) {
                     failures.append((item.identifier, reason))
+                    continue
+                }
+                if ownHasRules(item.identifier) {
+                    failures.append((item.identifier, EventKitManager.batchOccurrenceDateRequired))
                     continue
                 }
                 let own = occurrences.first { $0.eventIdentifier == item.identifier }
@@ -738,7 +749,8 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "future")
         XCTAssertNil(answer.dry[0]["error"], "\(answer.dry)")
         XCTAssertEqual(answer.dry[0]["also_deletes_later_occurrences"] as? Bool, true, "\(answer.dry)")
-        XCTAssertEqual(answer.dry[1]["already_removed"] as? Bool, true, "\(answer.dry)")
+        XCTAssertEqual(answer.dry[1]["covered_by_earlier_row"] as? Bool, true, "\(answer.dry)")
+        XCTAssertNil(answer.dry[1]["already_removed"], "r2: the dry run does not claim what the store will do")
         XCTAssertNil(answer.dry[1]["error"], "\(answer.dry)")
         XCTAssertNotNil(answer.dry[1]["start_date_local"], "review r1 item 1: the row is looked up first")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 1, "\(answer.real)")
@@ -747,16 +759,19 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         XCTAssertEqual(answer.left, 1, "only the occurrence before the cut is left")
     }
 
-    /// The dry run counts `already_removed` at the top, under the real call's name.
-    func testTheSpanFutureDryRunCountsAlreadyRemoved() async throws {
+    /// The dry run counts the covered rows at the top under a name of their own (review r2), not as
+    /// `already_removed`.
+    func testTheSpanFutureDryRunCountsCoveredRows() async throws {
         let shape = [editedOccurrence(7), unedited(14), editedOccurrence(21)]
         let server = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(series: series, occurrences: shape))
         let dry = try object(await server.executeToolCall(name: "delete_events_batch", arguments: [
             "event_ids": .array([.string(ownId(7)), .string(ownId(21))]), "span": .string("future"), "dry_run": .bool(true)]))
-        XCTAssertEqual(dry["already_removed"] as? Int, 1, "\(dry)")
+        XCTAssertEqual(dry["covered_by_earlier_rows"] as? Int, 1, "\(dry)")
+        XCTAssertNil(dry["already_removed"], "\(dry)")
         let none = try object(await server.executeToolCall(name: "delete_events_batch", arguments: [
             "event_ids": .array([.string(ownId(7))]), "span": .string("this"), "dry_run": .bool(true)]))
         XCTAssertNil(none["already_removed"], "\(none)")
+        XCTAssertNil(none["covered_by_earlier_rows"], "\(none)")
     }
 
     /// The later occurrence first: each row deletes, in both modes, and nothing is marked.
@@ -791,7 +806,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testACoveredOccurrenceThatSurvivesTheCutIsDeleted() async throws {
         let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(21)], span: "future",
                                                  cutReachesEditedOccurrences: false)
-        XCTAssertEqual(answer.dry[1]["already_removed"] as? Bool, true, "\(answer.dry)")
+        XCTAssertEqual(answer.dry[1]["covered_by_earlier_row"] as? Bool, true, "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 2, "\(answer.real)")
         XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
         XCTAssertEqual(answer.left, 1, "the surviving occurrence was deleted")
@@ -803,6 +818,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(24)], span: "future")
         XCTAssertNotNil(answer.dry[1]["error"], "\(answer.dry)")
         XCTAssertNil(answer.dryResponse["already_removed"], "\(answer.dryResponse)")
+        XCTAssertNil(answer.dryResponse["covered_by_earlier_rows"], "\(answer.dryResponse)")
         XCTAssertEqual(answer.real["failed"] as? Int, 1, "\(answer.real)")
         XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
     }
@@ -811,7 +827,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     /// row deleted earlier, in both.
     func testARepeatedCoveredIdIsCountedOnce() async throws {
         let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(21), ownId(21)], span: "future")
-        XCTAssertEqual(answer.dryResponse["already_removed"] as? Int, 1, "\(answer.dryResponse)")
+        XCTAssertEqual(answer.dryResponse["covered_by_earlier_rows"] as? Int, 1, "\(answer.dryResponse)")
         XCTAssertEqual(answer.dry[2]["error"] as? String, EventKitManager.batchRowDeletedEarlier, "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 1, "\(answer.real)")
         XCTAssertEqual(answer.real["already_removed"] as? Int, 1, "\(answer.real)")
@@ -843,6 +859,39 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         let answer = try await dryRunAndRealCall(shape, ids: [ownId(0), series], span: "future")
         XCTAssertNotNil(answer.dry[1]["error"], "\(answer.dry)")
         XCTAssertEqual(answer.real["succeeded"] as? Int, 1, "\(answer.real)")
+        XCTAssertEqual(answer.real["failed"] as? Int, 1, "\(answer.real)")
+    }
+
+    // MARK: - #452 review r2
+
+    /// MEDIUM: the counts relate as the description says. The dry run's rows without an error (its
+    /// deletions and its covered rows) are the real call's `succeeded` plus `already_removed`, whether
+    /// the store removes the covered occurrence with the earlier row's series or keeps it.
+    func testTheDryRunAndRealCountsRelateAsDescribed() async throws {
+        for reaches in [true, false] {
+            let answer = try await dryRunAndRealCall(fiveWithTwoEdited, ids: [ownId(7), ownId(21), "one-off"], span: "future",
+                                                     cutReachesEditedOccurrences: reaches)
+            let covered = answer.dry.filter { $0["covered_by_earlier_row"] as? Bool == true }.count
+            let deletions = answer.dry.filter { $0["error"] == nil && $0["covered_by_earlier_row"] == nil }.count
+            XCTAssertEqual(covered, 1, "\(reaches) \(answer.dry)")
+            XCTAssertEqual(answer.dryResponse["covered_by_earlier_rows"] as? Int, covered)
+            XCTAssertEqual(deletions + covered,
+                           (answer.real["succeeded"] as? Int ?? 0) + (answer.real["already_removed"] as? Int ?? 0),
+                           "\(reaches) \(answer.real)")
+            XCTAssertEqual(answer.real["already_removed"] as? Int ?? 0, reaches ? 1 : 0, "\(reaches) \(answer.real)")
+        }
+    }
+
+    /// LOW 1: an occurrence's own id that resolves to an event with rules, after an earlier row's cut
+    /// reaches it, is not counted as already removed: it was not a row the call deletes whole.
+    func testAnOccurrenceIdWithRulesIsNotCountedAfterACut() async throws {
+        let ruled = FirstRemainingOccurrence.Candidate(eventIdentifier: ownId(21), isDetached: true, hasRecurrenceRules: true,
+                                                       start: base.addingTimeInterval(21 * day), slot: base.addingTimeInterval(21 * day))
+        let shape = [unedited(0), editedOccurrence(7), unedited(14), ruled, unedited(28)]
+        let answer = try await dryRunAndRealCall(shape, ids: [ownId(7), ownId(21)], span: "future")
+        XCTAssertEqual(answer.dry[1]["error"] as? String, EventKitManager.batchOccurrenceDateRequired, "\(answer.dry)")
+        XCTAssertNil(answer.dryResponse["covered_by_earlier_rows"], "\(answer.dryResponse)")
+        XCTAssertNil(answer.real["already_removed"], "\(answer.real)")
         XCTAssertEqual(answer.real["failed"] as? Int, 1, "\(answer.real)")
     }
 }

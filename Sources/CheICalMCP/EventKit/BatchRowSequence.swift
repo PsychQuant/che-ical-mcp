@@ -38,13 +38,27 @@ struct BatchRowSequence {
         self.span = span
     }
 
-    /// Notes that an id named by `event_ids` resolved before the call.
-    mutating func resolvedBeforeTheCall(_ identifier: String) {
+    /// Notes that an id named by `event_ids` resolved before the call. Only an event without rules is
+    /// noted (review r2 LOW 1): one with rules is refused for want of a date, never deleted whole,
+    /// and the dry run's deletions (`.deletes`) are without rules too.
+    mutating func resolvedBeforeTheCall(_ identifier: String, hasRecurrenceRules: Bool) {
+        guard !hasRecurrenceRules else { return }
         resolvedBefore.insert(identifier)
     }
 
-    /// The answer before any lookup. `listed` is the row's occurrence date, given by date range only.
-    /// A repeated id is answered first: it is what the real lookup finds (nothing).
+    /// The dry run's answer for a row named by id that resolves (review r2 MEDIUM): whether an earlier
+    /// row's cut reaches it. The dry run cannot tell whether the store removes it with that series
+    /// (the real call then counts it in `already_removed`) or keeps it (the real call deletes it as
+    /// its own row); it is gone after the call either way, so it is remembered as finished.
+    mutating func coveredInTheDryRun(identifier: String) -> Bool {
+        guard resolvedBefore.contains(identifier), removedByAnEarlierRow(identifier: identifier) else { return false }
+        finishedIds.insert(identifier)
+        return true
+    }
+
+    /// The answer before any lookup. `listed` is the row's occurrence date, given by date range only;
+    /// a row named by id (`listed` nil) is never answered `.alreadyRemoved` here, only after its
+    /// lookup (`notFound`). A repeated id is answered first: it is what the real lookup finds (nothing).
     mutating func before(identifier: String, listed: Date?, slot: Date?) -> Answer {
         if finishedIds.contains(identifier) { return .failed(EventKitManager.batchRowDeletedEarlier) }
         if listed != nil, span == .futureEvents, coverage.covers(identifier: identifier, slot: slot) {
@@ -97,8 +111,9 @@ struct BatchRowSequence {
         span == .futureEvents && identifier.contains("/RID=")
     }
 
-    /// The one switch over an answer (review r1 item 5), shared by the manager's loop and the test
-    /// model: a failure is listed, an already removed row counted. True when the row is settled.
+    /// How the real call settles an answer (review r1 item 5), shared by the manager's loop and the
+    /// test model: a failure is listed, an already removed row counted. True when the row is settled.
+    /// The dry run turns answers into preview rows itself (`previewDeletionRows`).
     static func settle(_ answer: Answer, identifier: String, failures: inout [(String, String)],
                        coveredCount: inout Int) -> Bool {
         switch answer {

@@ -22,7 +22,7 @@ final class BatchRowSequenceTests: XCTestCase {
     /// resolving before the call.
     private func cutAtSeven(resolving ids: [String]) -> BatchRowSequence {
         var sequence = BatchRowSequence(span: .futureEvents)
-        for id in ids { sequence.resolvedBeforeTheCall(id) }
+        for id in ids { sequence.resolvedBeforeTheCall(id, hasRecurrenceRules: false) }
         sequence.deletedWhole(identifier: rid(7), requested: nil, requestedSlot: nil, removedStart: slot(7), removedSlot: slot(7))
         return sequence
     }
@@ -74,7 +74,7 @@ final class BatchRowSequenceTests: XCTestCase {
             XCTAssertEqual(sequence.notFound(identifier: id, listed: nil, reason: { self.notFound }), .failed(notFound), id)
         }
         var this = BatchRowSequence(span: .thisEvent)
-        this.resolvedBeforeTheCall(rid(21))
+        this.resolvedBeforeTheCall(rid(21), hasRecurrenceRules: false)
         this.deletedWhole(identifier: rid(7), requested: nil, requestedSlot: nil, removedStart: slot(7), removedSlot: slot(7))
         XCTAssertEqual(this.notFound(identifier: rid(21), listed: nil, reason: { self.notFound }), .failed(notFound))
     }
@@ -97,7 +97,7 @@ final class BatchRowSequenceTests: XCTestCase {
     /// Moved: the occurrence's start is not its slot. The coverage is read from the slot in its id.
     func testAMovedOccurrenceCoversFromItsSlot() {
         var sequence = BatchRowSequence(span: .futureEvents)
-        sequence.resolvedBeforeTheCall(rid(14))
+        sequence.resolvedBeforeTheCall(rid(14), hasRecurrenceRules: false)
         sequence.deletedWhole(identifier: rid(7), requested: nil, requestedSlot: nil, removedStart: slot(20), removedSlot: nil)
         XCTAssertTrue(sequence.removedByAnEarlierRow(identifier: rid(14)))
     }
@@ -161,7 +161,8 @@ final class BatchRowSequenceTests: XCTestCase {
         let body = try XCTUnwrap(SourcePins.body(of: "func deleteEventsBatch(",
                                                  in: try SourcePins.source("EventKit/EventKitManager.swift")))
         XCTAssertTrue(body.contains("BatchRowSequence(span:"), "the loop builds one sequence")
-        XCTAssertTrue(body.contains(".resolvedBeforeTheCall("), "the ids that resolve before the call are noted")
+        XCTAssertTrue(body.contains(".resolvedBeforeTheCall(item.identifier, hasRecurrenceRules:"),
+                      "the ids that resolve before the call are noted, with whether they have rules (r2 LOW 1)")
         XCTAssertEqual(SourcePins.ranges(of: "BatchRowSequence.settle(", in: body).count, 2, "both answers are settled by the helper")
         XCTAssertTrue(body.contains(".before(identifier:"), "each row is asked first")
         XCTAssertTrue(body.contains(".notFound(identifier:"), "a row not found is asked again")
@@ -170,5 +171,37 @@ final class BatchRowSequenceTests: XCTestCase {
         XCTAssertFalse(body.contains("case .alreadyRemoved") || body.contains("case .failed"), "no switch of its own")
         XCTAssertFalse(body.contains("FutureDeletionCoverage("), "the coverage is not kept beside the sequence")
         XCTAssertTrue(body.contains("followingOccurrencesDeleted.append("), "the rows whose undo refuses the batch are reported")
+    }
+
+    /// Review r2 LOW 1: an occurrence's own id that resolves to an event with rules is not a row the
+    /// call deletes whole (it is refused for want of a date), so a later miss is not counted.
+    func testAnIdThatResolvesWithRulesIsNotCountedAfterACut() {
+        var sequence = BatchRowSequence(span: .futureEvents)
+        sequence.resolvedBeforeTheCall(rid(21), hasRecurrenceRules: true)
+        sequence.deletedWhole(identifier: rid(7), requested: nil, requestedSlot: nil, removedStart: slot(7), removedSlot: slot(7))
+        XCTAssertEqual(sequence.notFound(identifier: rid(21), listed: nil, reason: { self.notFound }), .failed(notFound))
+    }
+
+    /// Review r2 MEDIUM: the dry run marks a covered row that resolves as covered, without saying
+    /// what the store will do with it; a repeat of it then fails as a row deleted earlier, as in the
+    /// real call (where it is either counted or deleted).
+    func testTheDryRunMarksACoveredRowWithoutCountingIt() {
+        var sequence = cutAtSeven(resolving: [rid(7), rid(21)])
+        XCTAssertTrue(sequence.coveredInTheDryRun(identifier: rid(21)))
+        XCTAssertEqual(sequence.before(identifier: rid(21), listed: nil, slot: nil), .failed(EventKitManager.batchRowDeletedEarlier))
+        XCTAssertFalse(sequence.coveredInTheDryRun(identifier: rid(0)), "an earlier slot is not covered")
+        var rules = BatchRowSequence(span: .futureEvents)
+        rules.resolvedBeforeTheCall(rid(21), hasRecurrenceRules: true)
+        rules.deletedWhole(identifier: rid(7), requested: nil, requestedSlot: nil, removedStart: slot(7), removedSlot: slot(7))
+        XCTAssertFalse(rules.coveredInTheDryRun(identifier: rid(21)))
+    }
+
+    /// Review r2 LOW 5: a row named by id (no listed date) is never answered as already removed
+    /// before its lookup, so the dry run maps only the failure.
+    func testARowNamedByIdIsNeverAlreadyRemovedBeforeItsLookup() {
+        var sequence = cutAtSeven(resolving: [rid(7), rid(14), rid(21)])
+        for id in [rid(14), rid(21), rid(0)] {
+            XCTAssertEqual(sequence.before(identifier: id, listed: nil, slot: nil), .lookUp, id)
+        }
     }
 }
