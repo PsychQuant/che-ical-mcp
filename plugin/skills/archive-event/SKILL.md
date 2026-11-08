@@ -87,7 +87,7 @@ default_calendar: "行政"
 }
 ```
 
-The second entry is a stay (`reservation` is its number). The third is a cancellation record written when the lodging module deletes a stay: it has no `event_id`, because the event is gone, and it holds the normalised property name and the deleted stay's days, so a reused number at another property is not taken for it (module section 4). A record written before #365 has only `reservation` and `cancelled_at`. In a key, `<reservation>` is the normalised number with every character other than a letter or a digit written as `_`; lookups compare the `reservation` field, never the key.
+The second entry is a stay (`reservation` is its number). The third is a cancellation record written when the lodging module deletes a stay: it has no `event_id`, because the event is gone, and it holds the normalised property name and the deleted stay's days, so a reused number at another property is not taken for it (module section 4). A record written before #365 has only `reservation` and `cancelled_at`. In a key, `<reservation>` is the normalised number percent-encoded (every UTF-8 byte other than a letter or a digit as `%` and two upper-case hex digits, so `AB/12` and `AB_12` get different keys); lookups compare the `reservation` field, never the key. **The state file holds private trip data** (reservation numbers, properties, dates of stays): in a work project under git, keep `.claude/.ical/state/` out of the repository with the project's `.gitignore`.
 
 If either file fails to parse, say so explicitly in the report and proceed as if it were absent — a malformed config must never silently change behavior.
 
