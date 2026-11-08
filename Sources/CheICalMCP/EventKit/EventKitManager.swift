@@ -570,7 +570,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #261: a reminder list whose save failed may stay pending and be written by the next
         // save, so it is discarded when a new store does not find it; when it finds it, it was
         // saved, and it is returned as created. When that store cannot answer, the list is kept and
-        // the call fails with `saveUnchecked` (#289: a create has no undo record). An event
+        // the call fails with `saveUnchecked` (#289: a create has no undo that removes it; #273's
+        // marker, recorded by `writeNewCalendar` after a create that returned, removes nothing either). An event
         // calendar is saved as before: in the failure classes tried, a failed one was not written
         // by a later save (see NewObjectSave).
         var storeDiffers: [String] = []
@@ -607,11 +608,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.calendarNotFound(identifier: "\(identifier) (read-only)")
         }
 
+        // #273: the title before the rename, for the marker's listing.
+        let titleBefore = calendar.title
         if let t = title { calendar.title = t }
         if let c = color { calendar.cgColor = parseColor(c) }
 
         try saveExistingCalendar(calendar)   // #274
         markNeedsRefresh()
+        await CalendarUndoManager.shared.record(.calendarOperation(kind: .updated, title: titleBefore))
         return calendar
     }
 
@@ -632,6 +636,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let calendar = eventStore.calendar(withIdentifier: identifier) else {
             throw EventKitError.calendarNotFound(identifier: identifier)
         }
+        // #273: the title for the marker's listing, read before the removal.
+        let title = calendar.title
 
         var checked: CalendarEmptiness.Checked?
         if requireEmpty {
@@ -666,6 +672,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         try removeExistingCalendar(calendar)   // #274
         markNeedsRefresh()
+        // #273: a marker, so that undo after this does not revert an older operation in its place.
+        await CalendarUndoManager.shared.record(.calendarOperation(kind: .deleted, title: title))
         return checked
     }
 
@@ -2165,6 +2173,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                         logFailure: { Self.logCopyFailure(handler: "copyEvent", identifier: identifier, error: $0) }) {
             try eventStore.save(newEvent, span: .thisEvent)
         }
+        // #273: the copy is a new one-off event, so its record is a create: undo deletes the copy
+        // through the create-undo's #236 check (refused when the copy changed since).
+        let copyID = newEvent.eventIdentifier ?? ""
+        await CalendarUndoManager.shared.record(.createEvent(id: copyID, title: newEvent.title ?? "",
+                                                             created: postWriteSnapshot(eventID: copyID, saved: newEvent)))
         return (newEvent, Self.fieldsNotCarriedOver(from: sourceEvent, to: newEvent))
     }
 
@@ -3130,6 +3143,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .completeRecurringReminder(let before, _, _):
             return try await undoRecurringCompletion(operation, before: before)
 
+        case .calendarOperation(let kind, _):
+            // #273: refused, never attempted; the record is discarded (UnrecoverableUndoError).
+            throw UndoOperation.calendarOperationRefusal(kind: kind)
+
         case .batch(let ops):
             return try await undoBatch(ops).message
         }
@@ -3223,7 +3240,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func executeRedo(_ operation: UndoOperation) async throws -> String {
         switch operation {
         case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
-             .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder:
+             .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder,
+             .calendarOperation:
             // #247: these write nothing on redo. `handleRedo` answers them itself and drops the
             // entry from the redo stack (`CalendarUndoManager.beginRedo`); this is a fallback with
             // the same text, and it writes nothing either.
@@ -3615,9 +3633,9 @@ enum EventKitError: LocalizedError {
         case .reminderRemovalMayLand(let code):
             return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the reminders back now does not rule this out: seeing it does not mean it stays."
         case .listChangeMayLand(let code):
-            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
+            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes, and that change would have no undo record of its own: undo reverts the newest recorded operation, not this one. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
         case .listRemovalMayLand(let code):
-            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the lists back now does not rule this out: seeing it does not mean it stays."
+            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own: undo reverts the newest recorded operation, not this one, so do not call undo to cancel it. Reading the lists back now does not rule this out: seeing it does not mean it stays."
         case .eventLookupFailed(let identifier):
             return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
         case .historyLookupFailed(let verb):

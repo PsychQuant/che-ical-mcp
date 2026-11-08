@@ -376,6 +376,9 @@ extension UndoOperation {
                                        restoring: completion.identityConfirmed ? completion.undoWrites : nil)
         case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .deleteReminder, .batch, .updateRecurringEvent:
             return nil
+        case .calendarOperation:
+            // #273: a marker; its undo is refused before anything is looked up.
+            return nil
         case .moveByCopy:
             // #466: the source is recreated; the copy is checked inside the undo arm, through its
             // create record, after the source is back, and a failed check leaves the copy instead

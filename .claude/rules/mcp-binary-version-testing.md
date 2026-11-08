@@ -637,3 +637,20 @@ end、notes、location、alarms。
 
 結果記在 #416。結束後刪掉拋棄式日曆，隔一段時間再 `list_calendars` 一次：iCloud 曾把剛刪的日曆以新的 id 帶回來
 （2026-11-05，空的）。
+
+## Release gate：行事曆操作與單純 copy_event 的 undo 紀錄（#273）
+
+#273 的紀錄點（`createCalendar`、`updateCalendar`、`deleteCalendar`、`copyEvent`）只有原始碼 pin，undo 的拒絕與丟棄只在
+未授權的 store 上用 handler 測試跑過。undo 是 stateful，`--cli` 走不到（見上表）。**出 #273 的那個版本打 tag 之前**，在重啟後的
+session MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#273` 的拋棄式日曆：
+
+1. 在拋棄式日曆建一個一次性事件（對照的舊紀錄）→ `create_calendar` 建第二個拋棄式日曆 → `update_calendar` 改它的名稱 →
+   `delete_calendar` 刪掉它 → `undo_history` 最上面三筆由上而下是 `Deleted calendar`、`Updated calendar`（舊名稱）、
+   `Created calendar`，都帶 `(undo not available)`。
+2. `undo` 三次：每次都拒絕、訊息不含日曆名稱、說下一次 undo 會復原更早的那筆，什麼都沒寫；第三次之後 `undo_history` 最上面是
+   第 1 步的事件。第四次 `undo` 才刪掉那個事件。
+3. 對同名再 `create_calendar` 一次（回傳既有日曆）：`undo_history` 沒有多一筆。
+4. 單純 `copy_event` 把一個一次性事件複製到另一個拋棄式日曆 → `undo` 刪掉複本，原事件還在；再複製一次，在 Calendar.app 改複本
+   的標題 → `undo` 以 `title` 拒絕、紀錄保留、`discard_id` 可移除。
+
+結果記在 #273。結束後刪掉拋棄式日曆，用 `list_calendars` 確認。

@@ -20,6 +20,13 @@ protocol CalendarWriteSource: Sendable {
 extension EventKitManager: CalendarWriteSource {
     func writeNewCalendar(title: String, entityType: EKEntityType, color: String?) async throws -> CalendarWriteValue {
         let result = try await createCalendar(title: title, entityType: entityType, color: color)
+        // #273: a marker, so that undo after this does not revert an older operation in its place.
+        // Recorded here, after `createCalendar` returned (its save path is pinned as is by
+        // `NewObjectSaveTests`), and not for the existing calendar a title match returned: nothing
+        // was created then.
+        if !result.isDuplicate {
+            await CalendarUndoManager.shared.record(.calendarOperation(kind: .created, title: result.calendar.title))
+        }
         return CalendarWriteValue(title: result.calendar.title, identifier: result.calendar.calendarIdentifier,
                                   isDuplicate: result.isDuplicate, storeDiffers: result.storeDiffers)
     }
