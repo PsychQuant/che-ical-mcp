@@ -179,6 +179,8 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、請求的日期在這台 Mac 時區下會寫成的那一天（`host_day`；重複而被略過的建立不會寫入，訊息會說既有事件沒有改變）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
 
+**Google 行事曆上的鬧鐘（#317）：** 其他帳號的行事曆可能在存檔之後改寫鬧鐘，而回應看不到這件事。在 Google 上量到：`copy_event`、或刪除之後的 undo，大約一分鐘內，絕對時間的鬧鐘變成同一時刻的相對鬧鐘，位置鬧鐘變成事件開始時的普通鬧鐘。email 鬧鐘在這台 Mac 讀得到，但 Google 沒有列出它。`update_event` 寫入的鬧鐘 offset（`alarms_minutes_offsets`）沒有被改。複製或還原的事件，請等帳號同步之後再讀回核對。Exchange 沒有量過。
+
 </details>
 
 <details>
