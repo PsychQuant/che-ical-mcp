@@ -638,7 +638,10 @@ final class EventRangeQueryTests: XCTestCase {
         XCTAssertLessThan(check.lowerBound, dryRunBranch.lowerBound, "the size is checked before the dry run returns")
         XCTAssertTrue(body.contains("\"deletions\""), "the dry run reports the number the ceiling is compared against")
         XCTAssertTrue(body.contains("EventRangeQuery.deletionItems("), "the deletion and its count come from one item list")
-        XCTAssertTrue(body.contains("slots: deletionItems.map(\\.slot)"), "the slots reach deleteEventsBatch (round 6)")
+        // #427 cluster verify: the rows and their slots come from the same list after the series'
+        // rows take their edited occurrences, so each slot stays with its row.
+        XCTAssertTrue(body.contains("let batchItems = rowItems.map {"), "the rows come from rowItems")
+        XCTAssertTrue(body.contains("slots: rowItems.map(\\.slot)"), "the slots reach deleteEventsBatch (round 6)")
         XCTAssertTrue(body.contains("response.merge(searchedFields)"), "the dry run reports the searched range")
         XCTAssertTrue(body.contains("extraFields: searchedFields"), "the deletion reports the searched range")
     }
