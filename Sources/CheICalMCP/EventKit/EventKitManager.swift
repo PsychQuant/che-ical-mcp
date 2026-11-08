@@ -1351,13 +1351,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #442: it answered updated and an occurrence nobody created appeared (device). Read from the
         // reach, so span future from the first occurrence (the same save over the whole series) is
         // refused too (cluster verify); still before the first write.
-        // Cluster verify r2: a series the scan cannot rule out is refused too (fail closed).
-        var allDayFacts: (edited: Bool, unknown: Bool)?
+        // Cluster verify r2, r3: a series the scan cannot rule out is refused too (fail closed).
+        var allDayFacts: (edited: Bool, unknown: Bool, listed: Bool)?
         if DetachedOccurrenceSpan.refusesAllDayChange(
             wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
+            clearingRecurrence: clearRecurrence,
             hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) {
-            throw EventKitError.occurrenceAddressRefused(reason: allDayFacts?.edited == false
-                ? DetachedOccurrenceSpan.allDayUnknownReason : DetachedOccurrenceSpan.allDayChangeReason)
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayRefusalReason(
+                edited: allDayFacts?.edited ?? true, listed: allDayFacts?.listed ?? true))
         }
         let now = Date()
         let happened = reach.anchor.map {
