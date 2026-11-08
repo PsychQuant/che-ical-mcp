@@ -1281,7 +1281,29 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(store.events.filter { $0.title == "Standup" }.map(\.start).sorted(), [exceptionsSlot(0), exceptionsSlot(1)])
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 1)
         let message = UndoOperation.batchUndoneMessage(count: texts.count, events: events)
-        XCTAssertEqual(message, "Undone batch (2 operations). 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted")
+        XCTAssertEqual(message, "Undone batch (2 operations). 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (at most four years, from a year before the delete, or from the first occurrence when that is later, moved earlier for a rule that ends sooner) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted")
+    }
+
+    /// #321 (PR #318 round 3, finding 22): `delete_events_batch` with the series' identifier and an
+    /// edited occurrence's own identifier records the occurrence as a rule-less `.deleteEvent`
+    /// beside the series. Undo runs the members newest-first, so the series comes back from its rules
+    /// first; the occurrence's record then finds its slot held by the recreated series and writes
+    /// nothing. Before #321 it wrote a one-off there, so the occurrence was there twice.
+    func testAnEditedOccurrenceDeletedBesideItsSeriesIsNotRestoredTwice() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(exceptionsSlot)
+        let calendar = UndoSnapshotFixtures.newCalendar()
+        let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: "S", externalIdentifier: "X-S")
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup moved", startDate: exceptionsSlot(2).addingTimeInterval(1800), calendar: calendar)
+            .withOccurrenceOrigin(OccurrenceOrigin(series: seriesIDs, slot: exceptionsSlot(2)))
+        let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart, calendar: calendar)
+            .withSeriesIdentity(seriesIDs)
+
+        let (_, events) = try await runOnStore([.deleteEvent(snapshot: occurrence), .deleteEvent(snapshot: series)], store)
+
+        XCTAssertEqual(events, [.seriesFromRules, .occurrenceAlreadyHeld])
+        XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 0, "no second copy of the occurrence")
+        XCTAssertEqual(store.events.filter { $0.title == "Standup" }.count, 4)
     }
 
     // MARK: - #323: the batch text from what the members did
@@ -1328,6 +1350,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testAGuardSkippedOccurrenceIsCountedAndMakesNoAlarmClaim() async throws {
         let store = FakeSeriesExceptionsStore()
         let held = UndoSnapshotFixtures.event(title: "Standup", startDate: exceptionsSlot(1))
+            .withOccurrenceOrigin(OccurrenceOrigin(series: .init(eventIdentifier: "S", externalIdentifier: "X-S"), slot: exceptionsSlot(1)))
         store.addSeries(id: "S", calendar: held.calendarIdentifier, title: "Standup", slots: [exceptionsSlot(0), exceptionsSlot(1)])
         let skipped = UndoOperation.deleteOccurrence(snapshot: held, notCarriedOver: ["absolute_alarms"])
 

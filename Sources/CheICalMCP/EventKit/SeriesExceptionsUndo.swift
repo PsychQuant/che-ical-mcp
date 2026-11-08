@@ -8,15 +8,17 @@ import Foundation
 /// `EventKitManager` unchanged, call for call, so that the same code runs against a fake in tests.
 enum SeriesExceptionsUndo {
     /// The exceptions of `series`, read before a whole-series delete removes anything: the
-    /// occurrences that exist over the series' scan window, split into those that stay and those
-    /// edited on their own. Nil when they cannot be listed (no identifier or calendar, or no
-    /// occurrence of the series found inside the window), so the record says so instead of
-    /// claiming there were none.
-    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store) -> SeriesExceptions? {
+    /// occurrences that exist over the delete window (`SeriesExceptionsPlanner.deleteWindow`, placed
+    /// around `now`, #319), split into those that stay and those edited on their own. Nil when they
+    /// cannot be listed (no identifier or calendar, or no occurrence of the series found inside the
+    /// window), so the record says so instead of claiming there were none.
+    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date()) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
-        let window = store.scanWindow(of: series)
+        let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), ruleEnd: store.ruleEnd(of: series),
+                                                          deletedAt: now)
+        let window = placed.window
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
         // Listed over the window and a year on each side, as separate queries: an occurrence edited
         // on its own is matched by its current time, so one moved out of the window is only found
@@ -24,11 +26,17 @@ enum SeriesExceptionsUndo {
         var seen = Set<String>()
         for range in SeriesExceptionsPlanner.listingRanges(for: window) {
             for occurrence in store.events(in: range, inCalendarOf: series) {
-                let key = "\(store.identifiers(of: occurrence).eventIdentifier ?? "")|\(store.startDate(of: occurrence).timeIntervalSinceReferenceDate)"
+                // #319: only this series' occurrences are snapshotted; the listing covers the whole calendar.
+                let occurrenceIDs = store.identifiers(of: occurrence)
+                guard UndoPostState.isOccurrence(occurrenceIDs, of: seriesIDs) else { continue }
+                let key = "\(occurrenceIDs.eventIdentifier ?? "")|\(store.startDate(of: occurrence).timeIntervalSinceReferenceDate)"
                 if seen.insert(key).inserted { observed.append(store.observed(occurrence)) }
             }
         }
-        return SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window)
+        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
+        exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
+        exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
+        return exceptions
     }
 
     /// Undo of a whole-series delete that recorded `exceptions`, after `restored` was saved from
@@ -112,13 +120,20 @@ enum SeriesExceptionsUndo {
         }
     }
 
-    /// Whether `calendar` (the snapshot's own, resolved by the caller) already holds an occurrence
-    /// of a recurring series with its title at its start (`OccurrenceSlotGuard`). The store is
-    /// refreshed first when this server wrote since the last refresh, so the series an earlier undo
-    /// just recreated is seen.
-    static func seriesHoldsSlot<Store: SeriesExceptionsStoreSource>(of snapshot: EventSnapshot, calendar: Store.Calendar,
-                                                                    in store: Store) -> Bool {
-        OccurrenceSlotGuard.isHeld(title: snapshot.title, start: snapshot.startDate, by: store.slotHolders(for: snapshot, in: calendar))
+    /// #321: whether `calendar` (the snapshot's own, resolved by the caller) already holds an
+    /// occurrence of the recorded series, or of a series undo recreated from it, at the recorded
+    /// rule slot (`OccurrenceSlotGuard`). The store is refreshed first when this server wrote since
+    /// the last refresh, so the series an earlier undo just recreated is seen.
+    static func seriesHoldsSlot<Store: SeriesExceptionsStoreSource>(_ origin: OccurrenceOrigin, length: TimeInterval,
+                                                                    calendar: Store.Calendar, in store: Store) -> Bool {
+        OccurrenceSlotGuard.isHeld(origin, recreatedAs: store.recreations(of: origin.series),
+                                   by: store.slotHolders(at: origin.slot, length: length, in: calendar))
+    }
+
+    /// The length the slot is listed for: the occurrence's own (an edited one may be shorter than
+    /// the series'; an event that overlaps the slot's first minute is listed either way).
+    private static func slotLength(of snapshot: EventSnapshot) -> TimeInterval {
+        snapshot.endDate.timeIntervalSince(snapshot.startDate)
     }
 
     /// The undo of `.deleteEvent`: recreate from the snapshot; a series from its rules only (#285),
@@ -129,8 +144,18 @@ enum SeriesExceptionsUndo {
     /// `.recreateDeleted` (#269; `EventKitManager.undoDeletedEvent`), so this runs synchronously on
     /// the caller's actor. Returns the text and what the undo did (#323: none for an event that is
     /// not a series), which a batch carries up instead of the text.
+    ///
+    /// #321: a series recreated from its rules is noted under the recorded series' identifiers
+    /// (`noteRecreation`), so an older occurrence record of it sees its slot held. A rule-less
+    /// snapshot of one occurrence (the whole-series delete of an occurrence edited on its own,
+    /// addressed by its own identifier: PR #318 round 3, finding 22) is guarded as an occurrence
+    /// record is: nothing is written when the series holds its slot again.
     static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
                                                                     in store: Store) throws -> (text: String, outcome: UndoEventOutcome?) {
+        if !snapshot.restoresFromRules, let origin = snapshot.occurrenceOrigin,
+           seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {
+            return (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title), .occurrenceAlreadyHeld)
+        }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
@@ -138,6 +163,9 @@ enum SeriesExceptionsUndo {
         var outcome: SeriesExceptionsRestorer.Outcome?
         if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
             outcome = try restore(exceptions, of: event, in: store)
+        }
+        if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {
+            store.noteRecreation(of: recorded, as: store.identifiers(of: event))
         }
         let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                       exceptionsOutcome: outcome)
@@ -148,21 +176,26 @@ enum SeriesExceptionsUndo {
     /// The undo of `.deleteOccurrence`. #244: the snapshot holds no rules, so the occurrence comes
     /// back as a one-off event at its slot, beside what is left of the series (EventKit cannot put
     /// it back in). #285: not when the series already holds the slot (it was recreated from its
-    /// rules by an undo of the whole-series delete, which brings every slot back).
+    /// rules by an undo of the whole-series delete, which brings every slot back). #321: "the series"
+    /// is the recorded one or one undo recreated from it, and "the slot" its rule slot; a record
+    /// without them (`occurrenceOrigin` nil) writes the one-off, and its text says the slot was not
+    /// checked.
     /// `calendar` is the recorded one, read once by the caller with `.recreateDeletedOccurrence`
     /// before the slot check and the write (#269 verify; `EventKitManager.undoDeletedOccurrence`).
     /// Returns the text and what the undo did (#323).
     static func undoDeleteOccurrence<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, notCarriedOver: [String],
                                                                          calendar: Store.Calendar, in store: Store) throws -> (text: String, outcome: UndoEventOutcome) {
-        if seriesHoldsSlot(of: snapshot, calendar: calendar, in: store) {
+        if let origin = snapshot.occurrenceOrigin,
+           seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {
             return (UndoOperation.occurrenceAlreadyRestoredMessage(title: snapshot.title), .occurrenceAlreadyHeld)
         }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
         try store.save(event)
         store.markNeedsRefresh()
-        let text = UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+        var text = UndoOperation.occurrenceRestoredMessage(title: snapshot.title, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
                                                            notCarriedOver: notCarriedOver)
+        if snapshot.occurrenceOrigin == nil { text += ". " + UndoOperation.occurrenceSlotUncheckedNote }
         return (text, .occurrenceOneOff(notCarriedOver: notCarriedOver))
     }
 }

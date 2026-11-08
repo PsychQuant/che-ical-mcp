@@ -68,7 +68,7 @@ extension UndoOperation {
                 ? ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
                 : ". In \(firstKept) of them the first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
         }
-        note += ". Exceptions outside the checked window (first occurrence to the end of the rule, at most four years) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
+        note += ". Exceptions outside the checked window (\(seriesExceptionsWindowRule)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
         return note
     }
 }

@@ -108,10 +108,34 @@ struct EventSnapshot {
     /// every other record and when they could not be listed. Set through `withExceptions`.
     private(set) var exceptions: SeriesExceptions? = nil
 
+    /// #321: for the snapshot of one occurrence of a series (an occurrence delete, a split move, or
+    /// the whole-series delete of an occurrence edited on its own addressed by its own identifier),
+    /// the series it belonged to and the slot its rule gave it, which the duplicate guard of its
+    /// undo compares (`OccurrenceSlotGuard`). Nil for every other snapshot, and when the occurrence
+    /// had no identifier or slot (its undo then writes the one-off). Set through `withOccurrenceOrigin`.
+    private(set) var occurrenceOrigin: OccurrenceOrigin? = nil
+    /// #321: for the snapshot of a series deleted whole, the series' identifiers, under which its
+    /// undo notes the series it recreates (`SeriesRecreations`). Set through `withSeriesIdentity`.
+    private(set) var seriesIdentity: UndoPostState.OccurrenceIDs? = nil
+
     /// A copy of this snapshot carrying `exceptions`; this one is unchanged.
     func withExceptions(_ exceptions: SeriesExceptions?) -> EventSnapshot {
         var copy = self
         copy.exceptions = exceptions
+        return copy
+    }
+
+    /// A copy of this snapshot carrying `origin` (#321); this one is unchanged.
+    func withOccurrenceOrigin(_ origin: OccurrenceOrigin?) -> EventSnapshot {
+        var copy = self
+        copy.occurrenceOrigin = origin
+        return copy
+    }
+
+    /// A copy of this snapshot carrying `identity` (#321); this one is unchanged.
+    func withSeriesIdentity(_ identity: UndoPostState.OccurrenceIDs?) -> EventSnapshot {
+        var copy = self
+        copy.seriesIdentity = identity
         return copy
     }
 
@@ -434,9 +458,10 @@ enum UndoOperation {
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
             var restore = ""
             if snapshot.restoresFromRules {
-                restore = snapshot.exceptions == nil
-                    ? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
-                    : " (undo recreates the series and its exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote))"
+                // #319: a single record names its window by its days.
+                restore = snapshot.exceptions.map {
+                    " (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowDays($0.window))): \(UndoOperation.seriesExceptionsListingNote))"
+                } ?? " (undo recreates the series from its rules: \(UndoOperation.seriesRulesListingNote))"
             }
             return "Deleted event: \(undoVisibleTitle(snapshot.title))\(restore)"
         case .deleteOccurrence(let snapshot, _):

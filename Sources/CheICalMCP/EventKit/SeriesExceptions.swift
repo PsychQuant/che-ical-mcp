@@ -387,19 +387,12 @@ enum OccurrenceSlotGuard {
         }
     }
 
-    /// An event found at the slot.
-    struct Holder {
-        let title: String?
-        let startDate: Date
-        let hasRecurrenceRules: Bool
-    }
-
-    /// True when one of `holders` is an occurrence of a recurring series with this title starting at
-    /// this instant (to the second). A one-off at the slot does not count: it is not what the
-    /// series' restore brings back, and refusing to write beside it would hide a real second write.
-    static func isHeld(title: String, start: Date, by holders: [Holder]) -> Bool {
-        holders.contains {
-            $0.hasRecurrenceRules && ($0.title ?? "") == title && UndoPostState.sameInstant($0.startDate, start)
-        }
+    /// A holder from an event listed at the slot: its rule slot is `UndoPostState.ruleSlot` (the
+    /// RID of an occurrence edited on its own, otherwise `occurrenceDate`), else its start.
+    static func holder(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
+                       startDate: Date, zone: TimeZone = .current) -> SeriesHolder {
+        SeriesHolder(ids: .init(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
+                     slot: UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
+                                                  occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) ?? startDate)
     }
 }

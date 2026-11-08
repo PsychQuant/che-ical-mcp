@@ -17,9 +17,9 @@ enum MoveByCopyUndo {
     enum Restore: Equatable, Sendable {
         /// The source was recreated; the restore's own text (title, new ID, notes).
         case written(String)
-        /// A split's source was not recreated: an occurrence of a recurring event with its title
-        /// already holds its time in its calendar (#285's slot check). That may be another series of
-        /// the same title (PR #474 round 3), so the copy is kept, not even looked up.
+        /// A split's source was not recreated: an occurrence of its series (or of one undo recreated
+        /// from it) already holds its rule slot in its calendar (#285's slot check, by series and
+        /// slot since #321). The copy is kept, not even looked up (PR #474 round 3).
         case slotAlreadyHeld
 
         /// From the occurrence or event undo's text and outcome.

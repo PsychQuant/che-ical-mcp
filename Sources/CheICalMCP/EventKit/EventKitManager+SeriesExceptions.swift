@@ -15,7 +15,9 @@ extension EventKitManager {
                                       restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },
                                       storedEvent: { try self.storedEvent(id: $0) },
                                       markNeedsRefresh: { self.markNeedsRefresh() },
-                                      refreshIfNeeded: { self.refreshIfNeeded() })
+                                      refreshIfNeeded: { self.refreshIfNeeded() },
+                                      noteRecreation: { self.seriesRecreations.note($0, recreatedAs: $1) },
+                                      recreations: { self.seriesRecreations.recreations(of: $0) })
     }
 
     /// `SeriesExceptionsUndo.capture` of `series`, read before a whole-series delete removes

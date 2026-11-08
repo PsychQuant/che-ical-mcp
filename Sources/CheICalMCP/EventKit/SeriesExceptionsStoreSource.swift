@@ -19,16 +19,17 @@ protocol SeriesExceptionsStoreSource {
     func identifiers(of event: Event) -> UndoPostState.OccurrenceIDs
     /// Whether the event has a calendar (a series without one is not listed or restored).
     func hasCalendar(_ event: Event) -> Bool
-    /// `UndoPostState.seriesScanWindow(of:)` of a series.
-    func scanWindow(of series: Event) -> DateInterval
+    /// #319: the end of a series' rules (`UndoPostState.seriesRuleEnd(of:)`): nil for an open-ended
+    /// or count-based rule. With the series' start it places `SeriesExceptionsPlanner.deleteWindow`.
+    func ruleEnd(of series: Event) -> Date?
     func startDate(of event: Event) -> Date
     /// The slot the rules gave an occurrence: its `occurrenceDate`, else its start.
     func slot(of occurrence: Event) -> Date
     /// The occurrence as the capture records it.
     func observed(_ occurrence: Event) -> SeriesExceptionsPlanner.ObservedOccurrence
     /// The events of one query over `range` in `event`'s calendar, in the order the store lists
-    /// them (none when it has no calendar). Callers pass only a listing range of the scan window
-    /// or the recorded window, at most 1460 days plus a year (`EventRangeQueryTests` pins them).
+    /// them (none when it has no calendar). Callers pass only a listing range of the delete window
+    /// (#319) or the recorded window, at most 1460 days plus a year (`EventRangeQueryTests` pins them).
     func events(in range: DateInterval, inCalendarOf event: Event) -> [Event]
 
     /// A new, unsaved event in the store.
@@ -51,9 +52,14 @@ protocol SeriesExceptionsStoreSource {
     func isStored(_ event: Event) throws -> Bool
     func markNeedsRefresh()
 
-    /// The events in `calendar` from `snapshot`'s start for its length (at least a minute), read
-    /// after a refresh when this server wrote since the last one (`OccurrenceSlotGuard`).
-    func slotHolders(for snapshot: EventSnapshot, in calendar: Calendar) -> [OccurrenceSlotGuard.Holder]
+    /// The events in `calendar` from `slot` for `length` (at least a minute), each with its
+    /// identifiers and rule slot, read after a refresh when this server wrote since the last one
+    /// (`OccurrenceSlotGuard`, #321).
+    func slotHolders(at slot: Date, length: TimeInterval, in calendar: Calendar) -> [OccurrenceSlotGuard.SeriesHolder]
+    /// #321: notes that undo recreated the series recorded as `recorded` as `recreated`.
+    func noteRecreation(of recorded: UndoPostState.OccurrenceIDs, as recreated: UndoPostState.OccurrenceIDs)
+    /// #321: the series undo recreated from `recorded` in this process (`SeriesRecreations`).
+    func recreations(of recorded: UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs]
 }
 
 /// The production `SeriesExceptionsStoreSource`: `EventKitManager`'s store, and the manager's own
@@ -68,17 +74,23 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     private let storedEvent: (String) throws -> EKEvent?
     private let markRefresh: () -> Void
     private let refreshIfNeeded: () -> Void
+    private let note: (UndoPostState.OccurrenceIDs, UndoPostState.OccurrenceIDs) -> Void
+    private let readRecreations: (UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs]
 
     init(eventStore: EKEventStore,
          restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
          storedEvent: @escaping (String) throws -> EKEvent?,
          markNeedsRefresh: @escaping () -> Void,
-         refreshIfNeeded: @escaping () -> Void) {
+         refreshIfNeeded: @escaping () -> Void,
+         noteRecreation: @escaping (UndoPostState.OccurrenceIDs, UndoPostState.OccurrenceIDs) -> Void,
+         recreations: @escaping (UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs]) {
         self.eventStore = eventStore
         self.readRestoreCalendar = restoreCalendar
         self.storedEvent = storedEvent
         self.markRefresh = markNeedsRefresh
         self.refreshIfNeeded = refreshIfNeeded
+        self.note = noteRecreation
+        self.readRecreations = recreations
     }
 
     func identifiers(of event: EKEvent) -> UndoPostState.OccurrenceIDs {
@@ -87,7 +99,7 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func hasCalendar(_ event: EKEvent) -> Bool { event.calendar != nil }
 
-    func scanWindow(of series: EKEvent) -> DateInterval { UndoPostState.seriesScanWindow(of: series) }
+    func ruleEnd(of series: EKEvent) -> Date? { UndoPostState.seriesRuleEnd(of: series) }
 
     func startDate(of event: EKEvent) -> Date { event.startDate }
 
@@ -133,14 +145,25 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func markNeedsRefresh() { markRefresh() }
 
-    func slotHolders(for snapshot: EventSnapshot, in calendar: EKCalendar) -> [OccurrenceSlotGuard.Holder] {
+    func slotHolders(at slot: Date, length: TimeInterval, in calendar: EKCalendar) -> [OccurrenceSlotGuard.SeriesHolder] {
         refreshIfNeeded()
-        let end = max(snapshot.endDate, snapshot.startDate.addingTimeInterval(60))
-        var holders: [OccurrenceSlotGuard.Holder] = []
-        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: snapshot.startDate, end: end,
+        let end = slot.addingTimeInterval(max(length, 60))
+        var holders: [OccurrenceSlotGuard.SeriesHolder] = []
+        eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: slot, end: end,
                                                                            calendars: [calendar])) { event, _ in
-            holders.append(.init(title: event.title, startDate: event.startDate, hasRecurrenceRules: event.hasRecurrenceRules))
+            holders.append(OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,
+                                                      externalIdentifier: event.calendarItemExternalIdentifier,
+                                                      occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay,
+                                                      startDate: event.startDate))
         }
         return holders
+    }
+
+    func noteRecreation(of recorded: UndoPostState.OccurrenceIDs, as recreated: UndoPostState.OccurrenceIDs) {
+        note(recorded, recreated)
+    }
+
+    func recreations(of recorded: UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs] {
+        readRecreations(recorded)
     }
 }

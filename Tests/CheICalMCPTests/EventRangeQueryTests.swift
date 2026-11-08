@@ -616,8 +616,9 @@ final class EventRangeQueryTests: XCTestCase {
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in SeriesExceptionsPlanner\.listingRanges\(for: window\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: capture).count, 1,
-                       "the capture's range is a listing range of the series' scan window")
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let window = store\.scanWindow\(of: series\)"#, in: capture).count, 1)
+                       "the capture's range is a listing range of the series' delete window")
+        // #319: the delete window, one query long (`SeriesDeleteWindowTests.testNoWindowIsLongerThanOneQuery`).
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), ruleEnd: store\.ruleEnd\(of: series\),\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
     }
 
     /// `delete_events_batch` by date range takes its range from `deletionRange`, checks the size,

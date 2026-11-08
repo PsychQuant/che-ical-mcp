@@ -21,7 +21,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
 
     func testSingleRecordWithExceptionsIsListedAsRestoringThem() {
         XCTAssertEqual(series(withExceptions: true).description,
-                       "Deleted event: Standup (undo recreates the series and its exceptions within the checked window: \(exceptionsListing))")
+                       "Deleted event: Standup (undo recreates the series and its exceptions within the checked window (2027-01-14 to 2027-02-14): \(exceptionsListing))")
     }
 
     func testSingleRecordWithoutExceptionsKeepsItsListing() {
@@ -133,5 +133,53 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertTrue(note.contains("more than a year"), note)
         XCTAssertFalse(note.contains("cannot say"), note)
         XCTAssertFalse(note.contains("first occurrence was edited"), "only when a member kept it: \(note)")
+    }
+
+    // MARK: - #319: the window by its days, and a series that reaches past it
+
+    private func iso(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+    /// Noon UTC on both ends, so the days read the same in the host zone and in UTC.
+    private var aroundTheDelete: DateInterval {
+        DateInterval(start: iso("2025-11-08T12:00:00Z"), end: iso("2029-11-07T12:00:00Z"))
+    }
+    private let windowRule = "at most four years, from a year before the delete, or from the first occurrence when that is later, moved earlier for a rule that ends sooner"
+
+    private func restored(startsBefore: Bool, continuesAfter: Bool) -> String {
+        var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [])
+        exceptions.seriesStartsBeforeWindow = startsBefore
+        exceptions.seriesContinuesAfterWindow = continuesAfter
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4).withExceptions(exceptions)
+        return UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW", exceptionsOutcome: .init(stayedDeleted: 1, oneOffs: 0))
+    }
+
+    func testTheUndoTextNamesTheWindowByItsDaysAndSaysTheSeriesReachesPastIt() {
+        let message = restored(startsBefore: true, continuesAfter: true)
+        XCTAssertTrue(message.contains("Exceptions outside the checked window (2025-11-08 to 2029-11-07; \(windowRule)) are not restored"), message)
+        XCTAssertTrue(message.contains("This series has occurrences outside that window, before and after it"), message)
+    }
+
+    func testTheUndoTextSaysWhichSideTheSeriesReachesPastTheWindow() {
+        XCTAssertTrue(restored(startsBefore: true, continuesAfter: false).contains("This series has occurrences outside that window, before it"))
+        XCTAssertTrue(restored(startsBefore: false, continuesAfter: true).contains("This series has occurrences outside that window, after it"))
+    }
+
+    func testASeriesInsideTheWindowSaysNothingMore() {
+        let message = restored(startsBefore: false, continuesAfter: false)
+        XCTAssertFalse(message.contains("This series has occurrences outside that window"), message)
+        XCTAssertTrue(message.contains("checked window (2025-11-08 to 2029-11-07;"), message)
+    }
+
+    func testTheHistoryLineNamesTheWindowByItsDays() {
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
+            .withExceptions(SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: []))
+        XCTAssertEqual(UndoOperation.deleteEvent(snapshot: snapshot).description,
+                       "Deleted event: Standup (undo recreates the series and its exceptions within the checked window (2025-11-08 to 2029-11-07): \(exceptionsListing))")
+    }
+
+    /// The batch note states the window's rule, without days: its members' windows differ.
+    func testTheBatchNoteStatesTheWindowRule() {
+        let message = UndoOperation.batchUndoneMessage(count: 1, events: [.seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 0))])
+        XCTAssertTrue(message.contains("Exceptions outside the checked window (\(windowRule)) are not restored"), message)
+        XCTAssertFalse(message.contains("first occurrence to the end of the rule"), message)
     }
 }
