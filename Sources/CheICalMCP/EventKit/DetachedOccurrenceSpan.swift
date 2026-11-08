@@ -66,8 +66,6 @@ import EventKit
 ///   first occurrence, the whole series).
 /// - `move_events_batch` span `all`: all occurrences moved and the identifier stayed, within one
 ///   iCloud account. Across accounts was not measured.
-/// - `delete_events_batch` by date range: the listing named the identifier, not the caller; a range
-///   holding only that occurrence deletes it alone (#427).
 ///
 /// Sources: `/RID=` and `isDetached` were measured reliable on Google (#320), and these refusals ran
 /// on iCloud only. On a source with no `/RID=`, which Exchange may be (not measured), the rest of the
@@ -608,6 +606,51 @@ enum DetachedOccurrenceSpan {
     /// A rule's day against the occurrence's original day, not the day it shows: through its id the
     /// new rule runs from the original one, and a rule on the shown day left two occurrences there.
     static let recurrenceDayReason = "event_id names one occurrence of a recurring series, edited on its own, and days_of_week does not hold the day of the week of its original date, the day the series runs from. Add that day, or leave days_of_week out. Nothing was written."
+
+    /// #442: `all_day` changed on a whole series with an occurrence edited on its own, through the
+    /// series' object. Measured on iCloud with `all_day: true`: every shape of edit brought that
+    /// occurrence's original slot back as an extra occurrence, answered `updated`. `all_day: false`
+    /// was not measured and counts too. `hasEditedOccurrence` is read only when the answer depends
+    /// on it: it scans the series, about five years from its start.
+    /// Cluster verify r3 (LOW): not when the same call clears the rule, which leaves one event.
+    static func refusesAllDayChange(wholeSeries: Bool, hasRules: Bool, requested: Bool?, current: Bool,
+                                    clearingRecurrence: Bool = false,
+                                    hasEditedOccurrence: @autoclosure () -> Bool) -> Bool {
+        guard wholeSeries, hasRules, !clearingRecurrence, let requested, requested != current else { return false }
+        return hasEditedOccurrence()
+    }
+
+    /// #442 (cluster verify r3): an edited occurrence cannot be ruled out whenever the scan does
+    /// not cover the whole series (open-ended, or ending past what the scan lists): one edited past
+    /// the scan is not seen, and the write still reaches it. Fail closed, whatever the series' age.
+    static func editedOccurrenceUnknown(coversWholeSeries: Bool) -> Bool {
+        !coversWholeSeries
+    }
+
+    static let allDayUnknownReason = "The scan cannot show where this series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static let allDayUnlistedReason = "This series' occurrences could not be listed, so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static func allDayRefusalReason(edited: Bool, listed: Bool) -> String {
+        edited ? allDayChangeReason : (listed ? allDayUnknownReason : allDayUnlistedReason)
+    }
+
+    static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
+
+    /// #455: `clear_timezone` on a series bounded by a count. Measured on iCloud (weekly and daily,
+    /// count 5, with and without an edited occurrence): the last occurrence went, and the rule read
+    /// back unchanged, also when it was written again in the same save. A rule with an end date and
+    /// an open-ended one kept every occurrence, and span `future` was not run, so it counts.
+    /// Cluster verify r2, r3: not when the result is all-day (no zone to clear: #190 nils it
+    /// harmlessly), or when the same call clears the rule, as the count no longer applies. A floating
+    /// timed series still gets timeZone = nil, so it is refused. `occurrenceCounts` holds the stored
+    /// rules and the rule this call writes.
+    static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int],
+                                     hasZone: Bool = true, clearingRecurrence: Bool = false) -> Bool {
+        clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
+    }
+
+    static let clearTimezoneReason = "This series, or the recurrence this call writes, ends by a count of occurrences, and clearing the time zone of such a series dropped its last occurrence. A rule given in the same call does not lift a count the series already has. On a series that has not started, first change its rule to an end date in a separate call, without clear_timezone (the last occurrence's date keeps the same occurrences), then send clear_timezone. A recurrence with a count cannot be written together with clear_timezone, and a series that has started takes no clear_timezone (#478), so do not change its rule for this. Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call

@@ -26,6 +26,15 @@ final class SeriesRuleWriteTests: XCTestCase {
         XCTAssertEqual(reach(repeats: false), .oneOccurrence, "a one-off event")
     }
 
+    /// #442 cluster verify: span future from the first occurrence is a whole-series save too.
+    func testWholeSeriesCoversSpanAllAndSpanFutureFromTheFirst() {
+        XCTAssertTrue(reach(all: true, future: false, slot: 3 * week).isWholeSeries)
+        XCTAssertTrue(reach(slot: 0).isWholeSeries, "span future from the first occurrence")
+        XCTAssertFalse(reach(slot: 3 * week).isWholeSeries)
+        XCTAssertFalse(reach(future: false).isWholeSeries)
+        XCTAssertTrue(reach(ownIdLater: false, slot: 3 * week).isWholeSeries, "nothing earlier remains")
+    }
+
     /// PR #471 verify item 1: an occurrence's own id resolves to that occurrence itself, so only the
     /// series' listing says whether it is the first.
     func testAnOwnIdWithAnEarlierSlotIsFromALaterOccurrence() {

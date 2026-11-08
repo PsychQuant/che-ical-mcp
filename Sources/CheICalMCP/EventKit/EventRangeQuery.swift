@@ -267,10 +267,33 @@ enum EventRangeQuery {
             .map(\.element)
     }
 
+    /// #427 cluster verify: by date range with span "all", the row of an occurrence edited on its own
+    /// (`<series>/RID=…`) whose series' own identifier is listed too is left to that series' row,
+    /// which deletes the whole series, the occurrence included, as before #427. Judged on its own,
+    /// that row was refused whenever the scan could not show the series ends (an open-ended one),
+    /// while the series' row deleted it anyway. Only for a series whose own row deletes on its own
+    /// (`seriesRowsThatDelete`, previewed first, cluster verify r2): when it is refused alone, as
+    /// with a first occurrence moved past the next slot, the occurrence's row is kept and runs
+    /// first, as on main, and the series' row then reaches the rest. An identifier without
+    /// `/RID=` names no series and keeps its row.
+    static func rowsTheSeriesRowDoesNotTake(_ items: [DeletionItem], seriesRowsThatDelete: Set<String>) -> [DeletionItem] {
+        items.filter { item in
+            DetachedOccurrenceSpan.seriesIdentifier(of: item.identifier).map { !seriesRowsThatDelete.contains($0) } ?? true
+        }
+    }
+
+    /// The series whose own identifier is listed beside an occurrence of theirs with `/RID=`: the
+    /// ones to preview before `rowsTheSeriesRowDoesNotTake`.
+    static func seriesListedWithTheirOccurrences(_ items: [DeletionItem]) -> Set<String> {
+        let listed = Set(items.map(\.identifier))
+        return Set(items.compactMap { DetachedOccurrenceSpan.seriesIdentifier(of: $0.identifier) }.filter { listed.contains($0) })
+    }
+
     /// The deletions these items make, at most: span "all" deletes each series once, whole, and
     /// span "future" each series once from its earliest listed slot. An occurrence edited on its
     /// own that has its own identifier (`<series>/RID=…` on iCloud) counts as one more, even when
-    /// its series' removal then takes it (it is reported as already_removed).
+    /// its series' removal then takes it (it is reported as already_removed). With span "all" the
+    /// rows a listed series' row takes are dropped before this count (`rowsTheSeriesRowDoesNotTake`).
     static func deletionOperations(_ identifiers: [String], span: String) -> Int {
         span == "all" || span == "future" ? Set(identifiers).count : identifiers.count
     }

@@ -957,6 +957,103 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertFalse(UndoPostState.sameWallClock(overDST, normal, zone: TimeZone(identifier: "UTC")!), "read in UTC the lengths differ")
     }
 
+    // MARK: - clear_timezone on a series with a count (#455)
+
+    func testClearingTheTimeZoneIsRefusedOnlyOnASeriesWithACount() throws {
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [0]), "an end date or no end: measured clean")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: []), "a one-off")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: false, occurrenceCounts: [5]), "one occurrence")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: false, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], hasZone: false),
+                       "an all-day result: no zone to clear")
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [0, 5]),
+                      "a count rule written in the same call (cluster verify r3)")
+        // Cluster verify r5: a stored count is not lifted by a rule without one in the same call, and
+        // the reason gives the two-call route that works.
+        XCTAssertTrue(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5, 0]),
+                      "stored count, this call writes an end date")
+        XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.contains("in a separate call"), DetachedOccurrenceSpan.clearTimezoneReason)
+        XCTAssertFalse(DetachedOccurrenceSpan.clearTimezoneReason.contains("leave out clear_timezone"), "not a way to clear the zone")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], clearingRecurrence: true),
+                       "the rule goes in the same call")
+        XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.hasSuffix("Nothing was written."))
+        let body = try updateBody()
+        XCTAssertTrue(body.contains("occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 } + [recurrenceRule?.occurrenceCount ?? 0], hasZone: !(isAllDay ?? event.isAllDay), clearingRecurrence: clearRecurrence) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason) }"), "the rule this call writes counts too (cluster verify r3)")
+    }
+
+    // MARK: - all_day on a series with an edited occurrence (#442)
+
+    /// Measured: an edited occurrence's original slot came back as an extra occurrence, whatever
+    /// the edit. Without an edited occurrence the call does what it says, and the scan is not run
+    /// unless the flag changes on a whole series.
+    func testChangingAllDayIsRefusedOnlyWithAnEditedOccurrence() {
+        var scans = 0
+        func refused(whole: Bool = true, rules: Bool = true, requested: Bool? = true, current: Bool = false, edited: Bool = true) -> Bool {
+            DetachedOccurrenceSpan.refusesAllDayChange(wholeSeries: whole, hasRules: rules, requested: requested, current: current,
+                                                       hasEditedOccurrence: { scans += 1; return edited }())
+        }
+        XCTAssertTrue(refused())
+        XCTAssertEqual(scans, 1)
+        XCTAssertTrue(refused(requested: false, current: true), "not measured: refused too")
+        XCTAssertFalse(refused(edited: false), "no edited occurrence: measured clean")
+        scans = 0
+        XCTAssertFalse(refused(whole: false), "span this, or span future from a later occurrence")
+        XCTAssertFalse(refused(rules: false), "a one-off")
+        XCTAssertFalse(refused(requested: nil), "all_day not given")
+        XCTAssertFalse(refused(requested: false, current: false), "no change")
+        XCTAssertEqual(scans, 0)
+        XCTAssertTrue(DetachedOccurrenceSpan.allDayChangeReason.hasSuffix("Nothing was written."))
+    }
+
+    /// Read from the reach (span future from the first occurrence is the same whole-series save,
+    /// cluster verify), so it comes after `reach` and the #326 stand-in check, and before any write.
+    /// Cluster verify r3: fail closed whenever the scan does not cover the whole series; an edit
+    /// past the scan (year six of a recent open-ended series) is not seen either.
+    func testAnEditedOccurrenceIsUnknownWheneverTheScanDoesNotCoverTheSeries() {
+        XCTAssertTrue(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false))
+        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: true))
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: true, listed: true), DetachedOccurrenceSpan.allDayChangeReason)
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: false, listed: true), DetachedOccurrenceSpan.allDayUnknownReason)
+        XCTAssertEqual(DetachedOccurrenceSpan.allDayRefusalReason(edited: false, listed: false), DetachedOccurrenceSpan.allDayUnlistedReason,
+                       "a series that could not be listed is not said to reach past the scan")
+        for reason in [DetachedOccurrenceSpan.allDayUnknownReason, DetachedOccurrenceSpan.allDayUnlistedReason] {
+            XCTAssertTrue(reason.hasSuffix("Nothing was written."))
+        }
+    }
+
+    /// Cluster verify r4 (LOW): the facts' wiring, which only EventKit can run: unlisted and empty
+    /// listings fail closed, and coverage is read over the end of the listing ranges.
+    func testTheAllDayFactsFailClosed() throws {
+        let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func allDayEditFacts(", in: SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))))
+        XCTAssertTrue(body.contains("let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\\.end).max() else { return (false, true, false) }"), body)
+        XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return (false, true, false) }"), body)
+        XCTAssertTrue(body.contains("if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false, true) }"), body)
+        XCTAssertTrue(body.contains("scannedTo: listedTo"), body)
+        XCTAssertTrue(body.contains("return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)"), body)
+    }
+
+    /// Cluster verify r3 (LOW): clearing the rule in the same call leaves one event.
+    func testClearingTheRuleTakesAnAllDayChange() {
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesAllDayChange(wholeSeries: true, hasRules: true, requested: true, current: false,
+                                                                  clearingRecurrence: true, hasEditedOccurrence: true))
+    }
+
+    func testTheAllDayRefusalComesBeforeTheFirstWrite() throws {
+        let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
+        let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, clearingRecurrence: clearRecurrence, hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayRefusalReason( edited: allDayFacts?.edited ?? true, listed: allDayFacts?.listed ?? true)) }"
+        let at = try XCTUnwrap(flat.range(of: refusal), flat)
+        for earlier in ["let reach = SeriesRuleWrite.reach(", "throw EventKitError.standInRefused(reason: Self.standInSplitReason)"] {
+            XCTAssertLessThan(try XCTUnwrap(flat.range(of: earlier), earlier).lowerBound, at.lowerBound, earlier)
+        }
+        // Cluster verify r2 (LOW): the first assignment is the title; each write must be found.
+        for write in ["event.title = ", "event.isAllDay = ", "event.timeZone = ", "event.startDate = ", "eventStore.save("] {
+            let first = try XCTUnwrap(flat.range(of: write), write)
+            XCTAssertLessThan(at.lowerBound, first.lowerBound, write)
+        }
+    }
+
     // MARK: - The series' id with the first occurrence edited (#428)
 
     func testTheEarliestEditedOccurrenceIsPickedOnlyWhenItComesFirst() {
@@ -981,7 +1078,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertTrue(manager.contains("} catch EventKitError.occurrenceAddressRefused(let reason) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted)) }"), "verify r2: the text says the series' id")
                 XCTAssertTrue(manager.contains("return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)"))
         XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: identifier) { try await deleteEvent(identifier: first.id, span: .futureEvents) return .firstEditedOccurrence(id: first.id) }"), "delete")
-        XCTAssertTrue(manager.contains("if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids only")
+        XCTAssertTrue(manager.contains("if let first = try firstEditedOccurrenceID(of: id), let occurrence = try freshEvent(id: first.id) {"), "the batch, by event_ids and by date range (#427)")
         XCTAssertTrue(manager.contains("if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) { failures.append((id, refusal)) continue } let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence) try eventStore.remove(occurrence, span: .futureEvents) successCount += 1 throughFirstOccurrence.append((identifier: id, occurrenceID: first.id)) if refusingMarker == nil { refusingMarker = snapshots.record(for: snapshots.kind( span: .futureEvents, seriesResolves: { seriesResolves(identifier: first.id) })) } continue"), "the batch: delete_event's refusals, then the whole series from the first occurrence, reported and kept out of the undo")
         XCTAssertTrue(manager.contains("await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) })) } else if let refusingMarker { await CalendarUndoManager.shared.record(refusingMarker) }"), "PR #465 verify r1-r2: the batch's undo holds only the rows it can restore; with none, delete_event's refusing record")
         let preview = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventBatchDeletionSource.swift")))
@@ -1447,8 +1544,8 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     func testTheSeriesDeletesCheckBeforeTheyRemove() throws {
         let single = try collapsed("func deleteEventSeries(identifier: String)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
         XCTAssertTrue(single.contains("if let refusal = try seriesDeleteRefusal(event, id: identifier) { throw EventKitError.occurrenceAddressRefused(reason: refusal) }"), single)
-        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(batch.contains("if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
+        let batch = try collapsed("func deleteEventSeriesBatch(identifiers: [String])", upTo: "let snapshot = EventSnapshot.recordingSeriesDelete(", in: "EventKit/EventKitManager.swift")
+        XCTAssertTrue(batch.contains("if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) { failures.append((id, refusal)) continue }"), batch)
     }
 
     /// The preview by `event_ids` walks the rows as the real call does and does not list what the

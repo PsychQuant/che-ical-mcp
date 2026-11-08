@@ -537,12 +537,12 @@ end、notes、location、alarms。
    `start_time` 09:00：只改結束的場次 09:00 起、保留自己的長度；+2h 的場次留在 12:00；移到週三的場次留在週三、09:00 起。
    `end_time` 12:00：只改結束的場次不變；+2h 的場次到 14:00。`timezone`：每場位移相同，與沒有單獨改過場次的系列一樣。
    `title`、`notes`、`location`：第 3 場只改時間、第 4 場改標題與備註、第 5 場改地點：改過那一欄的場次留著自己的值，其他都拿到新值。
-   `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
+   `clear_timezone`：有次數上限的系列拒絕，什麼都不寫（沒有這個拒絕的 build 會少掉最後一場，沒有單獨改過場次也一樣，#455）；結束日期或沒有結束的系列放行，每場都在。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
-   `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
+   `structured_location`：寫到別的場次。`all_day`：系列有單獨改過的場次時拒絕，什麼都不寫；沒有這個拒絕的 build 會多一個場次（#442）。
    **#478 之後**：系列已開始（第 1 場的原時段在現在之前）時，`timezone`（與事件原本不同的時區）與 `clear_timezone` 經系列 id、span `all`
-   會在寫入前被拒絕，系列不變；這是預期結果，不是 regression。上面 `timezone` 與 `clear_timezone` 那兩句描述的是舊行為，要看它們，
-   用一個還沒開始的系列（第 1 場在未來）重做這兩列；(g) 從還沒發生的下一場用 span `future` 帶 `timezone` 仍放行（#478 量過）。
+   會在寫入前被拒絕，系列不變；這是預期結果，不是 regression。上面 `timezone` 那一句描述的是舊行為，要看它，用一個還沒開始的系列（第 1 場在未來）重做；`clear_timezone` 那一句
+   已照 #455 改寫（有次數上限的系列拒絕，有結束日或沒有結束的未開始系列放行），照它做；(g) 從還沒發生的下一場用 span `future` 帶 `timezone` 仍放行（#478 量過）。
    **系列 id 走到第一場（#428）**：第 1 場只改標題或結束（開始時間沒動），或第 1 場刪掉、第 2 場單獨改過時，系列 id 帶 span `all` 的
    `update_event`、`delete_event`、`delete_events_batch`（`event_ids`，含 dry run，#436）改走該場次自己的 id：見 (h)。`id` 是系列 id
    （第 1 場刪掉時是新 id），回 `occurrence_id`。span `future` 在這個形狀仍被拒絕。#436 是在 Google 帳號上量到的，那裡要再跑一次
@@ -593,6 +593,8 @@ end、notes、location、alarms。
    5 場都在原日曆；帶它自己的日期：`split`，它到目標日曆成單一事件，原日曆 4 場。span `all`：全部搬走，id 不變，在 session MCP 上
    `undo` 搬回來；span `all` 帶日期：拒絕。`copy_event` 的 `delete_original`：拒絕。`update_event` span `this` 帶同帳號的新日曆，
    經場次自己的 id、經系列 id 加 `occurrence_date`：都拒絕，帶目前的日曆放行；
+   (j) Google 帳號（#435，只在該帳號上有意義，在兩個拋棄式日曆上做）：`create_event` → `move_events_batch` 到同帳號另一日曆
+   （`id_changed: true`）→ `undo`：訊息帶新的 ID → `undo`：刪掉事件，不是 not found。都在同一個 session MCP 或 stdio process；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，

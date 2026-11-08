@@ -96,7 +96,7 @@ final class UndoBatchWiringTests: XCTestCase {
     /// `deleteEventsBatch` (`DeletedEventSnapshots.record(for:)` only) and the reminder batch delete
     /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
     func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
-        let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool)", in: Self.manager))
+        let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
@@ -145,7 +145,9 @@ final class UndoBatchWiringTests: XCTestCase {
             let count = SourcePins.ranges(ofPattern: #"(?<!case )\.batch\s*\("#, in: code).count
             if count > 0 { built[file.lastPathComponent, default: 0] += count }
         }
-        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 1, "Server.swift": 1, "UndoBatchRestore.swift": 1],
+        // UndoManager.swift's second is `replacingEventIdentifier` (#435): the same members, with one
+        // identifier replaced, so nothing new can run last.
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 1, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 

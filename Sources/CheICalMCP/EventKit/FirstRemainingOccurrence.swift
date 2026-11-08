@@ -238,6 +238,23 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
+    /// #442 (cluster verify r2, r3): whether the series has an occurrence edited on its own, and
+    /// whether the scan cannot rule one out: the series could not be listed (`listed` false), or the
+    /// scan does not cover it whole (`DetachedOccurrenceSpan.editedOccurrenceUnknown`).
+    func allDayEditFacts(of stale: EKEvent, id: String) -> (edited: Bool, unknown: Bool, listed: Bool) {
+        guard let (_, candidates) = seriesOccurrences(of: stale, id: id), let window = seriesScanWindow(of: stale),
+              let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
+            return (false, true, false)
+        }
+        // Cluster verify r4 (LOW): an empty listing is not 'no edited occurrence' (as #285's capture reads it).
+        guard !candidates.isEmpty else { return (false, true, false) }
+        if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false, true) }
+        let covers = DetachedOccurrenceSpan.coversWholeSeries(
+            rules: (stale.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
+            firstStart: stale.startDate, scannedTo: listedTo, calendar: Calendar.gregorian(in: stale.timeZone ?? .current))
+        return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)
+    }
+
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
     /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
     func seriesObject(ofOccurrence id: String) throws -> EKEvent? {
