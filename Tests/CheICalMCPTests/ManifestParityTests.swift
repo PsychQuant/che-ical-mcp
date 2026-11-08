@@ -532,7 +532,7 @@ final class ManifestParityTests: XCTestCase {
              "a deleted occurrence comes back as a one-off event"),
             ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
              "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the checked window",
-             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete) restored"),
+             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete; for a count, also the four years from its first occurrence) restored"),
             ("#261: a single delete_reminder undo names the fields the store holds differently (the batch clause follows)",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),
@@ -817,5 +817,19 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(description.contains("not by title"), description)
         XCTAssertTrue(description.contains("moved off its slot"), description)
         XCTAssertTrue(description.contains("the only version with that edit"), description)
+    }
+
+    /// PR #494 round 5: the delete and undo surfaces name the extra window of a count.
+    func testTheDeleteAndUndoSurfacesNameTheCountWindow() throws {
+        let manifestData = try Data(contentsOf: try locateManifest())
+        let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any]
+        let entries = manifest?["tools"] as? [[String: Any]] ?? []
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertTrue(description.contains("for a count, also the four years from its first occurrence"), "defineTools() \(name): \(description)")
+        }
+        let summary = entries.first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        XCTAssertTrue(summary.contains("for a count, also the four years from its first occurrence"), summary)
     }
 }

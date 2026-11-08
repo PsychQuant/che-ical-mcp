@@ -23,9 +23,10 @@ struct SeriesExceptions {
     /// possible slot is at or past the window's end (an upper bound), or a count whose end cannot
     /// be shown. Never set together with `seriesContinuesAfterWindow`.
     var seriesMayContinueAfterWindow: Bool = false
-    /// PR #494 round 4: further windows the occurrences were listed over, each one EventKit query
-    /// long. A count whose end cannot be shown records the window from its first occurrence here
-    /// (the window before #319) beside `window` around the delete. Empty for every other series.
+    /// PR #494 rounds 4-5: further windows the occurrences were listed over, each one EventKit query
+    /// long. A count whose window around the delete starts after its first occurrence records the
+    /// window from its first occurrence here (the window before #319) beside `window`, unless none
+    /// of the series is listed there. Empty for every other series.
     var extraWindows: [DateInterval] = []
 
     /// `window` and `extraWindows`: every slot judged, kept or removed is inside one of them.
@@ -65,6 +66,14 @@ enum SeriesExceptionsPlanner {
         case endsBy(Date)
         /// A count rule whose end cannot be shown (a filter, a day after the 28th).
         case unknown
+
+        /// A rule that ends after a count of occurrences (`endsBy` or `unknown`).
+        var isCount: Bool {
+            switch self {
+            case .endsBy, .unknown: return true
+            case .open, .endsAt: return false
+            }
+        }
     }
 
     /// How `rules` end, from `firstStart` (`calendar` in the event's zone): any open-ended rule
@@ -510,9 +519,17 @@ enum OccurrenceSlotGuard {
 
     /// A holder from an event listed at the slot: its rule slot is `UndoPostState.ruleSlot` (the
     /// RID of an occurrence edited on its own, otherwise `occurrenceDate`), else its start.
+    /// PR #494 round 5: nil for a plain one-off event (no rules of its own, not detached, no
+    /// `/RID=`): only an occurrence of a recurring series holds a slot. A series that lost its rule
+    /// but kept its identifier, with its one remaining event moved onto the slot, is no series; the
+    /// guard before #321 required rules too. An occurrence edited on its own has no rules of its own
+    /// (iCloud) but is detached, or carries `/RID=`, so it still counts.
     static func holder(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
-                       startDate: Date, zone: TimeZone = .current) -> SeriesHolder {
-        SeriesHolder(ids: .init(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
+                       startDate: Date, hasRecurrenceRules: Bool, isDetached: Bool, zone: TimeZone = .current) -> SeriesHolder? {
+        let hasSlotSuffix = UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
+                                                       occurrenceDate: nil) != nil
+        guard hasRecurrenceRules || isDetached || hasSlotSuffix else { return nil }
+        return SeriesHolder(ids: .init(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
                      slot: UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
                                                   occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) ?? startDate)
     }

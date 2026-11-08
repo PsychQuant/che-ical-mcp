@@ -38,7 +38,7 @@
 
 在 `EventSnapshot` 加一個選用欄位 `exceptions: SeriesExceptions?`（init 參數預設 `nil`，既有呼叫點不必改）。`SeriesExceptions` 是純值型別：
 
-- `window: DateInterval`：檢查視窗。原本沿用 `UndoPostState.seriesScanWindow(firstStart:ruleEnd:)`（從第一個場次前一天起，最長 1460 天）；#319 起改為 `SeriesExceptionsPlanner.deleteWindow`：長度不變，但放在刪除時間附近（從刪除前三年起，若第一個場次前一天較晚就從那天起；規則較早結束時往前移，讓視窗結束在規則結束後一天，以次數結束的規則取其最晚可能的時段）。原本的視窗對多年前開始的系列整段落在過去。結束時間算不出來的次數規則另外記錄從第一個場次起的視窗（`extraWindows`），擷取與還原在兩個視窗內判斷。`seriesScanWindow` 本身不變，create-undo 與 stand-in 掃描仍用它；
+- `window: DateInterval`：檢查視窗。原本沿用 `UndoPostState.seriesScanWindow(firstStart:ruleEnd:)`（從第一個場次前一天起，最長 1460 天）；#319 起改為 `SeriesExceptionsPlanner.deleteWindow`：長度不變，但放在刪除時間附近（從刪除前三年起，若第一個場次前一天較晚就從那天起；規則較早結束時往前移：有結束日的規則讓視窗結束在結束日後一天；以次數結束的規則取其最晚可能的時段，只把視窗往前移、不截斷尾端）。原本的視窗對多年前開始的系列整段落在過去。以次數結束的規則（含結束時間算不出來的），若刪除前後的視窗晚於第一個場次，另外記錄從第一個場次起的視窗（`extraWindows`），擷取與還原在兩個視窗內判斷；該視窗列不到任何場次（store 沒有那段歷史）時不記錄。`seriesScanWindow` 本身不變，create-undo 與 stand-in 掃描仍用它；
 - `keptSlots: [Date]`：視窗內、刪除前存在且**未分離**的場次的時段；
 - `detached: [DetachedOccurrence]`：視窗內每個 detached 場次，含一份去掉規則的一次性 `EventSnapshot` 與它的原始時段（`UndoPostState.originalSlot`，即 `/RID=`）。
 

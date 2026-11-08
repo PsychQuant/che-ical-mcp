@@ -618,13 +618,13 @@ final class EventRangeQueryTests: XCTestCase {
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in windows\.flatMap\(SeriesExceptionsPlanner\.listingRanges\(for:\)\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: observed).count, 1,
                        "the capture's ranges are listing ranges of the windows it is given")
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"observedOccurrences\(of: series, ids: seriesIDs, over: (\[window\]|windows), in: store\)"#, in: undo).count, 2,
-                       "two callers: the delete window, and the two windows of an unknown count")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"observedOccurrences\(of: series, ids: seriesIDs, over: (\[window\]|\[window, fromFirst\]), in: store\)"#, in: undo).count, 2,
+                       "two callers: the delete window, and the two windows of a count")
         // #319: the delete window, one query long (`SeriesDeleteWindowTests.testNoWindowIsLongerThanOneQuery`).
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), end: seriesEnd,\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
         // Round 4: the second window is the create-undo window, uncut (1460 days).
         XCTAssertEqual(SourcePins.ranges(of: "let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)", in: capture).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "let windows = [window, fromFirst]", in: capture).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let windows = listedFromFirst ? [window, fromFirst] : [window]", in: capture).count, 1)
         let restore = try XCTUnwrap(SourcePins.body(of: "static func restore<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for window in exceptions\.windows \{\s*for occurrence in store\.events\(in: window, inCalendarOf: restored\)"#, in: restore).count, 1)
     }

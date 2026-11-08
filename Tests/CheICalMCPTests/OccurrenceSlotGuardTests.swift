@@ -75,33 +75,53 @@ final class OccurrenceSlotGuardTests: XCTestCase {
 
     // MARK: - the holder's slot (PR #494 round 1, LOW)
 
-    func testAHolderWithARIDIsAtItsRuleSlot() {
+    func testAHolderWithARIDIsAtItsRuleSlot() throws {
         let rid = at(slot)
         let moved = rid.addingTimeInterval(1800)
         let holder = OccurrenceSlotGuard.holder(eventIdentifier: "S/RID=\(Int(rid.timeIntervalSinceReferenceDate))", externalIdentifier: nil,
-                                                occurrenceDate: moved, isAllDay: false, startDate: moved)
-        XCTAssertEqual(holder.slot, rid)
+                                                occurrenceDate: moved, isAllDay: false, startDate: moved, hasRecurrenceRules: false, isDetached: true)
+        XCTAssertEqual(try XCTUnwrap(holder).slot, rid)
     }
 
-    func testAHolderWithoutARIDIsAtItsOccurrenceDate() {
-        let holder = OccurrenceSlotGuard.holder(eventIdentifier: "S", externalIdentifier: "UID-S", occurrenceDate: at(slot),
-                                                isAllDay: false, startDate: at(slot).addingTimeInterval(60))
+    func testAHolderWithoutARIDIsAtItsOccurrenceDate() throws {
+        let holder = try XCTUnwrap(OccurrenceSlotGuard.holder(eventIdentifier: "S", externalIdentifier: "UID-S", occurrenceDate: at(slot),
+                                                              isAllDay: false, startDate: at(slot).addingTimeInterval(60),
+                                                              hasRecurrenceRules: true, isDetached: false))
         XCTAssertEqual(holder.slot, at(slot))
         XCTAssertEqual(holder.ids, .init(eventIdentifier: "S", externalIdentifier: "UID-S"))
     }
 
-    func testAHolderWithNeitherIsAtItsStart() {
-        let holder = OccurrenceSlotGuard.holder(eventIdentifier: "O", externalIdentifier: nil, occurrenceDate: nil, isAllDay: false, startDate: at(slot))
+    /// A recurring event without an occurrenceDate is at its start.
+    func testAHolderWithNeitherIsAtItsStart() throws {
+        let holder = try XCTUnwrap(OccurrenceSlotGuard.holder(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: nil, isAllDay: false,
+                                                              startDate: at(slot), hasRecurrenceRules: true, isDetached: false))
         XCTAssertEqual(holder.slot, at(slot))
     }
 
+    /// PR #494 round 5: a plain one-off event (no rules, not detached, no `/RID=`) holds nothing,
+    /// whatever its identifier: a series that lost its rule but kept its id is no series.
+    func testAPlainOneOffEventIsNoHolder() {
+        XCTAssertNil(OccurrenceSlotGuard.holder(eventIdentifier: "S", externalIdentifier: "UID-S", occurrenceDate: at(slot), isAllDay: false,
+                                                startDate: at(slot), hasRecurrenceRules: false, isDetached: false))
+    }
+
+    /// An occurrence edited on its own has no rules of its own (iCloud); it still holds.
+    func testADetachedOccurrenceWithoutRulesIsAHolder() {
+        XCTAssertNotNil(OccurrenceSlotGuard.holder(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: at(slot), isAllDay: false,
+                                                   startDate: at(slot), hasRecurrenceRules: false, isDetached: true))
+        XCTAssertNotNil(OccurrenceSlotGuard.holder(eventIdentifier: "S/RID=1", externalIdentifier: nil, occurrenceDate: at(slot), isAllDay: false,
+                                                   startDate: at(slot), hasRecurrenceRules: false, isDetached: false),
+                        "a /RID= identifier marks an occurrence of a series")
+    }
+
     /// An all-day RID is a floating date: the slot is local midnight of that day.
-    func testAnAllDayHolderIsAtLocalMidnight() {
+    func testAnAllDayHolderIsAtLocalMidnight() throws {
         let zone = TimeZone(identifier: "Asia/Taipei")!
         var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
         let floating = utc.date(from: DateComponents(year: 2028, month: 5, day: 8))!
-        let holder = OccurrenceSlotGuard.holder(eventIdentifier: "S/RID=\(Int(floating.timeIntervalSinceReferenceDate))", externalIdentifier: nil,
-                                                occurrenceDate: nil, isAllDay: true, startDate: floating, zone: zone)
+        let holder = try XCTUnwrap(OccurrenceSlotGuard.holder(eventIdentifier: "S/RID=\(Int(floating.timeIntervalSinceReferenceDate))", externalIdentifier: nil,
+                                                              occurrenceDate: nil, isAllDay: true, startDate: floating,
+                                                              hasRecurrenceRules: false, isDetached: true, zone: zone))
         var local = Calendar(identifier: .gregorian); local.timeZone = zone
         XCTAssertEqual(holder.slot, local.date(from: DateComponents(year: 2028, month: 5, day: 8)))
     }

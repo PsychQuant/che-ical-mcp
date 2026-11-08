@@ -175,8 +175,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         let range = OccurrenceSlotGuard.listingRange(slot: slot, length: length)
         return events
             .filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
-            .map { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
-                                              occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start) }
+            .compactMap { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
+                                                     occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start,
+                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached) }
     }
 
     /// #321: what `noteRecreation` was told, in order.

@@ -84,14 +84,15 @@ extension UndoOperation {
         let series = applied.count == 1
             ? "1 series was restored from its rules with its exceptions"
             : "\(applied.count) series were restored from their rules with their exceptions"
-        var note = "\(series) inside the checked window: \(applied.map(\.stayedDeleted).reduce(0, +)) occurrence(s) deleted on their own earlier stayed deleted, \(applied.map(\.oneOffs).reduce(0, +)) occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series"
+        // PR #494 round 5: a count's record can hold two windows.
+        var note = "\(series) inside the checked window or windows: \(applied.map(\.stayedDeleted).reduce(0, +)) occurrence(s) deleted on their own earlier stayed deleted, \(applied.map(\.oneOffs).reduce(0, +)) occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series"
         let firstKept = applied.filter(\.firstOccurrenceKeptFromRule).count
         if firstKept > 0 {
             note += applied.count == 1
                 ? ". The series' first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
                 : ". In \(firstKept) of them the first occurrence was edited or deleted on its own; it is kept from the rule and not restored as an exception, because removing it would remove the series' anchor"
         }
-        note += ". Exceptions outside the checked window (\(seriesExceptionsWindowRule)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted"
+        note += ". Exceptions outside the checked window or windows (\(seriesExceptionsWindowRule)) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside them is neither restored nor listed, so its slot counts as deleted"
         return note
     }
 }

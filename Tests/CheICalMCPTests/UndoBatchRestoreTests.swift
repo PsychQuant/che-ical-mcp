@@ -1281,7 +1281,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(store.events.filter { $0.title == "Standup" }.map(\.start).sorted(), [exceptionsSlot(0), exceptionsSlot(1)])
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 1)
         let message = UndoOperation.batchUndoneMessage(count: texts.count, events: events)
-        XCTAssertEqual(message, "Undone batch (2 operations). 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window (at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count whose end cannot be shown, also the four years from one day before its first occurrence) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside the window is neither restored nor listed, so its slot counts as deleted")
+        XCTAssertEqual(message, "Undone batch (2 operations). 1 series was restored from its rules with its exceptions inside the checked window or windows: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back as separate one-off events that no longer belong to their series. Exceptions outside the checked window or windows (at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later) are not restored; those occurrences come back from the rules, and an occurrence edited on its own that was moved more than a year outside them is neither restored nor listed, so its slot counts as deleted")
     }
 
     /// #321 (PR #318 round 3, finding 22): `delete_events_batch` with the series' identifier and an
@@ -1337,7 +1337,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let (_, events) = try await runOnStore([seriesWithExceptions(), seriesWithFirstDeleted("Retro"), seriesWithUnmatchedExceptions("Sync")], store)
         let message = UndoOperation.batchUndoneMessage(count: 3, events: events)
 
-        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
+        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window or windows: 1 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
         XCTAssertTrue(message.contains("In 1 of them the first occurrence was edited or deleted on its own; it is kept from the rule"), message)
         XCTAssertTrue(message.contains("1 series was restored from its rules alone: its recorded exceptions did not match"), message)
         XCTAssertFalse(message.contains("cannot say"), message)
@@ -1379,7 +1379,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         } catch {
             let partial = try XCTUnwrap(error as? UndoBatchPartiallyUndoneError, "\(error)")
             XCTAssertEqual(partial.restoredEvents.count, 1)
-            XCTAssertTrue(partial.message.contains("For the items restored: 1 series was restored from its rules with its exceptions inside the checked window: 1 occurrence(s) deleted on their own earlier stayed deleted"), partial.message)
+            XCTAssertTrue(partial.message.contains("For the items restored: 1 series was restored from its rules with its exceptions inside the checked window or windows: 1 occurrence(s) deleted on their own earlier stayed deleted"), partial.message)
         }
     }
 

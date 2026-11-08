@@ -21,18 +21,27 @@ enum SeriesExceptionsUndo {
                                                           deletedAt: now)
         let window = placed.window
         let observed = observedOccurrences(of: series, ids: seriesIDs, over: [window], in: store)
-        // PR #494 round 4: a count whose end cannot be shown is placed as open-ended, around the
-        // delete, and also listed over the window from its first occurrence (the window before
-        // #319): its end is not known, so either can hold its exceptions. Both are recorded, and the
-        // restore applies the exceptions inside either. Rounds 2 and 3 chose one window by what the
-        // listing showed, which a continuing series with deleted later occurrences, or a sparse one,
-        // fooled.
-        if case .unknown = seriesEnd, placed.seriesStartsBefore {
-            let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
-            let windows = [window, fromFirst]
-            guard var exceptions = SeriesExceptionsPlanner.capture(observedOccurrences(of: series, ids: seriesIDs, over: windows, in: store),
-                                                                   of: seriesIDs, windows: windows) else { return nil }
-            exceptions.seriesMayContinueAfterWindow = true
+        // PR #494 rounds 4-5: a count (known or not) whose window around the delete starts after
+        // its first occurrence is also listed over the window from its first occurrence, the window
+        // before #319, which placed every count as open-ended. Its end is unknown or only an upper
+        // bound, so either window can hold its exceptions. Both are recorded, and the restore applies
+        // the exceptions inside either. Rounds 2 and 3 chose one window by what the listing showed,
+        // which a continuing series with deleted later occurrences, or a sparse one, fooled.
+        // Round 5: a known count too: its bound is an upper bound, which can push the window past
+        // its first occurrences; before #319 every count was listed from its first occurrence.
+        let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
+        if seriesEnd.isCount, window.start > fromFirst.start {
+            let both = observedOccurrences(of: series, ids: seriesIDs, over: [window, fromFirst], in: store)
+            // Round 5 (LOW 1): the window from the first occurrence always holds its first slot, so
+            // when none of the series is listed in it the store lacks that history: it is dropped,
+            // or the restore would take every slot in it for deleted.
+            let listedFromFirst = both.contains { UndoPostState.isOccurrence($0.ids, of: seriesIDs)
+                && SeriesExceptionsPlanner.inWindow(SeriesExceptionsPlanner.ruleSlot(of: $0), fromFirst) }
+            let windows = listedFromFirst ? [window, fromFirst] : [window]
+            guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
+            exceptions.seriesStartsBeforeWindow = !listedFromFirst && placed.seriesStartsBefore
+            exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
+            exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
         }
         guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }

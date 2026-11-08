@@ -519,7 +519,7 @@ enum UndoOperation {
                 parts.append("undo recreates \(series) series from \(series == 1 ? "its" : "their") rules: \(UndoOperation.seriesRulesListingNote)")
             }
             if withExceptions > 0 {
-                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window: \(UndoOperation.seriesExceptionsListingNote)")
+                parts.append("undo recreates \(withExceptions) series and \(withExceptions == 1 ? "its" : "their") exceptions within the checked window or windows: \(UndoOperation.seriesExceptionsListingNote)")
             }
             return "Batch (\(operations); \(parts.joined(separator: "; ")))"
         }

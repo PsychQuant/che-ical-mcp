@@ -156,10 +156,14 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
         var holders: [OccurrenceSlotGuard.SeriesHolder] = []
         eventStore.enumerateEvents(matching: eventStore.predicateForEvents(withStart: range.start, end: range.end,
                                                                            calendars: [calendar])) { event, _ in
-            holders.append(OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,
-                                                      externalIdentifier: event.calendarItemExternalIdentifier,
-                                                      occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay,
-                                                      startDate: event.startDate))
+            // PR #494 round 5: a plain one-off event is not an occurrence of a series; it holds nothing.
+            if let holder = OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,
+                                                       externalIdentifier: event.calendarItemExternalIdentifier,
+                                                       occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay,
+                                                       startDate: event.startDate, hasRecurrenceRules: event.hasRecurrenceRules,
+                                                       isDetached: event.isDetached) {
+                holders.append(holder)
+            }
         }
         return holders
     }

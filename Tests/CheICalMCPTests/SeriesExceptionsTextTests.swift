@@ -14,7 +14,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
                             : snapshot)
     }
 
-    private let exceptionsListing = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events; not for a first occurrence edited or deleted on its own, one moved more than a year outside the window, or a record that does not match the recreated series"
+    private let exceptionsListing = "occurrences deleted on their own earlier stay deleted, edited ones come back as one-off events; not for a first occurrence edited or deleted on its own, one moved more than a year outside the checked window or windows, or a record that does not match the recreated series"
     private let rulesListing = "occurrences deleted on their own earlier come back, edited ones without their edits"
 
     // MARK: - undo_history
@@ -32,18 +32,18 @@ final class SeriesExceptionsTextTests: XCTestCase {
     func testBatchOfSeriesWithExceptionsSaysSo() {
         let batch = UndoOperation.batch([series("A", withExceptions: true), series("B", withExceptions: true)])
         XCTAssertEqual(batch.description,
-                       "Batch (2 operations; undo recreates 2 series and their exceptions within the checked window: \(exceptionsListing))")
+                       "Batch (2 operations; undo recreates 2 series and their exceptions within the checked window or windows: \(exceptionsListing))")
     }
 
     func testBatchWithOneSeriesWithExceptionsUsesTheSingularForm() {
         XCTAssertEqual(UndoOperation.batch([series(withExceptions: true)]).description,
-                       "Batch (1 operation; undo recreates 1 series and its exceptions within the checked window: \(exceptionsListing))")
+                       "Batch (1 operation; undo recreates 1 series and its exceptions within the checked window or windows: \(exceptionsListing))")
     }
 
     func testMixedBatchSaysBoth() {
         let batch = UndoOperation.batch([series("A", withExceptions: true), series("B", withExceptions: false)])
         XCTAssertEqual(batch.description,
-                       "Batch (2 operations; undo recreates 1 series from its rules: \(rulesListing); undo recreates 1 series and its exceptions within the checked window: \(exceptionsListing))")
+                       "Batch (2 operations; undo recreates 1 series from its rules: \(rulesListing); undo recreates 1 series and its exceptions within the checked window or windows: \(exceptionsListing))")
     }
 
     // MARK: - undo text
@@ -71,7 +71,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
             .seriesWithExceptions(.init(stayedDeleted: 2, oneOffs: 1, firstOccurrenceKeptFromRule: true)),
         ])
         XCTAssertEqual(message.components(separatedBy: "inside the checked window").count - 1, 1, message)
-        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window: 3 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
+        XCTAssertTrue(message.contains("2 series were restored from their rules with their exceptions inside the checked window or windows: 3 occurrence(s) deleted on their own earlier stayed deleted, 1 occurrence(s) edited on their own came back"), message)
         XCTAssertTrue(message.contains("In 1 of them the first occurrence"), message)
         XCTAssertFalse(message.contains(UndoOperation.seriesRulesRestoreNote), message)
     }
@@ -79,7 +79,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     func testBatchUndoTextOfAMixedBatchNamesBothNotes() {
         let message = UndoOperation.batchUndoneMessage(count: 2, events: [.seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0)), .seriesFromRules])
         XCTAssertTrue(message.contains(UndoOperation.seriesRulesRestoreNote), message)
-        XCTAssertTrue(message.contains("1 series was restored from its rules with its exceptions inside the checked window"), message)
+        XCTAssertTrue(message.contains("1 series was restored from its rules with its exceptions inside the checked window or windows"), message)
     }
 
     /// PR #406 verify r1, 3: one series from its rules keeps the single wording; more say how many.
@@ -141,7 +141,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     private var aroundTheDelete: DateInterval {
         DateInterval(start: iso("2025-11-08T12:00:00Z"), end: iso("2029-11-07T12:00:00Z"))
     }
-    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count whose end cannot be shown, also the four years from one day before its first occurrence"
+    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; for a count, also the four years from one day before its first occurrence when the first starts later"
 
     private func restored(startsBefore: Bool, continuesAfter: Bool) -> String {
         var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [])
@@ -178,7 +178,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     /// The batch note states the window's rule, without days: its members' windows differ.
     func testTheBatchNoteStatesTheWindowRule() {
         let message = UndoOperation.batchUndoneMessage(count: 1, events: [.seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 0))])
-        XCTAssertTrue(message.contains("Exceptions outside the checked window (\(windowRule)) are not restored"), message)
+        XCTAssertTrue(message.contains("Exceptions outside the checked window or windows (\(windowRule)) are not restored"), message)
         XCTAssertFalse(message.contains("first occurrence to the end of the rule"), message)
     }
 
@@ -279,5 +279,24 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let both = "\(UndoOperation.windowRange(aroundTheDelete)), and \(UndoOperation.windowRange(fromTheFirst))"
         XCTAssertEqual(UndoOperation.deleteEvent(snapshot: snapshot).description,
                        "Deleted event: Standup (undo recreates the series and its exceptions within the checked windows (\(both)): \(exceptionsListing))")
+    }
+
+    // MARK: - PR #494 round 5: texts with two windows
+
+    func testTheBatchTextAndListingSayWindowOrWindows() {
+        let message = UndoOperation.batchUndoneMessage(count: 1, events: [.seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 0))])
+        XCTAssertTrue(message.contains("with its exceptions inside the checked window or windows: "), message)
+        XCTAssertTrue(message.contains("moved more than a year outside them is neither restored nor listed"), message)
+        XCTAssertTrue(UndoOperation.seriesExceptionsListingNote.contains("one moved more than a year outside the checked window or windows"))
+        let batch = UndoOperation.batch([series("A", withExceptions: true)])
+        XCTAssertTrue(batch.description.contains("within the checked window or windows: "), batch.description)
+    }
+
+    func testTheSingleTextSaysOutsideTheWindowsForTwoWindows() {
+        var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [], extraWindows: [fromTheFirst])
+        exceptions.seriesMayContinueAfterWindow = true
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4).withExceptions(exceptions)
+        let message = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: "NEW", exceptionsOutcome: .init(stayedDeleted: 1, oneOffs: 0))
+        XCTAssertTrue(message.contains("moved more than a year outside the windows is neither restored nor listed"), message)
     }
 }

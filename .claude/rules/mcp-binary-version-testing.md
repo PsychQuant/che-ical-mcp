@@ -215,7 +215,7 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
 每次建立都確認回應是 created、不是 skipped：
 
 1. **#319 舊系列**：`create_event` 建一個開始於約六年前、不設結束的每週系列 → 用 `--cli` 刪掉一個
-   未來兩週內的場次（span `this`），再用 `--cli` 改另一個未來場次的標題（span `this`；兩個寫入都不進 session
+   未來兩週內的場次（span `this`），再用 `--cli` 改另一個未來兩週內的場次的標題（span `this`，它要留在視窗內；兩個寫入都不進 session
    的 undo stack）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除、1 個編輯過的場次
    以一次性事件回來，視窗起訖約為刪除前三年到一年後，並說系列在視窗前後都有場次；`list_events` 讀回：
    被刪的那天沒有場次，被改的那天只有一個（一次性事件，改過的標題）。修正前的 binary 會兩個都依規則回來。
@@ -233,7 +233,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
    `undo`（系列依規則回來，那個五年前的時段也回來）→ `undo`：回應是「already restored by its series」、什麼都
    沒寫；讀回那天只有重建系列的一個場次。記下這次 `undo` 的耗時（它會列出時段前後兩年的行事曆）。
 5. **#321 被搬走的場次（第 4 步的變形）**：同第 4 步，但在最後一個 `undo` 之前，用 `--cli` 的 `update_event`
-   （重建系列的 id、那天的 `occurrence_date`、span `this`）把那個場次改到三天後 → session `undo`：回應是
+   （重建系列的 id、那天的 `occurrence_date`、span `this`）把那個場次改到三天後 → session 的 `list_events` 先確認
+   那個場次確實在三天後（session 看得到這次搬移；看不到就停下來，這一步不算數）→ session `undo`：回應是
    「already restored by its series」、什麼都沒寫；讀回原本那天沒有事件、三天後只有被搬走的那一個場次。
 6. **#321 finding 22**：建每週 ×4 系列 → 用 `--cli` 改第二場的標題（span `this`）→ session：`delete_events_batch`
    的 `event_ids` 帶 `[第二場自己的 id（含 /RID=）, 系列 id]`、span `all` → `undo`：讀回第二場那天只有一個事件
@@ -241,10 +242,16 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
    回來（系列只依規則重建、防護擋下重複）；兩者都算通過，重複才算失敗。
 7. **#319 多個星期幾的次數規則**：建一個開始於約十二年前、每週一三五、共 450 次的系列 → 用 `--cli` 刪掉它的
    第 100 個場次（span `this`）→ session：`delete_event` span `all` → `undo`：回應說 1 個場次維持刪除，讀回該天
-   沒有場次。對照：PR #494 第一輪的 binary（上界按 450 週算）回應會說依規則重建；#319 之前的 binary 也會套用
-   例外（它的視窗從第一個場次起，涵蓋整個系列）。
+   沒有場次。對照：PR #494 第一輪的 binary（branch 上的 commit `8648c70` build 出來的，上界按 450 週算）回應會說依規則
+   重建；#319 之前的 binary（v1.23.0）也會套用例外（它的視窗從第一個場次起，涵蓋整個系列）。
 8. **split move**：`move_events_batch` span `this` 把每週系列的一個場次移到另一個拋棄式日曆 → `undo`：場次以一次性
    事件回到原日曆、複本被移除（與 #466 相同；#321 只改了防護的比對方式）。
+9. **split move 的時段已被佔用（PR #494 第五輪）**：建一個開始於約六年前、不設結束的每週系列（自己的標題）→ session：
+   `move_events_batch` span `this`、`occurrence_date` 為約五年前的一天，把那個場次移到另一個拋棄式日曆 B →
+   `delete_event` span `all`（系列）→ `undo`（系列依規則回來，那個五年前的時段也回來）→ `undo`（搬移）：回應說
+   「was not recreated in its original calendar: its series already holds its original slot there」，複本留在 B、沒有
+   被查找或移除。變形：另建一個這樣的系列，搬移前先用 `--cli` 的 `update_event` span `this` 改那個場次的標題，其餘
+   相同 → 最後的 `undo` 回應說「the copy the move made (id …) is the only version with that edit」。
 
 另外記錄、不算通過條件的：在 Google（或其他存檔後會換 id 的來源）上做第 4 步時，若重建系列存檔後 id 變了，
 第 4 步會寫出第二個事件（已知限制，CHANGELOG 的 Not covered）；有大量事件的拋棄式日曆時，做一次刪掉約 20 個

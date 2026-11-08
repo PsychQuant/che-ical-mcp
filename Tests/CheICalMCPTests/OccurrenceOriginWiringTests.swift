@@ -46,7 +46,10 @@ final class OccurrenceOriginWiringTests: XCTestCase {
         XCTAssertEqual(count("recreations: { self.seriesRecreations.recreations(of: $0) })", in: store), 1)
         let adapter = try SourcePins.source("EventKit/SeriesExceptionsStoreSource.swift")
         let holders = try XCTUnwrap(SourcePins.body(of: "func slotHolders(at slot: Date, length: TimeInterval, in calendar: EKCalendar)", in: adapter))
-        XCTAssertEqual(count("holders.append(OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,", in: holders), 1)
+        XCTAssertEqual(count("if let holder = OccurrenceSlotGuard.holder(eventIdentifier: event.eventIdentifier,", in: holders), 1)
+        // Round 5: the holder is told whether the event is an occurrence of a series.
+        XCTAssertEqual(count("hasRecurrenceRules: event.hasRecurrenceRules,", in: holders), 1)
+        XCTAssertEqual(count("isDetached: event.isDetached)", in: holders), 1)
         XCTAssertEqual(count("refreshIfNeeded()", in: holders), 1, "the series an earlier undo recreated is seen")
     }
 

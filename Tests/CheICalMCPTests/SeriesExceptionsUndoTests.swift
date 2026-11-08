@@ -690,4 +690,96 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(exceptions.keptSlots.count, 9)
         XCTAssertTrue(exceptions.seriesMayContinueAfterWindow)
     }
+
+    // MARK: - PR #494 round 5
+
+    /// MEDIUM: the recreated series lost its rule but kept its identifier, and the one-off event left
+    /// was moved onto the deleted slot. It is no series, so it holds nothing: the occurrence comes back.
+    func testAOneOffThatKeptTheRecreatedSeriesIdentifierHoldsNothing() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        let series = seriesS
+        _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+        let left = try XCTUnwrap(store.events.first { $0.id == "E1" && $0.start == s0 })
+        for event in store.events where event.id == "E1" && event !== left { try store.remove(event, span: .thisEvent) }
+        left.hasRules = false
+        left.start = s1
+        left.occurrenceDate = s1
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1).withOccurrenceOrigin(origin(s1))
+
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []))
+        XCTAssertEqual(store.log.last, "save Standup")
+    }
+
+    /// An occurrence of the recreated series edited on its own reports no rules of its own (iCloud)
+    /// but is detached: it still holds its slot.
+    func testADetachedOccurrenceWithoutRulesOfItsOwnStillHoldsTheSlot() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        let series = seriesS
+        _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+        let edited = try XCTUnwrap(store.events.first { $0.id == "E1" && $0.start == s1 })
+        edited.detached = true
+        edited.hasRules = false
+        let occurrence = UndoSnapshotFixtures.event(title: "Standup", startDate: s1).withOccurrenceOrigin(origin(s1))
+
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(occurrence, notCarriedOver: [], calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .occurrenceAlreadyHeld)
+    }
+
+    /// LOW 1: an unknown count whose early history the store does not hold (none of it listed in
+    /// the window from its first occurrence, which always holds its first slot): that window is
+    /// dropped, so the restore does not take every slot in it for deleted.
+    func testAnEmptyWindowFromTheFirstOccurrenceIsDropped() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let near = [-14.0, -7, 7, 14].map { now.addingTimeInterval($0 * day) }
+        store.addSeries(id: "S", calendar: "C", title: "Standup", slots: near)
+        store.seriesEnd = .unknown
+        let series = FakeSeriesExceptionsStore.Event(id: "S", external: "X-S", calendar: "C", title: "Standup",
+                                                     start: now.addingTimeInterval(-3650 * day), occurrenceDate: now.addingTimeInterval(-3650 * day), hasRules: true)
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
+
+        XCTAssertEqual(exceptions.windows, [around(now)])
+        XCTAssertEqual(exceptions.keptSlots, near)
+    }
+
+    /// LOW 2: the windows overlap and a surplus slot is inside both: the occurrence is listed by
+    /// each window but removed once.
+    func testASurplusSlotInsideBothWindowsIsRemovedOnce() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        let first = DateInterval(start: s0.addingTimeInterval(-day), end: s2.addingTimeInterval(day))
+        let second = DateInterval(start: s1.addingTimeInterval(-day), end: s3.addingTimeInterval(day))
+        let exceptions = SeriesExceptions(window: second, keptSlots: [s0, s2, s3], detached: [], extraWindows: [first])
+        let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
+
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 0)))
+        XCTAssertEqual(store.log.filter { $0.hasPrefix("remove") }, [slotLog(s1)], "s1 is in both windows, removed once")
+    }
+
+    /// LOW 7: a known count whose bound is loose (weekly x209: the bound is a week past its last
+    /// slot) begun about 1500 days before the delete. Its window around the delete starts after its
+    /// first occurrence, which the window before #319 held; the record keeps that window too.
+    func testAKnownCountWhoseWindowStartsAfterItsFirstOccurrenceKeepsTheWindowFromIt() throws {
+        let now = s0
+        let first = now.addingTimeInterval(-1500 * day)
+        let store = FakeSeriesExceptionsStore()
+        let slots = (0..<209).map { first.addingTimeInterval(Double($0) * 7 * day) }
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots.enumerated().filter { $0.offset != 1 }.map(\.element))
+        store.seriesEnd = .endsBy(first.addingTimeInterval(1463 * day))
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertGreaterThan(exceptions.window.start, first, "the window around the delete misses the first occurrence")
+        XCTAssertEqual(exceptions.extraWindows, [fromFirst(now, -1500)])
+        XCTAssertTrue(exceptions.keptSlots.contains(first))
+        XCTAssertFalse(exceptions.keptSlots.contains(slots[1]), "deleted on its own: stays deleted")
+    }
 }
