@@ -604,6 +604,21 @@ printf '#!/bin/bash\nexit 3\n' > "$BIN"; /bin/chmod u+x "$BIN"
 run_wrapper
 check "fresh unusable: a different file is downloaded over" "$(downloads)" "2"
 
+# 41. LOW: the mv over the installed binary fails (here it is immutable): the installed
+#     binary is kept, the temp file is removed, no record is written, and nothing says installed.
+setup mv-fails 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+/usr/bin/chflags uchg "$BIN"
+run_wrapper
+/usr/bin/chflags nouchg "$BIN"
+check "mv fails: installed binary kept" "$(bin_version)" "1.22.0"
+check "mv fails: sidecar still the installed version" "$(side)" "1.22.0"
+check "mv fails: no release record" "$(release_record)" ""
+check "mv fails: nothing left behind" "$(leftovers)" ""
+has "mv fails: says it could not replace the binary" "$C/err" "could not replace"
+hasnt "mv fails: does not say installed" "$C/err" "installed v1.23.0"
+
 hasnt "no case reached an unexpected URL" <(cat "$TMP"/*/curl.log) "UNEXPECTED"
 
 echo

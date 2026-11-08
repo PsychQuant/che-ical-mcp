@@ -316,13 +316,22 @@ download() {
         echo "$BINARY_NAME: WARNING — release v${FETCHED_VERSION:-unknown} ships v${REPORTED_VERSION}, not newer than the installed v${INSTALLED_NOW}; keeping the installed binary" >&2
         return 0
     fi
+    local record
     if [[ -n "$REPORTED_VERSION" ]]; then
-        echo "${FETCHED_VERSION:-unknown} $REPORTED_VERSION" > "$RELEASE_FILE"
+        record="${FETCHED_VERSION:-unknown} $REPORTED_VERSION"
     else
-        echo "${FETCHED_VERSION:-unknown} unusable - $(file_sum "$TMP_FILE")" > "$RELEASE_FILE"
+        record="${FETCHED_VERSION:-unknown} unusable - $(file_sum "$TMP_FILE")"
     fi
-    mv "$TMP_FILE" "$BINARY"
+    # The record and the sidecar describe what is installed, so they are written only after
+    # the mv succeeds. A failed mv (an immutable or busy target) keeps the installed binary
+    # and writes no record, so the next spawn tries again and says so again.
+    if ! mv "$TMP_FILE" "$BINARY" 2>/dev/null; then
+        cleanup_tmp
+        echo "$BINARY_NAME: ERROR — could not replace $BINARY with release v${FETCHED_VERSION:-unknown}; keeping the installed binary" >&2
+        return 0
+    fi
     TMP_FILE=""
+    echo "$record" > "$RELEASE_FILE"
     echo "${REPORTED_VERSION:-unknown}" > "$VERSION_FILE"
     if [[ -z "$REPORTED_VERSION" ]]; then
         echo "$BINARY_NAME: WARNING — the asset of release v${FETCHED_VERSION:-unknown} does not report a version; installed it because nothing that reports one was installed" >&2
