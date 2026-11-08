@@ -179,7 +179,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、請求的日期在這台 Mac 時區下會寫成的那一天（`host_day`；重複而被略過的建立不會寫入，訊息會說既有事件沒有改變）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
 
-**Google 行事曆上的鬧鐘（#317）：** 放在 Google 上的行事曆，鬧鐘會在存檔之後改變，而回應看不到這件事。在 Google 上量到，寫入之後大約一分鐘：絕對時間的鬧鐘讀回時變成同一時刻的相對鬧鐘；email 鬧鐘這台 Mac 仍讀得到，但 Google 沒有列出它。這兩項發生在寫進 Google 的任何事件上，不只是複製的事件。`copy_event` 或刪除之後的 undo 寫入的位置鬧鐘，會變成事件開始時的普通鬧鐘。相對鬧鐘在每條路徑上都保住了，包括 `update_event` 在一次性事件上寫入的 `alarms_minutes_offsets`。讀回事件只看得到這台 Mac 的資料，看不出 Google 有沒有保住 email 鬧鐘。沒有量過：Exchange 與其他帳號、`move_events_batch` 的 fallback 複製與跨帳號搬移、`create_events_batch`、聲音鬧鐘。
+**Google 行事曆上的鬧鐘（#317）：** 在放在 Google 上的行事曆量到。存檔之後大約一分鐘，絕對時間的鬧鐘讀回時變成同一時刻的相對鬧鐘；`copy_event`、或一次性事件 `delete_event` 之後的 undo 寫入的位置鬧鐘，會變成事件開始時的普通鬧鐘；回應都看不到這些。相對鬧鐘在每條路徑上都保住了，包括 `update_event` 在一次性事件上寫入的 `alarms_minutes_offsets`。Google 從頭到尾沒有列出 email 鬧鐘（量到的每個事件都是），也沒有列出沒被複製的那個事件的位置鬧鐘，雖然這台 Mac 兩者都仍讀得到；讀回事件只看得到這台 Mac 的資料，看不出 Google 那邊有什麼。絕對鬧鐘的改變與 email 鬧鐘的情形，在不是這個 server 寫入的事件上也一樣。沒有量過：Exchange 與其他帳號、帶 `delete_original` 的 `copy_event`、`move_events_batch` 的 fallback 複製與跨帳號搬移、`create_events_batch`、系列、單一場次或 batch 刪除的 undo、聲音鬧鐘。
 
 </details>
 
