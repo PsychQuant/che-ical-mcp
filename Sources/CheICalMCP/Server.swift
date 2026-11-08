@@ -345,9 +345,9 @@ class CheICalMCPServer {
                             "description": .string("Structured location with coordinates. If provided, overrides the 'location' text field."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Office', 'Home')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters (default 100)")])
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90. Give it with longitude or give neither: one without the other is refused")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180. Give it with latitude or give neither: one without the other is refused")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters, greater than 0 (0 or less is refused); omit it to set none")])
                             ]),
                             "required": .array([.string("title")])
                         ])
@@ -420,9 +420,9 @@ class CheICalMCPServer {
                             "description": .string("Structured location with coordinates. If provided, overrides the 'location' text field."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Office', 'Home')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters (default 100)")])
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90. Give it with longitude or give neither: one without the other is refused")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180. Give it with latitude or give neither: one without the other is refused")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters, greater than 0 (0 or less is refused); omit it to set none")])
                             ]),
                             "required": .array([.string("title")])
                         ]),
@@ -540,7 +540,7 @@ class CheICalMCPServer {
                         "title": .object(["type": .string("string"), "description": .string("Reminder title")]),
                         "notes": .object(["type": .string("string"), "description": .string("Optional notes")]),
                         "due_date": .object(["type": .string("string"), "description": .string("Optional due date. A bare date (2026-01-30) makes a date-only reminder, with no time; for a time, ISO8601 with timezone (e.g., 2026-01-30T17:00:00+08:00)")]),
-                        "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
+                        "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused, not clamped. Omit or JSON null = 0")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (use list_calendars with type='reminder' to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "recurrence": .object([
@@ -592,13 +592,13 @@ class CheICalMCPServer {
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Home', 'Office')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters (default 100)")]),
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters, greater than 0 (default 100 when omitted; 0 or less is refused, not replaced)")]),
                                 "proximity": .object([
                                     "type": .string("string"),
                                     "enum": .array([.string("enter"), .string("leave")]),
-                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing")
+                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing. Required, and exactly one of these two: another value, including another case such as 'Leave', is refused")
                                 ])
                             ]),
                             "required": .array([.string("title"), .string("latitude"), .string("longitude"), .string("proximity")])
@@ -626,7 +626,7 @@ class CheICalMCPServer {
                             "type": .string("boolean"),
                             "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. Relative alarms stay, so an early relative alarm still sets what the Reminders.app list shows. The earliest absolute-date alarm lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
-                        "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
+                        "priority": .object(["type": .string("integer"), "description": .string("New priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused before any field is written. Omit or JSON null = left as it is")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "alarms_minutes_offsets": .object([
@@ -639,13 +639,13 @@ class CheICalMCPServer {
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Home', 'Office')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters (default 100)")]),
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters, greater than 0 (default 100 when omitted; 0 or less is refused, not replaced)")]),
                                 "proximity": .object([
                                     "type": .string("string"),
                                     "enum": .array([.string("enter"), .string("leave")]),
-                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing")
+                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing. Required, and exactly one of these two: another value, including another case such as 'Leave', is refused")
                                 ])
                             ]),
                             "required": .array([.string("title"), .string("latitude"), .string("longitude"), .string("proximity")])
@@ -690,7 +690,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove location trigger from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the reminder's location trigger. Cannot be combined with location_trigger (which replaces it): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "tags": .object([
                             "type": .string("array"),
@@ -699,7 +699,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_tags": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove all tags from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove all tags from the reminder. Cannot be combined with tags (which replaces them): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ])
                     ]),
                     "required": .array([.string("reminder_id")])
@@ -895,7 +895,7 @@ class CheICalMCPServer {
                                     "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier (e.g., 'Europe/Berlin')")]),
                                     "structured_location": .object([
                                         "type": .string("object"),
-                                        "description": .string("Structured location with coordinates"),
+                                        "description": .string("Structured location with coordinates, checked as create_event's: latitude from -90 to 90 and longitude from -180 to 180, both or neither; radius in meters, greater than 0. A value outside these fails this item"),
                                         "properties": .object([
                                             "title": .object(["type": .string("string")]),
                                             "latitude": .object(["type": .string("number")]),
@@ -1067,7 +1067,7 @@ class CheICalMCPServer {
                                     "title": .object(["type": .string("string")]),
                                     "notes": .object(["type": .string("string")]),
                                     "due_date": .object(["type": .string("string"), "description": .string("Due date: a bare date (2026-01-30) for a date-only reminder, or ISO8601 with timezone for a time")]),
-                                    "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
+                                    "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused, not clamped. Omit or JSON null = 0")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
                                     "tags": .object([
@@ -1879,7 +1879,7 @@ class CheICalMCPServer {
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
         let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
-        let priority = try InputValidation.requireIntIfPresent(arguments, key: "priority", default: 0)
+        let priority = try InputValidation.reminderPriority(arguments) ?? 0   // #473
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -1963,6 +1963,10 @@ class CheICalMCPServer {
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
+        // #486: the clear used to win and the tags were dropped with a success answer.
+        if newTags != nil && clearTags {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.tagsBothMessage)
+        }
         let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
         if clearDueDate && due != nil {
@@ -1972,12 +1976,16 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
+        let priority = try InputValidation.reminderPriority(arguments)   // #473: nil leaves it as it is
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
         let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
+        // #486: the clear used to win and the trigger was dropped with a success answer.
+        if locationTrigger != nil && clearLocationTrigger {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.locationTriggerBothMessage)
+        }
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
         // #354: the rule; both together, or a rule with clear_due_date, are refused here.
@@ -2250,7 +2258,7 @@ class CheICalMCPServer {
                     title: title,
                     notes: batchNotes,
                     due: batchDue,
-                    priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
+                    priority: try InputValidation.reminderPriority(reminderDict) ?? 0,   // #473: the row fails alone
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue,
                     alarmOffsets: batchAlarms
@@ -3731,15 +3739,7 @@ class CheICalMCPServer {
 
     private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else {
-            throw ToolError.invalidParameter("structured_location.title is required")
-        }
-        return StructuredLocationInput(
-            title: title,
-            latitude: InputValidation.number(dict["latitude"]),
-            longitude: InputValidation.number(dict["longitude"]),
-            radius: InputValidation.number(dict["radius"])
-        )
+        return try LocationArguments.structuredLocation(dict)   // #473
     }
 
     private func parseTimezone(from arguments: [String: Value]) throws -> TimeZone? {
@@ -3752,23 +3752,7 @@ class CheICalMCPServer {
 
     private func parseLocationTrigger(from arguments: [String: Value]) throws -> LocationTriggerInput? {
         guard let dict = arguments["location_trigger"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else {
-            throw ToolError.invalidParameter("location_trigger.title is required")
-        }
-        guard let lat = InputValidation.number(dict["latitude"]) else {
-            throw ToolError.invalidParameter("location_trigger.latitude is required")
-        }
-        guard let lon = InputValidation.number(dict["longitude"]) else {
-            throw ToolError.invalidParameter("location_trigger.longitude is required")
-        }
-        let radius = InputValidation.number(dict["radius"]) ?? 100
-        let proximityStr = dict["proximity"]?.stringValue ?? "enter"
-        let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
-
-        return LocationTriggerInput(
-            title: title, latitude: lat, longitude: lon,
-            radius: radius, proximity: proximity
-        )
+        return try LocationArguments.locationTrigger(dict)   // #473
     }
 
     // (#103 D4) `formatRecurrenceRule` moved to free function in

@@ -230,6 +230,27 @@ enum InputValidation {
         return try requireOptionalInt(arguments, key: key)
     }
 
+    /// The priorities a reminder takes: 0 none, 1 high, 5 medium, 9 low. EventKit refuses any
+    /// other with `priorityIsInvalid` (#473, measured on iCloud: 10, -1 and 100).
+    static let reminderPriorityRange = 0...9
+
+    /// `priority` on `create_reminder`, `update_reminder` and a `create_reminders_batch` row (#473).
+    /// Absent or JSON null is nil (omitted, as tool descriptions say); an integer outside 0 to 9, or
+    /// a value that is not an integer, is refused rather than clamped.
+    static func reminderPriority(_ arguments: [String: Value]) throws -> Int? {
+        let message = "priority must be an integer from 0 to 9 (0 = none, 1 = high, 5 = medium, 9 = low)"
+        let priority: Int?
+        do {
+            priority = try requireOptionalIntOrNull(arguments, key: "priority")
+        } catch {
+            throw ToolError.invalidParameter(message)
+        }
+        if let priority, !reminderPriorityRange.contains(priority) {
+            throw ToolError.invalidParameter(message)
+        }
+        return priority
+    }
+
     /// A number, for a key the schema declares `number`. `Value` decodes any JSON number it can as
     /// an Int first, so `500`, `500.0` and `1e2` are `.int`, and `doubleValue` alone reads them as
     /// nil: a whole `radius` silently became the default (PR #463 verify).
