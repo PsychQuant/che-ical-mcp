@@ -44,6 +44,8 @@ struct ReminderUpdateResult: Sendable {
     /// PR #415 verify round 1: set when the update left relative alarms on a reminder without a
     /// timed due (`ReminderRelativeAlarms.leftoverNote`).
     var leftoverAlarmsNote: String? = nil
+    /// #433: the update touched the alarms or the due date and the earliest alarm is off the due time.
+    var listShowsAlarmTime = false
     /// #354: the rule and due read off the saved reminder, when the request touched the rule.
     var recurrence: ReminderRecurrenceWrite.ReadBack? = nil
 }

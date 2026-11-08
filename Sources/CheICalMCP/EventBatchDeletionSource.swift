@@ -16,6 +16,9 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
     case deletes(start: Date, end: Date)
+    /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
+    /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
+    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String)
     case refused(String)
 }
 
@@ -59,17 +62,21 @@ extension EventKitManager: EventBatchDeletionSource {
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
         try await ensureCalendarAccess()
-        guard let event = freshEventWithOrigin(
+        guard let event = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
             goneInTheCall: goneInTheCall)?.event else {
             // #436: what the real row does when the series reaches only its first occurrence.
-            if spanAll, let first = firstEditedOccurrenceID(of: identifier), let occurrence = freshEvent(id: first) {
-                return .deletes(start: occurrence.startDate, end: occurrence.endDate)
+            if spanAll, let first = try firstEditedOccurrenceID(of: identifier, excluding: goneInTheCall),
+               let occurrence = try freshEvent(id: first.id) {
+                if let refusal = Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
+                    return .refused(refusal)
+                }
+                return .deletesThroughFirstOccurrence(start: occurrence.startDate, end: occurrence.endDate, occurrenceID: first.id)
             }
             throw notFoundError(id: identifier)
         }
         // #416: what the real call refuses is not listed as a deletion.
-        if spanAll, let refusal = seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
+        if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
             return .refused(refusal)
         }
         if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }

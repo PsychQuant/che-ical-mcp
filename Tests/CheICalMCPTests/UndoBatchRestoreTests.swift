@@ -893,6 +893,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                                          isCompleted: false, hasRecurrence: true, due: nil,
                                                                          rules: [], completionDate: nil),
                                        requestedCompleted: true, redoCompletionDate: nil),
+            .moveByCopy(original: event, isSplit: true, notCarriedOver: [], copyID: "c", copy: event),
             .batch([.deleteEvent(snapshot: event), edited("e")]),
         ]
         for operation in others { XCTAssertFalse(operation.mayRunLastAfterAFailure, operation.description) }

@@ -3,11 +3,11 @@ import Foundation
 
 /// #227: keeps a reminder's start date and absolute-date alarms in step with its due date.
 ///
-/// Reminders.app displays the date of a reminder's absolute-date alarm, not its due date
-/// (confirmed on device 2026-10-04: syncing the start date alone left the displayed date
-/// unchanged; syncing the alarm moved it). Reminders created in the app carry a start date
-/// and an alarm at the due time, so changing only `dueDateComponents` leaves the app
-/// showing the old date.
+/// Reminders.app displays a reminder's absolute-date alarm, not its due date (confirmed on device
+/// 2026-10-04: syncing the start date alone left the displayed date unchanged; syncing the alarm
+/// moved it). A relative alarm sets the list too (#433), and nothing here moves those. Reminders
+/// created in the app carry a start date and an alarm at the due time, so changing only
+/// `dueDateComponents` leaves the app showing the old date.
 ///
 /// How things move (verify rounds 1 and 2):
 /// - The number of calendar days the due date moved is counted from the stored
@@ -35,14 +35,19 @@ enum ReminderDateSync {
         let startDate: StartChange
         let absoluteAlarmsShifted: Int
         let absoluteAlarmsRemoved: Int
-        /// #235: whether the start date and the alarm Reminders.app displays agree with the due
-        /// date after the update (`isAligned`). `nil` when the update leaves no due date.
+        /// #235: whether the start date and the earliest absolute-date alarm agree with the due
+        /// date after the update (`isAligned`). `nil` when the update leaves no due date. A relative
+        /// alarm is not judged here, so this can be true while the list shows that alarm's time (#433).
         /// `confirmSaved` replaces it with the value judged on the saved reminder.
         var aligned: Bool? = nil
         /// The due date this update wrote, as the caller asked for it; `nil` when it was cleared.
         /// `confirmSaved` judges the saved reminder against it. Not part of the response, and not
         /// part of equality.
         var writtenDue: DateComponents? = nil
+        /// Whether `confirmSaved` re-read the saved reminder: `nil` when it did not try (no due was
+        /// written), `false` when the last reload failed. Not part of the response, and not part
+        /// of equality.
+        var reread: Bool? = nil
 
         static func == (lhs: Report, rhs: Report) -> Bool {
             lhs.startDate == rhs.startDate && lhs.absoluteAlarmsShifted == rhs.absoluteAlarmsShifted
@@ -230,11 +235,11 @@ enum ReminderDateSync {
         return moveAbsoluteAlarms(reminder) { $0.addingTimeInterval(delta) }
     }
 
-    /// #235: whether the start date and the alarm Reminders.app displays agree with the due date.
+    /// #235: whether the start date and the earliest absolute-date alarm agree with the due date.
     /// `nil` without a due date. True only if both hold:
     /// - there is no start, or the start agrees with the due (`startAgrees`);
-    /// - there is no absolute alarm, or the earliest one (the displayed one) is at the due
-    ///   instant (timed due) or on the due's day (date-only due).
+    /// - there is no absolute alarm, or the earliest one is at the due instant (timed due) or on
+    ///   the due's day (date-only due).
     /// `requestedTime`: the caller asked for a timed due, and every timed due this tool writes
     /// carries an explicit zone (#134). A due held without its time or without its zone, because
     /// the #237 fallback could not keep them, is not aligned, whatever the start and alarms say
@@ -265,8 +270,8 @@ enum ReminderDateSync {
     ///   for a failure, the sanitized error code (`eventkit_error_<N>` for an EventKit error;
     ///   otherwise `error_<domain>_<N>`, or `error_unknown` for a Swift error), never the
     ///   reminder's content. A failed fallback
-    ///   save is rolled back, not thrown: the update itself is saved and recorded for undo, and the
-    ///   report then says `aligned: false`. A read-back after the fallback that fails is treated
+    ///   save is not thrown: the update itself is saved and recorded for undo, and the report then
+    ///   says `aligned: false`. `rollback` does not drop that save (#274), so it may still land. A read-back after the fallback that fails is treated
     ///   like the first one: not confirmed, `aligned: false`.
     ///
     /// Known limit: a source that never hands the due's zone back would save twice on every timed
@@ -300,7 +305,8 @@ enum ReminderDateSync {
         let requestedTime = written.hour != nil
         // Round 2: a reminder that cannot be re-read (deleted or invalidated after the save) is not
         // confirmed; nothing is written on top of state that was not re-read.
-        guard reload() else {
+        confirmed.reread = reload()
+        guard confirmed.reread == true else {
             confirmed.aligned = false
             return confirmed
         }
@@ -322,10 +328,14 @@ enum ReminderDateSync {
             do {
                 try save()
             } catch {
+                // #274: this answers with `aligned: false`, not an error, and `rollback` does not
+                // drop the change, so the due date written here may still land with the next save.
                 rollback()
-                log("\(tool): saving the due date again failed (\(EventKitErrorSanitizer.sanitize(error).code)); rolled back\n")
+                let code = (error as? EventKitError)?.mayLandCode ?? EventKitErrorSanitizer.sanitize(error).code
+                log("\(tool): saving the due date again failed (\(code)); it may still be written by the next save\n")
             }
-            guard reload(), reminder.dueDateComponents != nil else {
+            confirmed.reread = reload()
+            guard confirmed.reread == true, reminder.dueDateComponents != nil else {
                 confirmed.aligned = false
                 return confirmed
             }

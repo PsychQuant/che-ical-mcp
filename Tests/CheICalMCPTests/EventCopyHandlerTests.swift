@@ -25,6 +25,7 @@ private actor CopyFake: EventCopySource {
 
     func eventTimeZone(identifier: String) async throws -> TimeZone? {
         if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
+        if identifier == "lookup-failed" { throw EventKitError.eventLookupFailed(identifier: identifier) }
         return identifier.hasPrefix("ny-") ? TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21")) : nil
     }
 
@@ -139,6 +140,42 @@ final class EventCopyHandlerTests: XCTestCase {
         XCTAssertEqual(result.isError, true)
         guard case let .text(text, _, _)? = result.content.first else { return XCTFail("no text content") }
         XCTAssertTrue(text.contains("Event not found: reminder-id"), text)
+    }
+
+    /// #288: a failed lookup while reading a date is about that event, so that row fails and the
+    /// others run; it does not reach the move. An access error is about every row, and stops the call.
+    func testMoveEventsBatchFailsOnlyTheRowWhoseZoneLookupFailed() async throws {
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let raw = try await server.executeToolCall(name: "move_events_batch", arguments: [
+            "target_calendar": .string("Work"),
+            "event_ids": .array([.string("first"), .string("lookup-failed"), .string("last")]),
+            "occurrence_dates": .array([.string("2026-10-21"), .string("2026-10-21"), .string("2026-10-21")])])
+        let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        XCTAssertEqual(response["succeeded"] as? Int, 2)
+        XCTAssertEqual(response["failed"] as? Int, 1)
+        let results = try XCTUnwrap(response["results"] as? [[String: Any]])
+        XCTAssertEqual(results.map { $0["event_id"] as? String }, ["first", "lookup-failed", "last"], "the rows keep their order")
+        let error = try XCTUnwrap(results[1]["error"] as? String)
+        XCTAssertTrue(error.contains("may still exist"), error)
+        let calls = await fake.moveCalls
+        XCTAssertEqual(calls.map(\.identifier), ["first", "last"])
+    }
+
+    func testMoveEventsBatchStopsOnAnAccessErrorWhileReadingADate() async throws {
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        do {
+            _ = try await server.executeToolCall(name: "move_events_batch", arguments: [
+                "target_calendar": .string("Work"),
+                "event_ids": .array([.string("first"), .string("denied")]),
+                "occurrence_dates": .array([.string("2026-10-21"), .string("2026-10-21")])])
+            XCTFail("an access error stops the call")
+        } catch {
+            XCTAssertTrue(error is EventKitError, "\(error)")
+        }
+        let calls = await fake.moveCalls
+        XCTAssertTrue(calls.isEmpty)
     }
 
     /// #260: in move_events_batch the not-found row fails on its own and the rows after it still
