@@ -392,6 +392,11 @@ enum UndoOperation {
     /// create record and the source's delete record (PR #474 round 1): a batch is checked whole
     /// before its first write, so a changed or missing copy refused the original's restore too.
     case moveByCopy(original: EventSnapshot, isSplit: Bool, notCarriedOver: [String], copyID: String, copy: EventSnapshot)
+    /// #273: a `create_calendar`, `update_calendar` or `delete_calendar`, kept only as a marker so
+    /// that undo after it does not revert an older operation in its place. Its undo is refused and
+    /// the record discarded; nothing is looked up or written (`CalendarOperationKind`). `title` is
+    /// the calendar's title as created, before the update, or before the delete, for the listing only.
+    case calendarOperation(kind: CalendarOperationKind, title: String)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -439,6 +444,8 @@ enum UndoOperation {
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             let action = requestedCompleted ? "Completed" : "Reopened"
             return "\(action) recurring reminder: \(undoVisibleTitle(before.title))"
+        case .calendarOperation(let kind, let title):
+            return "\(kind.listingVerb) calendar: \(undoVisibleTitle(title)) (undo not available)"
         case .batch(let ops):
             // Verify round 5, findings 1/2: a batch that removed series whole says it as well;
             // round 6, findings 1/2/4: unless a member's undo is refused, which refuses the whole
@@ -756,6 +763,9 @@ extension UndoOperation {
             return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + nothingWritten
         case .updateReminder(_, let oldSnapshot, _):
             return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_reminder to apply the changes again." + nothingWritten
+        case .calendarOperation(let kind, let title):
+            // #273: its undo always fails and discards the record, so it never reaches the redo stack.
+            return "Cannot redo the \(kind.noun) of calendar '\(undoVisibleTitle(title))': that \(kind.noun) was not undone, so there is nothing to redo." + nothingWritten
         case .batch(let operations):
             // A batch writes on redo only when every member does.
             if !operations.isEmpty, operations.allSatisfy({ $0.redoInstruction == nil }) { return nil }

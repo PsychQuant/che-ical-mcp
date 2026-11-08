@@ -63,9 +63,9 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | 工具 | 說明 |
 |------|------|
 | `list_calendars` | 列出所有行事曆和提醒事項清單（包含 source_type） |
-| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`。這個上限不保證長標題留得住：曾有一輪連 255 字元的標題也在 `list_calendars` 讀不到（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289） |
-| `delete_calendar` | 刪除行事曆或提醒事項清單（無法復原）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
-| `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0） |
+| `create_calendar` | 建立新行事曆。標題為 1 到 255 個字元且不能全是空白，`update_calendar` 也相同；`type` 只能是 `event` 或 `reminder`。這個上限不保證長標題留得住：曾有一輪連 255 字元的標題也在 `list_calendars` 讀不到（#449）。存提醒事項清單時回報錯誤、但清單其實已存好時，呼叫仍算成功；store 裡內容不同的欄位列在 `store_differs`，並附 `note`，用同樣參數再建一次可能會多出一份（#261）；無法確認是否已存時，清單會保留，呼叫回錯誤，說明再建之前要怎麼確認（#289）。無法復原（#273）：之後的 `undo` 會被拒絕、該筆紀錄丟棄，下一次 `undo` 復原的是在它之前記錄的操作 |
+| `delete_calendar` | 刪除行事曆或提醒事項清單。無法復原：裡面的事件或提醒事項會一起刪除，之後的 `undo` 會被拒絕、該筆紀錄丟棄，下一次 `undo` 復原的是在它之前記錄的操作（#273）。`require_empty: true` 時，日曆內有任何事件（只檢查現在前後約 200 年，範圍外的事件看不到；通過時回傳 `checked_empty`、`searched_from` / `searched_to`）或清單內有任何提醒事項，就拒絕刪除（#328） |
+| `update_calendar` | 重新命名行事曆或更改顏色（v0.9.0）。無法復原（#273）：之後的 `undo` 會被拒絕、該筆紀錄丟棄，下一次 `undo` 復原的是在它之前記錄的操作；要改回請再用 `update_calendar` |
 
 </details>
 
@@ -145,7 +145,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 | `list_events_quick` | 快速捷徑：`today`、`tomorrow`、`this_week`、`next_7_days` 等 |
 | `create_events_batch` | 一次建立多個事件（支援個別時區） |
 | `check_conflicts` | 檢查指定時間範圍是否有重疊事件 |
-| `copy_event` | 複製事件到另一個日曆；`delete_original` 時以 `move_events_batch` 的方式搬移（循環事件會被拒絕） |
+| `copy_event` | 複製事件到另一個日曆；`delete_original` 時以 `move_events_batch` 的方式搬移（循環事件會被拒絕）。單純複製的 `undo` 會刪掉複本，複本之後被改過則拒絕（#273） |
 | `move_events_batch` | 原地把事件搬到另一個日曆，保留循環規則與與會者；循環事件用 `span` / `occurrence_dates`（#226） |
 | `delete_events_batch` | 依 ID 或日期範圍刪除事件，支援預覽模式（v1.0.0） |
 | `find_duplicate_events` | 跨日曆查找重複事件（v0.5.0） |
@@ -184,7 +184,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 | 工具 | 說明 |
 |------|------|
-| `undo` | 復原最近一次行事曆/提醒事項操作 |
+| `undo` | 復原最近一次有記錄的行事曆/提醒事項操作。`create_calendar`、`update_calendar`、`delete_calendar` 會記一筆紀錄，只是為了讓 `undo` 不會改去復原更早的操作：它們的 undo 會被拒絕、該筆紀錄丟棄，下一次 `undo` 復原的是在它之前記錄的操作（#273） |
 | `redo` | 重做上次復原的操作。只有「完成」會再寫一次；建立、刪除、修改、搬移的 redo 什麼都不寫，回 `success: false` 並指出該用哪個工具，然後把這筆從 redo 紀錄移除（#247）。不重做這些寫入是設計如此（#295）：要重做就用原本的工具再做一次 |
 | `undo_history` | 列出可復原的操作及時間戳記 |
 

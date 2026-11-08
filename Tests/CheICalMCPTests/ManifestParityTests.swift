@@ -537,9 +537,15 @@ final class ManifestParityTests: XCTestCase {
             ("#248 (#261): a batch undo names the first five restored reminders whose store differs, then counts, finished or part-way",
              "A batch undo, whether it finishes or stops part-way, names the first five restored reminders whose store holds fields differently, with their fields, then says how many more.",
              "a batch undo names the first five restored reminders whose store holds fields differently, then how many more, also when it stops part-way;"),
-            ("#236, #244: the count of refusals that discard the record",
-             "Five refusals discard the record instead",
+            ("#236, #244, #273: the count of refusals that discard the record",
+             "Six refusals discard the record instead",
              nil),
+            ("#273: undo reverts the most recent recorded operation",
+             "Undo the most recent recorded calendar or reminder operation",
+             "Undo the most recent recorded operation"),
+            ("#273: a calendar operation is recorded, refused and discarded, so the next undo reverts the operation before it",
+             "a create_calendar, update_calendar or delete_calendar, which undo never reverts (its entry is recorded so that undo does not revert an older operation in its place; once it is discarded, the next undo reverts the operation recorded before it)",
+             "create_calendar, update_calendar and delete_calendar are recorded but never undone: their undo is refused and the entry discarded, so the next undo reverts the operation recorded before it"),
             ("#248: a batch undo is refused before any write, its entry kept, for a missing or read-only calendar or list",
              "is refused before any write, its record kept whole, when the calendar or list of any of its items is missing or read-only",
              "a batch undo is refused before any write, its entry kept, when an item's calendar or list is missing or read-only"),
@@ -605,6 +611,29 @@ final class ManifestParityTests: XCTestCase {
         for (tool, clause) in summaries {
             let summary = try descriptions(of: tool).summary
             XCTAssertTrue(summary.contains(clause), "mcpb/manifest.json \(tool) lost: \(clause)\n\(summary)")
+        }
+    }
+
+    /// #273: the calendar tools say their undo is refused and what the next undo then reverts, and
+    /// a plain copy says its undo deletes the copy; in both places a client reads them.
+    func testCalendarToolsAndCopyEventSayWhatTheirUndoDoes() throws {
+        let clauses: [(tool: String, declared: String, summary: String)] = [
+            ("create_calendar", "undo of it is refused and its entry discarded", "undo is refused"),
+            ("update_calendar", "undo of it is refused and its entry discarded", "undo is refused"),
+            ("delete_calendar", "not undoable: it deletes every event or reminder in the calendar", "cannot be undone"),
+            ("delete_calendar", "undo of it is refused and its entry discarded", "undo is refused"),
+            ("copy_event", "undo of a copy deletes the copy", "undo deletes the copy"),
+        ]
+        for clause in clauses {
+            let (declared, summary) = try descriptions(of: clause.tool)
+            XCTAssertTrue(declared.contains(clause.declared), "defineTools() \(clause.tool) lost: \(clause.declared)\n\(declared)")
+            XCTAssertTrue(summary.contains(clause.summary), "mcpb/manifest.json \(clause.tool) lost: \(clause.summary)\n\(summary)")
+        }
+        for tool in ["create_calendar", "update_calendar", "delete_calendar"] {
+            let (declared, summary) = try descriptions(of: tool)
+            for (place, text) in [("defineTools()", declared), ("mcpb/manifest.json", summary)] {
+                XCTAssertTrue(text.contains("next undo reverts the operation recorded before it"), "\(place) \(tool): \(text)")
+            }
         }
     }
 
