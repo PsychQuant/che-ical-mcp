@@ -238,6 +238,21 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
+    /// #442 (cluster verify r2): whether the series has an occurrence edited on its own, and whether
+    /// the scan cannot rule one out: the series could not be listed, or it reaches past what the
+    /// scan lists (`DetachedOccurrenceSpan.editedOccurrenceUnknown`).
+    func allDayEditFacts(of stale: EKEvent, id: String, now: Date = Date()) -> (edited: Bool, unknown: Bool) {
+        guard let (_, candidates) = seriesOccurrences(of: stale, id: id), let window = seriesScanWindow(of: stale),
+              let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
+            return (false, true)
+        }
+        if FirstRemainingOccurrence.hasEditedOccurrence(candidates) { return (true, false) }
+        let covers = DetachedOccurrenceSpan.coversWholeSeries(
+            rules: (stale.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
+            firstStart: stale.startDate, scannedTo: listedTo, calendar: Calendar.gregorian(in: stale.timeZone ?? .current))
+        return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers, listedTo: listedTo, now: now))
+    }
+
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
     /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
     func seriesObject(ofOccurrence id: String) throws -> EKEvent? {

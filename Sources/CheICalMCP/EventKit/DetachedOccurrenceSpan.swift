@@ -618,6 +618,16 @@ enum DetachedOccurrenceSpan {
         return hasEditedOccurrence()
     }
 
+    /// #442 (cluster verify r2): an edited occurrence cannot be ruled out when the series reaches
+    /// past what the scan lists and the listing ends less than a year after `now`: a series that
+    /// started more than about four years ago, open-ended, where recent edits are not seen. A series
+    /// whose listing reaches a year past now, or that the scan covers whole, is read as listed.
+    static func editedOccurrenceUnknown(coversWholeSeries: Bool, listedTo: Date, now: Date) -> Bool {
+        !coversWholeSeries && listedTo < now.addingTimeInterval(366 * 86_400)
+    }
+
+    static let allDayUnknownReason = "This series reaches past what can be listed (about five years from its start), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
     static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest

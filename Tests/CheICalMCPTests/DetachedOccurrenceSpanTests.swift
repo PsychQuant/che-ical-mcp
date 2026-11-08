@@ -983,16 +983,30 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     /// Read from the reach (span future from the first occurrence is the same whole-series save,
     /// cluster verify), so it comes after `reach` and the #326 stand-in check, and before any write.
+    /// Cluster verify r2: fail closed past the scan, but not for every open-ended series.
+    func testAnEditedOccurrenceIsUnknownOnlyPastWhatIsListed() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000), year: TimeInterval = 366 * 86_400
+        XCTAssertTrue(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false, listedTo: now, now: now),
+                      "an open-ended series that started years ago: recent edits are not seen")
+        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: false, listedTo: now.addingTimeInterval(2 * year), now: now),
+                       "a recent open-ended series is listed well past now")
+        XCTAssertFalse(DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: true, listedTo: now, now: now),
+                       "the scan covers the whole series")
+        XCTAssertTrue(DetachedOccurrenceSpan.allDayUnknownReason.hasSuffix("Nothing was written."))
+    }
+
     func testTheAllDayRefusalComesBeforeTheFirstWrite() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: SourcePins.source("EventKit/EventKitManager.swift")))
         let flat = body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: standInAndEditedFacts(of: masterEvent, id: identifier).hasEdited) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayChangeReason) }"
+        let refusal = "if DetachedOccurrenceSpan.refusesAllDayChange( wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay, hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) { throw EventKitError.occurrenceAddressRefused(reason: allDayFacts?.edited == false ? DetachedOccurrenceSpan.allDayUnknownReason : DetachedOccurrenceSpan.allDayChangeReason) }"
         let at = try XCTUnwrap(flat.range(of: refusal), flat)
         for earlier in ["let reach = SeriesRuleWrite.reach(", "throw EventKitError.standInRefused(reason: Self.standInSplitReason)"] {
             XCTAssertLessThan(try XCTUnwrap(flat.range(of: earlier), earlier).lowerBound, at.lowerBound, earlier)
         }
-        for write in ["event.isAllDay = ", "event.timeZone = ", "event.startDate = ", "eventStore.save("] {
-            if let first = flat.range(of: write) { XCTAssertLessThan(at.lowerBound, first.lowerBound, write) }
+        // Cluster verify r2 (LOW): the first assignment is the title; each write must be found.
+        for write in ["event.title = ", "event.isAllDay = ", "event.timeZone = ", "event.startDate = ", "eventStore.save("] {
+            let first = try XCTUnwrap(flat.range(of: write), write)
+            XCTAssertLessThan(at.lowerBound, first.lowerBound, write)
         }
     }
 
