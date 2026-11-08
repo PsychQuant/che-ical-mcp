@@ -539,7 +539,7 @@ end、notes、location、alarms。
    `title`、`notes`、`location`：第 3 場只改時間、第 4 場改標題與備註、第 5 場改地點：改過那一欄的場次留著自己的值，其他都拿到新值。
    `clear_timezone`：有次數上限的系列少掉最後一場，沒有單獨改過場次也一樣（#455），訊息不給這條路。
    `clear_recurrence`：剩系列第一個日期的一個事件，單獨改過的場次消失。`calendar_name`（同帳號）：全部搬走。`url`、鬧鐘、
-   `structured_location`：寫到別的場次。`all_day`：多一個場次（#442）。
+   `structured_location`：寫到別的場次。`all_day`：系列有單獨改過的場次時拒絕，什麼都不寫；沒有這個拒絕的 build 會多一個場次（#442）。
    **#478 之後**：系列已開始（第 1 場的原時段在現在之前）時，`timezone`（與事件原本不同的時區）與 `clear_timezone` 經系列 id、span `all`
    會在寫入前被拒絕，系列不變；這是預期結果，不是 regression。上面 `timezone` 與 `clear_timezone` 那兩句描述的是舊行為，要看它們，
    用一個還沒開始的系列（第 1 場在未來）重做這兩列；(g) 從還沒發生的下一場用 span `future` 帶 `timezone` 仍放行（#478 量過）。

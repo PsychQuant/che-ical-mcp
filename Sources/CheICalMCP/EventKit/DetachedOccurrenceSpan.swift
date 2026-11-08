@@ -607,6 +607,36 @@ enum DetachedOccurrenceSpan {
     /// new rule runs from the original one, and a rule on the shown day left two occurrences there.
     static let recurrenceDayReason = "event_id names one occurrence of a recurring series, edited on its own, and days_of_week does not hold the day of the week of its original date, the day the series runs from. Add that day, or leave days_of_week out. Nothing was written."
 
+    /// #442: `all_day` changed on a whole series with an occurrence edited on its own, through the
+    /// series' object. Measured on iCloud with `all_day: true`: every shape of edit brought that
+    /// occurrence's original slot back as an extra occurrence, answered `updated`. `all_day: false`
+    /// was not measured and counts too. `hasEditedOccurrence` is read only when the answer depends
+    /// on it: it scans the series, about five years from its start.
+    /// Cluster verify r3 (LOW): not when the same call clears the rule, which leaves one event.
+    static func refusesAllDayChange(wholeSeries: Bool, hasRules: Bool, requested: Bool?, current: Bool,
+                                    clearingRecurrence: Bool = false,
+                                    hasEditedOccurrence: @autoclosure () -> Bool) -> Bool {
+        guard wholeSeries, hasRules, !clearingRecurrence, let requested, requested != current else { return false }
+        return hasEditedOccurrence()
+    }
+
+    /// #442 (cluster verify r3): an edited occurrence cannot be ruled out whenever the scan does
+    /// not cover the whole series (open-ended, or ending past what the scan lists): one edited past
+    /// the scan is not seen, and the write still reaches it. Fail closed, whatever the series' age.
+    static func editedOccurrenceUnknown(coversWholeSeries: Bool) -> Bool {
+        !coversWholeSeries
+    }
+
+    static let allDayUnknownReason = "The scan cannot show where this series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out), so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static let allDayUnlistedReason = "This series' occurrences could not be listed, so an occurrence edited on its own cannot be ruled out, and changing all_day for the whole series brought such an occurrence's original slot back as an extra occurrence. Nothing was written."
+
+    static func allDayRefusalReason(edited: Bool, listed: Bool) -> String {
+        edited ? allDayChangeReason : (listed ? allDayUnknownReason : allDayUnlistedReason)
+    }
+
+    static let allDayChangeReason = "This series has an occurrence edited on its own, and changing all_day for the whole series brings that occurrence's original slot back as an extra occurrence. This shape has no tested way yet. Nothing was written."
+
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call
     /// as deleted, so the result must not depend on the order: with the series' row first and the
