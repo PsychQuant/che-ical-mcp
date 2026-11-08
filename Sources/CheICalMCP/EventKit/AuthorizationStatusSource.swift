@@ -20,15 +20,23 @@ import Foundation
 /// non-`Sendable` `EKEventStore`; declaring the protocol `Sendable` would force every
 /// conformer into `@unchecked Sendable` (which papered over a real Swift 6 strict-
 /// concurrency violation). Actor isolation in `EventKitManager` (the sole owner) provides
-/// the safety guarantee instead — the source never crosses an actor boundary in production.
+/// the safety guarantee instead: the gate runs on the caller's actor (#482), so the source, and the
+/// store it holds, is used on the `EventKitManager` actor. Before #482 this comment said the source
+/// never crossed an actor boundary, which did not hold: `AuthorizationGate.ensureAccess` was a
+/// nonisolated async function, and in Swift 5 mode (SE-0338) it ran on the generic executor, so the
+/// status read and the request on the actor's own store ran off the actor. The one other caller,
+/// `SetupModel.grant` (the `--setup` window, which owns its own store), passes `nil` and keeps its
+/// earlier behavior.
 protocol AuthorizationStatusSource {
     /// Read current TCC authorization status. Cheap (μs-scale, kernel-cache hit after first call).
     /// MUST NOT trigger TCC dialog — that's `requestFullAccess`'s job.
     func authorizationStatus(for entityType: EKEntityType) -> EKAuthorizationStatus
 
     /// Request full access (triggers TCC dialog if `.notDetermined`).
-    /// Only called by `AuthorizationGate.ensureAccess` when status is `.notDetermined`.
-    func requestFullAccess(for entityType: EKEntityType) async throws -> Bool
+    /// Only called by `AuthorizationGate.ensureAccess` when status is `.notDetermined`, which hands
+    /// it its own isolation (#482): a nonisolated async requirement would run off the caller's
+    /// actor (SE-0338). `SetupModel.grant` passes `nil`.
+    func requestFullAccess(for entityType: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool
 }
 
 /// Production implementation that delegates to the framework. Carries an `EKEventStore`
@@ -45,7 +53,7 @@ struct LiveAuthorizationStatusSource: AuthorizationStatusSource {
         EKEventStore.authorizationStatus(for: entityType)
     }
 
-    func requestFullAccess(for entityType: EKEntityType) async throws -> Bool {
+    func requestFullAccess(for entityType: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool {
         switch entityType {
         case .event:
             return try await store.requestFullAccessToEvents()
@@ -72,6 +80,12 @@ enum AuthorizationGate {
     ///   - entityType: EventKit entity (`.event` or `.reminder`)
     ///   - typeName: human-readable name for error messages ("Calendar" / "Reminders")
     ///   - probe: source of authorization-status reads + access requests
+    ///   - isolation: #482: the gate runs on the caller's actor (SE-0420), as #476's undo restore
+    ///     seams do. In Swift 5 mode (SE-0338) a nonisolated async function runs on the generic
+    ///     executor, so the status read and the request on `EventKitManager`'s own store ran off
+    ///     that actor while it could re-enter and do EventKit work. The callers in
+    ///     `EventKitManager` pass nothing, so `#isolation` gives them the actor; `nil` passed by
+    ///     hand brings the old behavior back.
     /// - Throws:
     ///   - `EventKitError.accessDenied` for `.denied` / `.restricted` / `.notDetermined`-then-denied
     ///   - `EventKitError.insufficientAccess` for `.writeOnly` (macOS 14+ partial-access state)
@@ -81,7 +95,8 @@ enum AuthorizationGate {
         typeName: String,
         isSSH: Bool = false,
         isNonInteractive: Bool = false,
-        probe: AuthorizationStatusSource
+        probe: AuthorizationStatusSource,
+        isolation: isolated (any Actor)? = #isolation
     ) async throws {
         let status = probe.authorizationStatus(for: entityType)
 
@@ -106,7 +121,7 @@ enum AuthorizationGate {
             if isSSH || isNonInteractive {
                 throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
             }
-            let granted = try await probe.requestFullAccess(for: entityType)
+            let granted = try await probe.requestFullAccess(for: entityType, isolation: isolation)
             if !granted {
                 throw EventKitError.accessDenied(type: typeName, isSSH: isSSH, isNonInteractive: isNonInteractive)
             }

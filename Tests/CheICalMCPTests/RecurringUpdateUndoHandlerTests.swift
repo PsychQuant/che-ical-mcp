@@ -10,7 +10,7 @@ import XCTest
 final class RecurringUpdateUndoHandlerTests: XCTestCase {
     private final class DeniedProbe: AuthorizationStatusSource {
         func authorizationStatus(for: EKEntityType) -> EKAuthorizationStatus { .denied }
-        func requestFullAccess(for: EKEntityType) async throws -> Bool { false }
+        func requestFullAccess(for: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool { false }
     }
 
     private func text(_ result: CallTool.Result) throws -> String {
