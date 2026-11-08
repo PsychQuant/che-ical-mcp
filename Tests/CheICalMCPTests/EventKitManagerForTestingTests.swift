@@ -20,7 +20,7 @@ final class EventKitManagerForTestingTests: XCTestCase {
         let status: EKAuthorizationStatus
         init(status: EKAuthorizationStatus) { self.status = status }
         func authorizationStatus(for: EKEntityType) -> EKAuthorizationStatus { status }
-        func requestFullAccess(for: EKEntityType) async throws -> Bool { false }
+        func requestFullAccess(for: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool { false }
     }
 
     /// Factory under test must produce an `EventKitManager` instance that routes
