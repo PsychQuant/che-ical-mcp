@@ -965,9 +965,13 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: []), "a one-off")
         XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: false, occurrenceCounts: [5]), "one occurrence")
         XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: false, wholeOrFollowing: true, occurrenceCounts: [5]))
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], hasZone: false),
+                       "no zone to clear (all-day or floating): nothing changes")
+        XCTAssertFalse(DetachedOccurrenceSpan.refusesClearTimezone(clearTimezone: true, wholeOrFollowing: true, occurrenceCounts: [5], clearingRecurrence: true),
+                       "the rule goes in the same call")
         XCTAssertTrue(DetachedOccurrenceSpan.clearTimezoneReason.hasSuffix("Nothing was written."))
         let body = try updateBody()
-        XCTAssertTrue(body.contains("if DetachedOccurrenceSpan.refusesClearTimezone( clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents, occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason) }"), body)
+        XCTAssertTrue(body.contains("if DetachedOccurrenceSpan.refusesClearTimezone( clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents, occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }, hasZone: !event.isAllDay && event.timeZone != nil, clearingRecurrence: clearRecurrence) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason) }"), body)
     }
 
     // MARK: - all_day on a series with an edited occurrence (#442)

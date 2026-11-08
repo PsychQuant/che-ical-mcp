@@ -634,11 +634,15 @@ enum DetachedOccurrenceSpan {
     /// count 5, with and without an edited occurrence): the last occurrence went, and the rule read
     /// back unchanged, also when it was written again in the same save. A rule with an end date and
     /// an open-ended one kept every occurrence, and span `future` was not run, so it counts.
-    static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int]) -> Bool {
-        clearTimezone && wholeOrFollowing && occurrenceCounts.contains { $0 > 0 }
+    /// Cluster verify r2 (LOW): not when there is no zone to clear (an all-day or floating series),
+    /// or when the same call clears the rule, as the count no longer applies; neither was measured to
+    /// drop anything.
+    static func refusesClearTimezone(clearTimezone: Bool, wholeOrFollowing: Bool, occurrenceCounts: [Int],
+                                     hasZone: Bool = true, clearingRecurrence: Bool = false) -> Bool {
+        clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
     }
 
-    static let clearTimezoneReason = "This series ends by a count of occurrences, and clearing its time zone drops the last one. A series with an end date, or with no end, takes it. Nothing was written."
+    static let clearTimezoneReason = "This series ends by a count of occurrences, and clearing its time zone drops the last one. A series with an end date, or with no end, takes it while it has not started (a started series is refused for its time zone, #478). Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call

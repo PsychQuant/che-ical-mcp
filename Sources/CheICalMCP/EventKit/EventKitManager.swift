@@ -1257,7 +1257,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #455: it answered updated and the last occurrence went (device).
         if DetachedOccurrenceSpan.refusesClearTimezone(
             clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents,
-            occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }) {
+            occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 },
+            hasZone: !event.isAllDay && event.timeZone != nil, clearingRecurrence: clearRecurrence) {
             throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason)
         }
 
