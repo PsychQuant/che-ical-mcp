@@ -1366,41 +1366,45 @@ class CheICalMCPServer {
         let fields = try InputValidation.parseFieldsFilter(arguments)
 
         // #490: values copied on the manager's actor.
-        var events = try await eventRangeReadSource.listEventValues(
+        // PR #495 round 1: filter, sort and limit run on the manager's actor over light keys
+        // (start, end, all-day), and only the kept rows are copied whole.
+        let searched = EventRangeQuery.Span(start: startDate, end: endDate)
+        let picked = try await eventRangeReadSource.listEventValues(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
+        ) { keys -> (keep: [Int], info: (totalInRange: Int, totalAfterFilter: Int, defaultLimit: Int?)) in
+            var events = keys
+            let now = Date()
 
-        let totalInRange = events.count
-        let now = Date()
+            // Apply filter
+            switch filterMode {
+            case "past":
+                events = events.filter { $0.end < now }
+            case "future":
+                events = events.filter { $0.start > now }
+            case "all_day":
+                events = events.filter { $0.isAllDay }
+            default:
+                break
+            }
 
-        // Apply filter
-        switch filterMode {
-        case "past":
-            events = events.filter { $0.formatEndDate < now }
-        case "future":
-            events = events.filter { $0.formatStartDate > now }
-        case "all_day":
-            events = events.filter { $0.formatIsAllDay }
-        default:
-            break
+            // Apply sort
+            if sortMode == "desc" {
+                events.sort { $0.start > $1.start }
+            } else {
+                events.sort { $0.start < $1.start }
+            }
+
+            // Apply limit. #332: over a wide range (`wideRangeDays`), no caller limit means at most
+            // `EventRangeQuery.defaultWideOutput` rows. `truncated` says rows were left out, whoever
+            // cut them; `default_limit` that the default did.
+            let (rows, defaultLimit) = EventRangeQuery.bounded(events, requested: limit, searched: searched)
+            return (rows.map(\.index), (keys.count, events.count, defaultLimit))
         }
-
-        let totalAfterFilter = events.count
-
-        // Apply sort
-        if sortMode == "desc" {
-            events.sort { $0.formatStartDate > $1.formatStartDate }
-        } else {
-            events.sort { $0.formatStartDate < $1.formatStartDate }
-        }
-
-        // Apply limit. #332: over a wide range (`wideRangeDays`), no caller limit means at most
-        // `EventRangeQuery.defaultWideOutput` rows. `truncated` says rows were left out, whoever
-        // cut them; `default_limit` that the default did.
-        let (rows, defaultLimit) = EventRangeQuery.bounded(events, requested: limit, searched: .init(start: startDate, end: endDate))
+        let rows = picked.values
+        let (totalInRange, totalAfterFilter, defaultLimit) = picked.info
 
         let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
@@ -2551,20 +2555,24 @@ class CheICalMCPServer {
         let effectiveStart = userStartDate ?? defaults.start
         let effectiveEnd = userEndDate ?? defaults.end
 
-        let events = try await eventRangeReadSource.searchEventValues(
+        // Apply limit. #332: this tool has no sort, so any cut, a caller's limit or the default,
+        // keeps the rows closest to today and the answer says so. PR #495 round 1: the cut runs on
+        // the manager's actor over light keys, and only the kept rows are copied whole.
+        let searched = EventRangeQuery.Span(start: effectiveStart, end: effectiveEnd)
+        let picked = try await eventRangeReadSource.searchEventValues(
             keywords: keywords,
             matchMode: matchMode,
             startDate: effectiveStart,
             endDate: effectiveEnd,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
-
-        // Apply limit. #332: this tool has no sort, so any cut, a caller's limit or the default,
-        // keeps the rows closest to today and the answer says so.
-        let totalCount = events.count
-        let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(events, requested: limit, searched: .init(start: effectiveStart, end: effectiveEnd),
-                                                                  now: now, start: { $0.formatStartDate })
+        ) { keys -> (keep: [Int], info: (totalCount: Int, defaultLimit: Int?)) in
+            let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(keys, requested: limit, searched: searched,
+                                                                      now: now, start: { $0.start })
+            return (rows.map(\.index), (keys.count, defaultLimit))
+        }
+        let rows = picked.values
+        let (totalCount, defaultLimit) = picked.info
 
         let result = rows.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 
@@ -2612,18 +2620,18 @@ class CheICalMCPServer {
         let fields = try InputValidation.parseFieldsFilter(arguments)
 
         // #490: through the range seam, as values copied on the manager's actor.
-        var events = try await eventRangeReadSource.listEventValues(
+        // Apply limit. PR #495 round 1: on the manager's actor, over light keys.
+        let picked = try await eventRangeReadSource.listEventValues(
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
             calendarSource: calendarSource
-        )
-
-        // Apply limit
-        let totalCount = events.count
-        if let limit = limit, events.count > limit {
-            events = Array(events.prefix(limit))
+        ) { keys -> (keep: [Int], info: Int) in
+            let kept = limit.map { Array(keys.prefix($0)) } ?? keys
+            return (kept.map(\.index), keys.count)
         }
+        let events = picked.values
+        let totalCount = picked.info
 
         let result = events.map { formatEventDict($0, detailLevel: detailLevel, displayTimezone: displayTimezone, fields: fields) }
 

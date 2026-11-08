@@ -20,7 +20,7 @@ enum EventRangeQuery {
     /// The most spans one call may query (about 400 years); a wider range is refused, not cut.
     static let maxSpans = 100
 
-    struct Span: Equatable {
+    struct Span: Equatable, Sendable {
         let start: Date
         let end: Date
     }

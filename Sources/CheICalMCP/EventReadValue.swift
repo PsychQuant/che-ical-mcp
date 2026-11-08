@@ -47,6 +47,41 @@ struct EventReadValue: EventFormattingSource, @unchecked Sendable {
     }
 }
 
+/// PR #495 round 1: what a read handler filters and sorts on, read for every event of the range.
+/// `index` is the event's place in the store's answer; a handler keeps rows by it.
+struct EventReadKey: Sendable, Equatable {
+    let index: Int
+    let start: Date
+    let end: Date
+    let isAllDay: Bool
+}
+
+/// PR #495 round 1: a handler's choice of rows over the keys, run on the manager's actor: the
+/// indices to copy whole, in output order, and whatever the handler wants back (its counts).
+typealias EventRowPick<Info: Sendable> = @Sendable ([EventReadKey]) -> (keep: [Int], info: Info)
+
+/// The rows a handler kept, copied whole, and what its pick returned.
+struct EventRowsPicked<Info: Sendable>: Sendable {
+    let values: [EventReadValue]
+    let info: Info
+
+    /// Reads the keys of every event, runs `pick` over them, and copies whole only the rows it
+    /// keeps (an index out of range is skipped). Called on the manager's actor, so every read of an
+    /// event happens there. Copying every event whole cost about 4.5 s and 350 MB more than main at
+    /// 182,605 occurrences (list_events over 100 years, --cli, 2026-11-09); picking first is within
+    /// 0.1 s of main and about 10 MB above it.
+    static func picking<Source: EventFormattingSource>(_ events: [Source],
+                                                       _ pick: ([EventReadKey]) -> (keep: [Int], info: Info)) -> EventRowsPicked {
+        let keys = events.enumerated().map {
+            EventReadKey(index: $0.offset, start: $0.element.formatStartDate, end: $0.element.formatEndDate,
+                         isAllDay: $0.element.formatIsAllDay)
+        }
+        let chosen = pick(keys)
+        return EventRowsPicked(values: chosen.keep.filter(events.indices.contains).map { EventReadValue(events[$0]) },
+                               info: chosen.info)
+    }
+}
+
 /// #490: a calendar as `list_calendars` lists it, copied inside the manager's actor.
 struct CalendarReadValue: Sendable, Equatable {
     let identifier: String
@@ -55,10 +90,11 @@ struct CalendarReadValue: Sendable, Equatable {
     let allowsContentModifications: Bool
     let isSubscribed: Bool
     let sourceTitle: String
-    let sourceType: EKSourceType
+    /// nil for a calendar with no source (an unsaved one).
+    let sourceType: EKSourceType?
 
     init(identifier: String, title: String, typeRawValue: Int, allowsContentModifications: Bool,
-         isSubscribed: Bool, sourceTitle: String, sourceType: EKSourceType) {
+         isSubscribed: Bool, sourceTitle: String, sourceType: EKSourceType?) {
         self.identifier = identifier
         self.title = title
         self.typeRawValue = typeRawValue
@@ -68,11 +104,14 @@ struct CalendarReadValue: Sendable, Equatable {
         self.sourceType = sourceType
     }
 
-    /// Reads the calendar where it is called: on the manager's actor.
+    /// Reads the calendar where it is called: on the manager's actor. `source` is implicitly
+    /// unwrapped (`null_unspecified`); a calendar without one lists `""` and `Unknown` instead of
+    /// trapping, as the handler did before (PR #495 round 1).
     init(_ calendar: EKCalendar) {
+        let source: EKSource? = calendar.source
         self.init(identifier: calendar.calendarIdentifier, title: calendar.title, typeRawValue: calendar.type.rawValue,
                   allowsContentModifications: calendar.allowsContentModifications, isSubscribed: calendar.isSubscribed,
-                  sourceTitle: calendar.source.title, sourceType: calendar.source.sourceType)
+                  sourceTitle: source?.title ?? "", sourceType: source?.sourceType)
     }
 
     /// The row `list_calendars` has always written.
@@ -89,7 +128,8 @@ struct CalendarReadValue: Sendable, Equatable {
     }
 
     /// `EKSourceType` as `list_calendars` names it.
-    static func sourceTypeName(_ sourceType: EKSourceType) -> String {
+    static func sourceTypeName(_ sourceType: EKSourceType?) -> String {
+        guard let sourceType else { return "Unknown" }
         switch sourceType {
         case .local: return "Local"
         case .exchange: return "Exchange"

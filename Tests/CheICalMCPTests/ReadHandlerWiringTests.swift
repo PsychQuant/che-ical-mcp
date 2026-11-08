@@ -42,14 +42,28 @@ final class ReadHandlerWiringTests: XCTestCase {
     func testTheSeamsReturnValuesBuiltOnTheActor() throws {
         let range = try Self.code("EventRangeReadSource.swift")
         XCTAssertFalse(range.contains("[EKEvent]"), "EventRangeReadSource returns no EventKit objects")
-        XCTAssertEqual(SourcePins.ranges(of: "-> [EventReadValue]", in: range).count, 6, "list, search, conflicts: protocol and the manager")
+        XCTAssertEqual(SourcePins.ranges(of: "-> EventRowsPicked<Info>", in: range).count, 4, "list and search: protocol and the manager")
+        XCTAssertEqual(SourcePins.ranges(of: "-> [EventReadValue]", in: range).count, 2, "conflicts: protocol and the manager")
         XCTAssertTrue(range.contains("-> [CalendarReadValue]"))
         let file = try SourcePins.source("EventRangeReadSource.swift")
         let manager = String(file[try XCTUnwrap(file.range(of: "extension EventKitManager:")).lowerBound...])
-        for method in ["func listEventValues(", "func searchEventValues(", "func checkConflictValues(", "func listCalendarValues("] {
+        for method in ["func checkConflictValues(", "func listCalendarValues("] {
             let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)
-            XCTAssertTrue(body.contains(".map(EventReadValue.init)") || body.contains(".map(CalendarReadValue.init)"),
-                          "\(method) maps to values inside the actor")
+            XCTAssertTrue(body.contains("EventRowsPicked.picking(") || body.contains(".map(EventReadValue.init)")
+                          || body.contains(".map(CalendarReadValue.init)"), "\(method) builds values inside the actor")
         }
+        for method in ["func listEventValues<", "func searchEventValues<"] {
+            let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)
+            XCTAssertTrue(body.contains("EventRowsPicked.picking("), "\(method) copies only the rows the handler keeps")
+        }
+    }
+
+    /// PR #495 round 1: the conformance runs on the actor; a `nonisolated` method in it would read
+    /// the store's events off it.
+    func testTheManagersConformanceHasNoNonisolatedMember() throws {
+        let file = try SourcePins.source("EventRangeReadSource.swift")
+        let start = try XCTUnwrap(file.range(of: "extension EventKitManager: EventRangeReadSource, CalendarListSource"))
+        let block = SourcePins.code(String(file[start.lowerBound...]))
+        XCTAssertFalse(block.contains("nonisolated"))
     }
 }
