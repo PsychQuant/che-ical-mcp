@@ -10,8 +10,14 @@ import Foundation
 /// covers that. Closure seam, so the order is unit-tested without EventKit.
 enum EventRestoreCalendar {
     /// `match` picks the calendar from a read, or throws the refusal.
+    ///
+    /// #476: runs on the caller's actor (`isolation`, SE-0420). A nonisolated async function resumes
+    /// off the actor after each `await` (Swift 5 mode, SE-0338), so `match` and `invalidate`, which
+    /// the caller forms on its actor (in production they read its `EKCalendar`s and write its
+    /// refresh state), ran off it after the first read.
     static func resolve<C>(read: () async throws -> [C], invalidate: () -> Void,
-                           match: ([C]) throws -> C) async throws -> C {
+                           match: ([C]) throws -> C,
+                           isolation: isolated (any Actor)? = #isolation) async throws -> C {
         let first = try await read()
         if let found = try? match(first) { return found }
         invalidate()
