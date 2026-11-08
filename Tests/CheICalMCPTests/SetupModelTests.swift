@@ -30,7 +30,7 @@ final class SetupModelTests: XCTestCase {
             statuses[entityType] ?? .notDetermined
         }
 
-        func requestFullAccess(for entityType: EKEntityType) async throws -> Bool {
+        func requestFullAccess(for entityType: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool {
             requestCount += 1
             onRequest?(entityType)
             return try requestResult.get()
