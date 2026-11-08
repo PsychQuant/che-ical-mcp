@@ -136,7 +136,8 @@ enum UndoPostState {
     }
 
     /// The latest end date of `event`'s rules; nil when any rule is open-ended or count-based. The
-    /// end `seriesScanWindow(of:)` cuts at, and the delete-undo window's (#319).
+    /// end `seriesScanWindow(of:)` cuts at (create-undo, #259). The delete-undo window reads a
+    /// series' end through `SeriesExceptionsPlanner.seriesEnd` instead, which bounds a count (#319).
     static func seriesRuleEnd(of event: EKEvent) -> Date? {
         let ruleEnds = (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.endDate }
         return ruleEnds.contains(where: { $0 == nil }) ? nil : ruleEnds.compactMap { $0 }.max()

@@ -63,4 +63,14 @@ final class OccurrenceOriginWiringTests: XCTestCase {
         XCTAssertLessThan(note.lowerBound, restore.lowerBound)
         XCTAssertEqual(count("if snapshot.restoresFromRules, let recorded = snapshot.seriesIdentity {", in: body), 1)
     }
+
+    /// Round 3: the production adapter lists the holders over `OccurrenceSlotGuard.listingRange`,
+    /// the range the fake store also uses (the fake does not reimplement it).
+    func testTheProductionSlotHoldersListTheSharedRange() throws {
+        let adapter = try SourcePins.source("EventKit/SeriesExceptionsStoreSource.swift")
+        let holders = try XCTUnwrap(SourcePins.body(of: "func slotHolders(at slot: Date, length: TimeInterval, in calendar: EKCalendar)", in: adapter))
+        XCTAssertEqual(count("let range = OccurrenceSlotGuard.listingRange(slot: slot, length: length)", in: holders), 1)
+        XCTAssertEqual(count("predicateForEvents(withStart: range.start, end: range.end,", in: holders), 1)
+        XCTAssertEqual(count("predicateForEvents(", in: holders), 1)
+    }
 }

@@ -197,7 +197,7 @@ extension UndoOperation {
     /// rather than that the occurrence is restored.
     static func occurrenceAlreadyRestoredMessage(title: String, edited: Bool = false) -> String {
         if edited {
-            return "Undone: nothing was written for the deleted occurrence of '\(undoVisibleTitle(title))': its restored series already holds that occurrence's slot (a one-off event beside it would have been a duplicate). The occurrence had been edited on its own before it was deleted, and the series holds it as its rules give it, so its own edit did not come back"
+            return "Undone: nothing was written for the deleted occurrence of '\(undoVisibleTitle(title))': its restored series already has an occurrence at its slot (a one-off event beside it would have been a duplicate), which is not the edited one, so its edit did not come back: the occurrence had been edited on its own before it was deleted"
         }
         return "Undone: the deleted occurrence of '\(undoVisibleTitle(title))' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)"
     }
@@ -247,7 +247,7 @@ extension UndoOperation {
     }
 
     /// #319: how the checked window is placed, in the words every text uses.
-    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner"
+    static let seriesExceptionsWindowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; a count whose end cannot be shown and that ended inside it, from one day before its first occurrence or over its last four years, whichever holds more of it"
 
     /// #319: the window by its two instants, to the minute, in the host zone; the end is exclusive.
     /// PR #494 round 1: by instants, not days: the edges fall at the time of day of the delete or of

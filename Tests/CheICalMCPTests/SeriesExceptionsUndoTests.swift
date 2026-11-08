@@ -316,13 +316,14 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         let series = seriesS
         _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
         let edited = UndoSnapshotFixtures.event(title: "Standup (moved)", startDate: s1.addingTimeInterval(1800))
-            .withOccurrenceOrigin(origin(s1))
+            .withOccurrenceOrigin(editedOrigin(s1))
 
-        // Same calendar as the series (each fixture gets its own).
+        // Same calendar as the series (each fixture gets its own). Round 3: the shape production
+        // records for a retitled and moved occurrence (`edited`).
         let (text, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(edited, notCarriedOver: [], calendar: series.calendarIdentifier, in: store)
 
-        XCTAssertEqual(outcome, .occurrenceAlreadyHeld)
-        XCTAssertEqual(text, UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup (moved)"))
+        XCTAssertEqual(outcome, .editedOccurrenceAlreadyHeld)
+        XCTAssertEqual(text, UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup (moved)", edited: true))
         XCTAssertEqual(store.log.filter { $0.hasPrefix("save") }, ["save series Standup"], "only the series was saved")
     }
 
@@ -455,7 +456,7 @@ final class SeriesExceptionsUndoTests: XCTestCase {
 
         XCTAssertEqual(outcome, .editedOccurrenceAlreadyHeld)
         XCTAssertEqual(text, UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup (moved)", edited: true))
-        XCTAssertTrue(text.contains("its own edit did not come back"), text)
+        XCTAssertTrue(text.contains("which is not the edited one, so its edit did not come back"), text)
         XCTAssertFalse(text.contains("is already restored by its series"), text)
     }
 
@@ -584,5 +585,62 @@ final class SeriesExceptionsUndoTests: XCTestCase {
 
         XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []))
         XCTAssertEqual(store.log.last, "save Standup")
+    }
+
+    // MARK: - PR #494 round 3, MEDIUM B: a count whose end cannot be shown, ended inside the window
+
+    /// Occurrences about a month apart from `first` (days), `count` of them, all but `missing`.
+    private func monthly(_ store: FakeSeriesExceptionsStore, from first: Double, count: Int, missing: Set<Int> = [], now: Date) -> [FakeSeriesExceptionsStore.Event] {
+        let slots = (0..<count).map { now.addingTimeInterval((first + Double($0) * 30) * day) }
+        return store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots.enumerated().filter { !missing.contains($0.offset) }.map(\.element))
+    }
+
+    /// Monthly on a filter, 33 occurrences, begun 2000 days and ended about 1040 days before the
+    /// delete. The window around the delete holds two of them; the window from the first
+    /// occurrence held all 33 before #319. The listing shows the series ended inside the window, so
+    /// the capture takes the window that holds more of it.
+    func testAnUnknownCountThatEndedInsideTheWindowGetsTheWindowFromItsFirstOccurrence() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = monthly(store, from: -2000, count: 33, missing: [5], now: now)
+        store.seriesEnd = .unknown
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertEqual(exceptions.window, UndoPostState.seriesScanWindow(firstStart: now.addingTimeInterval(-2000 * day), ruleEnd: nil))
+        XCTAssertEqual(exceptions.keptSlots.count, 32, "every occurrence but the one deleted on its own")
+        XCTAssertFalse(exceptions.seriesStartsBeforeWindow)
+        XCTAssertTrue(exceptions.seriesMayContinueAfterWindow, "its end cannot be shown")
+    }
+
+    /// The same, longer than four years (70 monthly, ended about 930 days before the delete): the
+    /// window from the first occurrence and the window over its last four years hold about as many;
+    /// the one that holds more is taken, never fewer than the window from the first occurrence.
+    func testAnUnknownCountLongerThanFourYearsNeverGetsFewerThanTheOldWindow() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = monthly(store, from: -3000, count: 70, now: now)
+        store.seriesEnd = .unknown
+        let old = UndoPostState.seriesScanWindow(firstStart: now.addingTimeInterval(-3000 * day), ruleEnd: nil)
+        let inOld = store.events.filter { SeriesExceptionsPlanner.inWindow($0.start, old) }.count
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertGreaterThanOrEqual(exceptions.keptSlots.count, inOld)
+    }
+
+    /// Still running past the window (monthly until about 970 days after the delete): the window
+    /// stays around the delete.
+    func testAnUnknownCountStillRunningKeepsTheWindowAroundTheDelete() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = monthly(store, from: -2000, count: 100, now: now)
+        store.seriesEnd = .unknown
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertEqual(exceptions.window.start, now.addingTimeInterval(-1094 * day))
+        XCTAssertTrue(exceptions.seriesStartsBeforeWindow)
+        XCTAssertTrue(exceptions.seriesMayContinueAfterWindow)
     }
 }

@@ -48,8 +48,8 @@ extension UndoOperation {
         let editedHeld = events.filter { $0 == .editedOccurrenceAlreadyHeld }.count
         if editedHeld > 0 {
             notes.append(editedHeld == 1
-                ? "1 deleted occurrence that had been edited on its own was not written: its restored series holds its slot as its rules give it, so its edit did not come back"
-                : "\(editedHeld) deleted occurrences that had been edited on their own were not written: their restored series hold their slots as their rules give them, so their edits did not come back")
+                ? "1 deleted occurrence that had been edited on its own was not written: its restored series already has an occurrence at its slot, which is not the edited one, so its edit did not come back"
+                : "\(editedHeld) deleted occurrences that had been edited on their own were not written: their restored series already have occurrences at their slots, which are not the edited ones, so their edits did not come back")
         }
         // Round 2: written without the slot check (their records do not name their series).
         let unchecked = events.filter { if case .occurrenceOneOffSlotUnchecked = $0 { return true } else { return false } }.count

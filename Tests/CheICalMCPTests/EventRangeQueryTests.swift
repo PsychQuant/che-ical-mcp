@@ -619,13 +619,15 @@ final class EventRangeQueryTests: XCTestCase {
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in SeriesExceptionsPlanner\.listingRanges\(for: window\) \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: observed).count, 1,
                        "the capture's range is a listing range of the window it is given")
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"observedOccurrences\(of: series, ids: seriesIDs, over: window, in: store\)"#, in: undo).count, 2,
-                       "two callers: the delete window and the window from the first occurrence")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"observedOccurrences\(of: series, ids: seriesIDs, over: (window|candidate\.window), in: store\)"#, in: undo).count, 2,
+                       "two callers: the delete window, and the candidates of an unknown count that ended (round 3)")
         // #319: the delete window, one query long (`SeriesDeleteWindowTests.testNoWindowIsLongerThanOneQuery`).
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), end: seriesEnd,\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
-        // The fallback: the create-undo window, uncut (1460 days).
-        let fallback = try XCTUnwrap(SourcePins.body(of: "private static func captureFromFirstOccurrence<", in: undo))
-        XCTAssertEqual(SourcePins.ranges(of: "let window = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)", in: fallback).count, 1)
+        // Round 3: the candidates are the create-undo window, uncut (1460 days), and a delete window.
+        let ended = try XCTUnwrap(SourcePins.body(of: "private static func captureEndedUnknownCount<", in: undo))
+        XCTAssertEqual(SourcePins.ranges(of: "let fromFirst = UndoPostState.seriesScanWindow(firstStart: firstStart, ruleEnd: nil)", in: ended).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "let ending = SeriesExceptionsPlanner.deleteWindow(firstStart: firstStart, end: .endsBy(lastSlot), deletedAt: now)", in: ended).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"candidates\.append\("#, in: ended).count, 1)
     }
 
     /// `delete_events_batch` by date range takes its range from `deletionRange`, checks the size,

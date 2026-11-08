@@ -102,7 +102,9 @@ enum SeriesExceptionsPlanner {
     /// after the rule's end (an end date also cuts it there; a count's last possible slot only moves
     /// it). It so reaches at least a year past the delete; a series begun within about three years
     /// of the delete gets the window it had before #319, and a series that ended long before the
-    /// delete is listed over its last four years (for a count, from its first occurrence).
+    /// delete is listed over its last four years: for an end date, up to that date; for a count,
+    /// the window from its first occurrence when its last possible slot is within 1459 days of the
+    /// first occurrence, else the 1460 days before that slot (not cut at it).
     ///
     /// Before #319 this was the create-undo window (`UndoPostState.seriesScanWindow`, #259),
     /// anchored at the first occurrence; for a series begun more than about four years before the
@@ -183,6 +185,20 @@ enum SeriesExceptionsPlanner {
         return [window,
                 DateInterval(start: window.start.addingTimeInterval(-margin), end: window.start),
                 DateInterval(start: window.end, end: window.end.addingTimeInterval(margin))]
+    }
+
+    /// PR #494 round 3: for a count whose end cannot be shown, whether the listing shows it ended
+    /// before the window's end (none of its listed occurrences is at or past it; the listing reaches
+    /// a year past it), and the last rule slot listed (nil when none was: it ended before the
+    /// listing). Nil when one is at or past the end: it runs on past the window.
+    static func observedEnd(of observed: [ObservedOccurrence], window: DateInterval) -> (ended: Bool, lastSlot: Date?) {
+        let slots = observed.map(ruleSlot(of:))
+        return (!slots.contains(where: { $0 >= window.end }), slots.max())
+    }
+
+    /// How many occurrences of the series a capture holds inside its window (kept and edited).
+    static func heldCount(_ exceptions: SeriesExceptions) -> Int {
+        exceptions.keptSlots.count + exceptions.detached.count
     }
 
     /// Splits what was listed into the slots that stay and the occurrences edited on their own.

@@ -141,7 +141,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     private var aroundTheDelete: DateInterval {
         DateInterval(start: iso("2025-11-08T12:00:00Z"), end: iso("2029-11-07T12:00:00Z"))
     }
-    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner"
+    private let windowRule = "at most four years, from three years before the delete, or from one day before the first occurrence when that is later, moved earlier for a rule that ends sooner; a count whose end cannot be shown and that ended inside it, from one day before its first occurrence or over its last four years, whichever holds more of it"
 
     private func restored(startsBefore: Bool, continuesAfter: Bool) -> String {
         var exceptions = SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [])
@@ -210,13 +210,13 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let message = UndoOperation.batchUndoneMessage(count: 2, events: [.occurrenceAlreadyHeld, .editedOccurrenceAlreadyHeld])
         // Round 2: the held edited occurrence is not counted as "already restored".
         XCTAssertTrue(message.contains("1 deleted occurrence was already restored by its series, so nothing was written for it"), message)
-        XCTAssertTrue(message.contains("1 deleted occurrence that had been edited on its own was not written: its restored series holds its slot as its rules give it, so its edit did not come back"), message)
+        XCTAssertTrue(message.contains("1 deleted occurrence that had been edited on its own was not written: its restored series already has an occurrence at its slot, which is not the edited one, so its edit did not come back"), message)
         XCTAssertFalse(message.contains("2 deleted occurrences were already restored"), message)
     }
 
     /// A split move's source held by its series keeps the copy, edited or not.
     func testAMoveByCopyRestoreTreatsAHeldEditedOccurrenceAsHeld() {
-        XCTAssertEqual(MoveByCopyUndo.Restore(text: "x", outcome: .editedOccurrenceAlreadyHeld), .slotAlreadyHeld)
+        XCTAssertEqual(MoveByCopyUndo.Restore(text: "x", outcome: .editedOccurrenceAlreadyHeld), .editedSlotAlreadyHeld)
     }
 
     /// Round 2 (LOW): the move-by-copy text of a held slot names the series, not a title match.
@@ -231,5 +231,28 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup")
         let line = UndoOperation.moveByCopy(original: snapshot, isSplit: true, notCarriedOver: [], copyID: "C1", copy: snapshot).description
         XCTAssertTrue(line.contains("if its series there already holds its original slot, nothing is recreated and the copy stays"), line)
+    }
+
+    /// Round 3: the held text does not claim what holds the slot came from the rules (it may be an
+    /// occurrence moved there); it says the edit did not come back.
+    func testTheEditedHeldTextDoesNotSayTheRulesHoldIt() {
+        let text = UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup", edited: true)
+        XCTAssertFalse(text.contains("as its rules give it"), text)
+        XCTAssertTrue(text.contains("which is not the edited one, so its edit did not come back"), text)
+    }
+
+    /// Round 3: a split move of an occurrence edited on its own whose slot the series holds: the copy
+    /// is the only version with the edit, so the text says to keep it, not to remove it.
+    func testAHeldEditedSplitSaysTheCopyIsTheOnlyEditedVersion() {
+        let message = MoveByCopyUndo.message(restore: .editedSlotAlreadyHeld, title: "Standup", copyID: "C1", copy: .keptSlotHeld)
+        XCTAssertTrue(message.contains("the copy the move made (id C1) is the only version with that edit"), message)
+        XCTAssertFalse(message.contains("remove the copy there if it should go"), message)
+    }
+
+    /// The move-by-copy run keeps the copy for an edited held slot too.
+    func testAHeldEditedSplitKeepsTheCopy() async throws {
+        let result = try await MoveByCopyUndo.run(copyID: "C1", restoreOriginal: { .editedSlotAlreadyHeld },
+                                                  checkAndRemove: { XCTFail("must not check") })
+        XCTAssertEqual(result.copy, .keptSlotHeld)
     }
 }

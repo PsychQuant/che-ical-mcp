@@ -21,10 +21,17 @@ enum MoveByCopyUndo {
         /// from it) already holds its rule slot in its calendar (#285's slot check, by series and
         /// slot since #321). The copy is kept, not even looked up (PR #474 round 3).
         case slotAlreadyHeld
+        /// PR #494 round 3: the same for a split occurrence edited on its own: the copy is the only
+        /// version that has its edit.
+        case editedSlotAlreadyHeld
 
         /// From the occurrence or event undo's text and outcome.
         init(text: String, outcome: UndoEventOutcome?) {
-            self = outcome == .occurrenceAlreadyHeld || outcome == .editedOccurrenceAlreadyHeld ? .slotAlreadyHeld : .written(text)
+            switch outcome {
+            case .occurrenceAlreadyHeld?: self = .slotAlreadyHeld
+            case .editedOccurrenceAlreadyHeld?: self = .editedSlotAlreadyHeld
+            default: self = .written(text)
+            }
         }
     }
 
@@ -80,7 +87,7 @@ enum MoveByCopyUndo {
                     restoreOriginal: () async throws -> Restore,
                     checkAndRemove: () async throws -> Void) async throws -> (restore: Restore, copy: Copy) {
         let restore = try await restoreOriginal()
-        guard restore != .slotAlreadyHeld else { return (restore, .keptSlotHeld) }
+        guard restore != .slotAlreadyHeld, restore != .editedSlotAlreadyHeld else { return (restore, .keptSlotHeld) }
         guard !copyID.isEmpty else { return (restore, .noIdentifier) }
         do {
             try await checkAndRemove()
@@ -112,6 +119,9 @@ enum MoveByCopyUndo {
         let id = copyID.isEmpty ? "" : " (id \(copyID))"
         let used = " This history entry is used up: running undo again undoes the operation before it, not this copy."
         let both = "and the event is now in both calendars: remove the copy there if it should go."
+        if restore == .editedSlotAlreadyHeld {
+            return "Undone: the moved occurrence of '\(undoVisibleTitle(title))' was not recreated in its original calendar: its series already holds its original slot there (the series, or one an undo recreated from it, matched by identifier, #321), with an occurrence that is not the edited one. The occurrence had been edited on its own before the move, so the copy the move made\(id) is the only version with that edit: this undo did not look up or remove it. If it is still in the calendar it was moved to, keep it if the edit should stay." + used
+        }
         guard case .written(let restored) = restore else {
             return "Undone: the moved occurrence of '\(undoVisibleTitle(title))' was not recreated in its original calendar: its series already holds its original slot there (the series, or one an undo recreated from it, matched by identifier, #321). So this undo did not look up or remove the copy the move made\(id); if it is still in the calendar it was moved to, the occurrence is now in both calendars: remove the copy there if it should go." + used
         }
