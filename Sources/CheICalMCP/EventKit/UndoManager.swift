@@ -238,6 +238,9 @@ enum EventRestoreKind: Sendable, Equatable {
     case recreateDeletedOccurrence
     case revertUpdate
     case moveBack
+    /// #466 (PR #474 round 2, INFO): the source of a move by copy, recreated in the calendar it was
+    /// moved from. Giving up loses nothing the move did not do: its copy is in the target calendar.
+    case undoMoveByCopy
 }
 
 /// Snapshot of an EKReminder's properties for undo/redo restoration.
@@ -377,6 +380,18 @@ enum UndoOperation {
     /// accounts changes it); undo moves the event back to `fromCalendarIdentifier`, and only while
     /// the event is still in `toCalendarIdentifier` (#236).
     case moveEvent(id: String, fromCalendarIdentifier: String, toCalendarIdentifier: String, title: String, isSeries: Bool)
+    /// #466: a move that split one occurrence out (span "this") or fell back to copy and delete.
+    /// `original` is the removed source without rules, as `.deleteEvent` holds it. `isSplit`: the
+    /// source was one occurrence of a series, restored as `.deleteOccurrence` restores it (#285: not
+    /// when the series holds the slot again), with `notCarriedOver` as that record holds it; else a
+    /// one-off, restored as `.deleteEvent` restores it (PR #474 round 2, LOW 2). `copyID` and
+    /// `copy` are the copy's identifier after the save (possibly empty) and its post-write state
+    /// (`postWriteSnapshot`). Undo always restores the original, as `.deleteEvent` does, and then
+    /// removes the copy only when it is found under `copyID` and unchanged (#236); otherwise the copy
+    /// stays and the answer says so (`MoveByCopyUndo`). Its own kind, not a batch of the copy's
+    /// create record and the source's delete record (PR #474 round 1): a batch is checked whole
+    /// before its first write, so a changed or missing copy refused the original's restore too.
+    case moveByCopy(original: EventSnapshot, isSplit: Bool, notCarriedOver: [String], copyID: String, copy: EventSnapshot)
     case batch([UndoOperation])
 
     /// Human-readable description of this operation. **Surfaces verbatim
@@ -408,6 +423,11 @@ enum UndoOperation {
             return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
         case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(undoVisibleTitle(title))"
+        case .moveByCopy(let original, let isSplit, _, _, _):
+            if isSplit {
+                return "Moved occurrence of event: \(undoVisibleTitle(original.title)) (split out: undo restores it as a one-off event in its original calendar and removes the copy if unchanged; if an occurrence there already holds its time, nothing is recreated and the copy stays)"
+            }
+            return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):
             return "Created reminder: \(undoVisibleTitle(title))"
         case .deleteReminder(let snapshot):
@@ -727,6 +747,9 @@ extension UndoOperation {
             return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
         case .moveEvent(_, _, _, let title, _):
             return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + nothingWritten
+        case .moveByCopy(let original, _, _, _, _):
+            // #466: before, this was a `.deleteEvent` record, whose redo also wrote nothing (#247).
+            return "Cannot redo the move of event '\(undoVisibleTitle(original.title))': redo does not move events again. Use move_events_batch to move it again. If the undo left the copy in the calendar it was moved to, moving the event again adds a second one there: check that calendar first." + nothingWritten
         case .createReminder(_, let title, _):
             return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten
         case .deleteReminder(let snapshot):
