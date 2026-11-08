@@ -3180,6 +3180,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
+    /// #287: `undo` with `restore_available`. Only a batch can be restored in part; every other
+    /// record runs the plain undo.
+    func executeUndo(_ operation: UndoOperation, restoreAvailable: Bool) async throws -> String {
+        if restoreAvailable, case .batch(let ops) = operation {
+            return try await undoBatch(ops, restoreAvailable: true).message
+        }
+        return try await executeUndo(operation)
+    }
+
     /// #466: removes the copy a move by copy made, after its #236 check passed. The check found it
     /// unchanged, so it has no rules (the copy was saved as a one-off) and span `this` removes it alone.
     func removeMoveCopy(_ copy: EKEvent) throws {
@@ -3189,11 +3198,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// The undo of a batch record: its message, and what the stores of the reminders it recreated
     /// hold differently, as data, so a batch nested in another carries them up
     /// (`undoBatchMember`; PR #282 round 6, findings 2, 9).
-    func undoBatch(_ ops: [UndoOperation]) async throws
+    func undoBatch(_ ops: [UndoOperation], restoreAvailable: Bool = false) async throws
         -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
         // #244 D3 first: a member that can never be restored refuses and discards the record,
         // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
         try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
+        // #287: asked to restore what it can, the batch takes the same steps through
+        // `UndoBatchPartialRestore` (`undoBatchRestoringAvailable`).
+        if restoreAvailable { return try await undoBatchRestoringAvailable(ops) }
         // #248 B: the calendar or list each deleted item is recreated in, read once per batch.
         try await verifyRestoreDestinations(of: ops, verb: .undo)
         // #236 D4: every sub-operation is checked before the first write. #248 A: a failed write
@@ -3210,6 +3222,25 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // what a restored reminder's store holds differently (`batchUndoneMessage`).
         return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing),
                 outcome.differing, outcome.events)
+    }
+
+    /// #287: a batch undo with `restore_available`: #248 B's pre-check, and when it refuses, the
+    /// members whose calendar or list is in place run and the others are kept
+    /// (`UndoBatchKeptUnavailable`, which `handleUndo` turns into a narrowed record and a success).
+    /// The members run through `undoBatch` itself, so each gets #236's check and #248 A's part-way
+    /// rule, and the restorable ones are checked once more before the first write (a calendar gone
+    /// since the split refuses them whole, nothing written).
+    func undoBatchRestoringAvailable(_ ops: [UndoOperation]) async throws
+        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
+        let (outcome, kept) = try await UndoBatchPartialRestore.run(
+            ops, restoreAvailable: true,
+            verify: { try await self.verifyRestoreDestinations(of: ops, verb: .undo) },
+            split: { try await self.splitByRestoreDestination(ops) },
+            runMembers: { members in try await self.undoBatch(members) })
+        if let kept {
+            throw UndoBatchKeptUnavailable(kept: kept.blocked, restored: kept.restorable, message: UndoBatchPartialRestore.keptMessage(restored: outcome.message, kept: kept))
+        }
+        return outcome
     }
 
     /// #261: the undo of `delete_reminder`, for the single arm and for each batch member. Reads the

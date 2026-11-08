@@ -682,6 +682,15 @@ actor CalendarUndoManager {
         restoreFailedUndo(record.narrowed(to: remaining))
     }
 
+    /// #287: a partial restore. Same call contract as `restoreFailedUndo`: puts back the record
+    /// narrowed to `kept`, under the same id, and leaves a redo record of `restored` (a new id), as a
+    /// whole batch undo leaves its record, so the next redo answers for the restored items instead of
+    /// reaching an older undone operation (PR #496 round 1).
+    func finishPartialUndo(_ record: UndoRecord, kept: UndoOperation, restored: UndoOperation) {
+        restoreFailedUndo(record, remaining: kept)
+        redoStack.append(UndoRecord(restored))
+    }
+
     /// #191 — symmetric restore for a failed executeRedo (same call contract).
     func restoreFailedRedo(_ record: UndoRecord) {
         finishHistoryOperation(record)

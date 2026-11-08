@@ -211,6 +211,8 @@ struct UndoRestoreDestinationMissingError: LocalizedError, Sendable {
             + (others > 1 ? ", including the \(others) whose calendars or lists are in place," : "")
             + " and cannot be reversed: ask the user first; if they agree, read undo_history and call undo with discard_id set to its id."
             + " A calendar or list that was deleted, or whose account was removed, does not come back, so retrying cannot restore its items; run undo again only if it may still be syncing or its access may change."
+            // #287: the other way on, when some items could be restored.
+            + (others > 0 ? " To restore the " + (others == 1 ? "1 item" : "\(others) items") + " whose calendar or list is in place now and keep only the others in this entry, under the same id, ask the user; if they agree, call undo with restore_available set to true." : "")
     }
 }
 
