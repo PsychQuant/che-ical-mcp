@@ -87,6 +87,13 @@ jobs:
         # stubbed and HOME is a temp dir; no network, no build. About 35 s (lock waits, slow assets).
         run: bash scripts/tests/plugin-wrapper-test.sh
 
+      - name: plugin config and quota helper tests
+        # #337 / #327: find-ical-config.sh (walk-up, trust check, --quotas) and quota-dates.sh (resets, dues,
+        # alarms, whether one recurrence rule fits). Temp dirs and fixed --from / --local-tz; no network, no build.
+        run: |
+          bash plugin/bin/tests/find-ical-config.test.sh
+          bash plugin/bin/tests/quota-dates.test.sh
+
       - name: swift build
         run: swift build
 

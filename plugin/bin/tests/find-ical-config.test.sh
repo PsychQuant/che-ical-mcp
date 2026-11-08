@@ -105,5 +105,32 @@ else
   fail=$((fail + 1)); printf 'FAIL a missing start directory exits 2\n     got [%s] rc=%s\n' "$got" "$rc"
 fi
 
+# --quotas (#327): only ~/.claude/.ical/quotas.yaml, no walk; 0 trusted, 1 absent, 3 present but not trusted.
+qcheck() { # name expected-stdout expected-status home
+  local name="$1" want="$2" want_rc="$3" h="$4" got rc
+  got="$(cd "$HOME_DIR/Conf/2026/sub" && HOME="$h" bash "$HELPER" --quotas 2>/dev/null)"; rc=$?
+  if [ "$got" = "$want" ] && [ "$rc" = "$want_rc" ]; then
+    pass=$((pass + 1)); printf 'ok   %s\n' "$name"
+  else
+    fail=$((fail + 1)); printf 'FAIL %s\n     want [%s] rc=%s\n     got  [%s] rc=%s\n' "$name" "$want" "$want_rc" "$got" "$rc"
+  fi
+}
+QH="$ROOT/qhome"
+mkdir -p "$QH/.claude/.ical"
+qcheck "--quotas with no file exits 1" "" 1 "$QH"
+mkdir -p "$HOME_DIR/Conf/.claude/.ical" && : > "$HOME_DIR/Conf/.claude/.ical/quotas.yaml"
+qcheck "--quotas does not walk up from the working directory" "" 1 "$QH"
+: > "$QH/.claude/.ical/quotas.yaml"
+qcheck "--quotas finds the user-level file" "$QH/.claude/.ical/quotas.yaml" 0 "$QH"
+chmod 666 "$QH/.claude/.ical/quotas.yaml"
+qcheck "--quotas: a file writable by others exits 3" "" 3 "$QH"
+chmod 644 "$QH/.claude/.ical/quotas.yaml"
+chmod 775 "$QH/.claude/.ical"
+qcheck "--quotas: a group-writable .ical directory exits 3" "" 3 "$QH"
+chmod 755 "$QH/.claude/.ical"
+rm "$QH/.claude/.ical/quotas.yaml"
+ln -s "$ROOT/nowhere.yaml" "$QH/.claude/.ical/quotas.yaml"
+qcheck "--quotas: a dangling symlink exits 3, not 1 (no new file over it)" "" 3 "$QH"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

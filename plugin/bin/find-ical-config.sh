@@ -2,6 +2,7 @@
 # Find the .claude/.ical/config.yaml that applies to a directory.
 #
 # Usage: find-ical-config.sh [start_dir]      (default: the current directory)
+#        find-ical-config.sh --quotas         the quota declarations, ~/.claude/.ical/quotas.yaml (#327)
 #
 # Lookup order (the contract is plugin/rules/calendar-routing.md):
 #   1. From start_dir upward, the first .claude/.ical/config.yaml found wins. Files are never merged.
@@ -15,9 +16,19 @@
 # Only paths are looked up; the file's content is never read. A config not owned by the current
 # user, or whose file, .ical directory or .claude directory is writable by group or others, is ignored
 # (stderr warning) so a file planted in or swapped within a shared directory cannot redirect events.
+#
+# --quotas looks only at ~/.claude/.ical/quotas.yaml (a quota belongs to an account, not to a folder, so there is
+# no walk), with the same trust check. Exit codes: 0 found and trusted (path on stdout), 1 the file does not
+# exist, 3 the file exists but is not trusted (stderr warning; it must not be read, nor replaced by a new file).
 set -u
 
-start="${1:-$PWD}"
+quotas=0
+if [ "${1:-}" = "--quotas" ]; then
+  quotas=1
+  start="$PWD"
+else
+  start="${1:-$PWD}"
+fi
 if [ ! -d "$start" ]; then
   echo "find-ical-config.sh: not a directory: $start" >&2
   exit 2
@@ -52,6 +63,18 @@ accept() {
   done
   accepted="$file"
 }
+
+if [ "$quotas" = 1 ]; then
+  [ -n "$home" ] || exit 1
+  q="$home/.claude/.ical/quotas.yaml"
+  [ -e "$q" ] || [ -L "$q" ] || exit 1
+  if accept "$q"; then
+    printf '%s\n' "$accepted"
+    exit 0
+  fi
+  [ -f "$q" ] || echo "find-ical-config.sh: ignoring $q (not a regular file)" >&2
+  exit 3
+fi
 
 while [ "$dir" != "$home" ]; do
   candidate="$dir/.claude/.ical/config.yaml"
