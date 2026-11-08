@@ -15,6 +15,33 @@ final class EventMovePolicyTests: XCTestCase {
 
     // MARK: - Before the write
 
+    /// #426: an occurrence edited on its own, by its own id, has no rules of its own. Read as a
+    /// one-off it moved in place, which moved the whole series with span this (measured), ignored
+    /// occurrence_date, and on a failed save would have copied one occurrence out.
+    func testAnOccurrenceByItsOwnIdMovesAsRecurring() {
+        func recurring(_ rules: Bool, _ id: String, _ detached: Bool) -> Bool {
+            EventMovePolicy.movesAsRecurring(hasRules: rules, identifier: id, isDetached: detached)
+        }
+        XCTAssertTrue(recurring(true, "S", false), "a series")
+        XCTAssertTrue(recurring(false, "S/RID=1", true))
+        XCTAssertTrue(recurring(false, "S/RID=1", false), "the /RID= arm")
+        XCTAssertTrue(recurring(false, "OTHER", true), "the isDetached arm")
+        XCTAssertFalse(recurring(false, "E", false), "a one-off")
+        let own = EventMovePolicy.Input(isRecurring: true, span: .this, hasOccurrenceDate: false, attendeeCount: 0)
+        guard case .refuse = EventMovePolicy.plan(own) else { return XCTFail("span this without a date moved the series") }
+        XCTAssertEqual(EventMovePolicy.plan(.init(isRecurring: true, span: .this, hasOccurrenceDate: true, attendeeCount: 0)), .split)
+        XCTAssertEqual(EventMovePolicy.plan(.init(isRecurring: true, span: .all, hasOccurrenceDate: false, attendeeCount: 0)), .inPlace)
+        guard case .refuse = EventMovePolicy.afterInPlaceFailure(.init(isRecurring: true, span: .all, hasOccurrenceDate: false, attendeeCount: 0)) else {
+            return XCTFail("a failed save must not copy one occurrence out")
+        }
+    }
+
+    func testTheMoveAndTheCopyToolReadIt() throws {
+        let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertTrue(source.contains("let isRecurring = EventMovePolicy.movesAsRecurring(hasRules: master.hasRecurrenceRules, identifier: identifier, isDetached: master.isDetached)"))
+        XCTAssertTrue(source.contains("if EventMovePolicy.movesAsRecurring(hasRules: sourceEvent.hasRecurrenceRules, identifier: identifier, isDetached: sourceEvent.isDetached) { throw EventKitError.moveRefused("))
+    }
+
     func testNonRecurringEventMovesInPlace() {
         XCTAssertEqual(EventMovePolicy.plan(input()), .inPlace)
         XCTAssertEqual(EventMovePolicy.plan(input(span: .all)), .inPlace)
