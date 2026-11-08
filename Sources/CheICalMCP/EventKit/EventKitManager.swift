@@ -1711,6 +1711,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return .series
     }
 
+    /// #436 (PR #465 verify r1): what the batch's route through the first occurrence refuses, as
+    /// `delete_event` would through that id with span future: the moved-first refusal, and an
+    /// occurrence that reports rules of its own, which delete_event refuses without occurrence_date
+    /// (on iCloud an edited occurrence has none; Google and Exchange are not measured).
+    static func throughFirstOccurrenceRefusal(_ occurrence: EKEvent, movedFirst: String?) -> String? {
+        if let movedFirst { return movedFirst }
+        return occurrence.hasRecurrenceRules ? throughFirstOccurrenceHasRulesReason : nil
+    }
+
+    /// PR #465 verify r2: the row has no occurrence_date to give, so the text names a call that works.
+    static let throughFirstOccurrenceHasRulesReason = "This series' first occurrence was edited on its own and reports recurrence rules of its own, which was not measured, so this row does not delete the series through it. This shape has no tested way to delete the whole series through this tool yet; delete it in Calendar. This row deleted nothing."
+
     /// A row without a date on a recurring event, with span `this` or `future`. By `event_ids` no
     /// date is passed, so every bare recurring id gets this; its dry run says the same (#416).
     static let batchOccurrenceDateRequired = "For recurring events, occurrence_date is required"
@@ -1725,12 +1737,33 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var successCount = 0
         var failures: [(String, String)] = []
         var undoSnapshots: [EventSnapshot] = []
+        var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
+        var refusingMarker: UndoOperation?
 
         for id in identifiers {
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = try freshEvent(id: id) else {
+                    // #436: as in deleteEventSeries, when the caller named the series' id: through the
+                    // occurrence that comes first, with span future, which reaches every occurrence left.
+                    if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id),
+                       let occurrence = try freshEvent(id: first.id) {
+                        if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
+                            failures.append((id, refusal))
+                            continue
+                        }
+                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
+                        try eventStore.remove(occurrence, span: .futureEvents)
+                        successCount += 1
+                        throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))
+                        // PR #465 verify r2: kept only for a call where no other row is recorded.
+                        if refusingMarker == nil {
+                            refusingMarker = snapshots.record(for: snapshots.kind(
+                                span: .futureEvents, seriesResolves: { seriesResolves(identifier: first.id) }))
+                        }
+                        continue
+                    }
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
@@ -1761,11 +1794,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         markNeedsRefresh()
         if !undoSnapshots.isEmpty {
             await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
+        } else if let refusingMarker {
+            // PR #465 verify r2: with no other row recorded, the call records what delete_event
+            // records for the same delete, which undo refuses and drops. Without it, the next undo
+            // would revert an older, unrelated entry, and redo would not be cleared.
+            await CalendarUndoManager.shared.record(refusingMarker)
         }
         return BatchDeleteResult(
             successCount: successCount,
             failedCount: failures.count,
-            failures: failures
+            failures: failures,
+            throughFirstOccurrence: throughFirstOccurrence
         )
     }
 
@@ -3693,6 +3732,10 @@ struct BatchDeleteResult {
     var mayLandCount: Int = 0
     /// Span "future" items an earlier removal of their series already reached (#325).
     var coveredCount: Int = 0
+    /// #436 (PR #465 verify r1): series rows deleted from their first occurrence edited on its own,
+    /// with span future. That delete cannot be undone, so it is kept out of the batch's undo record
+    /// (which it would make refused as a whole) and reported per row instead.
+    var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
 }
 
 struct DuplicatePair: Sendable {

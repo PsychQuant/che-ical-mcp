@@ -247,8 +247,11 @@ extension EventKitManager {
     /// #428: the identifier of the occurrence edited on its own that comes first in the series
     /// `id`, when `id` resolves to nothing else. A series with no stored object, or one with an
     /// unedited occurrence first, is not this.
-    func firstEditedOccurrenceID(of id: String) throws -> (id: String, allEdited: Bool, firstDeleted: Bool)? {
-        guard let stored = try storedEvent(id: id), let (_, candidates) = seriesOccurrences(of: stored, id: id),
+    /// `excluding` (PR #465 verify r1): occurrences a dry run counts as deleted by earlier rows of
+    /// the same call, so it answers as the real call does when it gets to this row.
+    func firstEditedOccurrenceID(of id: String, excluding gone: Set<String> = []) throws -> (id: String, allEdited: Bool, firstDeleted: Bool)? {
+        guard let stored = try storedEvent(id: id), let (_, listed) = seriesOccurrences(of: stored, id: id),
+              case let candidates = listed.filter({ !gone.contains($0.eventIdentifier ?? "") }),
               let index = FirstRemainingOccurrence.earliestEdited(candidates, identifier: id, isAllDay: stored.isAllDay),
               let first = candidates[index].eventIdentifier else { return nil }
         let firstStart: Date? = stored.startDate
