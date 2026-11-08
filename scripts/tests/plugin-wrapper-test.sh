@@ -8,8 +8,16 @@
 # - The sidecar ~/bin/.CheICalMCP.version records what the installed binary reports, never the
 #   pin it wanted. After a fallback to releases/latest it holds what latest shipped, so the
 #   pinned release is fetched once it exists.
-# - Never download the same release twice: a release whose asset reports another version than
-#   its tag (or no version) is downloaded once and remembered in ~/bin/.CheICalMCP.release.
+# - Not download a release again while ~/bin/.CheICalMCP.release says what it ships and the
+#   installed binary is no worse: it reports a version not older than what the release's asset
+#   reported, or the release's asset reported none and the installed file is that asset (same
+#   cksum) or the version kept over it. A failed download writes no record and is retried on
+#   the next spawn; deleting the record also makes the wrapper retry.
+# - Never replace a binary with an asset that is not newer than what is installed at the moment
+#   of the mv (the binary is probed again after the download).
+# - Download in one spawn at a time (lock ~/bin/.CheICalMCP.lock); a lock whose pid is dead is
+#   taken at once; a TERM during the download ends the wrapper promptly and leaves no lock or
+#   temp file; leftover temp files of killed runs are removed.
 # - Leave stdin alone (`--version` probes read /dev/null): stdin is the MCP channel.
 #
 # Hermetic: HOME is a temp dir (the wrapper installs to $HOME/bin), `curl` is a stub first on
@@ -97,12 +105,12 @@ case "$url" in
         [ -f "$RELEASES/asset-$tag.version" ] && report=$(cat "$RELEASES/asset-$tag.version")
         if [ -n "${SLOW_ASSET:-}" ]; then
             # Two stages, like a real slow download: half the file, a pause, the rest.
-            "$(dirname "$0")/mkfake" "$out.full.$$" "$report"
-            size=$(wc -c < "$out.full.$$" | tr -d ' ')
-            head -c $((size / 2)) "$out.full.$$" > "$out"
+            "$(dirname "$0")/mkfake" "$RELEASES/full.$$" "$report"
+            size=$(wc -c < "$RELEASES/full.$$" | tr -d ' ')
+            head -c $((size / 2)) "$RELEASES/full.$$" > "$out"
             sleep "$SLOW_ASSET"
-            tail -c +$((size / 2 + 1)) "$out.full.$$" >> "$out"
-            /bin/chmod u+x "$out"; rm -f "$out.full.$$"
+            tail -c +$((size / 2 + 1)) "$RELEASES/full.$$" >> "$out"
+            /bin/chmod u+x "$out"; rm -f "$RELEASES/full.$$"
             exit 0
         fi
         "$(dirname "$0")/mkfake" "$out" "$report"
@@ -161,6 +169,19 @@ spawn_bg() {
         /bin/bash "$C/plugin/bin/che-ical-mcp-wrapper.sh" mcp-arg > "$C/out.$tag" 2> "$C/err.$tag" &
 }
 release_record() { cat "$C/home/bin/.CheICalMCP.release" 2>/dev/null; }
+# wait_download_started — until the stub has been asked for an asset (at most 5 s).
+wait_download_started() {
+    local i=0
+    until grep -q "/releases/download/" "$C/curl.log" 2>/dev/null || (( i >= 50 )); do sleep 0.1; i=$((i + 1)); done
+    sleep 0.2
+}
+# exits_within <pid> <seconds> → 0 when the process is gone within that time.
+exits_within() {
+    local i=0
+    while kill -0 "$1" 2>/dev/null; do (( i >= $2 * 10 )) && return 1; sleep 0.1; i=$((i + 1)); done
+    return 0
+}
+dead_pid() { /usr/bin/true & local p=$!; wait "$p"; echo "$p"; }
 leftovers() { ls -A "$C/home/bin" | grep -vxE 'CheICalMCP|\.CheICalMCP\.version|\.CheICalMCP\.release' | tr '\n' ' '; }
 bin_version() { "$BIN" --version </dev/null 2>/dev/null | awk '{print $NF}'; }
 side() { tr -d '[:space:]' < "$SIDE" 2>/dev/null; }
@@ -471,7 +492,7 @@ echo "CheICalMCP 1.21.0" > "$C/releases/asset-v1.23.0.version"
 run_wrapper
 check "older asset: binary kept" "$(bin_version)" "1.22.0"
 check "older asset: record" "$(release_record)" "1.23.0 1.21.0"
-check "older asset: one line about it" "$(grep -c "older than the installed" "$C/err" | tr -d ' ')" "1"
+check "older asset: one line about it" "$(grep -c "not newer than the installed" "$C/err" | tr -d ' ')" "1"
 check "older asset: no temp file left" "$(leftovers)" ""
 run_wrapper
 check "older asset: not downloaded again" "$(downloads)" "1"
@@ -491,6 +512,97 @@ api_slow=$(cat "$TMP"/*/curl.log.max-time | grep " https://api.github.com/" | gr
 check "API calls use --max-time 5" "$api_slow" "0"
 asset_mt=$(cat "$TMP"/*/curl.log.max-time | grep "/releases/download/" | awk '{print $1}' | sort -u | tr '\n' ' ')
 check "asset download uses --max-time 300" "$asset_mt" "300 "
+
+# 34. Round 3, MEDIUM 1: the binary is replaced by a newer one (make install, --self-update)
+#     while the asset downloads: the newer one survives the mv.
+setup swapped-mid-download 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=2
+wait_download_started
+fake_binary "$C/newer" 1.24.0; mv "$C/newer" "$BIN"
+wait
+check "swapped: newer binary survives" "$(bin_version)" "1.24.0"
+check "swapped: runs the newer binary" "$(cat "$C/out.a")" "RAN CheICalMCP 1.24.0 req"
+has "swapped: says it kept the installed binary" "$C/err.a" "keeping the installed binary"
+check "swapped: no temp file or lock left" "$(leftovers)" ""
+run_wrapper
+check "swapped: next spawn keeps it, no download" "$(downloads)" "1"
+
+# 35. Round 3, MEDIUM 2/3: TERM during the asset download ends the wrapper within a few
+#     seconds (not after the download), and leaves no lock or temp file.
+setup term-mid-download 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=20; pid=$!
+wait_download_started
+kill -TERM "$pid"
+if exits_within "$pid" 3; then ok "TERM: wrapper exits within 3 s"; else bad "TERM: wrapper exits within 3 s"; kill -KILL "$pid" 2>/dev/null; fi
+pkill -f "$C/home/bin/CheICalMCP" 2>/dev/null; sleep 0.2
+check "TERM: no lock or temp file left" "$(leftovers)" ""
+check "TERM: binary untouched" "$(bin_version)" "1.22.0"
+
+# 36. KILL during the download leaves a lock with a dead pid and a temp file: the next spawn
+#     takes the lock at once, removes the temp file, and downloads.
+setup kill-mid-download 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=20; pid=$!
+wait_download_started
+kill -KILL "$pid"; wait "$pid" 2>/dev/null
+pkill -f "$C/home/bin/CheICalMCP" 2>/dev/null; sleep 0.2
+[ -d "$C/home/bin/.CheICalMCP.lock" ] && ok "KILL: lock left behind (precondition)" || bad "KILL: lock left behind (precondition)"
+start=$(date +%s)
+run_wrapper
+check "KILL: next spawn did not wait" "$(( $(date +%s) - start < 3 ))" "1"
+hasnt "KILL: next spawn did not report a held lock" "$C/err" "another wrapper"
+check "KILL: next spawn downloaded" "$(bin_version)" "1.23.0"
+check "KILL: no lock or temp file left" "$(leftovers)" ""
+
+# 37. A lock whose pid file names a dead process is taken at once.
+setup lock-dead-pid 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+mkdir "$C/home/bin/.CheICalMCP.lock"; dead_pid > "$C/home/bin/.CheICalMCP.lock/pid"
+start=$(date +%s)
+run_wrapper
+check "dead pid: did not wait" "$(( $(date +%s) - start < 3 ))" "1"
+check "dead pid: downloaded" "$(bin_version)" "1.23.0"
+check "dead pid: lock removed" "$(leftovers)" ""
+
+# 38. Leftover temp files of killed runs are removed while the lock is held.
+setup leftover-temp 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo partial > "$C/home/bin/CheICalMCP.download.Ab12Cd"
+echo keep > "$C/home/bin/CheICalMCP.backup"
+run_wrapper
+check "leftover temp: removed, other files kept" "$(leftovers)" "CheICalMCP.backup "
+check "leftover temp: downloaded" "$(bin_version)" "1.23.0"
+
+# 39. The lock is released only when its pid file still holds the wrapper's own pid.
+setup lock-foreign-pid 1.23.0
+install_existing 1.22.0 1.22.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+spawn_bg a SLOW_ASSET=2
+wait_download_started
+echo $$ > "$C/home/bin/.CheICalMCP.lock/pid"
+wait
+check "foreign pid: download finished" "$(bin_version)" "1.23.0"
+check "foreign pid: lock left alone" "$(cat "$C/home/bin/.CheICalMCP.lock/pid" 2>/dev/null)" "$$"
+check "foreign pid: temp file removed" "$(leftovers)" ".CheICalMCP.lock "
+
+# 40. LOW: fresh install whose pinned asset reports no version: installed once, and not
+#     downloaded again while the installed file is that asset; a different file is replaced.
+setup fresh-unusable 1.23.0
+release_json "$C/releases/tag-v1.23.0.json" 1.23.0
+echo "garbage" > "$C/releases/asset-v1.23.0.version"
+run_wrapper; run_wrapper; run_wrapper
+check "fresh unusable: one download over three spawns" "$(downloads)" "1"
+has "fresh unusable: says the asset reports no version" "$C/err" "does not report a version"
+printf '#!/bin/bash\nexit 3\n' > "$BIN"; /bin/chmod u+x "$BIN"
+run_wrapper
+check "fresh unusable: a different file is downloaded over" "$(downloads)" "2"
 
 hasnt "no case reached an unexpected URL" <(cat "$TMP"/*/curl.log) "UNEXPECTED"
 

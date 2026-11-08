@@ -7,16 +7,24 @@
 #   sidecar: downloads when the binary is missing, cannot report a version, or reports one
 #   older than the pin; never replaces a binary newer than the pin (--self-update, make install)
 # - Tries the pinned release first, then falls back to releases/latest (pin not released yet)
-# - One download at a time: the download section holds ~/bin/.CheICalMCP.lock (mkdir). A spawn
-#   that finds it held waits a few seconds, then runs whatever is installed without downloading,
-#   so the client does not time out; a lock older than 10 minutes is stale and removed
-# - Each download goes to its own temp file in ~/bin (mktemp), then an atomic mv; `curl -f` so an
-#   HTTP error body is never installed; the downloaded file must report a version, not older
-#   than the installed binary's, before it replaces an existing binary
+# - One download at a time: the download section holds ~/bin/.CheICalMCP.lock (mkdir, with the
+#   holder's pid inside). A lock whose pid is dead, or that is older than 10 minutes, is stale and
+#   taken over at once. A spawn that finds a live lock waits up to 5 s, then runs whatever is
+#   installed without downloading, so the client does not time out. The lock is removed only by
+#   the process whose pid it holds.
+# - The asset is downloaded in the background and waited for, so a TERM (the client giving up)
+#   ends the wrapper at once: the trap stops curl and removes the temp file and the lock.
+#   Temp files (~/bin/CheICalMCP.download.XXXXXX) left by a killed run are removed under the lock.
+# - `curl -f`, so an HTTP error body is never installed. Right before the mv the installed binary
+#   is probed again: an asset that reports no version, or one not newer than what is installed at
+#   that moment, does not replace a binary that reports a version.
 # - ~/bin/.CheICalMCP.version (sidecar) records what the installed binary reports
-# - ~/bin/.CheICalMCP.release records the last release downloaded and what its asset reported
-#   (`<tag> <version>`, or `<tag> unusable <version kept>`), so a release that offers nothing
-#   newer than what is installed is not downloaded again on every spawn. Delete it to retry.
+# - ~/bin/.CheICalMCP.release records the last release downloaded: `<tag> <version>` (what its
+#   asset reported), `<tag> unusable <version kept>`, or `<tag> unusable - <cksum>` (an asset
+#   that reports no version, installed because nothing that reports one was there). While it
+#   describes what is installed (a version not older than the asset's, the version kept, or the
+#   same file by cksum), that release is not downloaded again. Delete it to make the wrapper
+#   retry. A failed download writes no record and is retried on the next spawn.
 # - API calls give up after 5 s each; while the pinned release does not exist, each spawn makes
 #   up to two of them (pinned tag, latest) and downloads nothing when latest is not newer
 # - Every `--version` probe reads /dev/null: stdin is the MCP channel
@@ -32,6 +40,7 @@ BINARY="$INSTALL_DIR/$BINARY_NAME"
 VERSION_FILE="$INSTALL_DIR/.${BINARY_NAME}.version"
 RELEASE_FILE="$INSTALL_DIR/.${BINARY_NAME}.release"
 LOCK_DIR="$INSTALL_DIR/.${BINARY_NAME}.lock"
+TMP_PREFIX="${BINARY}.download."
 LOCK_WAIT_TICKS=20          # × 0.25 s: how long a spawn waits for another wrapper's download
 LOCK_STALE_MINUTES=10
 API_MAX_TIME=5
@@ -44,13 +53,25 @@ PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
 
 VERSION_RE='^([0-9]+)\.([0-9]+)\.([0-9]+)$'
 
-# Cleanup of what this process created: its temp file, and the lock only if it took it.
+# Cleanup of what this process created: the background curl, its temp file, and the lock
+# only if the lock still names this process.
 TMP_FILE=""
+CURL_PID=""
 OWN_LOCK=false
 cleanup() {
-    [[ -n "$TMP_FILE" ]] && rm -f "$TMP_FILE" 2>/dev/null
-    $OWN_LOCK && rm -rf "$LOCK_DIR" 2>/dev/null
-    TMP_FILE=""
+    if [[ -n "$CURL_PID" ]]; then
+        kill "$CURL_PID" 2>/dev/null
+        wait "$CURL_PID" 2>/dev/null
+        CURL_PID=""
+    fi
+    cleanup_tmp
+    release_lock
+}
+cleanup_tmp() { [[ -n "$TMP_FILE" ]] && rm -f "$TMP_FILE" 2>/dev/null; TMP_FILE=""; }
+release_lock() {
+    if $OWN_LOCK && [[ "$(lock_pid)" == "$$" ]]; then
+        rm -rf "$LOCK_DIR" 2>/dev/null
+    fi
     OWN_LOCK=false
 }
 trap cleanup EXIT
@@ -67,6 +88,12 @@ reported_version() {
     if [[ "$out" =~ ^${BINARY_NAME}[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$ ]]; then
         echo "${BASH_REMATCH[1]}"
     fi
+}
+
+# A file's CRC and size from cksum (base macOS), as `<crc>-<size>`; empty if unreadable.
+file_sum() {
+    [[ -f "$1" ]] || return 0
+    cksum < "$1" 2>/dev/null | awk '{print $1 "-" $2}'
 }
 
 # compare_versions A B → prints -1, 0 or 1 (numeric x.y.z; both must match VERSION_RE).
@@ -91,13 +118,20 @@ release_version() {
     grep -oE '"tag_name":[[:space:]]*"[^"]+"' | head -1 | cut -d'"' -f4 | sed 's/^v//'
 }
 
-# release_offers_nothing_newer TAG → true when downloading release TAG cannot improve on the
-# installed binary. Requires a binary that reports a version: a missing or non-reporting
-# binary is always worth replacing. Then: the tag is not newer than that version, or TAG was
-# the last release downloaded and its asset reported a version not newer than it, or its asset
-# reported none while this same version was kept.
+# release_offers_nothing_newer TAG → true when downloading release TAG cannot improve on what
+# is installed:
+# - the installed binary reports a version, and the tag is not newer than it; or TAG is the
+#   recorded release and its asset reported a version not newer than it, or reported none
+#   while this same version was kept;
+# - the installed binary reports no version, TAG is the recorded release, its asset reported
+#   none, and the installed file is that asset (same cksum).
 release_offers_nothing_newer() {
-    [[ -n "$1" ]] && [[ -n "$ACTUAL_VERSION" ]] || return 1
+    [[ -n "$1" ]] || return 1
+    if [[ -z "$ACTUAL_VERSION" ]]; then
+        [[ -x "$BINARY" ]] && [[ "$LAST_RELEASE_TAG" == "$1" ]] && [[ "$LAST_RELEASE_REPORTED" == unusable ]] \
+            && [[ -n "$LAST_RELEASE_SUM" ]] && [[ "$LAST_RELEASE_SUM" == "$(file_sum "$BINARY")" ]]
+        return
+    fi
     not_newer "$1" "$ACTUAL_VERSION" && return 0
     [[ "$LAST_RELEASE_TAG" == "$1" ]] || return 1
     if [[ "$LAST_RELEASE_REPORTED" == unusable ]]; then
@@ -121,8 +155,9 @@ fi
 # load_state: the last release downloaded and what the installed binary reports; keeps the
 # sidecar equal to the latter.
 load_state() {
-    LAST_RELEASE_TAG="" LAST_RELEASE_REPORTED="" LAST_RELEASE_KEPT=""
-    [[ -f "$RELEASE_FILE" ]] && read -r LAST_RELEASE_TAG LAST_RELEASE_REPORTED LAST_RELEASE_KEPT _ < "$RELEASE_FILE" 2>/dev/null
+    LAST_RELEASE_TAG="" LAST_RELEASE_REPORTED="" LAST_RELEASE_KEPT="" LAST_RELEASE_SUM=""
+    [[ -f "$RELEASE_FILE" ]] && read -r LAST_RELEASE_TAG LAST_RELEASE_REPORTED LAST_RELEASE_KEPT LAST_RELEASE_SUM _ \
+        < "$RELEASE_FILE" 2>/dev/null
     ACTUAL_VERSION=""
     [[ -x "$BINARY" ]] && ACTUAL_VERSION=$(reported_version "$BINARY")
     local sidecar=""
@@ -147,7 +182,7 @@ decide() {
     elif release_offers_nothing_newer "$DESIRED_VERSION"; then
         # The pinned release was downloaded before and offers nothing newer than what is installed.
         if [[ "$LAST_RELEASE_REPORTED" == unusable ]]; then
-            NOTE="WARNING — plugin wants v${DESIRED_VERSION}; the asset of release v${DESIRED_VERSION} does not report a version, keeping v${ACTUAL_VERSION} (delete $RELEASE_FILE to retry)"
+            NOTE="WARNING — plugin wants v${DESIRED_VERSION}; the asset of release v${DESIRED_VERSION} does not report a version, keeping what is installed (delete $RELEASE_FILE to retry)"
         else
             NOTE="WARNING — plugin wants v${DESIRED_VERSION}; release v${DESIRED_VERSION} ships v${LAST_RELEASE_REPORTED}, keeping v${ACTUAL_VERSION} (delete $RELEASE_FILE to retry)"
         fi
@@ -158,19 +193,56 @@ decide() {
     return 0
 }
 
+# The pid in the lock's pid file (digits only; empty if none).
+lock_pid() { tr -cd '0-9' < "$LOCK_DIR/pid" 2>/dev/null; }
+
+# lock_is_stale → true when the lock's holder is gone: its pid file names a dead process, it has
+# no pid file and is over a minute old (killed between mkdir and writing the pid), or it is
+# older than LOCK_STALE_MINUTES.
+lock_is_stale() {
+    local pid
+    pid=$(lock_pid)
+    if [[ -n "$pid" ]]; then
+        kill -0 "$pid" 2>/dev/null || return 0
+    elif find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null | grep -q .; then
+        return 0
+    fi
+    find "$LOCK_DIR" -maxdepth 0 -mmin +"$LOCK_STALE_MINUTES" 2>/dev/null | grep -q .
+}
+
+try_mkdir_lock() {
+    mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    OWN_LOCK=true
+    echo $$ > "$LOCK_DIR/pid"
+}
+
 # take_lock → 0 when this process holds the download lock; 1 after waiting for another
 # wrapper's lock (bounded), which this process then leaves alone.
 take_lock() {
     mkdir -p "$INSTALL_DIR"
-    if mkdir "$LOCK_DIR" 2>/dev/null; then OWN_LOCK=true; echo $$ > "$LOCK_DIR/pid"; return 0; fi
-    if find "$LOCK_DIR" -maxdepth 0 -mmin +"$LOCK_STALE_MINUTES" 2>/dev/null | grep -q .; then
-        echo "$BINARY_NAME: removing a stale download lock (older than $LOCK_STALE_MINUTES minutes)" >&2
+    try_mkdir_lock && return 0
+    if lock_is_stale; then
+        echo "$BINARY_NAME: removing a stale download lock (holder gone)" >&2
         rm -rf "$LOCK_DIR" 2>/dev/null
-        if mkdir "$LOCK_DIR" 2>/dev/null; then OWN_LOCK=true; echo $$ > "$LOCK_DIR/pid"; return 0; fi
+        try_mkdir_lock && return 0
     fi
     local i=0
     while [[ -d "$LOCK_DIR" ]] && (( i < LOCK_WAIT_TICKS )); do sleep 0.25; i=$((i + 1)); done
     return 1
+}
+
+# fetch_asset URL → downloads into a new temp file ($TMP_FILE) in the background and waits for
+# it, so a trapped signal interrupts the wait instead of waiting for curl.
+fetch_asset() {
+    local f rc
+    for f in "${TMP_PREFIX}"??????; do [[ -e "$f" ]] && rm -f "$f" 2>/dev/null; done
+    TMP_FILE=$(mktemp "${TMP_PREFIX}XXXXXX" 2>/dev/null) || { TMP_FILE=""; return 1; }
+    curl -fsSL --max-time "$ASSET_MAX_TIME" "$1" -o "$TMP_FILE" 2>/dev/null </dev/null &
+    CURL_PID=$!
+    wait "$CURL_PID"
+    rc=$?
+    CURL_PID=""
+    return "$rc"
 }
 
 # download: fetch the release to install, probe it, and install or keep. Runs under the lock.
@@ -178,7 +250,7 @@ download() {
     echo "$BINARY_NAME: $REASON — downloading from $REPO..." >&2
 
     # Try pinned tag first, then fall back to latest release.
-    local URL="" FETCHED_VERSION="" API_URL RELEASE_JSON REPORTED_VERSION
+    local URL="" FETCHED_VERSION="" API_URL RELEASE_JSON REPORTED_VERSION INSTALLED_NOW
     for API_URL in \
         "${DESIRED_VERSION:+https://api.github.com/repos/$REPO/releases/tags/v$DESIRED_VERSION}" \
         "https://api.github.com/repos/$REPO/releases/latest"
@@ -212,12 +284,11 @@ download() {
     if [[ -x "$BINARY" ]] && release_offers_nothing_newer "$FETCHED_VERSION"; then
         # The release found offers nothing newer than what is installed (typically: the pinned
         # tag has no release yet and latest is what we have). Nothing to download.
-        echo "$BINARY_NAME: WARNING — v${DESIRED_VERSION:-latest} has no release yet; keeping installed v${ACTUAL_VERSION} (latest is v${FETCHED_VERSION})" >&2
+        echo "$BINARY_NAME: WARNING — v${DESIRED_VERSION:-latest} has no release yet; keeping installed v${ACTUAL_VERSION:-unknown} (latest is v${FETCHED_VERSION})" >&2
         return 0
     fi
 
-    TMP_FILE=$(mktemp "${BINARY}.XXXXXX" 2>/dev/null) || TMP_FILE=""
-    if [[ -z "$TMP_FILE" ]] || ! curl -fsSL --max-time "$ASSET_MAX_TIME" "$URL" -o "$TMP_FILE" 2>/dev/null; then
+    if ! fetch_asset "$URL"; then
         cleanup_tmp
         if [[ -x "$BINARY" ]]; then
             echo "$BINARY_NAME: WARNING — download failed, keeping existing binary" >&2
@@ -230,32 +301,40 @@ download() {
     # The temp file is this process's own and curl finished writing it: the probe is final.
     chmod +x "$TMP_FILE"
     REPORTED_VERSION=$(reported_version "$TMP_FILE")
-    if [[ -z "$REPORTED_VERSION" ]] && [[ -n "$ACTUAL_VERSION" ]]; then
-        echo "${FETCHED_VERSION:-unknown} unusable $ACTUAL_VERSION" > "$RELEASE_FILE"
+    # What is installed now: make install or --self-update may have replaced it meanwhile.
+    INSTALLED_NOW=""
+    [[ -x "$BINARY" ]] && INSTALLED_NOW=$(reported_version "$BINARY")
+    if [[ -z "$REPORTED_VERSION" ]] && [[ -n "$INSTALLED_NOW" ]]; then
+        echo "${FETCHED_VERSION:-unknown} unusable $INSTALLED_NOW" > "$RELEASE_FILE"
         cleanup_tmp
-        echo "$BINARY_NAME: WARNING — the asset of release v${FETCHED_VERSION:-unknown} does not report a version; keeping existing binary v${ACTUAL_VERSION}" >&2
+        echo "$BINARY_NAME: WARNING — the asset of release v${FETCHED_VERSION:-unknown} does not report a version; keeping the installed binary v${INSTALLED_NOW}" >&2
         return 0
     fi
-    echo "${FETCHED_VERSION:-unknown} ${REPORTED_VERSION:-unusable}" > "$RELEASE_FILE"
-    if [[ -n "$REPORTED_VERSION" ]] && [[ -n "$ACTUAL_VERSION" ]] \
-        && [[ "$(compare_versions "$REPORTED_VERSION" "$ACTUAL_VERSION")" -lt 0 ]]; then
+    if [[ -n "$REPORTED_VERSION" ]] && [[ -n "$INSTALLED_NOW" ]] && not_newer "$REPORTED_VERSION" "$INSTALLED_NOW"; then
+        echo "${FETCHED_VERSION:-unknown} $REPORTED_VERSION" > "$RELEASE_FILE"
         cleanup_tmp
-        echo "$BINARY_NAME: WARNING — release v${FETCHED_VERSION:-unknown} ships v${REPORTED_VERSION}, older than the installed v${ACTUAL_VERSION}; keeping the installed binary" >&2
+        echo "$BINARY_NAME: WARNING — release v${FETCHED_VERSION:-unknown} ships v${REPORTED_VERSION}, not newer than the installed v${INSTALLED_NOW}; keeping the installed binary" >&2
         return 0
+    fi
+    if [[ -n "$REPORTED_VERSION" ]]; then
+        echo "${FETCHED_VERSION:-unknown} $REPORTED_VERSION" > "$RELEASE_FILE"
+    else
+        echo "${FETCHED_VERSION:-unknown} unusable - $(file_sum "$TMP_FILE")" > "$RELEASE_FILE"
     fi
     mv "$TMP_FILE" "$BINARY"
     TMP_FILE=""
     echo "${REPORTED_VERSION:-unknown}" > "$VERSION_FILE"
-    if [[ -n "$DESIRED_VERSION" ]] && [[ "$FETCHED_VERSION" != "$DESIRED_VERSION" ]]; then
-        echo "$BINARY_NAME: WARNING — plugin wants v${DESIRED_VERSION}, which has no release yet; installed release v${FETCHED_VERSION:-unknown}, which ships v${REPORTED_VERSION:-unknown}" >&2
+    if [[ -z "$REPORTED_VERSION" ]]; then
+        echo "$BINARY_NAME: WARNING — the asset of release v${FETCHED_VERSION:-unknown} does not report a version; installed it because nothing that reports one was installed" >&2
+    elif [[ -n "$DESIRED_VERSION" ]] && [[ "$FETCHED_VERSION" != "$DESIRED_VERSION" ]]; then
+        echo "$BINARY_NAME: WARNING — plugin wants v${DESIRED_VERSION}, which has no release yet; installed release v${FETCHED_VERSION:-unknown}, which ships v${REPORTED_VERSION}" >&2
     elif [[ -n "$DESIRED_VERSION" ]] && [[ "$REPORTED_VERSION" != "$DESIRED_VERSION" ]]; then
-        echo "$BINARY_NAME: WARNING — plugin wants v${DESIRED_VERSION}; release v${FETCHED_VERSION} ships v${REPORTED_VERSION:-unknown}, installed it" >&2
+        echo "$BINARY_NAME: WARNING — plugin wants v${DESIRED_VERSION}; release v${FETCHED_VERSION} ships v${REPORTED_VERSION}, installed it" >&2
     else
-        echo "$BINARY_NAME: installed v${REPORTED_VERSION:-unknown}" >&2
+        echo "$BINARY_NAME: installed v${REPORTED_VERSION}" >&2
     fi
     return 0
 }
-cleanup_tmp() { [[ -n "$TMP_FILE" ]] && rm -f "$TMP_FILE" 2>/dev/null; TMP_FILE=""; }
 
 load_state
 decide
