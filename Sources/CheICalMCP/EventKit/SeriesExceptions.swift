@@ -5,13 +5,19 @@ import Foundation
 /// own (detached). EventKit has no API to read either as such, so they are recorded as the set of
 /// slots that existed, read from the occurrences themselves before the delete removes anything.
 struct SeriesExceptions {
-    /// The scan window the occurrences were listed over (`UndoPostState.seriesScanWindow`).
+    /// The window the occurrences were listed over (`SeriesExceptionsPlanner.deleteWindow`, #319).
     /// Nothing outside it was seen, so nothing outside it is restored or removed.
     let window: DateInterval
     /// Slots, inside `window`, of the occurrences that existed and were not edited on their own.
     let keptSlots: [Date]
     /// Occurrences edited on their own, inside `window`, each with the slot its rule gave it.
     let detached: [DetachedOccurrence]
+    /// #319: the series has occurrences before `window` (it began more than a year before the
+    /// delete), which come back from the rules alone.
+    var seriesStartsBeforeWindow: Bool = false
+    /// #319: the series has, or may have, occurrences after `window` (open-ended, count-based, or a
+    /// rule that ends later), which come back from the rules alone.
+    var seriesContinuesAfterWindow: Bool = false
 }
 
 /// An occurrence edited on its own: undo recreates it as a one-off event (EventKit cannot put an
@@ -25,6 +31,40 @@ struct DetachedOccurrence {
 
 /// The two decisions of the restore, as pure functions over values read from EventKit.
 enum SeriesExceptionsPlanner {
+    /// #319: the window a whole-series delete lists the series' exceptions over, and whether the
+    /// series reaches past it on either side.
+    struct DeleteWindow: Equatable {
+        let window: DateInterval
+        let seriesStartsBefore: Bool
+        let seriesContinuesAfter: Bool
+    }
+
+    /// #319: the window of a whole-series delete. It is one EventKit query long (1460 days), as
+    /// the restore lists it in one query, and placed around the time of the delete: from a year
+    /// before the delete, or from one day before the series' first occurrence when that is later,
+    /// and moved earlier when the rule ends sooner, so that it ends one day after the rule's end.
+    /// A series that ended long before the delete is so listed over its last four years.
+    ///
+    /// Before #319 this was the create-undo window (`UndoPostState.seriesScanWindow`, #259),
+    /// anchored at the first occurrence; for a series begun more than about four years before the
+    /// delete it lay entirely in the past, so the exceptions that mattered were never listed. A
+    /// series begun less than a year before the delete still gets exactly that window. The
+    /// create-undo window is unchanged: a series it checks was just created.
+    static func deleteWindow(firstStart: Date, ruleEnd: Date?, deletedAt: Date) -> DeleteWindow {
+        let day: TimeInterval = 86_400
+        let length = 1460 * day
+        let fromFirst = firstStart.addingTimeInterval(-day)
+        let ruleLimit = ruleEnd.map { $0.addingTimeInterval(day) }
+        var anchor = deletedAt.addingTimeInterval(-366 * day)
+        if let ruleLimit { anchor = min(anchor, ruleLimit.addingTimeInterval(-length)) }
+        let start = max(fromFirst, anchor)
+        let cap = start.addingTimeInterval(length)
+        let end = max(start, ruleLimit.map { min($0, cap) } ?? cap)
+        return DeleteWindow(window: DateInterval(start: start, end: end),
+                            seriesStartsBefore: start.timeIntervalSince(fromFirst) >= 1,
+                            seriesContinuesAfter: ruleLimit.map { $0.timeIntervalSince(end) >= 1 } ?? true)
+    }
+
     /// One occurrence as the enumeration of the series' window reports it.
     struct ObservedOccurrence {
         let ids: UndoPostState.OccurrenceIDs
@@ -191,7 +231,10 @@ enum SeriesExceptionsRestorer {
         // same series: every recorded slot (kept and edited) is generated, and so is the series' own first slot.
         let generatedSlots = generated.map(\.slot)
         func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
-        guard isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
+        // #319: the window may start after the series' first occurrence (a series begun more than a
+        // year before the delete), where the listing cannot show it; it is required only inside.
+        let firstSlotChecked = SeriesExceptionsPlanner.inWindow(seriesStart, exceptions.window)
+        guard !firstSlotChecked || isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
               exceptions.detached.allSatisfy({ isGenerated($0.slot) }) else {
             return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)
         }
@@ -255,10 +298,95 @@ enum SeriesExceptionsRestorer {
     }
 }
 
+/// #321: what ties a deleted occurrence to its series: the series' identifiers and the slot the
+/// series' rule gave the occurrence, not its (possibly edited) title and start.
+struct OccurrenceOrigin: Equatable {
+    let series: UndoPostState.OccurrenceIDs
+    let slot: Date
+
+    /// From an occurrence's identifiers: the series is the part before a `/RID=` suffix
+    /// (`DetachedOccurrenceSpan.seriesIdentifier`), the slot the rule slot (`UndoPostState.ruleSlot`:
+    /// the RID when there is one, otherwise `occurrenceDate`). Nil without either: nothing ties the
+    /// occurrence to its series, and the guard cannot decide.
+    static func of(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
+                   zone: TimeZone = .current) -> OccurrenceOrigin? {
+        guard let series = seriesIDs(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
+              let slot = UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
+                                                occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) else { return nil }
+        return OccurrenceOrigin(series: series, slot: slot)
+    }
+
+    /// The identifiers of the series an occurrence belongs to: each without its `/RID=` suffix.
+    /// Nil when neither is a non-empty identifier.
+    static func seriesIDs(eventIdentifier: String?, externalIdentifier: String?) -> UndoPostState.OccurrenceIDs? {
+        func base(_ id: String?) -> String? {
+            guard let id, !id.isEmpty else { return nil }
+            return DetachedOccurrenceSpan.seriesIdentifier(of: id) ?? id
+        }
+        let event = base(eventIdentifier), external = base(externalIdentifier)
+        guard event != nil || external != nil else { return nil }
+        return UndoPostState.OccurrenceIDs(eventIdentifier: event, externalIdentifier: external)
+    }
+}
+
+/// #321: the series that undo recreated in this process, by the series they were recorded as. The
+/// undo of a whole-series delete writes a new series with new identifiers, so an occurrence record
+/// of the original series could not otherwise tell that series' occurrences from another's. Kept
+/// in memory for the life of the server, as the undo history is; a fact once noted stays true.
+struct SeriesRecreations {
+    private var links: [(recorded: UndoPostState.OccurrenceIDs, recreated: UndoPostState.OccurrenceIDs)] = []
+
+    mutating func note(_ recorded: UndoPostState.OccurrenceIDs, recreatedAs recreated: UndoPostState.OccurrenceIDs) {
+        links.append((recorded, recreated))
+    }
+
+    /// The series recreated from `series`, and from those in turn, in the order they were noted.
+    func recreations(of series: UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs] {
+        var found: [UndoPostState.OccurrenceIDs] = []
+        var frontier = [series]
+        while let current = frontier.popLast() {
+            for link in links where Self.sameSeries(link.recorded, current) {
+                guard !Self.sameSeries(link.recreated, series), !found.contains(where: { Self.sameSeries($0, link.recreated) }) else { continue }
+                found.append(link.recreated)
+                frontier.append(link.recreated)
+            }
+        }
+        return found
+    }
+
+    /// The same series: an equal non-empty event identifier or external identifier.
+    static func sameSeries(_ a: UndoPostState.OccurrenceIDs, _ b: UndoPostState.OccurrenceIDs) -> Bool {
+        func same(_ x: String?, _ y: String?) -> Bool { x.map { !$0.isEmpty && $0 == y } ?? false }
+        return same(a.eventIdentifier, b.eventIdentifier) || same(a.externalIdentifier, b.externalIdentifier)
+    }
+}
+
 /// #285: whether an occurrence delete's slot is already held by the recreated series. When a
 /// whole-series delete is undone first, the series' rules bring every slot back, so undoing the
 /// earlier delete of one occurrence would write a second event there.
 enum OccurrenceSlotGuard {
+    /// #321: an event listed at the slot: its identifiers and the slot its rule gave it.
+    struct SeriesHolder: Equatable {
+        let ids: UndoPostState.OccurrenceIDs
+        let slot: Date
+    }
+
+    /// #321: true when one of `holders` is an occurrence of the recorded series, or of a series
+    /// undo recreated from it (`recreated`), at the recorded rule slot (to the second). Tied by
+    /// identifier (`UndoPostState.isOccurrence`), never by title: before #321 any recurring event
+    /// with the title at that second held the slot, an unrelated series included, and an occurrence
+    /// retitled or moved before its delete was compared by its edit. A one-off at the slot does not
+    /// count: it is not what the series' restore brings back, and refusing to write beside it would
+    /// hide a real second write.
+    static func isHeld(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
+                       by holders: [SeriesHolder]) -> Bool {
+        let series = [origin.series] + recreated
+        return holders.contains { holder in
+            UndoPostState.sameInstant(holder.slot, origin.slot)
+                && series.contains { UndoPostState.isOccurrence(holder.ids, of: $0) }
+        }
+    }
+
     /// An event found at the slot.
     struct Holder {
         let title: String?

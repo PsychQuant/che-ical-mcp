@@ -298,4 +298,29 @@ final class SeriesExceptionsRestorerTests: XCTestCase {
         XCTAssertEqual(log.removedOneOffs, ["A", "B"])  // B was possibly written: it is cleaned up too
         XCTAssertEqual(log.rolledBack, 1)
     }
+
+    // MARK: - #319: a window that does not reach back to the series' first occurrence
+
+    /// A series that began years before the delete is listed around the delete (#319), so its first
+    /// occurrence is outside the window: it cannot be listed there, and its absence from the
+    /// generated slots does not mean the record and the recreated series differ. The restore applies.
+    func testARestoreWhoseWindowStartsAfterTheFirstOccurrenceStillApplies() throws {
+        let window = DateInterval(start: at("2028-04-09T10:00:00+08:00"), end: at("2028-04-25T10:00:00+08:00"))
+        let exceptions = SeriesExceptions(window: window, keptSlots: [at(slots[3])],
+                                          detached: [detached("Standup (moved room)", slot: slots[1])])
+        let (outcome, log) = try run(exceptions, generated: Array(slots.dropFirst()).map(at),
+                                     seriesStart: at("2020-04-06T10:00:00+08:00"))
+        XCTAssertFalse(outcome.notApplied)
+        XCTAssertEqual(outcome, .init(stayedDeleted: 1, oneOffs: 1))
+        XCTAssertEqual(log.removed, [at(slots[1]), at(slots[2])])
+        XCTAssertEqual(log.created, ["Standup (moved room)"])
+        XCTAssertFalse(outcome.firstOccurrenceKeptFromRule, "the first occurrence was not in the record")
+    }
+
+    /// The first slot is still required when it is inside the window.
+    func testAFirstSlotInsideTheWindowIsStillRequired() throws {
+        let (outcome, log) = try run(spikeExceptions, generated: Array(slots.dropFirst()).map(at), seriesStart: at(slots[0]))
+        XCTAssertEqual(log.events, [])
+        XCTAssertTrue(outcome.notApplied)
+    }
 }
