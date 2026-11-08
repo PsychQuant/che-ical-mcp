@@ -15,15 +15,22 @@ private final class EventRangeReadFake: EventRangeReadSource, @unchecked Sendabl
         self.readError = readError
     }
 
-    func listEvents(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?) async throws -> [EKEvent] {
+    func listEventValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?) async throws -> [EventReadValue] {
         if let readError { throw readError }
-        return events
+        return events.map(EventReadValue.init)
     }
 
-    func searchEvents(keywords: [String], matchMode: String, startDate: Date?, endDate: Date?,
-                      calendarName: String?, calendarSource: String?) async throws -> [EKEvent] {
+    func searchEventValues(keywords: [String], matchMode: String, startDate: Date?, endDate: Date?,
+                           calendarName: String?, calendarSource: String?) async throws -> [EventReadValue] {
         if let readError { throw readError }
-        return events
+        return events.map(EventReadValue.init)
+    }
+
+    /// #490: the conflicts read went through the range seam; these tests do not call it.
+    func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                             excludeEventId: String?) async throws -> [EventReadValue] {
+        if let readError { throw readError }
+        return events.map(EventReadValue.init)
     }
 }
 
