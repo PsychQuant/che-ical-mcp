@@ -198,7 +198,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **批次刪除以一筆紀錄復原（#185、#243、#248）：** `delete_events_batch`、整個系列的刪除、`delete_reminders_batch` 與 `cleanup_completed_reminders` 每次呼叫記一筆 undo 紀錄，只含實際刪掉的項目，並成為最新的一筆。一次 `undo` 在同一次呼叫裡逐筆存檔重建（cleanup 最多到它的 `limit`，預設 1000，或 `reminder_ids` 列出的每一筆），每筆換新的 identifier，內容是 undo 快照記錄的欄位；提醒事項的子任務沒有記錄。第一次寫入之前，會先確認每筆要放回去的行事曆或清單還在，跟還原時一樣用記錄下來的 identifier 找（別的帳號裡同名的清單不算）；有一個不在或是唯讀（要求重新整理後再讀一次仍然如此），就什麼都不寫，紀錄整筆保留，錯誤訊息會說有幾筆的行事曆或清單還在；用 `discard_id` 放棄會連那些一起丟掉（只還原一部分是 #287）。若存檔仍在中途失敗，紀錄只留下還沒還原的項目，id 不變，失敗的那筆排到最後，下一次 `undo` 先還原其他項目；但若失敗那筆的行事曆或清單那時已經不在或變成唯讀，上面的檢查會整批拒絕。每次這類呼叫都會清空 redo 紀錄，而 undo 紀錄只保留最新的 50 筆。
 
-**以 `event_ids` 搭配 span `this` 或 `future` 批次刪除（#452）：** 各列依給定的順序執行，dry run 也照同樣的順序。某個 ID 在刪掉它的那一列之後又出現時，該列以 `Event not found: an earlier row of this call deleted it` 失敗，dry run 也一樣。span `future` 時，單獨改過的場次的 `id`（結尾是 `/RID=`）會刪掉該場次與系列之後的場次：它在 dry run 的那一列帶 `also_deletes_later_occurrences: true`，同一次呼叫裡該系列較晚場次的 `id` 會算進 `already_removed`（實際呼叫原本會以 `Event not found` 讓它失敗）。沒有場次的系列 ID 需要場次日期，兩者都會拒絕。這種場次以 span `future` 刪除會把系列從該時段起刪掉，是依日期範圍在 iCloud 量到的（2026-10-20）。
+**以 `event_ids` 搭配 span `this` 或 `future` 批次刪除（#452）：** 各列依給定的順序執行，dry run 也照同樣的順序。某個 ID 在刪掉它的那一列之後又出現時，該列以 `Event not found: an earlier row of this call deleted it` 失敗，dry run 也一樣。span `future` 時，單獨改過的場次的 `id`（結尾是 `/RID=`）會刪掉該場次與系列之後的場次：它在 dry run 的那一列帶 `also_deletes_later_occurrences: true`，同一次呼叫裡該系列較晚場次的 `id` 會算進 `already_removed`（實際呼叫原本會以 `Event not found` 讓它失敗）。沒有場次的系列 ID 需要場次日期，兩者都會拒絕。以上在 iCloud 用 `--cli` 量過（2026-11-09）：重複的一次性事件，以及每週系列兩個場次自己的 ID（兩種順序）；其他來源沒有量。
 
 </details>
 
