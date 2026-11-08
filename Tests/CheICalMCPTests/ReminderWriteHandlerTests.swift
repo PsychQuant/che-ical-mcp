@@ -83,6 +83,51 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(requests[0].notes, "replacement\n#old")
         XCTAssertEqual(requests[1].notes, "original")
     }
+    // #486: a value with the flag that clears it is refused before any read or write, as
+    // recurrence with clear_recurrence is (#354). The clear flag used to win and the value was
+    // dropped with a success answer; false is no request to clear.
+    private static let trigger: Value = .object([
+        "title": .string("Office"), "latitude": .double(25.04), "longitude": .double(121.61), "proximity": .string("enter")])
+    func testUpdateRefusesALocationTriggerWithClearLocationTrigger() async throws {
+        let fake = WriteFake()
+        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        do {
+            _ = try await server.executeToolCall(name: "update_reminder", arguments: [
+                "reminder_id": .string("r"), "location_trigger": Self.trigger, "clear_location_trigger": .bool(true)])
+            XCTFail("update_reminder wrote with both")
+        } catch ToolError.invalidParameter(let message) {
+            XCTAssertEqual(message, ReminderUpdateWrite.locationTriggerBothMessage)
+            XCTAssertTrue(message.contains("location_trigger") && message.contains("clear_location_trigger"), message)
+        }
+        let refused = await fake.updated
+        XCTAssertTrue(refused.isEmpty)
+        _ = try await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "location_trigger": Self.trigger, "clear_location_trigger": .bool(false)])
+        let updated = await fake.updated
+        XCTAssertEqual(updated.count, 1)
+        XCTAssertEqual(updated.first?.locationTrigger?.title, "Office", "false is no request to clear")
+        XCTAssertEqual(updated.first?.clearLocationTrigger, false)
+    }
+    func testUpdateRefusesTagsWithClearTags() async throws {
+        let fake = WriteFake()
+        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        for tags in [Value.array([.string("new")]), .array([])] {
+            do {
+                _ = try await server.executeToolCall(name: "update_reminder", arguments: [
+                    "reminder_id": .string("r"), "tags": tags, "clear_tags": .bool(true)])
+                XCTFail("update_reminder wrote with both")
+            } catch ToolError.invalidParameter(let message) {
+                XCTAssertEqual(message, ReminderUpdateWrite.tagsBothMessage)
+                XCTAssertTrue(message.contains("tags") && message.contains("clear_tags"), message)
+            }
+        }
+        let refused = await fake.updated
+        XCTAssertTrue(refused.isEmpty)
+        _ = try await server.executeToolCall(name: "update_reminder", arguments: [
+            "reminder_id": .string("r"), "tags": .array([.string("new")]), "clear_tags": .bool(false)])
+        let updated = await fake.updated
+        XCTAssertEqual(updated.first?.notes, "original\n#new", "false is no request to clear")
+    }
     // #268: the response reports the identifier after the save, and says when it changed.
     func testUpdateToAListInAnotherAccountReportsTheNewIdentifier() async throws {
         let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
