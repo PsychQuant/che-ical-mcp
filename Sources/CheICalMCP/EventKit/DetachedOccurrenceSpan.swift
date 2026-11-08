@@ -650,7 +650,7 @@ enum DetachedOccurrenceSpan {
         clearTimezone && wholeOrFollowing && hasZone && !clearingRecurrence && occurrenceCounts.contains { $0 > 0 }
     }
 
-    static let clearTimezoneReason = "This series, or the recurrence this call writes, ends by a count of occurrences, and clearing the time zone of such a series dropped its last occurrence. To clear the zone, leave out the count (an end date, or no end), or leave out clear_timezone; a series that has started is refused for its time zone anyway (#478). Nothing was written."
+    static let clearTimezoneReason = "This series, or the recurrence this call writes, ends by a count of occurrences, and clearing the time zone of such a series dropped its last occurrence. A rule given in the same call does not lift a count the series already has. To clear the zone, first change the series' rule to an end date or no end in a separate call (without clear_timezone), then send clear_timezone; a recurrence with a count cannot be written together with clear_timezone. Nothing was written."
 
     /// `event_ids` rows for a span `all` delete, each id once: occurrences' own ids first, earliest
     /// slot first, then the rest in the caller's order. A row's check counts the others in the call
