@@ -346,7 +346,8 @@ extension EventRangeQuery.RangeError: TrustedErrorMessage {}
 /// (its `occurrenceDate`), which differs from its start when it was moved, and a later item is
 /// compared by its own slot. An occurrence edited on its own (`<series>/RID=<slot>`) is judged
 /// by the slot in its identifier, both when it is removed and when it is skipped. The event_ids
-/// mode passes no occurrence dates, so nothing is recorded and nothing is skipped there.
+/// mode passes no occurrence dates: there only an occurrence's own id is recorded, with its own start
+/// as the requested one (`BatchRowSequence`, #452), and a series' id is never skipped.
 struct FutureDeletionCoverage {
     private var coveredFrom: [String: Date] = [:]
 
