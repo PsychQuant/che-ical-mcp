@@ -45,7 +45,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
     func testALocationTriggerKeepsAWholeNumber() async throws {
         let source = RecordingReminderSource()
         let server = try await CheICalMCPServer(reminderWriteSource: source)
-        let trigger = #""location_trigger": {"title": "Lab", "latitude": 25, "longitude": 121.0, "radius": 500}"#
+        let trigger = #""location_trigger": {"title": "Lab", "latitude": 25, "longitude": 121.0, "radius": 500, "proximity": "enter"}"#
         _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(#"{"title": "t", \#(trigger)}"#))
         _ = try await server.executeToolCall(name: "update_reminder", arguments: decoded(#"{"reminder_id": "r", \#(trigger)}"#))
         let written = [await source.created.first?.locationTrigger, await source.updated.first?.locationTrigger]
@@ -60,7 +60,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
         let source = RecordingReminderSource()
         let server = try await CheICalMCPServer(reminderWriteSource: source)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(
-            #"{"title": "t", "location_trigger": {"title": "Lab", "latitude": 25.03, "longitude": 121.56}}"#))
+            #"{"title": "t", "location_trigger": {"title": "Lab", "latitude": 25.03, "longitude": 121.56, "proximity": "leave"}}"#))
         let location = await source.created.first?.locationTrigger
         XCTAssertEqual(location?.latitude, 25.03)
         XCTAssertEqual(location?.radius, 100, "not given: the documented default")
