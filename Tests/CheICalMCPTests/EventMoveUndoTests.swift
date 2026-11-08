@@ -48,6 +48,20 @@ final class EventMoveIdentifierTests: XCTestCase {
         XCTAssertEqual(members.compactMap { id(of: $0) }, ["new", "new", "new", "new"], "inside a batch too")
     }
 
+    /// #466 with #435: a move by copy names the copy, a live event that a later move can give a new
+    /// identifier; the record follows it, so the undo can still find and remove the copy.
+    func testAMoveByCopyRecordFollowsItsCopy() {
+        let record = UndoOperation.moveByCopy(original: snapshot, isSplit: true, notCarriedOver: [], copyID: "old", copy: snapshot)
+        guard case .moveByCopy(_, _, _, let copyID, _) = record.replacingEventIdentifier("old", with: "new") else {
+            return XCTFail("stays a move by copy")
+        }
+        XCTAssertEqual(copyID, "new")
+        guard case .moveByCopy(_, _, _, let untouched, _) = record.replacingEventIdentifier("other", with: "new") else {
+            return XCTFail("stays a move by copy")
+        }
+        XCTAssertEqual(untouched, "old", "another event")
+    }
+
     func testTheStackFollowsItAndKeepsItsRecords() async throws {
         let manager = CalendarUndoManager()
         await manager.record(.createEvent(id: "old", title: "Standup", created: snapshot))

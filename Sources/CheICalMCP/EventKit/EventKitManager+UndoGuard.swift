@@ -11,7 +11,9 @@ extension EventKitManager {
     /// not necessarily the object the write saved. Falls back to the saved object when the
     /// identifier does not resolve yet; the undo then fails as not found, which keeps the record.
     func postWriteSnapshot(eventID: String, saved: EKEvent) -> EventSnapshot {
-        if let event = storedEvent(id: eventID), event.refresh() {
+        // A failed lookup falls back like a missing one: this is a snapshot taken after the write,
+        // and the undo that reads it looks the event up itself.
+        if let event = try? storedEvent(id: eventID), event.refresh() {
             return EventSnapshot(from: event)
         }
         return EventSnapshot(from: saved)
@@ -36,18 +38,18 @@ extension EventKitManager {
     /// A series whose first occurrence was deleted resolves, but its object does not refresh
     /// (#326, root cause #284); the earliest remaining occurrence stands in for it
     /// (`FirstRemainingOccurrence`), and a series with none left stays not found.
-    func freshEvent(id: String) -> EKEvent? {
-        freshEventWithOrigin(id: id)?.event
+    func freshEvent(id: String) throws -> EKEvent? {
+        try freshEventWithOrigin(id: id)?.event
     }
 
     /// `freshEvent(id:)` and whether the event is the stand-in for the series (#326): a caller
     /// that writes to the whole series needs to know, because that write is a `.futureEvents`
     /// save on a middle occurrence.
     func freshEventWithOrigin(id: String, refuseWhenEditedBefore: Bool = true,
-                              goneInTheCall: Set<String> = []) -> (event: EKEvent, viaStandIn: Bool)? {
+                              goneInTheCall: Set<String> = []) throws -> (event: EKEvent, viaStandIn: Bool)? {
         refreshIfNeeded()
         return FirstRemainingOccurrence.resolve(
-            stored: storedEvent(id: id), refresh: { $0.refresh() },
+            stored: try storedEvent(id: id), refresh: { $0.refresh() },
             standIn: { firstRemainingOccurrence(of: $0, id: id, refuseWhenEditedBefore: refuseWhenEditedBefore, goneInTheCall: goneInTheCall) })
     }
 
@@ -56,7 +58,9 @@ extension EventKitManager {
     /// hint. A scan on the failure path only.
     func notFoundError(id: String) -> Error {
         refreshIfNeeded()
-        let stored = storedEvent(id: id)
+        // #288: this runs after a lookup that found nothing. If this one raises, that is the answer.
+        let stored: EKEvent?
+        do { stored = try storedEvent(id: id) } catch { return error }
         let hint = FirstRemainingOccurrence.hintsEditedBefore(
             stored: stored != nil,
             refreshes: stored.map { $0.refresh() } ?? false,
@@ -79,8 +83,11 @@ extension EventKitManager {
     /// `notFoundError(id:)` as the short reason a batch row reports, in the batch's own words
     /// (`batchRowReason`, #335 item 6).
     func notFoundReason(id: String) -> String {
-        if case EventKitError.standInRefused(let reason) = notFoundError(id: id) { return Self.batchRowReason(reason) }
-        return "Event not found"
+        switch notFoundError(id: id) {
+        case EventKitError.standInRefused(let reason): return Self.batchRowReason(reason)
+        case EventKitError.eventLookupFailed: return Self.eventLookupFailedReason
+        default: return "Event not found"
+        }
     }
 
     /// Reminder counterpart of `freshEvent(id:)`.
@@ -116,31 +123,38 @@ extension EventKitManager {
             try await ensureCalendarAccess()
             let deletesSeries: Bool
             if case .createEvent = operation, verb == .undo { deletesSeries = true } else { deletesSeries = false }
-            return try UndoTargetCheck.check(
-                expected, verb: verb,
-                lookup: { () -> EKEvent? in
-                    if operation.resolvesThroughStandIn {
-                        return try seriesMoveUndoTarget(operation, expected, verb: verb)
-                    }
-                    refreshIfNeeded()
-                    return storedEvent(id: expected.itemID)
-                },
-                refresh: { $0.refresh() },
-                missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },
-                conflicts: { event in
-                    // Rounds 5–6: update-undo and the undo of a one-off move never write to an
-                    // event that repeats or is an edited occurrence now; refused and discarded
-                    // before the comparison.
-                    if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
-                                                                      isDetached: event.isDetached) {
-                        throw refusal
-                    }
-                    let fields = expected.changedFields(in: event)
-                    guard deletesSeries, event.hasRecurrenceRules else { return fields }
-                    return fields + UndoPostState.seriesConflicts(
-                        modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
-                },
-                refusal: refusal)
+            // #288: every event lookup of undo and redo comes through here. The general text says to
+            // restart the server, which would lose the whole undo history, so this says what to do
+            // with the record instead. Nothing was written and the record stays.
+            do {
+                return try UndoTargetCheck.check(
+                    expected, verb: verb,
+                    lookup: { () -> EKEvent? in
+                        if operation.resolvesThroughStandIn {
+                            return try seriesMoveUndoTarget(operation, expected, verb: verb)
+                        }
+                        refreshIfNeeded()
+                        return try storedEvent(id: expected.itemID)
+                    },
+                    refresh: { $0.refresh() },
+                    missing: { stored in createUndoMissingError(of: operation, verb: verb, id: expected.itemID, stored: stored) },
+                    conflicts: { event in
+                        // Rounds 5–6: update-undo and the undo of a one-off move never write to an
+                        // event that repeats or is an edited occurrence now; refused and discarded
+                        // before the comparison.
+                        if let refusal = operation.recurringTargetRefusal(hasRecurrenceRules: event.hasRecurrenceRules,
+                                                                          isDetached: event.isDetached) {
+                            throw refusal
+                        }
+                        let fields = expected.changedFields(in: event)
+                        guard deletesSeries, event.hasRecurrenceRules else { return fields }
+                        return fields + UndoPostState.seriesConflicts(
+                            modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
+                    },
+                    refusal: refusal)
+            } catch EventKitError.eventLookupFailed {
+                throw EventKitError.historyLookupFailed(verb: verb)
+            }
         case .reminder:
             try await ensureReminderAccess()
             var identity: ReminderCompletionSnapshot?
@@ -167,7 +181,7 @@ extension EventKitManager {
     private func seriesMoveUndoTarget(_ operation: UndoOperation, _ expected: UndoPostState,
                                       verb: UndoHistoryVerb) throws -> EKEvent? {
         let id = expected.itemID
-        let resolved = freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)
+        let resolved = try freshEventWithOrigin(id: id, refuseWhenEditedBefore: false)
         // A recorded calendar that no longer resolves gives nil here; `decide` refuses a stand-in
         // still in the destination with the record's refusal (#269), and the move arm refuses the
         // series object the same way.
@@ -180,7 +194,7 @@ extension EventKitManager {
         }
         return try SeriesMoveUndo.decide(
             expected, verb: verb,
-            stored: { storedEvent(id: id) != nil },
+            stored: { try storedEvent(id: id) != nil },
             resolved: resolved.map {
                 SeriesMoveUndo.Resolved(event: $0.event, viaStandIn: $0.viaStandIn,
                                         calendarID: $0.event.calendar?.calendarIdentifier,

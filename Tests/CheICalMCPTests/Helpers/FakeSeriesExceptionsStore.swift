@@ -158,7 +158,11 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         }
     }
 
-    func isStored(_ event: Event) -> Bool {
+    /// #288: makes `isStored` throw, as a failed event lookup does.
+    var isStoredFails = false
+
+    func isStored(_ event: Event) throws -> Bool {
+        if isStoredFails { throw EventKitError.eventLookupFailed(identifier: event.id ?? "") }
         guard let id = event.id else { return false }
         return events.contains { $0.id == id }
     }

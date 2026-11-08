@@ -597,9 +597,9 @@ final class NewObjectSaveTests: XCTestCase {
         // create's result, and onto the undo message. #301 / #308: a dated create is read back in
         // between (`ReminderCreateWrite.readBack`, which does not throw; a timed one may save again
         // through the #237 fallback), and its report rides with the result. #333: so do the relative
-        // alarms read off the saved reminder.
+        // alarms read off the saved reminder, and #433: whether the list shows an alarm's time.
         let create = try body(of: "func createReminder( title:", in: code)
-        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?, ?storedRelativeAlarms: ?alarmOffsets\.map ?\{ ?_ in ReminderRelativeAlarms\.storedMinutesBefore\( ?reminder ?\) ?\} ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
+        XCTAssertEqual(try matches(#"let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?false ?\) ?markNeedsRefresh\( ?\) ?let dateSync = ReminderCreateWrite\.readBack\( ?reminder ?, ?report: ?dateReport ?, ?storeDiffers: ?storeDiffers ?, ?save: ?\{ ?try eventStore\.save\( ?reminder ?, ?commit: ?true ?\) ?\} ?, ?reload: ?\{ ?reminder\.refresh\( ?\) ?\} ?, ?rollback: ?\{ ?reminder\.rollback\( ?\) ?\} ?\) ?let alarms = ReminderCreateWrite\.alarmReadBack\( ?offsets: ?alarmOffsets ?, ?saved: ?reminder ?, ?dateSync: ?dateSync ?, ?storeDiffers: ?storeDiffers ?\) ?let result = CreateReminderResult\( ?reminder: ?ReminderWriteSnapshot\( ?from: ?reminder ?\) ?, ?isDuplicate: ?false ?, ?storeDiffers: ?storeDiffers ?, ?dateSync: ?dateSync ?, ?storedRelativeAlarms: ?alarms\.stored ?, ?listShowsAlarmTime: ?alarms\.listShowsAlarmTime ?\) ?let createdID = result\.reminder\.calendarItemIdentifier ?await CalendarUndoManager\.shared\.record\( ?\.createReminder\( ?id: ?createdID ?,"#,
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
@@ -755,6 +755,11 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"commit: ?(?!true\b|false\b)[^ ,)]"#, in: code).count, 2 * forwarded,
                        "commit flags are literals, apart from the overrides' parameter and forwarding")
         XCTAssertEqual(try matches(#"span: ?[^,)]*, ?commit: ?false"#, in: code).count, 0)
+        // No reset. #274 measured that it drops a failed reminder change and `rollback()` does not,
+        // and PR #456 used it; its verify took it out. The header of `-[EKEventStore reset]` says "All
+        // objects ever created/fetched, etc. using this store are no longer connected to it and are
+        // considered invalid", and the manager is a reentrant actor with one task per request, so
+        // it would hit calls that did nothing wrong. See `ExistingReminderSave`.
         XCTAssertEqual(try matches(#"\.reset\( ?\)"#, in: code).count, 0)
     }
 }
