@@ -457,7 +457,7 @@ final class ManifestParityTests: XCTestCase {
         // By date range the same row is refused (#427).
         XCTAssertTrue(batch.declared.contains("By date range, with span all, an occurrence edited on its own is refused the same way, in the dry run too, while another occurrence of its series is not listed (#427)."), batch.declared)
         // #427 cluster verify: a listed series takes its edited occurrence.
-        XCTAssertTrue(batch.declared.contains("When the series' own identifier is listed too, the occurrence is left to that row, which deletes the series with it; if that row is refused, the occurrence stays."), batch.declared)
+        XCTAssertTrue(batch.declared.contains("When the series' own identifier is listed too and its row deletes on its own, an occurrence whose id has a /RID= part is left to that row, which deletes the series with it; otherwise the occurrence's row runs first, as by event_ids."), batch.declared)
     }
 
     /// #267: a bare `YYYY-MM-DD` due_date writes a date-only reminder, and a date-only update also
