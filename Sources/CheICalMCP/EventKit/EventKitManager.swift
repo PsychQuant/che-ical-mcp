@@ -1254,6 +1254,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.occurrenceAddressRefused(reason: refusal)
         }
 
+        // #455: it answered updated and the last occurrence went (device).
+        if DetachedOccurrenceSpan.refusesClearTimezone(
+            clearTimezone: clearTimezone, wholeOrFollowing: applyToAll || span == .futureEvents,
+            // Cluster verify r3: the rule this call writes counts too (a count rule written in the
+            // same save was the measured shape); either one with a count refuses (fail closed). Only
+            // an all-day result has no zone to clear: a floating series still gets timeZone = nil.
+            occurrenceCounts: (event.recurrenceRules ?? []).map { $0.recurrenceEnd?.occurrenceCount ?? 0 }
+                + [recurrenceRule?.occurrenceCount ?? 0],
+            hasZone: !(isAllDay ?? event.isAllDay), clearingRecurrence: clearRecurrence) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.clearTimezoneReason)
+        }
+
         // Series-level properties through the stand-in (verify rounds 6-7), decided before the
         // first field of the event is assigned, so nothing is half-written when it throws. A new
         // calendar moves the whole series even with span this (device), so one of another account
@@ -1348,6 +1360,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             applyToAll: applyToAll, futureSpan: span == .futureEvents, repeats: masterEvent.hasRecurrenceRules,
             ownIdLater: ownNeighbours.map { $0.earlierRemain || $0.own.firstSlotGone },
             seriesStart: seriesStart, occurrenceSlot: wholeFromSeries ? seriesStart : eventSlot)
+        // #442: it answered updated and an occurrence nobody created appeared (device). Read from the
+        // reach, so span future from the first occurrence (the same save over the whole series) is
+        // refused too (cluster verify); still before the first write.
+        // Cluster verify r2, r3: a series the scan cannot rule out is refused too (fail closed).
+        var allDayFacts: (edited: Bool, unknown: Bool, listed: Bool)?
+        if DetachedOccurrenceSpan.refusesAllDayChange(
+            wholeSeries: reach.isWholeSeries, hasRules: masterEvent.hasRecurrenceRules, requested: isAllDay, current: masterEvent.isAllDay,
+            clearingRecurrence: clearRecurrence,
+            hasEditedOccurrence: { let facts = allDayEditFacts(of: masterEvent, id: identifier); allDayFacts = facts; return facts.edited || facts.unknown }()) {
+            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.allDayRefusalReason(
+                edited: allDayFacts?.edited ?? true, listed: allDayFacts?.listed ?? true))
+        }
         let now = Date()
         let happened = reach.anchor.map {
             SeriesRuleWrite.hasHappened(slot: $0, shownStart: wholeFromSeries ? seriesStart : shownStart, now: now)
@@ -1746,7 +1770,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// with deleteEventsBatch. One undo restores every series actually removed
     /// (partial failure: only the successes). Lives in the manager so undo
     /// bookkeeping never leaks into the server layer.
-    func deleteEventSeriesBatch(identifiers: [String], refusingOccurrenceIdentifiers: Bool) async throws -> BatchDeleteResult {
+    func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {
         try await ensureCalendarAccess()
 
         var successCount = 0
@@ -1760,9 +1784,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
                 guard let event = try freshEvent(id: id) else {
-                    // #436: as in deleteEventSeries, when the caller named the series' id: through the
+                    // #436: as in deleteEventSeries: through the
                     // occurrence that comes first, with span future, which reaches every occurrence left.
-                    if refusingOccurrenceIdentifiers, let first = try firstEditedOccurrenceID(of: id),
+                    if let first = try firstEditedOccurrenceID(of: id),
                        let occurrence = try freshEvent(id: first.id) {
                         if let refusal = try Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                             failures.append((id, refusal))
@@ -1782,9 +1806,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
-                // #416: as in deleteEventSeries, when the caller named the id; a row refused, the
-                // others go on.
-                if refusingOccurrenceIdentifiers, let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
+                // #416: as in deleteEventSeries; a row refused, the others go on. By date range too (#427).
+                if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
                     failures.append((id, refusal))
                     continue
                 }
@@ -2172,7 +2195,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     }
 
     /// #226: moves an event (or one occurrence) to another calendar. In place first, which
-    /// keeps the identifier within an account and every field; see `EventMovePolicy` for when
+    /// keeps every field, and the identifier on iCloud (on Google it changed within one account, #435); see `EventMovePolicy` for when
     /// it splits, falls back to copy + delete, or refuses.
     func moveEvent(
         identifier: String,
@@ -2272,6 +2295,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             },
             copy: { try copyOut(false) },
             split: { try copyOut(true) })
+        // #435: older records of this event follow it to its new identifier.
+        if result.method == .inPlace, CalendarUndoManager.identifierChanged(from: identifier, to: result.eventIdentifier) {
+            await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: result.eventIdentifier)
+        }
         if let undo { await CalendarUndoManager.shared.record(undo) }
         return (result, title)
     }
@@ -2999,7 +3026,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).
             throw UndoOperation.recurringUpdateRefusal(title: title, kind: kind)
 
-        case .moveEvent(_, let fromCalendarIdentifier, _, let title, let isSeries):
+        case .moveEvent(let movedID, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
             // event is still in the calendar it was moved to (#236). A series is resolved as the
             // move resolved it, through the stand-in when needed (#369, `seriesMoveUndoTarget`).
@@ -3024,6 +3051,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 throw error
             }
             markNeedsRefresh()
+            // #435: on Google a move within one account gave a new identifier, its undo too.
+            if let restoredID = event.eventIdentifier, CalendarUndoManager.identifierChanged(from: movedID, to: restoredID) {
+                await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID)
+                return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar (new ID: \(restoredID))"
+            }
             return "Undone: moved event '\(undoVisibleTitle(title))' back to its original calendar"
 
         case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):

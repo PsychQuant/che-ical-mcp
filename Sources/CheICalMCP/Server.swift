@@ -345,9 +345,9 @@ class CheICalMCPServer {
                             "description": .string("Structured location with coordinates. If provided, overrides the 'location' text field."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Office', 'Home')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters (default 100)")])
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90. Give it with longitude or give neither: one without the other is refused")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180. Give it with latitude or give neither: one without the other is refused")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters, greater than 0 (0 or less is refused); omit it to set none")])
                             ]),
                             "required": .array([.string("title")])
                         ])
@@ -368,7 +368,7 @@ class CheICalMCPServer {
                         "end_time": .object(["type": .string("string"), "description": .string("New end time in ISO8601 format (e.g., 2026-01-31T15:00:00+08:00). Provide this if you want to change the event duration; turning an all-day event into a timed one needs both start_time and end_time. For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing). The same rule applies whether the event is already all-day or becomes all-day in this call.")]),
                         "notes": .object(["type": .string("string"), "description": .string("New notes")]),
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
-                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
+                        "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Changing it over a whole series through the series' identifier (span all, or span future from the first occurrence) is refused while the series has an occurrence edited on its own, and when the scan cannot show where the series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out) or cannot list it, as one cannot be ruled out; clearing the rule in the same call is not refused (#442). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. A calendar in another account can give the event a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
@@ -420,16 +420,16 @@ class CheICalMCPServer {
                             "description": .string("Structured location with coordinates. If provided, overrides the 'location' text field."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Office', 'Home')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters (default 100)")])
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90. Give it with longitude or give neither: one without the other is refused")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180. Give it with latitude or give neither: one without the other is refused")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Radius in meters, greater than 0 (0 or less is refused); omit it to set none")])
                             ]),
                             "required": .array([.string("title")])
                         ]),
                         "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier for the event (e.g., 'Europe/Berlin', 'America/New_York'). Sets the event's display timezone. On a recurring series that has started, with span all or span future from an occurrence that has already happened, any identifier other than the event's own (item_timezone) is refused: another spelling of the same zone counts as a change, and so does any zone, this Mac's included, on an event with no zone of its own (item_timezone null). The occurrences repeat at the new zone's wall-clock time, which moved happened ones and lost the last one of a counted series (#478). From an occurrence that has already happened, the event's own identifier is not written again.")]),
                         "clear_timezone": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default. Refused like timezone on a recurring series that has started, whatever the zone, as a counted series lost its last occurrence (#455, #478); on a started series with no zone, from an occurrence that has already happened, it writes nothing.")
+                            "description": .string("Set to true to remove per-event timezone (revert to system timezone) Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default. With span all or future, refused on a series that ends by a count of occurrences, or that this call gives a count, whose last occurrence it would drop, unless the result is all-day or the same call clears the rule (#455). Refused like timezone on a recurring series that has started, whatever the zone, as a counted series lost its last occurrence (#455, #478); on a started series with no zone, from an occurrence that has already happened, it writes nothing (a series ending by a count is refused first, #455).")
                         ]),
                         "span": .object([
                             "type": .string("string"),
@@ -540,7 +540,7 @@ class CheICalMCPServer {
                         "title": .object(["type": .string("string"), "description": .string("Reminder title")]),
                         "notes": .object(["type": .string("string"), "description": .string("Optional notes")]),
                         "due_date": .object(["type": .string("string"), "description": .string("Optional due date. A bare date (2026-01-30) makes a date-only reminder, with no time; for a time, ISO8601 with timezone (e.g., 2026-01-30T17:00:00+08:00)")]),
-                        "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
+                        "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused, not clamped. Omit or JSON null = 0")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (use list_calendars with type='reminder' to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "recurrence": .object([
@@ -592,13 +592,13 @@ class CheICalMCPServer {
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Home', 'Office')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters (default 100)")]),
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters, greater than 0 (default 100 when omitted; 0 or less is refused, not replaced)")]),
                                 "proximity": .object([
                                     "type": .string("string"),
                                     "enum": .array([.string("enter"), .string("leave")]),
-                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing")
+                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing. Required, and exactly one of these two: another value, including another case such as 'Leave', is refused")
                                 ])
                             ]),
                             "required": .array([.string("title"), .string("latitude"), .string("longitude"), .string("proximity")])
@@ -626,7 +626,7 @@ class CheICalMCPServer {
                             "type": .string("boolean"),
                             "description": .string("Set to true to put the start date and absolute-date alarms onto the due date (due_date if given, otherwise the current one) instead of moving them by the change. Relative alarms stay, so an early relative alarm still sets what the Reminders.app list shows. The earliest absolute-date alarm lands on the due date and later ones keep their spacing after it, so with several alarms a stale one earlier than an intended early alarm pushes the early alarm past the due date; with a date-only due they move to its day and keep their time. A start that already agrees with the due date (any time on its day for a date-only due; the due instant, or its day at midnight or without a time, for a timed due) is left as it is; any other start is set to the due date. Cannot be combined with clear_due_date; fails when the reminder has no due date and none is given. With a bare-date due_date it changes nothing further: absolute-date alarms are removed. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
-                        "priority": .object(["type": .string("integer"), "description": .string("New priority")]),
+                        "priority": .object(["type": .string("integer"), "description": .string("New priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused before any field is written. Omit or JSON null = left as it is")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move reminder to a different list. A list in another account may give the reminder a new identifier: use the response's id (see id_changed).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple lists share the same name.")]),
                         "alarms_minutes_offsets": .object([
@@ -639,13 +639,13 @@ class CheICalMCPServer {
                             "description": .string("Location-based trigger. Reminder fires when entering or leaving the geofence."),
                             "properties": .object([
                                 "title": .object(["type": .string("string"), "description": .string("Location name (e.g., 'Home', 'Office')")]),
-                                "latitude": .object(["type": .string("number"), "description": .string("Latitude coordinate")]),
-                                "longitude": .object(["type": .string("number"), "description": .string("Longitude coordinate")]),
-                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters (default 100)")]),
+                                "latitude": .object(["type": .string("number"), "description": .string("Latitude, from -90 to 90")]),
+                                "longitude": .object(["type": .string("number"), "description": .string("Longitude, from -180 to 180")]),
+                                "radius": .object(["type": .string("number"), "description": .string("Geofence radius in meters, greater than 0 (default 100 when omitted; 0 or less is refused, not replaced)")]),
                                 "proximity": .object([
                                     "type": .string("string"),
                                     "enum": .array([.string("enter"), .string("leave")]),
-                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing")
+                                    "description": .string("When to trigger: 'enter' when arriving, 'leave' when departing. Required, and exactly one of these two: another value, including another case such as 'Leave', is refused")
                                 ])
                             ]),
                             "required": .array([.string("title"), .string("latitude"), .string("longitude"), .string("proximity")])
@@ -690,7 +690,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_location_trigger": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove location trigger from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove the reminder's location trigger. Cannot be combined with location_trigger (which replaces it): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ]),
                         "tags": .object([
                             "type": .string("array"),
@@ -699,7 +699,7 @@ class CheICalMCPServer {
                         ]),
                         "clear_tags": .object([
                             "type": .string("boolean"),
-                            "description": .string("Set to true to remove all tags from reminder Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
+                            "description": .string("Set to true to remove all tags from the reminder. Cannot be combined with tags (which replaces them): the pair is refused and nothing is written. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")
                         ])
                     ]),
                     "required": .array([.string("reminder_id")])
@@ -895,7 +895,7 @@ class CheICalMCPServer {
                                     "timezone": .object(["type": .string("string"), "description": .string("IANA timezone identifier (e.g., 'Europe/Berlin')")]),
                                     "structured_location": .object([
                                         "type": .string("object"),
-                                        "description": .string("Structured location with coordinates"),
+                                        "description": .string("Structured location with coordinates, checked as create_event's: latitude from -90 to 90 and longitude from -180 to 180, both or neither; radius in meters, greater than 0. A value outside these fails this item"),
                                         "properties": .object([
                                             "title": .object(["type": .string("string")]),
                                             "latitude": .object(["type": .string("number")]),
@@ -952,7 +952,7 @@ class CheICalMCPServer {
             // Feature 7: Move Events Batch
             Tool(
                 name: "move_events_batch",
-                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stays the same within an account and changes when moving across accounts (the result's new_event_id). If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields. not_carried_over lists only recurrence (a split occurrence becomes a one-off), absolute_alarms (a split occurrence's absolute-date alarms become alarms at its start), structured_location and availability (a copy keeps availability when the target calendar supports the value); a procedure alarm turned plain is not listed. If saving a copy fails while it carries location, email or sound alarms, which some calendars refuse, that event's error gives the failure code and names those alarm kinds as a possible cause; the original is not removed. Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original first and then removes the copy only when it is unchanged; a copy changed since the move, given attendees, not found, recorded without an identifier, or not checkable is not removed, nor when its removal fails; when an occurrence of a recurring event with the split occurrence's title already holds its time in the original calendar, nothing is recreated and the copy is not looked up or removed; the answer says which.",
+                description: "PREFERRED: Move multiple events to another calendar in a single call. Each event is moved in place (calendar reassigned), which keeps recurrence, attendees and every other field; the identifier stayed the same within an iCloud account, changed within a Google account, and changes across accounts, so read each result's id_changed and new_event_id. If an in-place move fails, the event is copied and the original removed, unless it has recurrence or attendees, in which case it is refused with a reason. For a recurring event, span 'this' (default) moves only the occurrence named in occurrence_dates, split out of the series; span 'all' moves the whole series (an occurrence date with span 'all' is refused). An event already in the target calendar is reported unchanged and nothing is written. Each result reports method (in_place / copied / split / unchanged), id_changed and any not_carried_over fields. not_carried_over lists only recurrence (a split occurrence becomes a one-off), absolute_alarms (a split occurrence's absolute-date alarms become alarms at its start), structured_location and availability (a copy keeps availability when the target calendar supports the value); a procedure alarm turned plain is not listed. If saving a copy fails while it carries location, email or sound alarms, which some calendars refuse, that event's error gives the failure code and names those alarm kinds as a possible cause; the original is not removed. Undo of an in-place move moves the event back; undo of a split or a fallback copy restores the original first and then removes the copy only when it is unchanged; a copy changed since the move, given attendees, not found, recorded without an identifier, or not checkable is not removed, nor when its removal fails; when an occurrence of a recurring event with the split occurrence's title already holds its time in the original calendar, nothing is recreated and the copy is not looked up or removed; the answer says which.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -982,7 +982,7 @@ class CheICalMCPServer {
             // Feature 8: Delete Events Batch
             Tool(
                 name: "delete_events_batch",
-                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. By event_ids with span all, a row with the series' own identifier, when its first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, and that occurrence starts no later than the next occurrence's slot or another occurrence's shown start, deletes the series from that occurrence with span 'future', as delete_event does (#436). That delete cannot be undone: the dry-run row gives occurrence_id and an undo_note; the real call lists it under through_first_occurrence with an undo_note and leaves it out of the call's undo, which restores the other rows, or, when no other row was deleted, is refused and dropped as delete_event's is. When that occurrence reports recurrence rules of its own (not measured), the row is refused. By date range the row is not delegated. By date range, an occurrence edited on its own that is the only listed occurrence of its series is deleted alone and the rest of the series stays (#427). With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
+                description: "Delete multiple events. Two modes: (1) by event_ids - delete specific events, (2) by calendar + date range - delete all events matching criteria; with only before_date or only after_date the open side is searched 100 years out, and the response reports searched_from and searched_to; over a range wider than 1462 days, which every one-sided range is, more than 2000 deletions are refused, dry run included, and nothing is deleted, and the read itself stops with an error, nothing deleted, once it passes about 200,000 event occurrences (about 2,000 a year over 100 years, checked after each 1460-day part, which is read whole): give both after_date and before_date, at most 1460 days apart; span all and span future count each series once (an occurrence edited on its own that has its own id counts once more, unless with span all its listed series' row takes it), and the dry run reports the count as deletions. Over such a range the dry-run preview lists at most 2000 events (preview_truncated). Span all deletes each listed series whole, and span future each listed series from the slot of its earliest listed occurrence to its end (an occurrence edited on its own is removed from its original slot, which can be before searched_from), both including occurrences outside searched_from / searched_to. By event_ids, span all through the identifier of an occurrence edited on its own would delete that occurrence only, so while another occurrence the call does not name remains that row is refused, in the dry run too, and the other rows go on (#416); when the series can be listed, the row says which id and span delete it. With span all, a row with the series' own identifier, when its first occurrence was edited on its own and still starts at its original time, or was deleted with the first occurrence left edited on its own, and that occurrence starts no later than the next occurrence's slot or another occurrence's shown start, deletes the series from that occurrence with span 'future', as delete_event does (#436). That delete cannot be undone: the dry-run row gives occurrence_id and an undo_note; the real call lists it under through_first_occurrence with an undo_note and leaves it out of the call's undo, which restores the other rows, or, when no other row was deleted, is refused and dropped as delete_event's is. When that occurrence reports recurrence rules of its own (not measured), the row is refused. By date range, with span all, an occurrence edited on its own is refused the same way, in the dry run too, while another occurrence of its series is not listed (#427). When the series' own identifier is listed too and its row deletes on its own, an occurrence whose id has a /RID= part is left to that row, which deletes the series with it; otherwise the occurrence's row runs first, as by event_ids. By date range too, a series' row goes through its first occurrence as by event_ids, and the dry run marks it with occurrence_id and undo_note. With span future the response counts as already_removed the listed occurrences an earlier one removed with its series. Use dry_run=true (default) to preview before deleting. Preview returns only event_id + dates (no titles or calendar names) to avoid echoing untrusted content; pipe through list_events if you need full event details. Undo restores the batch's events, each as delete_event's undo would: a deleted occurrence of a recurring event comes back as a one-off event, and a series removed whole (span 'future' from its first occurrence, or span 'all') is recreated from its rules with its exceptions inside the scan window restored (an occurrence deleted on its own earlier stays deleted, one edited on its own comes back as a separate one-off event), and exceptions outside that window, a first occurrence edited or deleted on its own, a series that could not be listed and a record that does not match the recreated series come back from the rules alone, while an edited occurrence moved more than a year outside the window is not restored and its slot counts as deleted, which the undo text says (if restoring the exceptions and deleting the recreated series again both fail, that member is dropped from the batch); undoing the earlier delete of an occurrence that the restored series already holds writes nothing and says so. A batch holding a span 'future' delete that delete_event's undo would refuse is refused before any of its events is restored, and its history entry is discarded. The undo is also refused before any of its events is restored, and its history entry kept whole, when the calendar of any of its events is missing or read-only; giving up that undo with discard_id drops every event of the batch. If a restore still fails part-way, the entry keeps only the events not yet restored.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -1067,7 +1067,7 @@ class CheICalMCPServer {
                                     "title": .object(["type": .string("string")]),
                                     "notes": .object(["type": .string("string")]),
                                     "due_date": .object(["type": .string("string"), "description": .string("Due date: a bare date (2026-01-30) for a date-only reminder, or ISO8601 with timezone for a time")]),
-                                    "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low")]),
+                                    "priority": .object(["type": .string("integer"), "description": .string("Priority: 0=none, 1=high, 5=medium, 9=low; an integer from 0 to 9, anything else is refused, not clamped. Omit or JSON null = 0")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target reminder list name (required)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
                                     "tags": .object([
@@ -1879,7 +1879,7 @@ class CheICalMCPServer {
         let notes = buildNotesWithTags(notes: userNotes, tags: tags)
 
         let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
-        let priority = try InputValidation.requireIntIfPresent(arguments, key: "priority", default: 0)
+        let priority = try InputValidation.reminderPriority(arguments) ?? 0   // #473
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
@@ -1963,6 +1963,10 @@ class CheICalMCPServer {
 
         let newTags = arguments["tags"]?.arrayValue?.compactMap { $0.stringValue }
         let clearTags = try InputValidation.requireOptionalBool(arguments, key: "clear_tags") ?? false
+        // #486: the clear used to win and the tags were dropped with a success answer.
+        if newTags != nil && clearTags {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.tagsBothMessage)
+        }
         let due = try arguments["due_date"]?.stringValue.map { try parseReminderDue($0) }
         let clearDueDate = try InputValidation.requireOptionalBool(arguments, key: "clear_due_date") ?? false
         if clearDueDate && due != nil {
@@ -1972,12 +1976,16 @@ class CheICalMCPServer {
         if realignToDue && clearDueDate {
             throw ToolError.invalidParameter("Cannot specify both realign_to_due and clear_due_date")
         }
-        let priority = try InputValidation.requireOptionalIntOrNull(arguments, key: "priority")
+        let priority = try InputValidation.reminderPriority(arguments)   // #473: nil leaves it as it is
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
 
         let locationTrigger = try parseLocationTrigger(from: arguments)
         let clearLocationTrigger = try InputValidation.requireOptionalBool(arguments, key: "clear_location_trigger") ?? false
+        // #486: the clear used to win and the trigger was dropped with a success answer.
+        if locationTrigger != nil && clearLocationTrigger {
+            throw ToolError.invalidParameter(ReminderUpdateWrite.locationTriggerBothMessage)
+        }
         // #333: what the request alone settles is refused here (a bare-date due or clear_due_date
         // with alarms); the stored due is checked by the store before any write.
         // #354: the rule; both together, or a rule with clear_due_date, are refused here.
@@ -2250,7 +2258,7 @@ class CheICalMCPServer {
                     title: title,
                     notes: batchNotes,
                     due: batchDue,
-                    priority: try InputValidation.requireIntIfPresent(reminderDict, key: "priority", default: 0),
+                    priority: try InputValidation.reminderPriority(reminderDict) ?? 0,   // #473: the row fails alone
                     calendarName: reminderDict["calendar_name"]?.stringValue,
                     calendarSource: reminderDict["calendar_source"]?.stringValue,
                     alarmOffsets: batchAlarms
@@ -2924,7 +2932,7 @@ class CheICalMCPServer {
         // A move to the event's own calendar writes nothing; report that (verify round 2 #5).
         let action = !deleteOriginal ? "copied" : (newEvent.move?.method == .unchanged ? "unchanged" : "moved")
         var response: [String: Any] = ["action": action, "title": newEvent.title ?? "", "target_calendar": targetCalendar, "new_id": newEvent.eventIdentifier ?? "unknown"]
-        // #226: a move keeps the identifier within an account; say whether it changed, how the
+        // #226, #435: a move can change the identifier; say whether it did, how the
         // event was moved, and what a fallback copy did not keep (verify #2).
         if let move = newEvent.move {
             response["id_changed"] = move.eventIdentifier != eventId
@@ -3058,7 +3066,7 @@ class CheICalMCPServer {
             // ONE undo unit (per-id deleteEventSeries would push N separate entries).
             let uniqueIds = DetachedOccurrenceSpan.occurrenceRowsFirst(items.map(\.identifier))
             let result = try await eventBatchDeletionSource.deleteEventSeriesBatch(
-                identifiers: uniqueIds, refusingOccurrenceIdentifiers: mode == "by_event_ids")
+                identifiers: uniqueIds)
             var response: [String: Any] = [
                 "dry_run": false,
                 "mode": mode,
@@ -3128,48 +3136,8 @@ class CheICalMCPServer {
                 // #416: with span all the rows run as in the real call, occurrences' own ids first,
                 // and a bare id is judged with the occurrences before it gone, so the preview
                 // does not refuse a row the real call deletes.
-                let spanAll = spanStr == "all"
-                let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
-                let named = Set(eventIds)
-                var gone = Set<String>()
-                var preview: [[String: Any]] = []
-                for id in rows {
-                    do {
-                        let row = try await eventBatchDeletionSource.previewEventDeletion(
-                            identifier: id, span: spanStr == "future" ? .futureEvents : .thisEvent, spanAll: spanAll,
-                            namedInTheCall: named, goneInTheCall: gone)
-                        switch row {
-                        case .refused(let refusal):
-                            preview.append(["event_id": id, "error": refusal])
-                        case .deletes(let start, let end):
-                            if spanAll { gone.insert(id) }
-                            preview.append([
-                                "event_id": id,
-                                "start_date_local": localDateFormatter.string(from: start),
-                                "end_date_local": localDateFormatter.string(from: end)
-                            ])
-                        case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID):
-                            if spanAll { gone.insert(id) }
-                            preview.append([
-                                "event_id": id,
-                                "start_date_local": localDateFormatter.string(from: start),
-                                "end_date_local": localDateFormatter.string(from: end),
-                                "occurrence_id": occurrenceID,
-                                "undo_note": Self.batchPreviewThroughOccurrenceNote
-                            ])
-                        }
-                    } catch {
-                        preview.append([
-                            "event_id": id,
-                            // #335 item 6: the batch's own words for a refused series id.
-                            "error": EventKitErrorSanitizer.writeFailureLog(
-                                handler: "deleteEventsBatch",
-                                identifier: id,
-                                error: EventKitManager.batchRowError(error)
-                            )
-                        ])
-                    }
-                }
+                let rows = spanStr == "all" ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+                let preview = await previewDeletionRows(eventIds, spanStr: spanStr)
                 let response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_event_ids",
@@ -3221,10 +3189,22 @@ class CheICalMCPServer {
             let deletionItems = EventRangeQuery.deletionItems(
                 events.map { (identifier: $0.identifier, start: $0.start, slot: $0.slot) }, span: spanStr
             )
-            let batchItems = deletionItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
-            // #325 verify rounds 1-3: over a range wider than EventKit's old cut (every one-sided
-            // range is), refuse more than the ceiling of deletions before the dry run too, counted
-            // as this call deletes (span "all" once per series). A narrower range is not limited.
+            // #427 cluster verify: with span all an edited occurrence whose series is listed too is left
+            // to the series' row (`rowsTheSeriesRowDoesNotTake`).
+            var rowItems = deletionItems
+            if spanStr == "all" {
+                let named = Set(deletionItems.map(\.identifier))
+                var deleting = Set<String>()
+                for series in EventRangeQuery.seriesListedWithTheirOccurrences(deletionItems) {
+                    switch try? await eventBatchDeletionSource.previewEventDeletion(
+                        identifier: series, span: .thisEvent, spanAll: true, namedInTheCall: named, goneInTheCall: []) {
+                    case .deletes?, .deletesThroughFirstOccurrence?: deleting.insert(series)
+                    case .refused?, nil: break
+                    }
+                }
+                rowItems = EventRangeQuery.rowsTheSeriesRowDoesNotTake(deletionItems, seriesRowsThatDelete: deleting)
+            }
+            let batchItems = rowItems.map { (identifier: $0.identifier, occurrenceDate: Optional($0.occurrenceDate)) }
             let deletions = EventRangeQuery.deletionOperations(batchItems.map(\.identifier), span: spanStr)
             try EventRangeQuery.checkDeletionSize(operations: deletions, searched: searched)
 
@@ -3236,19 +3216,39 @@ class CheICalMCPServer {
                 // stays — it's already whatever the caller specified.
                 let previewLimit = EventRangeQuery.previewLimit(searched: searched)
                 let previewed = previewLimit.map { Array(events.prefix($0)) } ?? events
+                // #427: with span all each row is previewed as the real call runs it (`previewDeletionRows`):
+                // a refused or failing row says so and is not counted, and a series' row that goes
+                // through its first occurrence says it cannot be undone. A listed occurrence left to
+                // its series' row shows that row's answer.
+                var rowAnswer: [String: [String: Any]] = [:]
+                if spanStr == "all" {
+                    var unique: [String] = []
+                    for id in batchItems.map(\.identifier) where !unique.contains(id) { unique.append(id) }
+                    for row in await previewDeletionRows(unique, spanStr: spanStr) {
+                        if let id = row["event_id"] as? String { rowAnswer[id] = row }
+                    }
+                }
+                let refusedRows = rowAnswer.values.filter { $0["error"] != nil }.count
+                func answer(for id: String) -> [String: Any]? {
+                    rowAnswer[id] ?? DetachedOccurrenceSpan.seriesIdentifier(of: id).flatMap { rowAnswer[$0] }
+                }
                 let preview = previewed.map { event -> [String: Any] in
-                    [
+                    var row: [String: Any] = [
                         "event_id": event.identifier ?? "",
                         "start_date_local": localDateFormatter.string(from: event.start),
                         "end_date_local": localDateFormatter.string(from: event.end)
                     ]
+                    if let answer = answer(for: event.identifier ?? "") {
+                        for key in ["error", "occurrence_id", "undo_note"] { if let value = answer[key] { row[key] = value } }
+                    }
+                    return row
                 }
                 var response: [String: Any] = [
                     "dry_run": true,
                     "mode": "by_date_range",
                     "calendar": calendarName,
                     "total": events.count,
-                    "deletions": deletions,
+                    "deletions": deletions - refusedRows,
                     "events_to_delete": preview,
                     "message": "Set dry_run=false to execute deletion. Use list_events for human-readable titles."
                 ]
@@ -3260,13 +3260,64 @@ class CheICalMCPServer {
             }
 
             return try await deleteEventsWithSpan(
-                items: batchItems, slots: deletionItems.map(\.slot), spanStr: spanStr, mode: "by_date_range",
+                items: batchItems, slots: rowItems.map(\.slot), spanStr: spanStr, mode: "by_date_range",
                 extraFields: searchedFields.merging(["calendar": calendarName]) { $1 }
             )
 
         } else {
             throw ToolError.invalidParameter("Either event_ids or calendar_name (with before_date/after_date) is required")
         }
+    }
+
+    /// #416: the dry run's rows, run as in the real call: with span all occurrences' own ids first, and
+    /// a bare id judged with the occurrences before it gone, so the preview does not refuse a row the
+    /// real call deletes. Shared by both modes (#427 cluster verify): a row the real call deletes
+    /// through the first occurrence carries `occurrence_id` and `undo_note`, a refused or failing row
+    /// carries `error`.
+    private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {
+        let spanAll = spanStr == "all"
+        let rows = spanAll ? DetachedOccurrenceSpan.occurrenceRowsFirst(eventIds) : eventIds
+        let named = Set(eventIds)
+        var gone = Set<String>()
+        var preview: [[String: Any]] = []
+        for id in rows {
+            do {
+                let row = try await eventBatchDeletionSource.previewEventDeletion(
+                    identifier: id, span: spanStr == "future" ? .futureEvents : .thisEvent, spanAll: spanAll,
+                    namedInTheCall: named, goneInTheCall: gone)
+                switch row {
+                case .refused(let refusal):
+                    preview.append(["event_id": id, "error": refusal])
+                case .deletes(let start, let end):
+                    if spanAll { gone.insert(id) }
+                    preview.append([
+                        "event_id": id,
+                        "start_date_local": localDateFormatter.string(from: start),
+                        "end_date_local": localDateFormatter.string(from: end)
+                    ])
+                case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID):
+                    if spanAll { gone.insert(id) }
+                    preview.append([
+                        "event_id": id,
+                        "start_date_local": localDateFormatter.string(from: start),
+                        "end_date_local": localDateFormatter.string(from: end),
+                        "occurrence_id": occurrenceID,
+                        "undo_note": Self.batchPreviewThroughOccurrenceNote
+                    ])
+                }
+            } catch {
+                preview.append([
+                    "event_id": id,
+                    // #335 item 6: the batch's own words for a refused series id.
+                    "error": EventKitErrorSanitizer.writeFailureLog(
+                        handler: "deleteEventsBatch",
+                        identifier: id,
+                        error: EventKitManager.batchRowError(error)
+                    )
+                ])
+            }
+        }
+        return preview
     }
 
     /// Feature 9: Find duplicate events across calendars
@@ -3688,15 +3739,7 @@ class CheICalMCPServer {
 
     private func parseStructuredLocation(from arguments: [String: Value]) throws -> StructuredLocationInput? {
         guard let dict = arguments["structured_location"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else {
-            throw ToolError.invalidParameter("structured_location.title is required")
-        }
-        return StructuredLocationInput(
-            title: title,
-            latitude: InputValidation.number(dict["latitude"]),
-            longitude: InputValidation.number(dict["longitude"]),
-            radius: InputValidation.number(dict["radius"])
-        )
+        return try LocationArguments.structuredLocation(dict)   // #473
     }
 
     private func parseTimezone(from arguments: [String: Value]) throws -> TimeZone? {
@@ -3709,23 +3752,7 @@ class CheICalMCPServer {
 
     private func parseLocationTrigger(from arguments: [String: Value]) throws -> LocationTriggerInput? {
         guard let dict = arguments["location_trigger"]?.objectValue else { return nil }
-        guard let title = dict["title"]?.stringValue else {
-            throw ToolError.invalidParameter("location_trigger.title is required")
-        }
-        guard let lat = InputValidation.number(dict["latitude"]) else {
-            throw ToolError.invalidParameter("location_trigger.latitude is required")
-        }
-        guard let lon = InputValidation.number(dict["longitude"]) else {
-            throw ToolError.invalidParameter("location_trigger.longitude is required")
-        }
-        let radius = InputValidation.number(dict["radius"]) ?? 100
-        let proximityStr = dict["proximity"]?.stringValue ?? "enter"
-        let proximity: EKAlarmProximity = proximityStr == "leave" ? .leave : .enter
-
-        return LocationTriggerInput(
-            title: title, latitude: lat, longitude: lon,
-            radius: radius, proximity: proximity
-        )
+        return try LocationArguments.locationTrigger(dict)   // #473
     }
 
     // (#103 D4) `formatRecurrenceRule` moved to free function in
