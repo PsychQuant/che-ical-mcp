@@ -79,6 +79,14 @@ jobs:
         # tags and creation dates must not decide it. Throwaway git repositories, no build.
         run: bash scripts/tests/verify-release-ready-test.sh
 
+      - name: plugin wrapper sidecar tests
+        # #483: the wrapper decides from the binary's --version (older than the pin →
+        # download, newer → keep), records what is installed rather than the pin, and does not
+        # download a release again while its .release record still describes what is installed;
+        # one spawn downloads at a time (lock). curl is
+        # stubbed and HOME is a temp dir; no network, no build. About 35 s (lock waits, slow assets).
+        run: bash scripts/tests/plugin-wrapper-test.sh
+
       - name: swift build
         run: swift build
 
