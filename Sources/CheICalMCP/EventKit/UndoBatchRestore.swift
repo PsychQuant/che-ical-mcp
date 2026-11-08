@@ -138,7 +138,7 @@ extension UndoOperation {
             // #244: never restored; its refusal (`batchMemberUndoRefusal`) runs before this check.
             return nil
         case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
-             .completeReminder, .completeRecurringReminder, .batch:
+             .completeReminder, .completeRecurringReminder, .batch, .calendarOperation:
             return nil
         }
     }
@@ -426,7 +426,7 @@ extension UndoOperation {
         case .deleteOccurrence(let snapshot, _): return snapshot.title
         case .deleteReminder(let snapshot): return snapshot.title
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
-             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
     }
@@ -449,7 +449,7 @@ extension UndoOperation {
             if let hour = due.hour { text += String(format: "T%02d:%02d", hour, due.minute ?? 0) }
             return "due " + text
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
-             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder:
+             .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
     }
@@ -479,7 +479,7 @@ extension UndoOperation {
         case .batch(let members):
             return members.allSatisfy(\.mayRunLastAfterAFailure)
         case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
-             .completeReminder, .completeRecurringReminder:
+             .completeReminder, .completeRecurringReminder, .calendarOperation:
             return false
         case .moveByCopy:
             // #466: it removes an existing item (the copy) as well as recreating one. No batch records it.

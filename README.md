@@ -63,9 +63,9 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | Tool | Description |
 |------|-------------|
 | `list_calendars` | List all calendars and reminder lists (includes source_type) |
-| `create_calendar` | Create a new calendar. A title is 1 to 255 characters and not only whitespace, also on `update_calendar`, and `type` is `event` or `reminder`. The limit is not a promise that a long title stays: a 255-character title was among those `list_calendars` stopped showing in one run (#449). If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; if whether it was saved cannot be checked, the list is kept and the call fails with an error that says how to check before creating it again (#289); fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261) |
-| `delete_calendar` | Delete a calendar or reminder list (not undoable). `require_empty: true` refuses one that holds any event (checked only about 200 years either side of now; a passed check returns `checked_empty`, `searched_from` / `searched_to`) or any reminder (#328) |
-| `update_calendar` | Rename a calendar or change its color (v0.9.0) |
+| `create_calendar` | Create a new calendar. A title is 1 to 255 characters and not only whitespace, also on `update_calendar`, and `type` is `event` or `reminder`. The limit is not a promise that a long title stays: a 255-character title was among those `list_calendars` stopped showing in one run (#449). If saving a reminder list reports an error but the list turns out to be saved, the call succeeds; if whether it was saved cannot be checked, the list is kept and the call fails with an error that says how to check before creating it again (#289); fields the store holds differently are listed in `store_differs` with a `note`, and creating it again with the same parameters may make a second copy (#261). Not undoable (#273): `undo` after it is refused and the entry discarded, so the next `undo` reverts the operation recorded before it |
+| `delete_calendar` | Delete a calendar or reminder list. This cannot be undone: it deletes every event or reminder in it, and `undo` after it is refused and the entry discarded, so the next `undo` reverts the operation recorded before it (#273). `require_empty: true` refuses one that holds any event (checked only about 200 years either side of now; a passed check returns `checked_empty`, `searched_from` / `searched_to`) or any reminder (#328) |
+| `update_calendar` | Rename a calendar or change its color (v0.9.0). Not undoable (#273): `undo` after it is refused and the entry discarded, so the next `undo` reverts the operation recorded before it; run `update_calendar` again to revert |
 
 </details>
 
@@ -147,7 +147,7 @@ On first use, macOS prompts for **Calendar** and **Reminders** access — click 
 | `list_events_quick` | Quick shortcuts: `today`, `tomorrow`, `this_week`, `next_7_days`, etc. |
 | `create_events_batch` | Create multiple events at once (with per-event timezone) |
 | `check_conflicts` | Check for overlapping events in a time range |
-| `copy_event` | Copy an event to another calendar; `delete_original` moves it like `move_events_batch` (recurring events refused) |
+| `copy_event` | Copy an event to another calendar; `delete_original` moves it like `move_events_batch` (recurring events refused). `undo` of a plain copy deletes the copy, refused while the copy was changed since (#273) |
 | `move_events_batch` | Move events to another calendar in place, keeping recurrence and attendees; `span` / `occurrence_dates` for recurring events (#226) |
 | `delete_events_batch` | Delete events by IDs or date range, with dry-run preview (v1.0.0) |
 | `find_duplicate_events` | Find duplicate events across calendars (v0.5.0) |
@@ -186,7 +186,7 @@ This was measured on iCloud. The whole-series update and delete above go through
 
 | Tool | Description |
 |------|-------------|
-| `undo` | Undo the most recent calendar/reminder operation |
+| `undo` | Undo the most recent recorded calendar/reminder operation. `create_calendar`, `update_calendar` and `delete_calendar` are recorded only so that `undo` does not revert an older operation in their place: their undo is refused and the entry discarded, and the next `undo` reverts the operation recorded before it (#273) |
 | `redo` | Redo the last undone operation. Only completions are written again; for a create, delete, update or move, redo writes nothing, answers `success: false` with the tool to use, and drops that entry from the redo history (#247). Not replaying those writes is the design (#295): the tool that made them repeats them |
 | `undo_history` | List undoable operations with timestamps |
 
