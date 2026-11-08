@@ -20,30 +20,34 @@ enum SeriesExceptionsUndo {
         let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: seriesEnd,
                                                           deletedAt: now)
         let window = placed.window
-        let observed = observedOccurrences(of: series, ids: seriesIDs, over: [window], in: store)
         // PR #494 rounds 4-5: a count (known or not) whose window around the delete starts after
         // its first occurrence is also listed over the window from its first occurrence, the window
         // before #319, which placed every count as open-ended. Its end is unknown or only an upper
         // bound, so either window can hold its exceptions. Both are recorded, and the restore applies
         // the exceptions inside either. Rounds 2 and 3 chose one window by what the listing showed,
         // which a continuing series with deleted later occurrences, or a sparse one, fooled.
-        // Round 5: a known count too: its bound is an upper bound, which can push the window past
-        // its first occurrences; before #319 every count was listed from its first occurrence.
+        // Round 6: decided before anything is listed, then listed once over both windows' merged
+        // ranges (`listingRanges(covering:)`).
         let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
         if seriesEnd.isCount, window.start > fromFirst.start {
-            let both = observedOccurrences(of: series, ids: seriesIDs, over: [window, fromFirst], in: store)
-            // Round 5 (LOW 1): the window from the first occurrence always holds its first slot, so
-            // when none of the series is listed in it the store lacks that history: it is dropped,
-            // or the restore would take every slot in it for deleted.
-            let listedFromFirst = both.contains { UndoPostState.isOccurrence($0.ids, of: seriesIDs)
-                && SeriesExceptionsPlanner.inWindow(SeriesExceptionsPlanner.ruleSlot(of: $0), fromFirst) }
-            let windows = listedFromFirst ? [window, fromFirst] : [window]
+            let both = observedOccurrences(of: series, ids: seriesIDs,
+                                           over: SeriesExceptionsPlanner.listingRanges(covering: [window, fromFirst]), in: store)
+            // Rounds 5-6: the window from the first occurrence is kept only when the series is listed
+            // in its earliest part, before the window around the delete (that part always holds the
+            // first slot). Listed nowhere there, the store lacks that history: the window is dropped,
+            // or the restore would take every slot in that part for deleted.
+            let listedEarly = both.contains {
+                let slot = SeriesExceptionsPlanner.ruleSlot(of: $0)
+                return UndoPostState.isOccurrence($0.ids, of: seriesIDs) && SeriesExceptionsPlanner.inWindow(slot, fromFirst) && slot < window.start
+            }
+            let windows = listedEarly ? [window, fromFirst] : [window]
             guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
-            exceptions.seriesStartsBeforeWindow = !listedFromFirst && placed.seriesStartsBefore
+            exceptions.seriesStartsBeforeWindow = !listedEarly && placed.seriesStartsBefore
             exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
             exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
         }
+        let observed = observedOccurrences(of: series, ids: seriesIDs, over: SeriesExceptionsPlanner.listingRanges(for: window), in: store)
         guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
         exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
@@ -51,17 +55,18 @@ enum SeriesExceptionsUndo {
         return exceptions
     }
 
-    /// The series' own occurrences, listed over each of `windows` and a year on each side of it, as
-    /// separate queries: an occurrence edited on its own is matched by its current time, so one
-    /// moved out of a window is only found there (PR #318 verify B1; round 2, A: the four-year limit
-    /// is per query). #319: only this series' occurrences are snapshotted; the listing covers the
-    /// calendar. An occurrence listed twice (overlapping ranges) is taken once.
+    /// The series' own occurrences, listed over `ranges`, one query each: a window and a year on each
+    /// side of it (`SeriesExceptionsPlanner.listingRanges`), because an occurrence edited on its own is
+    /// matched by its current time, so one moved out of a window is only found there (PR #318 verify
+    /// B1; round 2, A: the four-year limit is per query). #319: only this series' occurrences are
+    /// snapshotted; the listing covers the calendar. An occurrence listed twice (an event that spans
+    /// two ranges) is taken once.
     private static func observedOccurrences<Store: SeriesExceptionsStoreSource>(of series: Store.Event, ids seriesIDs: UndoPostState.OccurrenceIDs,
-                                                                                over windows: [DateInterval], in store: Store)
+                                                                                over ranges: [DateInterval], in store: Store)
         -> [SeriesExceptionsPlanner.ObservedOccurrence] {
         var observed: [SeriesExceptionsPlanner.ObservedOccurrence] = []
         var seen = Set<String>()
-        for range in windows.flatMap(SeriesExceptionsPlanner.listingRanges(for:)) {
+        for range in ranges {
             for occurrence in store.events(in: range, inCalendarOf: series) {
                 let occurrenceIDs = store.identifiers(of: occurrence)
                 guard UndoPostState.isOccurrence(occurrenceIDs, of: seriesIDs) else { continue }

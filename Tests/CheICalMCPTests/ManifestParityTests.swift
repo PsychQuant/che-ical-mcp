@@ -532,7 +532,7 @@ final class ManifestParityTests: XCTestCase {
              "a deleted occurrence comes back as a one-off event"),
             ("#244 (#285): a series deleted whole comes back from its rules with its exceptions restored",
              "undo of a whole-series delete (delete_event span future from the first occurrence, or span all) recreates the series from its rules and then restores its exceptions inside the checked window",
-             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete; for a count, also the four years from its first occurrence) restored"),
+             "a series deleted whole comes back from its rules with its exceptions inside the checked window (at most four years, around the time of the delete; for a count, also the four years from its first occurrence when the store lists them) restored"),
             ("#261: a single delete_reminder undo names the fields the store holds differently (the batch clause follows)",
              "the message names those fields and asks to check the reminder.",
              "when a delete_reminder undo recreates a reminder the store then holds differently, the message names the fields"),

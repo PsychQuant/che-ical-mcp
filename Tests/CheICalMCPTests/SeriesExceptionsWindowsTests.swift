@@ -52,4 +52,32 @@ final class SeriesExceptionsWindowsTests: XCTestCase {
         XCTAssertEqual(outcome, .init(stayedDeleted: 2, oneOffs: 0))
         XCTAssertEqual(removed.sorted(), [d(2), d(102)])
     }
+
+    // MARK: - PR #494 round 6: one listing for two windows
+
+    /// The listing ranges of two windows that overlap: disjoint, each at most one EventKit query
+    /// (1460 days), and together covering every listing range of either window.
+    func testTheListingRangesOfTwoWindowsAreDisjointAndBounded() {
+        let around = DateInterval(start: d(-1094), duration: 1460 * day)
+        let fromFirst = DateInterval(start: d(-1501), duration: 1460 * day)
+        let ranges = SeriesExceptionsPlanner.listingRanges(covering: [around, fromFirst])
+        for range in ranges { XCTAssertLessThanOrEqual(range.duration, 1460 * day) }
+        for (a, b) in zip(ranges, ranges.dropFirst()) { XCTAssertLessThanOrEqual(a.end, b.start, "disjoint, in order") }
+        let needed = [around, fromFirst].flatMap(SeriesExceptionsPlanner.listingRanges(for:))
+        let start = needed.map(\.start).min()!, end = needed.map(\.end).max()!
+        XCTAssertEqual(ranges.first?.start, start)
+        XCTAssertEqual(ranges.last?.end, end)
+        XCTAssertEqual(ranges.map(\.duration).reduce(0, +), end.timeIntervalSince(start), accuracy: 1, "no gap and no overlap")
+        XCTAssertLessThan(ranges.count, 6, "fewer queries than listing each window's three ranges")
+    }
+
+    /// Two windows far apart: each keeps its own ranges (no query over the gap between them).
+    func testTheListingRangesOfTwoDistantWindowsLeaveTheGapOut() {
+        let late = DateInterval(start: d(5000), duration: 1460 * day)
+        let early = DateInterval(start: d(0), duration: 1460 * day)
+        let ranges = SeriesExceptionsPlanner.listingRanges(covering: [late, early])
+        let gap = DateInterval(start: d(1460 + 366), end: d(5000 - 366))
+        XCTAssertFalse(ranges.contains { $0.intersects(gap) && $0.intersection(with: gap)!.duration > 0 })
+        for range in ranges { XCTAssertLessThanOrEqual(range.duration, 1460 * day) }
+    }
 }

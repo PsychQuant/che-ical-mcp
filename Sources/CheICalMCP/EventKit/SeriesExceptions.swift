@@ -232,6 +232,32 @@ enum SeriesExceptionsPlanner {
                 DateInterval(start: window.end, end: window.end.addingTimeInterval(margin))]
     }
 
+    /// PR #494 round 6: the ranges to list several windows over, in one pass: the listing ranges of
+    /// each window (`listingRanges(for:)`), merged where they meet or overlap, then cut into pieces
+    /// of at most 1460 days (one EventKit query each). Disjoint and in order, so no range is queried
+    /// twice and the gap between two windows far apart is not queried at all.
+    static func listingRanges(covering windows: [DateInterval]) -> [DateInterval] {
+        let limit: TimeInterval = 1460 * 86_400
+        var merged: [DateInterval] = []
+        for range in windows.flatMap(listingRanges(for:)).sorted(by: { $0.start < $1.start }) {
+            if let last = merged.last, range.start <= last.end {
+                merged[merged.count - 1] = DateInterval(start: last.start, end: max(last.end, range.end))
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged.flatMap { range -> [DateInterval] in
+            var pieces: [DateInterval] = []
+            var start = range.start
+            while start < range.end {
+                let end = min(start.addingTimeInterval(limit), range.end)
+                pieces.append(DateInterval(start: start, end: end))
+                start = end
+            }
+            return pieces
+        }
+    }
+
     /// Splits what was listed into the slots that stay and the occurrences edited on their own.
     /// Occurrences of other series (same calendar, same range) are ignored. Everything is judged
     /// by RULE SLOT against `window`, never by where an occurrence currently sits: a slot outside

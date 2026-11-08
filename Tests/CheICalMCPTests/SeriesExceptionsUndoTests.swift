@@ -782,4 +782,41 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertTrue(exceptions.keptSlots.contains(first))
         XCTAssertFalse(exceptions.keptSlots.contains(slots[1]), "deleted on its own: stays deleted")
     }
+
+    // MARK: - PR #494 round 6
+
+    /// MEDIUM 1: the two-window path lists once, over the merged ranges of both windows: no range is
+    /// queried twice and each occurrence is snapshotted once (round 5 listed the window around the
+    /// delete, then both windows again).
+    func testTheTwoWindowCaptureListsEachRangeOnceAndSnapshotsEachOccurrenceOnce() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = monthly(store, from: -1500, count: 70, now: now)
+        store.seriesEnd = .unknown
+        let windows = [around(now), fromFirst(now, -1500)]
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertEqual(exceptions.windows, windows)
+        XCTAssertEqual(store.log.filter { $0 == "list" }.count, SeriesExceptionsPlanner.listingRanges(covering: windows).count)
+        XCTAssertEqual(store.observedCount, occurrences.count, "each occurrence snapshotted once")
+    }
+
+    /// LOW: the window from the first occurrence is kept only when the series is listed in its
+    /// earliest part, before the window around the delete; here the store lacks everything before
+    /// that window, so the overlap alone does not keep it.
+    func testAWindowFromTheFirstOccurrenceWithAnEmptyEarlyPartIsDropped() throws {
+        let now = s0
+        let store = FakeSeriesExceptionsStore()
+        let first = now.addingTimeInterval(-1200 * day)
+        let near = stride(from: -1080.0, through: 200, by: 30).map { now.addingTimeInterval($0 * day) }
+        store.addSeries(id: "S", calendar: "C", title: "Standup", slots: near)
+        store.seriesEnd = .unknown
+        let series = FakeSeriesExceptionsStore.Event(id: "S", external: "X-S", calendar: "C", title: "Standup",
+                                                     start: first, occurrenceDate: first, hasRules: true)
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
+
+        XCTAssertEqual(exceptions.windows, [around(now)])
+    }
 }
