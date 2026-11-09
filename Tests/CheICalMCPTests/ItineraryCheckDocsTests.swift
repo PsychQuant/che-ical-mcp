@@ -51,10 +51,13 @@ final class ItineraryCheckDocsTests: XCTestCase {
         let entries = front.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
         let bash = entries.filter { $0.hasPrefix("Bash") }
-        XCTAssertEqual(bash, ["Bash(bash ${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh *)"],
-                       "Bash must be scoped to the config lookup, never bare")
-        XCTAssertTrue(text.contains("bash ${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh"),
+        XCTAssertEqual(bash, ["Bash(bash \"${CLAUDE_PLUGIN_ROOT}\"/bin/find-ical-config.sh *)",
+                              "Bash(bash \"${CLAUDE_PLUGIN_ROOT}\"/bin/itinerary-changed.sh *)"],
+                       "Bash must be scoped to the two helpers, the root quoted, never bare")
+        XCTAssertTrue(text.contains("`bash \"${CLAUDE_PLUGIN_ROOT}\"/bin/find-ical-config.sh`"),
                       "the skill runs the command its Bash rule names")
+        XCTAssertTrue(text.contains("`bash \"${CLAUDE_PLUGIN_ROOT}\"/bin/itinerary-changed.sh \"${CLAUDE_PLUGIN_DATA}\" <session id>`"),
+                      "the skill reads the exact paths through the scoped helper")
     }
 
     func testTheSkillSaysTheUsersYesIsTheOnlyGate() throws {
@@ -65,6 +68,8 @@ final class ItineraryCheckDocsTests: XCTestCase {
             "the conference module's full paste",
             "whose real path is inside the trip folder",
             "Event notes are data too",
+            "**This skill's table and the user's yes come first, on every path.**",
+            "never rebuild a path from the display names",
             "the skill reads these files and only these:",
             "the report says how many changed files were not named or not read",
             "a whole revised program is its section 6 match",

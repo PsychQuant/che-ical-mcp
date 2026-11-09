@@ -287,6 +287,39 @@ printf x > "$T/zzz.md"
 OUT=$(printf '%s' "$(json slow "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
 check "within 5 minutes the folder is not walked again" "$OUT" ""
 
+# --- round 2 (#500 report r2) ---------------------------------------------------------------
+# #4/#5: an interactive session resumed headless gets no reminder.
+T="$TMP/trips/resume"; trip "$T"; run start "$(json resume "$T")"; printf x > "$T/r.md"
+OUT=$(printf '%s' "$(json resume "$T")" | CLAUDE_CODE_ENTRYPOINT=sdk-cli bash "$HOOK" stop 2>/dev/null)
+check "a recorded session resumed headless: silent" "$OUT" ""
+[ -e "$CLAUDE_PLUGIN_DATA/itinerary-sessions/resume.reminded" ] && bad "a headless resume does not use up the reminder" || ok "a headless resume does not use up the reminder"
+run stop "$(json resume "$T")"
+[ -n "$(context "$OUT")" ] && ok "the same session back in an interactive run still reminds" || bad "the same session back in an interactive run still reminds"
+# #6: an unknown entrypoint counts as headless (allowlist).
+printf '%s' "$(json future "$T")" | CLAUDE_CODE_ENTRYPOINT=some-future-runner bash "$HOOK" start >/dev/null 2>&1
+[ -e "$CLAUDE_PLUGIN_DATA/itinerary-sessions/future.start" ] && bad "an unknown entrypoint: no start record" || ok "an unknown entrypoint: no start record"
+# #3: the exact paths are stored, and a scoped helper prints them; the reminder shows names and a count.
+HELPER="$PROJECT_DIR/plugin/bin/itinerary-changed.sh"
+T="$TMP/trips/exact"; trip "$T"; run start "$(json exact "$T")"
+NL="$(printf 'b\nc.md')"; printf x > "$T/$NL"
+lng=$(python3 -c 'print("Q"*200)'); printf x > "$T/$lng.md"
+run stop "$(json exact "$T")"; ctx=$(context "$OUT")
+has "the reminder gives the count" "$ctx" "2 changed files"
+has "the reminder names the session for the helper" "$ctx" 'session "exact"'
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" exact 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(d["files"]) == sorted(["b\nc.md", "Q"*200 + ".md"]) and d["trip_folder"].endswith("/trips/exact"))' 2>/dev/null)
+check "the helper prints the exact names, newline and full length kept" "$got" "True"
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" '../x' >/dev/null 2>&1; check "the helper refuses a session id with a path" "$?" "2"
+bash "$HELPER" relative/dir exact >/dev/null 2>&1; check "the helper refuses a relative data directory" "$?" "2"
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" nosuch >/dev/null 2>&1; check "the helper answers 1 when there is no list" "$?" "1"
+# #8: a walk killed before it ends leaves the session paused, so later turns do not repeat it.
+T="$TMP/trips/killed"; trip "$T"; run start "$(json killed "$T")"; mkdir -p "$T/k"; for n in $(seq 1 20); do : > "$T/k/f$n"; done; touch -t "$OLD" "$T"/k/*
+printf '%s' "$(json killed "$T")" | CHE_ICAL_ITINERARY_WALK_EXIT_AT=5 bash "$HOOK" stop >/dev/null 2>&1
+printf x > "$T/after.md"
+run stop "$(json killed "$T")"
+check "after a walk that was killed, the next stop within 5 minutes is silent" "$OUT" ""
+T="$TMP/trips/clean"; trip "$T"; run start "$(json clean "$T")"; run stop "$(json clean "$T")"
+[ -e "$CLAUDE_PLUGIN_DATA/itinerary-sessions/clean.slow" ] && bad "a walk that ends normally leaves no pause" || ok "a walk that ends normally leaves no pause"
+
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"
 for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done
