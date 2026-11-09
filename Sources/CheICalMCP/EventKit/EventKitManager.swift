@@ -1347,20 +1347,21 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #451: what the write covers, from the original slots (an edited occurrence shows another
         // time). Through an occurrence's own id the object found is that occurrence, so whether it
         // is the first comes from the series' listing (PR #471 verify).
-        let seriesRules: [SeriesRuleWrite.StoredRule] = try {
-            // #288: a lookup that raises is a failed lookup, not "no rule" (which would read as an
-            // unwritable pattern), so it throws.
-            let series = try addressesOwnOccurrence
-                ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
-            // PR #471 verify rounds 6-7: whether a week start regroups the rule depends on the
-            // series' start weekday, read in the zone its days are read in, from the first
-            // occurrence's original slot (occurrenceDate), not where an edit moved it.
-            let startWeekday = series.map {
-                Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current))
-                    .component(.weekday, from: $0.occurrenceDate ?? $0.startDate)
-            }
-            return (series?.recurrenceRules ?? []).map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }
-        }()
+        // #288: a lookup that raises is a failed lookup, not "no rule" (which would read as an
+        // unwritable pattern), so it throws.
+        let rulesSeries: EKEvent? = try addressesOwnOccurrence
+            ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
+        // PR #471 verify rounds 6-7: whether a week start regroups the rule depends on the
+        // series' start weekday, read in the zone its days are read in, from the first
+        // occurrence's original slot (occurrenceDate), not where an edit moved it. PR #505 round 6
+        // (LOW 4): the #503 pattern check reads the same weekday, and the day of the month.
+        let seriesFirstSlotDay: DateComponents? = rulesSeries.map {
+            Calendar.gregorian(in: $0.isAllDay ? .current : ($0.timeZone ?? .current))
+                .dateComponents([.weekday, .day], from: $0.occurrenceDate ?? $0.startDate)
+        }
+        let seriesRules: [SeriesRuleWrite.StoredRule] = (rulesSeries?.recurrenceRules ?? []).map {
+            SeriesRuleWrite.StoredRule($0, startWeekday: seriesFirstSlotDay?.weekday)
+        }
         let shownStart: Date = event.startDate
         let eventSlot: Date = UndoPostState.ruleSlot(
             eventIdentifier: addressesOwnOccurrence ? identifier : event.eventIdentifier,
@@ -1562,6 +1563,83 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
                 if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
                 throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
+            }
+        }
+
+        // #503: a change of the start, end or all-day flag over more than one occurrence brought back
+        // every occurrence deleted on its own among them (device, iCloud), answered updated, and undo
+        // refuses recurring updates. Refused while one is found or cannot be ruled out; read only
+        // when the write is that shape, and still before the first field is assigned (#373).
+        // PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete (not
+        // measured), so it goes through the same verdict; its refusal says so when no date changes.
+        // PR #505 round 5 (LOW): a rule written over several occurrences with another pattern (not
+        // measured) goes through the verdict too, which reads the stored rule.
+        // A weekly rule without days runs on its start's weekday (a monthly one on its start's day), so
+        // the measured end-date-only call is not a pattern change whether the store reads that day back
+        // or none. Round 6 (LOW 4): read from the series' original first slot, and every stored rule
+        // is compared (more than one is a pattern change).
+        let changesPattern = effectiveRule.map {
+            DeletedOccurrenceCheck.changesPattern(DeletedOccurrenceCheck.Rule($0), stored: (rulesSeries?.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+                                                  startWeekday: seriesFirstSlotDay?.weekday, startDay: seriesFirstSlotDay?.day)
+        } ?? false
+        func deletedOccurrenceCheckApplies(changesAccount: Bool, baseline: DeletedOccurrenceCheck.StoredBaseline = .stored) -> Bool {
+            DeletedOccurrenceCheck.applies(
+                reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
+                plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
+                resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount,
+                changesPattern: changesPattern, baseline: baseline)
+        }
+        // The series the check lists, read once and only when the check needs it.
+        var checkSeries: (EKEvent, String)??
+        func seriesForCheck() throws -> (EKEvent, String)? {
+            if let cached = checkSeries { return cached }
+            let series = try addressesOwnOccurrence
+                ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
+            // Round 2 (INFO 8): the own-id path reads the series object without a refresh; refresh it
+            // before its rule is read (a failure is fine: #326's objects cannot refresh).
+            if addressesOwnOccurrence { _ = series?.refresh() }
+            let seriesID = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+            let found = series.flatMap { object in seriesID.map { (object, $0) } }
+            checkSeries = .some(found)
+            return found
+        }
+        let viaStandInForCheck = addressesOwnOccurrence ? false : resolved.viaStandIn
+        // PR #505 round 5 (MEDIUM): a whole-series write of the stored start and end compares them with
+        // the first occurrence's shown times, which are its slot only when it was not edited on its own
+        // and its slot is shown; otherwise any date in the call is checked (fail closed).
+        // Round 6 (LOW 5): the proven slot is also what a planned start is compared with for the route text.
+        var baseline = DeletedOccurrenceCheck.StoredBaseline.stored
+        var provenSlot: Date? = event.startDate
+        if reach.isWholeSeries, datePlan.datesToWrite != nil {
+            let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }
+            baseline = proof?.baseline ?? .unproven
+            provenSlot = proof?.slot
+        }
+        if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {
+            let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)
+            // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
+            // first slot (the own-id path reads the series' own object, not a stand-in).
+            let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {
+                deletedOccurrenceVerdict(
+                    of: $0.0, id: $0.1,
+                    // Round 6 (LOW 6): across accounts every slot, as move_events_batch checks.
+                    reachedFrom: crossesAccounts ? nil : DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
+                    viaStandIn: viaStandInForCheck,
+                    changesAllDay: datePlan.isAllDay != event.isAllDay)
+            } ?? .unknown(.notListed)
+            let change = DeletedOccurrenceCheck.changeKind(
+                allDayChanges: datePlan.isAllDay != event.isAllDay,
+                startChanges: DeletedOccurrenceCheck.startChanges(planned: datePlan.datesToWrite?.start, provenSlot: provenSlot),
+                endChanges: datePlan.datesToWrite.map { !UndoPostState.sameInstant($0.end, event.endDate) } ?? false,
+                changesZone: changesZone, changesPattern: changesPattern, changesAccount: crossesAccounts)
+            switch verdict {
+            case .none: break
+            case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
+            case .deleted(let blocked):
+                // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
+                let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
+                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change))
+            case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
             }
         }
 
@@ -2311,6 +2389,30 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 fromSourceID: master.calendar?.source?.sourceIdentifier,
                 toSourceID: targetCalendar.source?.sourceIdentifier)) {
             throw EventKitError.standInRefused(reason: Self.standInAccountReason)
+        }
+        // PR #505 round 5 (INFO 6): the argument contradictions are answered before the #503 listing.
+        if let refusal = EventMovePolicy.argumentRefusal(isRecurring: isRecurring, span: span, hasOccurrenceDate: occurrenceDate != nil) {
+            throw EventKitError.moveRefused(reason: refusal)
+        }
+        // PR #505 round 4 (MEDIUM): a whole series to another account is a create plus a delete, and
+        // whether the new series keeps occurrences deleted on its own was not measured (#503): refused
+        // while one is found or cannot be ruled out, before anything is written.
+        if isRecurring, !(span == .this && occurrenceDate != nil),
+           master.calendar?.calendarIdentifier != targetCalendar.calendarIdentifier,
+           FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,
+                                                        toSourceID: targetCalendar.source?.sourceIdentifier) {
+            let ownID = DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: master.isDetached)
+            let seriesID = ownID ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+            let series = ownID ? try seriesObject(ofOccurrence: identifier) : master
+            if ownID { _ = series?.refresh() }
+            let verdict: DeletedOccurrenceCheck.Verdict = {
+                guard let series, let seriesID else { return .unknown(.notListed) }
+                return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,
+                                                viaStandIn: ownID ? false : resolved.viaStandIn, changesAllDay: false)
+            }()
+            if verdict != .none {
+                throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
+            }
         }
 
         var subject = master
