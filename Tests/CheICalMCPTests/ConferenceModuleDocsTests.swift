@@ -40,7 +40,7 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (spec, "#### Scenario: A one-set rename question and a plain yes", "r7 #4 scenario"),
             (contract, "and for an umbrella that would be updated to other dates or another title", "an updated umbrella's target is searched (r7 #2 #7)"),
             (contract, "**An umbrella that would be updated onto days a listed all-day event covers**", "umbrella update-anyway row (r7 #2 #7)"),
-            (contract, "unless step 3 listed an all-day event on the new days", "an exact set's umbrella update asks first (r7 #2)"),
+            (contract, "unless step 3 listed an event for it on the new days", "an exact set's umbrella update asks first (r7 #2)"),
             (spec, "SHALL have the same update-anyway row with its own answer", "umbrella update-anyway row (spec, r7 #2)"),
             (spec, "#### Scenario: An exact set's umbrella moves onto a hand-built all-day event", "r7 #2 scenario"),
             (spec, "ignoring all-day events, the program's own events and the old events that rows answered yes map to program items (a clash with a hand-built event the table lists SHALL be reported as the routing requirement states)", "entry-points clash rule (spec, r7 #1 #3, r8 #1 #4)"),
@@ -97,6 +97,21 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (skill, "kept, declined, not updated or pending", "no mapping to an umbrella left under the old marker (r8 #7)"),
             (contract, "the conference module counts an event as its own only with both lines", "one-line events are hand-built (r8 #13)"),
             (eventModules, "the conference module counts an event as its own only with both of its lines", "one-line events are hand-built (index, r8 #13)"),
+            // PR #498 round 9.
+            (contract, "**The umbrella that would be updated counts as lacking here**", "a found all-day event stays listed for the update-anyway row (r9 #1)"),
+            (spec, "the umbrella SHALL count as an item the set lacks when it would be updated to other dates or another title", "the update target is not filtered out (spec, r9 #1)"),
+            (spec, "#### Scenario: A found all-day event stays listed although the set has an umbrella", "r9 #1 scenario"),
+            (contract, "for a timed event with the official or short name that runs over more than one of the program's days (a hand-built conference block), the umbrella as well", "a multi-day timed block is listed for the umbrella (r9 #7)"),
+            (spec, "a timed event with the official or short name that runs over more than one of the program's days SHALL also be listed for the umbrella", "a multi-day timed block is listed for the umbrella (spec, r9 #7)"),
+            (spec, "#### Scenario: A timed hand-built event spans the conference's days", "r9 #7 scenario"),
+            (contract, "**An umbrella of another set on the program's days.**", "an umbrella left under an old marker is named (r9 #3)"),
+            (contract, "or, in a calendar chosen in step 2, the step 2 fallback", "several sets in a step 2 calendar (r9 #4)"),
+            (contract, "and run step 3 for the corrected items", "a partial correction runs step 3 (r9 #5)"),
+            (design, "點名手建事件的舊事件列與「仍要更新嗎」列仍要單獨回答", "design r8 (4) lists the own-answer rows (r9 #6)"),
+            (contract, "except an old event whose row was answered no", "a declined correction's old event is clash-checked (r9 #2)"),
+            (spec, "an old event of the set whose row was answered no SHALL NOT be ignored", "a declined correction's old event is clash-checked (spec, r9 #2)"),
+            (contract, "an answer that leaves a set without one is not an answer", "every step 2 set needs an answer (r9 #8)"),
+            (spec, "every set the question lists SHALL need one of these answers", "every step 2 set needs an answer (spec, r9 #8)"),
         ]
     }
 
