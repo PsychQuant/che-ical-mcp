@@ -9,41 +9,60 @@ extension RuleEndShift {
          rule.weeksOfTheYear?.count, rule.monthsOfTheYear?.count, rule.setPositions?.count]
             .contains { ($0 ?? 0) > 0 }
     }
+
+    /// The unit a plain rule repeats by; the coarsest of several rules (fail closed).
+    static func unit(of rules: [EKRecurrenceRule]) -> Unit {
+        if rules.contains(where: { $0.frequency == .yearly }) { return .year }
+        if rules.contains(where: { $0.frequency == .monthly }) { return .month }
+        return .day
+    }
+
+    static func passedRule(_ rule: RecurrenceRuleInput?, clearing: Bool) -> PassedRule? {
+        if clearing { return .clear }
+        guard let rule else { return nil }
+        if let end = rule.endDate { return .end(end) }
+        return rule.occurrenceCount != nil ? .count : .open
+    }
 }
 
 extension EventKitManager {
-    /// #509: the refusal for a start change that would move an occurrence of `series` past one of
-    /// its rule ends, or nil. `series` carries the rules (the series object, or the occurrence a
-    /// span future starts from); its occurrences are listed by `seriesID` in a short window before
-    /// each end. Read only, so it runs before the first field of the update is assigned.
-    func ruleEndShiftRefusal(series: EKEvent?, seriesID: String?, storedStart: Date, plannedStart: Date,
-                             storedZone: TimeZone, newZone: TimeZone) -> String? {
-        guard let series, let seriesID, let calendar = series.calendar else { return RuleEndShift.unknownReason }
-        let rules = series.recurrenceRules ?? []
-        let keepsDays = rules.contains(where: RuleEndShift.keepsDays)
+    /// #509: the refusal for a start or zone change that would move an occurrence of the series past
+    /// one of the ends it is checked against, or nil. `series` carries the rules (the series object,
+    /// or the occurrence a span future starts from); its own occurrences are listed by `seriesID`
+    /// around each end and placed by their original slot (PR #510 round 1, HIGH 1, MEDIUM 4: an
+    /// occurrence edited on its own and moved within a year is listed; one that cannot be placed, or
+    /// an empty listing, refuses). Read only, so it runs before the first field is assigned.
+    func ruleEndShiftRefusal(series: EKEvent?, seriesID: String?, ends: [Date], plan: RuleEndShift.Plan,
+                             from: Date?, ruleWritable: Bool) -> String? {
+        guard !ends.isEmpty else { return nil }
+        guard let series, let seriesID, let calendar = series.calendar else { return RuleEndShift.unknownReason(ruleWritable: ruleWritable) }
         let ids = UndoPostState.OccurrenceIDs(eventIdentifier: seriesID, externalIdentifier: series.calendarItemExternalIdentifier)
-        for ruleEnd in rules.compactMap({ $0.recurrenceEnd?.endDate }) {
-            let window = RuleEndShift.listingWindow(ruleEnd: ruleEnd, storedStart: storedStart, plannedStart: plannedStart)
-            // Through the chunked range query (#325), as every listing a range is built for; one
-            // that fails is refused, not taken as no occurrence.
-            guard let listed = try? events(from: window.start, to: window.end, calendars: [calendar]) else {
-                return RuleEndShift.unknownReason
+        for ruleEnd in ends {
+            // PR #510 round 1 (MEDIUM 3): refused before any read when nothing would remain.
+            if RuleEndShift.startsPastEnd(plannedStart: plan.plannedStart, ruleEnd: ruleEnd) {
+                return RuleEndShift.pastEndReason(ruleEnd: ruleEnd, zone: plan.newZone)
             }
-            let slots: [Date] = listed.compactMap { event in
+            guard let range = RuleEndShift.listingRange(ruleEnd: ruleEnd, plan: plan),
+                  let listed = try? events(from: range.start, to: range.end, calendars: [calendar]) else {
+                return RuleEndShift.unknownReason(ruleWritable: ruleWritable)
+            }
+            let own: [RuleEndShift.Listed] = listed.compactMap { event in
                 let occurrence = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
                                                              externalIdentifier: event.calendarItemExternalIdentifier)
                 guard UndoPostState.isOccurrence(occurrence, of: ids) else { return nil }
-                // The original slot: an occurrence edited on its own shows another time.
-                return UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
-                                                  externalIdentifier: event.calendarItemExternalIdentifier,
-                                                  occurrenceDate: event.occurrenceDate)
-                    ?? event.occurrenceDate ?? event.startDate
+                let rid = UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
+                                                     externalIdentifier: event.calendarItemExternalIdentifier,
+                                                     occurrenceDate: nil)
+                let slot = rid.map {
+                    UndoPostState.ruleSlot(eventIdentifier: event.eventIdentifier, externalIdentifier: event.calendarItemExternalIdentifier,
+                                           occurrenceDate: event.occurrenceDate, isAllDay: series.isAllDay) ?? $0
+                }
+                return RuleEndShift.Listed(isDetached: event.isDetached, ridSlot: slot, occurrenceDate: event.occurrenceDate, start: event.startDate)
             }
-            if let slot = RuleEndShift.firstLost(slots: slots, ruleEnd: ruleEnd, storedStart: storedStart, plannedStart: plannedStart,
-                                                 storedZone: storedZone, newZone: newZone, keepsDays: keepsDays) {
-                let moved = RuleEndShift.latestMove(slot: slot, storedStart: storedStart, plannedStart: plannedStart,
-                                                    storedZone: storedZone, newZone: newZone, keepsDays: keepsDays)
-                return RuleEndShift.lostReason(slot: slot, ruleEnd: ruleEnd, movedTo: moved, zone: newZone)
+            guard let slots = RuleEndShift.place(own) else { return RuleEndShift.unknownReason(ruleWritable: ruleWritable) }
+            if let slot = RuleEndShift.firstLost(slots: slots, ruleEnd: ruleEnd, plan: plan, from: from) {
+                return RuleEndShift.lostReason(slot: slot, ruleEnd: ruleEnd, movedTo: RuleEndShift.latestMove(slot: slot, plan: plan),
+                                               zone: plan.newZone, ruleWritable: ruleWritable)
             }
         }
         return nil

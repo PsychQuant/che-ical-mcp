@@ -7,49 +7,132 @@ import Foundation
 /// iCloud, 2026-11-09; the table is in #509's Diagnosis). Undo refuses recurring updates, so nothing
 /// brought the occurrence back.
 ///
-/// Measured: a plain rule shifts whole by the start's change (a day earlier and an hour later kept
-/// all five); a time zone change alone keeps the instants; passing the rule again in the same call
-/// with an `end_date` at or after the moved start kept every occurrence, with span `all` and with
-/// span `future`. A rule with days of its own keeps its days and takes the new time of day; that is
-/// read from the rule's semantics, not measured, so both readings are checked (fail closed).
+/// Measured (weekly series in Asia/Taipei): a plain rule shifts whole by the start's change (a day
+/// earlier and an hour later kept all five); a zone change alone between zones without daylight
+/// saving (Asia/Bangkok, Asia/Tokyo) kept the instants; passing the rule again in the same call with
+/// an `end_date` at or after the moved start kept every occurrence, with span `all` and `future`.
+/// Read from the rule's semantics, not measured, and checked as well (PR #510 round 1, fail closed):
+/// the store re-expands by the wall clock in the zone the event then has, so a zone change across a
+/// daylight-saving change can move occurrences; a plain monthly or yearly rule repeats on the new
+/// start's day of the month; a rule with days of its own keeps its days at the new time of day.
 ///
-/// Not covered: an earlier move that brings in an occurrence after the end. Nothing is lost there,
-/// the added occurrence is visible, and finding it would mean computing the rule's next slot.
+/// Not covered: an earlier move that brings in an occurrence after the end (nothing is lost, and it
+/// is visible), and an occurrence edited on its own and moved more than a year from its slot, which
+/// the listing does not reach (the margin #285 and #442 list with).
 enum RuleEndShift {
-    /// How far before a rule end an occurrence can sit and still be moved past it by a change of the
-    /// time of day: under a day, plus the widest zone difference and the day either side.
-    static let timeOfDayReach: TimeInterval = 2 * 86_400 + 2 * 3_600
+    /// How a plain rule repeats: by days (daily, weekly), months or years.
+    enum Unit: Equatable { case day, month, year }
 
-    /// Whether the check runs: a start change over the rest of a series that keeps its stored rule.
-    /// A call that writes a rule (or clears it) sets the end itself.
-    static func applies(repeats: Bool, reachesEnd: Bool, writesRule: Bool, storedStart: Date, plannedStart: Date?) -> Bool {
-        guard repeats, reachesEnd, !writesRule, let plannedStart else { return false }
-        return plannedStart != storedStart
+    /// What the write does to the series' start, read before any field is assigned.
+    /// `storedStarts`: the start the store re-expands from, read as the shown start and, through an
+    /// occurrence's own id, also as its original slot (PR #510 round 1, HIGH 2).
+    struct Plan: Equatable {
+        let storedStarts: [Date]
+        let plannedStart: Date
+        let storedZone: TimeZone
+        let newZone: TimeZone
+        let unit: Unit
+        let keepsDays: Bool
     }
 
-    /// The slots to list before one rule end: back past the start's change and the time-of-day
-    /// reach, up to just after the end (which is inclusive).
-    static func listingWindow(ruleEnd: Date, storedStart: Date, plannedStart: Date) -> DateInterval {
-        let shift = max(0, plannedStart.timeIntervalSince(storedStart))
-        return DateInterval(start: ruleEnd.addingTimeInterval(-(shift + timeOfDayReach)), end: ruleEnd.addingTimeInterval(1))
+    /// A listed occurrence of the series, as `place` reads it.
+    struct Listed: Equatable {
+        let isDetached: Bool
+        let ridSlot: Date?
+        let occurrenceDate: Date?
+        let start: Date
     }
 
-    /// Where the occurrence at `slot` can start after the write. A plain rule shifts it by the
-    /// start's change, read both as elapsed time and by the wall clock (the store expands by the wall
-    /// clock, so across a DST change a one-day move is 23 or 25 hours); a rule with days of its own
-    /// keeps the slot's day at the new time of day, read with the day in either zone.
-    static func movedStarts(slot: Date, storedStart: Date, plannedStart: Date,
-                            storedZone: TimeZone, newZone: TimeZone, keepsDays: Bool) -> [Date] {
-        var moved = [slot.addingTimeInterval(plannedStart.timeIntervalSince(storedStart))]
-        for zone in [storedZone, newZone] {
-            let calendar = Calendar.gregorian(in: zone)
-            let change = calendar.dateComponents([.day, .hour, .minute, .second], from: storedStart, to: plannedStart)
-            if let date = calendar.date(byAdding: change, to: slot) { moved.append(date) }
+    /// The rule a call passes, as far as its end goes.
+    enum PassedRule: Equatable { case end(Date), count, open, clear }
+
+    /// The widest start change checked: past it the listing would be long, so it is refused.
+    static let maxShift: TimeInterval = 366 * 86_400
+    /// Room for a change of the time of day, the zones' offsets and month lengths.
+    static let slack: TimeInterval = 5 * 86_400
+    /// How far from its slot an occurrence edited on its own is still listed (as #285 and #442 list).
+    static let margin: TimeInterval = 366 * 86_400
+
+    /// The routes through an occurrence's own id (#416, #428) read an object with no rules of its own.
+    static func repeats(masterHasRules: Bool, addressesOwnOccurrence: Bool) -> Bool {
+        masterHasRules || addressesOwnOccurrence
+    }
+
+    /// Whether the check runs: a start or zone change over the rest of a series.
+    static func applies(repeats: Bool, reachesEnd: Bool, movesStart: Bool, changesZone: Bool) -> Bool {
+        repeats && reachesEnd && (movesStart || changesZone)
+    }
+
+    /// The ends to check: the stored rule's, or, when the call passes a rule, that rule's own end
+    /// (PR #510 round 1, MEDIUM 6: the store expands a passed rule up to its end just the same). A
+    /// count or no end drops nothing at the end; clear_recurrence leaves one event.
+    static func ends(stored: [Date], passedRule: PassedRule?) -> [Date] {
+        switch passedRule {
+        case nil: return stored
+        case .end(let end)?: return [end]
+        case .count?, .open?, .clear?: return []
         }
-        guard keepsDays else { return moved }
-        let newCalendar = Calendar.gregorian(in: newZone)
-        let time = newCalendar.dateComponents([.hour, .minute, .second], from: plannedStart)
-        for zone in [storedZone, newZone] {
+    }
+
+    /// The new start is already after the end: nothing the write reaches would remain.
+    static func startsPastEnd(plannedStart: Date, ruleEnd: Date) -> Bool {
+        plannedStart > ruleEnd
+    }
+
+    /// What to list around one rule end: the slots the move can push past it, and a year on each
+    /// side, so an occurrence edited on its own and moved up to a year is listed too. nil when the
+    /// move is wider than `maxShift` (PR #510 round 1, MEDIUM 3: refused as not checkable).
+    static func listingRange(ruleEnd: Date, plan: Plan) -> DateInterval? {
+        let shift = plan.storedStarts.map { max(0, plan.plannedStart.timeIntervalSince($0)) }.max() ?? 0
+        guard shift <= maxShift else { return nil }
+        return DateInterval(start: ruleEnd.addingTimeInterval(-(shift + slack + margin)), end: ruleEnd.addingTimeInterval(margin + 1))
+    }
+
+    /// The original slots of the listed occurrences: an occurrence edited on its own counts by its
+    /// `/RID=` slot, wherever it shows. nil when one cannot be placed (edited, without that slot) or
+    /// nothing is listed: an empty listing is never safe (PR #510 round 1, HIGH 1).
+    static func place(_ listed: [Listed]) -> [Date]? {
+        guard !listed.isEmpty else { return nil }
+        var slots: [Date] = []
+        for occurrence in listed {
+            if let rid = occurrence.ridSlot {
+                slots.append(rid)
+            } else if occurrence.isDetached {
+                return nil
+            } else {
+                slots.append(occurrence.occurrenceDate ?? occurrence.start)
+            }
+        }
+        return slots
+    }
+
+    /// Where the occurrence at `slot` can start after the write, every reading of it (fail closed):
+    /// the start's change as elapsed time and by the wall clock in either zone; the rule re-expanded
+    /// from the new start in the new zone by its unit (days, months, years); and, for a rule with days
+    /// of its own, the slot's day at the new time of day.
+    static func movedStarts(slot: Date, plan: Plan) -> [Date] {
+        let newCalendar = Calendar.gregorian(in: plan.newZone)
+        var moved: [Date] = []
+        for stored in plan.storedStarts {
+            moved.append(slot.addingTimeInterval(plan.plannedStart.timeIntervalSince(stored)))
+            for zone in [plan.storedZone, plan.newZone] {
+                let calendar = Calendar.gregorian(in: zone)
+                let change = calendar.dateComponents([.day, .hour, .minute, .second], from: stored, to: plan.plannedStart)
+                if let date = calendar.date(byAdding: change, to: slot) { moved.append(date) }
+            }
+            let units: Set<Calendar.Component> = {
+                switch plan.unit {
+                case .day: return [.day, .hour, .minute, .second]
+                case .month: return [.month, .day, .hour, .minute, .second]
+                case .year: return [.year, .day, .hour, .minute, .second]
+                }
+            }()
+            let periods = Calendar.gregorian(in: plan.storedZone).dateComponents(units, from: stored, to: slot)
+            if let date = newCalendar.date(byAdding: periods, to: plan.plannedStart) { moved.append(date) }
+        }
+        guard plan.keepsDays else { return moved }
+        let time = newCalendar.dateComponents([.hour, .minute, .second], from: plan.plannedStart)
+        for zone in [plan.storedZone, plan.newZone] {
             var parts = Calendar.gregorian(in: zone).dateComponents([.year, .month, .day], from: slot)
             parts.hour = time.hour
             parts.minute = time.minute
@@ -59,33 +142,52 @@ enum RuleEndShift {
         return moved
     }
 
-    /// The first slot, at or before `ruleEnd`, that the write would move past it, or nil.
-    static func firstLost(slots: [Date], ruleEnd: Date, storedStart: Date, plannedStart: Date,
-                          storedZone: TimeZone, newZone: TimeZone, keepsDays: Bool) -> Date? {
-        slots.filter { $0 <= ruleEnd }.sorted().first { slot in
-            movedStarts(slot: slot, storedStart: storedStart, plannedStart: plannedStart,
-                        storedZone: storedZone, newZone: newZone, keepsDays: keepsDays).contains { $0 > ruleEnd }
+    /// The first slot at or before `ruleEnd` (and, for span future, at or after `from`, the slot the
+    /// write starts at: PR #510 round 1, LOW 8) that some reading moves past the end, or nil.
+    static func firstLost(slots: [Date], ruleEnd: Date, plan: Plan, from: Date? = nil) -> Date? {
+        slots.filter { slot in slot <= ruleEnd && (from.map { slot.timeIntervalSince($0) > -1 } ?? true) }.sorted().first { slot in
+            movedStarts(slot: slot, plan: plan).contains { $0 > ruleEnd }
         }
     }
 
-    /// The latest start the write can give the occurrence at `slot`: the one the refusal names.
-    static func latestMove(slot: Date, storedStart: Date, plannedStart: Date,
-                           storedZone: TimeZone, newZone: TimeZone, keepsDays: Bool) -> Date {
-        movedStarts(slot: slot, storedStart: storedStart, plannedStart: plannedStart,
-                    storedZone: storedZone, newZone: newZone, keepsDays: keepsDays).max() ?? slot
+    /// The latest start a reading gives the occurrence at `slot`: the one the refusal names.
+    static func latestMove(slot: Date, plan: Plan) -> Date {
+        movedStarts(slot: slot, plan: plan).max() ?? slot
     }
 
-    static func lostReason(slot: Date, ruleEnd: Date, movedTo: Date, zone: TimeZone) -> String {
+    private static func iso(_ date: Date, _ zone: TimeZone) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = zone
-        return "Cannot move the start of this recurring event: the series' rule ends at \(formatter.string(from: ruleEnd)), "
-            + "and the occurrence at \(formatter.string(from: slot)) would start at \(formatter.string(from: movedTo)), after that end, "
-            + "so the store would drop it and undo cannot bring it back (#509). Nothing was written. To keep it, pass the series' rule "
-            + "in the same call as recurrence, with an end_date at or after \(formatter.string(from: movedTo))."
+        return formatter.string(from: date)
     }
 
-    static let unknownReason = "Cannot move the start of this recurring event: the series' rule ends at a fixed time, and its "
-        + "occurrences near that end could not be listed, so whether the move would drop one is not known (#509). Nothing was "
-        + "written. To move it, pass the series' rule in the same call as recurrence, with an end_date at or after the last "
-        + "occurrence's new start."
+    /// PR #510 round 1 (LOW 9): the recurrence route only for a rule this tool can write; it was
+    /// measured on a plain weekly rule.
+    private static func route(_ ruleWritable: Bool, after: String) -> String {
+        ruleWritable
+            ? "To keep it, pass the series' rule in the same call as recurrence, with an end_date at or after \(after) (measured to keep every occurrence on a weekly rule)."
+            : "This series' rule has parts this tool cannot write, so to move it, change the series in Calendar."
+    }
+
+    /// PR #510 round 1 (LOW 10): "may", since only some readings were measured.
+    static func lostReason(slot: Date, ruleEnd: Date, movedTo: Date, zone: TimeZone, ruleWritable: Bool) -> String {
+        "Cannot move the start or zone of this recurring event: the series' rule ends at \(iso(ruleEnd, zone)), and the occurrence at "
+            + "\(iso(slot, zone)) may start as late as \(iso(movedTo, zone)) after this write, after that end, so the store may drop it and "
+            + "undo cannot bring it back (#509; measured for a later time and a later day on a plain weekly rule, read from the rule "
+            + "for the other cases). Nothing was written. " + route(ruleWritable, after: iso(movedTo, zone))
+    }
+
+    static func pastEndReason(ruleEnd: Date, zone: TimeZone) -> String {
+        "Cannot move the start of this recurring event after the end of the series' rule (\(iso(ruleEnd, zone))): no occurrence it "
+            + "moves would remain, and undo cannot bring them back (#509). Nothing was written."
+    }
+
+    static func unknownReason(ruleWritable: Bool) -> String {
+        "Cannot move the start or zone of this recurring event: the series' rule ends at a fixed time, and whether the move would push "
+            + "an occurrence past it cannot be checked (#509): the series could not be listed near that end, an occurrence edited on its "
+            + "own there has no original slot in its identifier, or the move is more than a year. Nothing was written. "
+            + (ruleWritable
+               ? "To move it, pass the series' rule in the same call as recurrence, with an end_date at or after the last occurrence's new start."
+               : "This series' rule has parts this tool cannot write, so to move it, change the series in Calendar.")
+    }
 }

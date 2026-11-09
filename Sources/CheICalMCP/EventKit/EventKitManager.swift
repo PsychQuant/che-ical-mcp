@@ -1424,17 +1424,29 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #509: the store keeps the rule end as a fixed instant and re-expands the rule from the new
         // start, so a start change over the rest of the series dropped every occurrence moved past
         // that end, and answered updated (device). Refused before the first field is assigned.
+        // PR #510 round 1: gated on the series' rules, so the own-id routes (#416, #428) are checked
+        // (HIGH 2); a zone change counts (MEDIUM 5); a rule passed in the call is checked against its
+        // own end (MEDIUM 6).
+        let shiftStart: Date = datePlan.datesToWrite?.start ?? event.startDate
         if RuleEndShift.applies(
-            repeats: event.hasRecurrenceRules, reachesEnd: applyToAll || span == .futureEvents,
-            writesRule: recurrenceRule != nil || clearRecurrence,
-            storedStart: event.startDate, plannedStart: datePlan.datesToWrite?.start),
-           let plannedStart = datePlan.datesToWrite?.start {
+            repeats: RuleEndShift.repeats(masterHasRules: masterEvent.hasRecurrenceRules, addressesOwnOccurrence: addressesOwnOccurrence),
+            reachesEnd: applyToAll || span == .futureEvents,
+            movesStart: !UndoPostState.sameInstant(shiftStart, event.startDate), changesZone: changesZone) {
             let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
             let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
+            if addressesOwnOccurrence { _ = ruleHolder?.refresh() }   // as #505 reads it; a failure is fine (#326)
+            let rules = ruleHolder?.recurrenceRules ?? []
             let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
             let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
-            if let reason = ruleEndShiftRefusal(series: ruleHolder, seriesID: seriesID, storedStart: event.startDate,
-                                                plannedStart: plannedStart, storedZone: storedZone, newZone: newZone) {
+            let plan = RuleEndShift.Plan(
+                storedStarts: addressesOwnOccurrence ? [event.startDate, eventSlot] : [event.startDate],
+                plannedStart: shiftStart, storedZone: storedZone, newZone: newZone,
+                unit: RuleEndShift.unit(of: rules), keepsDays: rules.contains(where: RuleEndShift.keepsDays))
+            let ends = RuleEndShift.ends(stored: rules.compactMap { $0.recurrenceEnd?.endDate },
+                                         passedRule: RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence))
+            if let reason = ruleEndShiftRefusal(
+                series: ruleHolder, seriesID: seriesID, ends: ends, plan: plan,
+                from: applyToAll ? nil : eventSlot, ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil) {
                 throw EventKitError.seriesWriteRefused(reason: reason)
             }
         }
@@ -3683,7 +3695,7 @@ enum EventKitError: LocalizedError {
             if !spanAll {
                 return measured + " From one occurrence on, the recurrence route was not measured, and from a later occurrence a count is refused (#443): to move the whole series use span all, or change the series in Calendar."
             }
-            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day) together with start_time, on span all: measured clean on iCloud for a monthly series on days_of_month only, within one month; not for yearly series, a rule that also has days_of_week, a move to another month, or a series with an occurrence edited on its own."
+            return measured + " To move it, pass recurrence with every field of the series' rule as list_events shows it (frequency, interval, days_of_week, days_of_month and its bound, with days that include the new start's day, and an end_date no earlier than the last occurrence's new start, or the write is refused, #509) together with start_time, on span all: measured clean on iCloud for a monthly series on days_of_month only, within one month; not for yearly series, a rule that also has days_of_week, a move to another month, or a series with an occurrence edited on its own."
         case .weekdayOffNumberedRule(let startDay):
             return "This series repeats on a numbered weekday, such as the first Monday of the month, and the start would fall on \(startDay). This tool cannot write a rule like that, so change the series in Calendar. Nothing was written."
         case .exclusionOutOfWindow(let date):
