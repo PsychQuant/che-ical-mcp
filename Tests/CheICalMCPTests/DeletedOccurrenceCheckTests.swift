@@ -450,18 +450,18 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
     /// new end date (measured, kept them) is not.
     func testAPatternChangeIsChecked() {
         let stored = weekly(days: [2], count: 0, end: at("2027-01-04T23:00:00"))
-        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], end: at("2027-02-01T23:00:00")), stored: stored))
-        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2, 4], end: at("2027-01-04T23:00:00")), stored: stored))
-        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], interval: 2, end: at("2027-01-04T23:00:00")), stored: stored))
-        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], count: 3), stored: stored))
+        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], end: at("2027-02-01T23:00:00")), stored: [stored]))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2, 4], end: at("2027-01-04T23:00:00")), stored: [stored]))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], interval: 2, end: at("2027-01-04T23:00:00")), stored: [stored]))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], count: 3), stored: [stored]))
         // A weekly rule without days runs on its start's weekday (as the expander reads it), so the
         // measured end-date-only call is not a pattern change whether the store reads back that day
         // or no day; another day is.
         let monday = 2
-        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(weekly(end: at("2027-02-01T23:00:00")), stored: stored, startWeekday: monday))
+        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(weekly(end: at("2027-02-01T23:00:00")), stored: [stored], startWeekday: monday))
         XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], end: at("2027-02-01T23:00:00")),
-                                                             stored: weekly(end: at("2027-01-04T23:00:00")), startWeekday: monday))
-        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(end: at("2027-02-01T23:00:00")), stored: stored, startWeekday: 4))
+                                                             stored: [weekly(end: at("2027-01-04T23:00:00"))], startWeekday: monday))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(end: at("2027-02-01T23:00:00")), stored: [stored], startWeekday: 4))
         let start = at("2026-12-07T10:00:00"), end = at("2026-12-07T11:00:00")
         XCTAssertTrue(DeletedOccurrenceCheck.applies(reachesSeveral: true, clearingRecurrence: false, plannedDates: nil,
                                                      storedStart: start, storedEnd: end, resultAllDay: false, storedAllDay: false,
@@ -471,14 +471,23 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
     /// LOW: the span-future route says measured only for a new start.
     func testTheRouteSaysMeasuredOnlyForANewStart() {
         XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil, change: .start).contains("stay deleted (measured)"))
-        for change in [DeletedOccurrenceCheck.ChangeKind.endOnly, .zone, .pattern, .account] {
+        for change in [DeletedOccurrenceCheck.ChangeKind.endOnly, .zone, .account, .combined, .unproven] {
             let text = DeletedOccurrenceCheck.deletedReason(blocked: nil, change: change)
             XCTAssertFalse(text.contains("stay deleted (measured)"), "\(change)")
             XCTAssertTrue(text.contains("not for this kind of change"), "\(change)")
         }
-        XCTAssertEqual(DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: false, endChanges: true, changesZone: false, changesPattern: false), .endOnly)
-        XCTAssertEqual(DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: false, endChanges: false, changesZone: true, changesPattern: false), .zone)
-        XCTAssertEqual(DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: true, endChanges: true, changesZone: true, changesPattern: false), .start)
+        func kind(start: Bool? = false, end: Bool = false, zone: Bool = false, pattern: Bool = false, account: Bool = false) -> DeletedOccurrenceCheck.ChangeKind {
+            DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: start, endChanges: end, changesZone: zone,
+                                              changesPattern: pattern, changesAccount: account)
+        }
+        XCTAssertEqual(kind(end: true), .endOnly)
+        XCTAssertEqual(kind(zone: true), .zone)
+        // Round 6 (LOW 3, 5): measured only when the start is the only change (with the end it moves).
+        XCTAssertEqual(kind(start: true, end: true), .start)
+        XCTAssertEqual(kind(start: true, end: true, zone: true), .combined)
+        XCTAssertEqual(kind(start: true, pattern: true), .combined)
+        XCTAssertEqual(kind(start: true, account: true), .combined)
+        XCTAssertEqual(kind(start: nil, end: true), .unproven, "a start that cannot be compared with a proven slot")
     }
 
     /// LOW: the round-4 first-slot case carries its own cause into the verdict.
@@ -491,5 +500,65 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
                                                       changesAllDay: false, reachedFrom: nil, scannedTo: at("2027-12-31T00:00:00"), coversWholeSeries: true,
                                                       calendar: calendar, firstSlotCause: .ridAfterStart),
                        .unknown(.firstSlot(.ridAfterStart)))
+    }
+
+    // MARK: - Round 6 of PR #505
+
+    private func monthly(days: [Int] = [], end: Date? = nil) -> DeletedOccurrenceCheck.Rule {
+        .init(frequency: .monthly, interval: 1, daysOfWeek: [], daysOfMonth: days, endDate: end, occurrenceCount: 0, hasOtherParts: false)
+    }
+
+    /// LOW 5: the start counts as changed only against the proven first slot. A first occurrence
+    /// edited only in its title holds its slot, so end_time alone is an end change, not a new start.
+    func testTheStartIsComparedWithTheProvenSlot() {
+        let slot = at("2026-12-07T10:00:00")
+        XCTAssertEqual(DeletedOccurrenceCheck.startChanges(planned: nil, provenSlot: slot), false)
+        XCTAssertEqual(DeletedOccurrenceCheck.startChanges(planned: slot, provenSlot: slot), false)
+        XCTAssertEqual(DeletedOccurrenceCheck.startChanges(planned: at("2026-12-07T12:00:00"), provenSlot: slot), true)
+        XCTAssertNil(DeletedOccurrenceCheck.startChanges(planned: slot, provenSlot: nil), "no proven slot: not shown either way")
+    }
+
+    /// LOW 4 (two rules), LOW 11 (a monthly rule without days): more than one stored rule is a pattern
+    /// change, and a monthly rule without days runs on its start's day, as the expander reads it.
+    func testTwoRulesOrAnotherMonthDayIsAPatternChange() {
+        let stored = weekly(days: [2], end: at("2027-01-04T23:00:00"))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], end: at("2027-02-01T23:00:00")), stored: [stored, weekly(days: [4])]))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(weekly(days: [2], end: at("2027-02-01T23:00:00")), stored: []))
+        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(monthly(end: at("2027-06-15T23:00:00")), stored: [monthly(days: [15])], startDay: 15))
+        XCTAssertFalse(DeletedOccurrenceCheck.changesPattern(monthly(days: [15], end: at("2027-06-15T23:00:00")), stored: [monthly()], startDay: 15))
+        XCTAssertTrue(DeletedOccurrenceCheck.changesPattern(monthly(end: at("2027-06-15T23:00:00")), stored: [monthly(days: [15])], startDay: 16))
+    }
+
+    /// LOW 9: a new pattern is refused because it was not measured; the text says so and offers no
+    /// time-change route (a count from a later occurrence is refused by #451).
+    func testAPatternRefusalNamesTheRuleAndOffersNoRoute() {
+        let text = DeletedOccurrenceCheck.deletedReason(blocked: nil, change: .pattern)
+        XCTAssertTrue(text.contains("whether a new pattern of the rule"), text)
+        XCTAssertFalse(text.contains("To change the time"), text)
+        XCTAssertFalse(text.contains("span 'future' with the occurrence_date"), text)
+        XCTAssertTrue(text.contains("Nothing was written."))
+    }
+
+    /// MEDIUM 2, measured on iCloud (2026-11-09): with span all and with span future from a later
+    /// occurrence, through the series' id and through an occurrence's own id, these fields kept the
+    /// deletions before and after the anchor. The texts name the spans measured.
+    func testTheKeptFieldsNameTheSpansMeasured() {
+        let kept = "A change of the title, notes, location, url, alarms or structured_location keeps them (measured on iCloud with span all and with span future from a later occurrence)."
+        XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil).contains(kept))
+        XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil, change: .pattern).contains(kept))
+        XCTAssertTrue(DeletedOccurrenceCheck.unknownReason(.notListed).contains(kept))
+        XCTAssertFalse(DeletedOccurrenceCheck.unknownReason(.notListed).contains("A title, notes or location change"))
+    }
+
+    /// LOW 6: a cross-account write from a later occurrence says it moves part of the series.
+    func testACrossAccountWriteFromALaterOccurrenceSaysSo() {
+        let part = DeletedOccurrenceCheck.accountMoveReason(.deleted(blocked: nil), fromLaterOccurrence: true)
+        XCTAssertTrue(part.contains("the occurrences from this one on"), part)
+        XCTAssertFalse(DeletedOccurrenceCheck.accountMoveReason(.deleted(blocked: nil)).contains("the occurrences from this one on"))
+    }
+
+    /// INFO 12: a day counted from the month's end is named among the rules not followed.
+    func testANegativeMonthDayIsNamed() {
+        XCTAssertTrue(DeletedOccurrenceCheck.unknownReason(.ruleNotFollowed).contains("counted from the month's end"))
     }
 }

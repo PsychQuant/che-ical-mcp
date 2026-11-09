@@ -6,7 +6,11 @@ import Foundation
 /// or a later one, a time of day, a new date, `end_time` alone, `all_day`) brought back every
 /// occurrence deleted on its own among the occurrences it reached, and answered `updated`.
 /// Title, notes and location kept them, so did the stored start and end written again, and so did
-/// `timezone` alone on a series that had not started. Undo refuses every recurring update, so
+/// `timezone` alone on a series that had not started. PR #505 round 6 (measured on iCloud, 2026-11-09):
+/// with span future from a later occurrence, a title, notes and location, url, alarms and
+/// structured_location, a recurrence with only a new end date, and that rule with a calendar of the
+/// same account kept deletions before and after the anchor too, through the series' id and (url,
+/// alarms, structured_location on a count series) through an occurrence's own id. Undo refuses every recurring update, so
 /// nothing restores the deletion. EventKit exposes no exception dates, so a deletion is found as a
 /// slot the rule gives that no listed occurrence holds: this file expands the rule (narrowly) and
 /// compares. Pure; the listing is `EventKitManager.deletedOccurrenceVerdict`.
@@ -100,26 +104,45 @@ enum DeletedOccurrenceCheck {
     /// A weekly rule without days runs on its start's weekday (`startWeekday`, an `EKWeekday` raw
     /// value), as the expander reads it, so a store that reads that day back, or none, is the same
     /// pattern. Without `startWeekday` the days are compared as given (a difference is checked).
-    static func changesPattern(_ rule: Rule, stored: Rule?, startWeekday: Int? = nil) -> Bool {
-        guard let stored else { return true }
+    /// Round 6 (LOW 4, 11): `stored` is every rule of the series; anything but one is a pattern change
+    /// (the write keeps one rule). A monthly rule without days runs on its start's day (`startDay`),
+    /// as the expander reads it. Both are read from the series' original first slot by the caller.
+    static func changesPattern(_ rule: Rule, stored: [Rule], startWeekday: Int? = nil, startDay: Int? = nil) -> Bool {
+        guard stored.count == 1, let stored = stored.first else { return true }
         func days(_ rule: Rule) -> Set<Int> {
             if rule.frequency == .weekly, rule.daysOfWeek.isEmpty, let startWeekday { return [startWeekday] }
             return Set(rule.daysOfWeek)
         }
+        func monthDays(_ rule: Rule) -> Set<Int> {
+            if rule.frequency == .monthly, rule.daysOfMonth.isEmpty, let startDay { return [startDay] }
+            return Set(rule.daysOfMonth)
+        }
         return rule.frequency != stored.frequency || rule.interval != stored.interval
-            || days(rule) != days(stored) || Set(rule.daysOfMonth) != Set(stored.daysOfMonth)
+            || days(rule) != days(stored) || monthDays(rule) != monthDays(stored)
             || rule.occurrenceCount != stored.occurrenceCount || rule.hasOtherParts != stored.hasOtherParts
     }
 
     /// Round 5 (LOW): the kind of change, in this order: all_day, a new start, an end alone, a zone,
-    /// a rule, an account.
-    static func changeKind(allDayChanges: Bool, startChanges: Bool, endChanges: Bool, changesZone: Bool, changesPattern: Bool) -> ChangeKind {
+    /// a rule, an account. Round 6 (LOW 3, 5): a new start is `.start` only when nothing else of
+    /// these changes with it (the end may move with it: a new time of day was measured), else
+    /// `.combined`; `startChanges` nil (no proven slot to compare with) is `.unproven`.
+    static func changeKind(allDayChanges: Bool, startChanges: Bool?, endChanges: Bool, changesZone: Bool, changesPattern: Bool,
+                           changesAccount: Bool) -> ChangeKind {
         if allDayChanges { return .allDay }
-        if startChanges { return .start }
+        guard let startChanges else { return .unproven }
+        if startChanges { return changesZone || changesPattern || changesAccount ? .combined : .start }
         if endChanges { return .endOnly }
         if changesZone { return .zone }
         if changesPattern { return .pattern }
         return .account
+    }
+
+    /// Round 6 (LOW 5): whether the planned start differs from the proven slot; nil when no slot is
+    /// proven, so neither can be shown.
+    static func startChanges(planned: Date?, provenSlot: Date?) -> Bool? {
+        guard let planned else { return false }
+        guard let provenSlot else { return nil }
+        return !UndoPostState.sameInstant(planned, provenSlot)
     }
 
     /// `.stored` only when the proven first slot is the shown start (`startDate`) and the first
@@ -131,7 +154,7 @@ enum DeletedOccurrenceCheck {
 
     /// PR #505 round 5 (LOW): which kind of change the write is, so the span-future route says
     /// "measured" only for the kinds measured (a new start: a time of day or a date).
-    enum ChangeKind: Equatable { case start, endOnly, zone, allDay, pattern, account }
+    enum ChangeKind: Equatable { case start, combined, unproven, endOnly, zone, allDay, pattern, account }
 
     /// Whether the write is the measured shape: it reaches more than one occurrence, keeps the rule,
     /// and changes the start, the end or the all-day flag (the stored values written again kept them).
@@ -359,22 +382,32 @@ enum DeletedOccurrenceCheck {
         case .nothingAfter?:
             route = "No update route keeps the deletions here: no occurrence that was not edited on its own follows the last deleted one, so there is nowhere to start span 'future' from. Change the series in Calendar (not measured)."
         }
-        return "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach), and changing the start, end, all_day or time zone of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. A title, notes or location change keeps them. \(route) Nothing was written."
+        let found = "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach)"
+        // Round 6 (LOW 9): a new pattern alone is refused because it was not measured; no time route.
+        if change == .pattern {
+            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day or time zone brought them back, measured on iCloud, and a new end_date alone kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
+        }
+        return "\(found), and changing the start, end, all_day or time zone of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. \(keptText) \(route) Nothing was written."
     }
 
     /// PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete; whether the
     /// new series keeps the occurrences deleted on its own was not measured (no second account), so it
     /// is refused while one is found or cannot be ruled out. Round 5: the unknown text names its cause,
     /// and the same-account measurement is named as update_event's.
-    static func accountMoveReason(_ verdict: Verdict) -> String {
+    /// Round 6 (LOW 6): `fromLaterOccurrence` names the part a span-future write moves.
+    static func accountMoveReason(_ verdict: Verdict, fromLaterOccurrence: Bool = false) -> String {
         let found: String
         if case .unknown(let cause) = verdict {
             found = "and this check cannot rule one out: \(unknownCause(cause))"
         } else {
             found = "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
         }
-        return "Moving this series to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it with update_event to a calendar of the same account kept them (measured). Nothing was written."
+        let subject = fromLaterOccurrence ? "Moving the occurrences from this one on" : "Moving this series"
+        return "\(subject) to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it with update_event to a calendar of the same account kept them (measured with span all, and with span future from a later occurrence together with a new end_date). Nothing was written."
     }
+
+    /// MEDIUM 2 of round 6 (measured on iCloud, 2026-11-09): the fields that kept the deletions, and the spans.
+    static let keptText = "A change of the title, notes, location, url, alarms or structured_location keeps them (measured on iCloud with span all and with span future from a later occurrence)."
 
     /// The condition that made the check unable to tell, one text each.
     static func unknownCause(_ cause: UnknownCause) -> String {
@@ -393,7 +426,7 @@ enum DeletedOccurrenceCheck {
             }
             return "its first slot cannot be shown (\(why))"
         case .editedWithoutSlot: return "an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time"
-        case .ruleNotFollowed: return "its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year)"
+        case .ruleNotFollowed: return "its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th or counted from the month's end, or February 29 every year)"
         case .listedOffRule: return "a listed occurrence falls where the rule gives none"
         case .allDayEnd: return "it is an all-day series whose rule ends less than a day after an occurrence's start, and whether that day is listed east of UTC was not measured"
         case .notCovered: return "the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days)"
@@ -401,7 +434,7 @@ enum DeletedOccurrenceCheck {
     }
 
     static func unknownReason(_ cause: UnknownCause) -> String {
-        "This write changes the start, end, all_day, time zone or rule of more than one occurrence of a series; a change of the start, end, all_day or time zone brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: \(unknownCause(cause)). A title, notes or location change is not affected. Nothing was written."
+        "This write changes the start, end, all_day, time zone or rule of more than one occurrence of a series; a change of the start, end, all_day or time zone brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: \(unknownCause(cause)). \(keptText) Nothing was written."
     }
 }
 

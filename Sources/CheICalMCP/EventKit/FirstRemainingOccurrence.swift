@@ -303,8 +303,9 @@ extension EventKitManager {
     /// PR #505 round 5 (MEDIUM): whether a whole-series write's planned dates can be compared with the
     /// stored ones. They are the first occurrence's shown times, which are its slot only when it was not
     /// edited on its own and its slot is shown; otherwise `.unproven`, and any date in the call is checked.
-    func wholeSeriesBaseline(of series: EKEvent, id: String, viaStandIn: Bool) -> DeletedOccurrenceCheck.StoredBaseline {
-        guard let (_, candidates) = seriesOccurrences(of: series, id: id), !candidates.isEmpty else { return .unproven }
+    /// Round 6 (LOW 5): also the proven first slot itself, which a planned start is compared with.
+    func wholeSeriesBaseline(of series: EKEvent, id: String, viaStandIn: Bool) -> (baseline: DeletedOccurrenceCheck.StoredBaseline, slot: Date?) {
+        guard let (_, candidates) = seriesOccurrences(of: series, id: id), !candidates.isEmpty else { return (.unproven, nil) }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
         func ruleSlot(_ candidate: FirstRemainingOccurrence.Candidate) -> Date {
             UndoPostState.ruleSlot(of: candidate, isAllDay: series.isAllDay, zone: zone)
@@ -314,7 +315,7 @@ extension EventKitManager {
             occurrenceDate: series.occurrenceDate, startDate: series.startDate, startMatches: atStart.count,
             startRIDSlot: atStart.first.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
             earliestListedSlot: candidates.map(ruleSlot).min(), viaStandIn: viaStandIn, isDetached: series.isDetached)
-        return DeletedOccurrenceCheck.baseline(firstSlot: slot, firstIsEdited: atStart.first?.isDetached ?? true, startDate: series.startDate)
+        return (DeletedOccurrenceCheck.baseline(firstSlot: slot, firstIsEdited: atStart.first?.isDetached ?? true, startDate: series.startDate), slot)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
