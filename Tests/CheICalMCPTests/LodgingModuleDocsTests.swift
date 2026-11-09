@@ -210,6 +210,32 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "before the stay is created again (nobody to ask: pending, nothing created)", "a reconfirmation with nobody to ask (round 7 #8)"),
             (lodging, "that shares no night with the booking is named in the report next to `created`", "a nearby unconfirmed stay is named (round 7 #10)"),
             (lodgingSpec, "SHALL be named in the report next to the created stay", "a nearby unconfirmed stay is named (spec, round 7 #10)"),
+            // Round 8
+            (lodging, "**No create beside a stay at the same property.**", "a property guard before any create without a question (round 8 #1 #2 #4 #9)"),
+            (lodging, "The guard does not depend on reservation numbers, `(also …)` parts or state entries.", "the guard needs no alias bookkeeping (round 8)"),
+            (lodging, "and one that also carries another module's marker, so an `unconfirmed` stay that belongs to neither module still stops the create", "dual-marker unconfirmed stay (round 8 #1)"),
+            (lodging, "the guard \"No create beside a stay at the same property\" (below) runs, and a stay it finds makes the create ask", "step 3 runs the guard (round 8)"),
+            (lodging, "the guard of section 4 \"No create beside a stay at the same property\" runs before a statement creates", "a statement runs the guard (round 8 #1)"),
+            (lodging, "that answer writes the other number on the `Reservation:` line", "the same-stay answer writes the (also) part (round 8 #2)"),
+            (lodging, "**Every later write keeps the `Reservation:` line as `<marker number> (also <other number>)`**", "updates keep the (also) part (round 8 #4)"),
+            (lodging, "a reservation number copied from a mail that contains `(also` is written with `· ` in front of `(also`", "a mail cannot plant an (also) part (round 8 #7)"),
+            (lodging, "An `unconfirmed` stay has no reservation number, so deleting it leaves no record", "an unconfirmed stay's delete leaves no record (round 8 #5)"),
+            (lodging, "covers one of its nights (named only, not adopted)", "a hand-built stay in another calendar is named (round 8 #10)"),
+            (lodgingSpec, "SHALL NOT create without a question while any event with a `lodging-module:` marker line", "the property guard (spec, round 8)"),
+            (lodgingSpec, "the answer itself SHALL write the other number on the `Reservation:` line", "the same-stay answer writes the (also) part (spec, round 8 #2)"),
+            (lodgingSpec, "every later write SHALL keep the `Reservation:` line as the marker's number followed by the `(also …)` part", "updates keep the (also) part (spec, round 8 #4)"),
+            (lodgingSpec, "deleting an `unconfirmed` stay SHALL leave no record", "an unconfirmed stay's delete (spec, round 8 #5)"),
+            (lodgingSpec, "#### Scenario: Same stay, but the write declined, then a moved confirmation under the second number", "same stay, no, then a second-number confirmation (spec, round 8 #2)"),
+            (lodgingSpec, "#### Scenario: The `(also …)` part lost by an update", "the alias lost (spec, round 8 #4)"),
+            (lodgingSpec, "#### Scenario: An unconfirmed stay that also carries a conference marker is stated again", "dual-marker unconfirmed stay (spec, round 8 #1)"),
+            (archive, "write one cancellation record for each number on the deleted stay's `Reservation:` line", "one record per number (archive-event, round 8 #3 #6)"),
+            (archive, "the records, not the mappings, keep a cancelled number from being created again under either number", "alias coverage kept by the records (archive-event, round 8 #3)"),
+            (archive, "the module's guard \"No create beside a stay at the same property\"", "archive-event runs the guard (round 8)"),
+            (archivingSpec, "SHALL write one such record for each number on the deleted stay's `Reservation:` line", "one record per number (archiving spec, round 8 #3 #6)"),
+            (archivingSpec, "SHALL NOT create a stay without a question while the module's guard finds a stay at the same property", "the guard (archiving spec, round 8)"),
+            (lodging, "an entry whose event still exists but carries the number in neither place is not dropped", "a mapped event without the number asks (round 8 #9)"),
+            (lodgingSpec, "an entry naming an existing event that carries the number in neither place SHALL make that event a possible-match row", "a mapped event without the number asks (spec, round 8 #9)"),
+            (changelog, "**No create beside a stay at the same property.**", "CHANGELOG names the guard (round 8)"),
             (changelog, "a record or a `by_user` record silences a cancellation notice only on the same number, the same property and its days", "CHANGELOG names the round 6 and 7 changes (round 7 #7)"),
         ]
     }
@@ -272,6 +298,19 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "A cancellation notice that finds its event always reaches"),
             (lodgingSpec, "and a cancellation notice, which SHALL always reach"),
             (changelog, "above the marker.  A skipped"),
+        ]
+        for (document, phrase) in removed {
+            XCTAssertFalse(try read(document).contains(phrase), "\(document) still says \(phrase)")
+        }
+    }
+
+    /// Round 8: the singular record restatement and the alias written only with the mail's write are gone.
+    func testTheRound8WordingIsGone() throws {
+        let removed: [(String, String)] = [
+            (lodging, "the other number is written on the `Reservation:` line as `<number> (also <other number>)`"),
+            (archive, "write the cancellation record: an entry keyed by the cancelling message"),
+            (archivingSpec, "remove every mapping that names it and write an entry keyed by the cancelling message"),
+            (lodgingSpec, "the other number SHALL be added to the `Reservation:` line, and"),
         ]
         for (document, phrase) in removed {
             XCTAssertFalse(try read(document).contains(phrase), "\(document) still says \(phrase)")
