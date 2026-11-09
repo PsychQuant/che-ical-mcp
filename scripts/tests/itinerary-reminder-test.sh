@@ -320,6 +320,41 @@ check "after a walk that was killed, the next stop within 5 minutes is silent" "
 T="$TMP/trips/clean"; trip "$T"; run start "$(json clean "$T")"; run stop "$(json clean "$T")"
 [ -e "$CLAUDE_PLUGIN_DATA/itinerary-sessions/clean.slow" ] && bad "a walk that ends normally leaves no pause" || ok "a walk that ends normally leaves no pause"
 
+# --- round 3 (#500 report r3) ---------------------------------------------------------------
+# #3: an ignored directory is pruned before it is walked, so it does not use up the walk budget.
+T="$TMP/trips/prune"; trip "$T" 'itinerary_ignore: [drafts/]'; run start "$(json prune "$T")"
+for n in $(seq 1 150); do mkdir -p "$T/drafts/d$(printf %03d $n)"; done
+mkdir -p "$T/aaa"; printf x > "$T/aaa/real.md"
+OUT=$(printf '%s' "$(json prune "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=100 bash "$HOOK" stop 2>/dev/null)
+ctx=$(context "$OUT")
+has "a large ignored directory does not hide a real change elsewhere" "$ctx" "aaa/real.md"
+hasnt "and the walk did not stop early" "$ctx" "stopped early"
+# #5: a session id with a newline is refused by the helper.
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" "$(printf 'exact\n../x')" >/dev/null 2>&1; check "the helper refuses a session id with a newline" "$?" "2"
+# #6: a symlinked itinerary-sessions directory or list file is refused.
+L="$TMP/linkdata"; mkdir -p "$L" "$TMP/elsewhere-sessions"; ln -s "$TMP/elsewhere-sessions" "$L/itinerary-sessions"; printf '{}' > "$TMP/elsewhere-sessions/x.changed.json"
+bash "$HELPER" "$L" x >/dev/null 2>&1; check "the helper refuses a symlinked sessions directory" "$?" "2"
+L2="$TMP/linkdata2"; mkdir -p "$L2/itinerary-sessions"; ln -s "$TMP/elsewhere-sessions/x.changed.json" "$L2/itinerary-sessions/y.changed.json"
+bash "$HELPER" "$L2" y >/dev/null 2>&1; check "the helper refuses a symlinked list file" "$?" "2"
+# #8: lone surrogates and private-use characters are dropped from display names; the stored list is ASCII JSON.
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.render("a\udcffbc"))' "$PROJECT_DIR/plugin/hooks" 2>/dev/null)
+check "Cs and Co characters are removed from a display name" "$got" '"abc"'
+T="$TMP/trips/ascii"; trip "$T"; run start "$(json ascii "$T")"; printf x > "$T/日程.md"
+run stop "$(json ascii "$T")"
+python3 -c 'import sys; d=open(sys.argv[1],"rb").read(); sys.exit(0 if all(b < 128 for b in d) else 1)' "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ascii.changed.json" && ok "the stored list is ASCII JSON" || bad "the stored list is ASCII JSON"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"])')
+check "and decodes to the exact name" "$got" "['日程.md']"
+has "the reminder shows the name as it is" "$(context "$OUT")" "日程.md"
+# #10: the stored list is capped, with the total.
+T="$TMP/trips/capped"; trip "$T"; run start "$(json capped "$T")"; mkdir -p "$T/c"; for n in $(seq 1 250); do : > "$T/c/f$n"; done
+run stop "$(json capped "$T")"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" capped | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["files"]), d["total"])')
+check "the stored list holds at most 200 paths and the total" "$got" "200 250"
+# #11: a walk that takes long and finds nothing also pauses.
+T="$TMP/trips/slowwalk"; trip "$T"; run start "$(json slowwalk "$T")"
+OUT=$(printf '%s' "$(json slowwalk "$T")" | CHE_ICAL_ITINERARY_SLOW_WALK_SECONDS=0 bash "$HOOK" stop 2>/dev/null)
+[ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/slowwalk.slow" ] && ok "a slow walk with no change pauses the next ones" || bad "a slow walk with no change pauses the next ones"
+
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"
 for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done

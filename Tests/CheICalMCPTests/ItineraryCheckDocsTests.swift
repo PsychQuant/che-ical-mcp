@@ -46,6 +46,8 @@ final class ItineraryCheckDocsTests: XCTestCase {
             XCTAssertFalse(front.contains(write), "itinerary-check must not pre-approve \(write)")
         }
         XCTAssertTrue(front.contains("search_events"))
+        // #500 r3 #9: no unscoped Read either: outside the working directory a read prompts as usual.
+        XCTAssertFalse(front.contains("- Read"), "itinerary-check must not pre-approve Read")
         // A tool on this list is pre-approved in the turn that invokes the skill, the same turn that
         // reads untrusted trip files, so Bash is scoped to the one command the skill runs (#341 round 1).
         let entries = front.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -93,6 +95,30 @@ final class ItineraryCheckDocsTests: XCTestCase {
         ] {
             XCTAssertTrue(text.contains(phrase), "\(skill) lacks: \(phrase)")
         }
+    }
+
+    /// #500 r3 #4: the rule is a property, not a list of the module paths that write without a question.
+    func testModulesWriteNothingBeforeTheYesAsAProperty() throws {
+        let text = try read(skill)
+        XCTAssertEqual(text.components(separatedBy: "**On the itinerary-check path, a module writes nothing (create, update, delete, read-back correction) before the user's yes on this skill's table.**").count - 1, 1)
+        XCTAssertFalse(text.contains("these are the ones that exist"), "the closed list of silent module paths is gone")
+    }
+
+    /// #500 r3 #1 and #2: where the trip folder comes from, and a manual run with no config.
+    func testTheTripFolderIsTheHooksAndANoConfigRunAsksFirst() throws {
+        let text = try read(skill)
+        for phrase in ["the `trip_folder` of the helper's JSON is the trip folder",
+                       "the logical ancestor of the working directory whose `.claude/.ical/config.yaml` is the config the finder printed",
+                       "ask the user to confirm the trip folder, and read no file until they confirm it"] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
+        }
+        XCTAssertFalse(text.contains("the folder that holds the config's `.claude` directory"))
+    }
+
+    /// #500 r3 #7: the other documents name both Bash commands.
+    func testTheOtherDocumentsNameBothCommands() throws {
+        XCTAssertTrue(try read("plugin/CLAUDE.md").contains("two scoped Bash commands (the config lookup and the changed-paths helper)"))
+        XCTAssertTrue(try read("openspec/changes/add-itinerary-calendar-check/design.md").contains("\"/bin/itinerary-changed.sh *)"))
     }
 
     func testTheUpgradeNoticeAndTheSwitchAreDocumented() throws {

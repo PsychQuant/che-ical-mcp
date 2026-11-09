@@ -30,14 +30,14 @@ headless 的執行（`claude -p`、Agent SDK、排程或背景 session）多出�
 ### 設定鍵不用 YAML 函式庫讀
 
 hook 只讀兩個頂層鍵：
-- `itinerary_check`：`off` 或 `false` 關閉提醒，引號有無、大小寫都可以。
+- `itinerary_check`：`off`、`no` 或 `false` 關閉提醒，引號有無、大小寫都可以。
 - `itinerary_ignore`：行內清單或區塊清單。
 
 macOS 的 python3 預設沒有 YAML 模組，所以用逐行解析讀這兩個鍵；檔案其他內容 hook 不看。
 
 ### 檢查本身不寫入，使用者的同意是唯一的關卡
 
-`allowed-tools` 在呼叫 skill 的那個回合預先核准，而那個回合也讀不受信任的檔案，所以只列讀取工具，Bash 限定為設定檔查詢那一個指令（`Bash(bash ${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh *)`；Claude Code 文件：結尾 ` *` 也比對單獨的指令，複合指令會先拆開再比對）。這只讓 skill 自己的回合維持唯讀，不是寫入的第二道檢查：使用者的設定可能已允許寫入工具或使用 auto mode。寫入的唯一關卡是使用者對那一列的同意。從本 skill 進入的模組，不適用它自己不問就寫的路徑（會議模組的 exact match 更新與 partial correction、住宿模組不問的寫入）：要改的都列進本 skill 的表，或由模組先列它自己的表，同意之前什麼都不寫。變更先依事件屬於誰分派（會議標記→會議模組、住宿標記→住宿模組、其他→`update_event`），沒有事件的事實再依種類（新發布的議程→會議模組的完整貼上、住宿→住宿模組、其他→`create_event`）。
+`allowed-tools` 在呼叫 skill 的那個回合預先核准，而那個回合也讀不受信任的檔案，所以只列行事曆讀取工具與兩個限定範圍的 Bash 指令：設定檔查詢 `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/find-ical-config.sh *)` 與變更清單 helper `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/itinerary-changed.sh *)`，不列 `Read`（工作目錄外的讀取照常跳提示）；Claude Code 文件：結尾 ` *` 也比對單獨的指令，複合指令會先拆開再比對）。這只讓 skill 自己的回合維持唯讀，不是寫入的第二道檢查：使用者的設定可能已允許寫入工具或使用 auto mode。寫入的唯一關卡是使用者對那一列的同意。在本 skill 的路徑上，模組在使用者對本 skill 的表說 yes 之前什麼都不寫（建立、修改、刪除、讀回修正都算）；這是一條性質，不是一份清單，模組的對照表仍提供表格的列。旅程資料夾：提醒來的取 helper JSON 的 `trip_folder`，手動執行取工作目錄的邏輯祖先（hook 的規則），沒有設定檔時先請使用者確認資料夾、確認前不讀任何檔案。符合 `/` 結尾忽略樣式的目錄在走訪前就略過，不佔走訪額度；走訪超過 1 秒而沒找到變更時也暫停 5 分鐘。變更先依事件屬於誰分派（會議標記→會議模組、住宿標記→住宿模組、其他→`update_event`），沒有事件的事實再依種類（新發布的議程→會議模組的完整貼上、住宿→住宿模組、其他→`create_event`）。
 
 ## Risks / Trade-offs
 

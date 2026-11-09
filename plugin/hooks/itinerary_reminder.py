@@ -39,7 +39,9 @@ SLOW_PAUSE = 300       # after a walk that stopped early and found nothing, wait
 SKIPPED_DIRS = (".git", ".claude")
 SKIPPED_FILES = (".DS_Store",)
 SESSION = re.compile(r"[A-Za-z0-9_-]{1,128}")
-DROPPED_CATEGORIES = ("Cc", "Cf", "Zl", "Zp")
+DROPPED_CATEGORIES = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co")
+STORED = 200          # exact paths stored for the skill; the total is stored too
+SLOW_WALK_SECONDS = 1.0  # a walk this long that finds nothing also pauses the next ones
 
 
 INTERACTIVE_ENTRYPOINTS = ("cli",)   # observed; any other value, or none, counts as headless
@@ -49,6 +51,15 @@ def walk_exit_at():
     """CHE_ICAL_ITINERARY_WALK_EXIT_AT ends the process mid-walk, as a hook timeout would (tests only)."""
     value = os.environ.get("CHE_ICAL_ITINERARY_WALK_EXIT_AT", "")
     return int(value) if value.isdigit() and int(value) > 0 else 0
+
+
+def slow_walk_seconds():
+    """CHE_ICAL_ITINERARY_SLOW_WALK_SECONDS lowers the slow-walk threshold (for the hook's tests)."""
+    value = os.environ.get("CHE_ICAL_ITINERARY_SLOW_WALK_SECONDS", "")
+    try:
+        return min(float(value), SLOW_WALK_SECONDS) if value else SLOW_WALK_SECONDS
+    except ValueError:
+        return SLOW_WALK_SECONDS
 
 
 def walk_limit():
@@ -234,7 +245,9 @@ def visit(entry, trip, since, ignores, stack):
             return None
         if entry.is_dir(follow_symlinks=False):
             if entry.name not in SKIPPED_DIRS:
-                stack.append(entry.path)
+                rel_dir = os.path.relpath(entry.path, trip).replace(os.sep, "/")
+                if not ignored(rel_dir + "/", ignores):   # an ignored directory is pruned, not walked
+                    stack.append(entry.path)
             return None
         if not entry.is_file(follow_symlinks=False) or entry.name in SKIPPED_FILES:
             return None
@@ -308,24 +321,23 @@ def stop(data, folder):
             f.write(repr(time.time()))
     except OSError:
         return
+    began = time.monotonic()
     files, cut_short = changed_files(trip, since, ignores)
-    if not (cut_short and not files):
+    slow_walk = time.monotonic() - began >= slow_walk_seconds()
+    if not ((cut_short or slow_walk) and not files):
         try:
             os.remove(slow)
         except OSError:
             pass
     if not files:
         return
-    try:  # the exact paths, for the itinerary-check skill (bin/itinerary-changed.sh)
-        with open(os.path.join(folder, sid + ".changed.json"), "w", encoding="utf-8") as f:
-            json.dump({"trip_folder": trip, "files": sorted(files), "complete": not cut_short}, f, ensure_ascii=False)
-    except OSError:
+    stored = sorted(files)
+    try:  # the exact paths, for the itinerary-check skill (bin/itinerary-changed.sh); ASCII JSON
+        with open(os.path.join(folder, sid + ".changed.json"), "w", encoding="ascii") as f:
+            json.dump({"trip_folder": trip, "files": stored[:STORED], "total": len(stored),
+                       "complete": not cut_short}, f, ensure_ascii=True)
+    except (OSError, ValueError):
         return
-    try:
-        with open(reminded, "x") as f:
-            f.write(repr(time.time()))
-    except OSError:
-        return  # without the record it would remind again on every turn: stay silent instead
     message = (
         f"che-ical-mcp itinerary check (#341): files changed since this session started in the trip folder {render(trip)} "
         "(by anyone: this session, a sync client or another session). "
@@ -339,7 +351,14 @@ def stop(data, folder):
         "This reminder comes once per session; `itinerary_check: off` in the folder's .claude/.ical/config.yaml "
         "turns it off, and `itinerary_ignore:` skips files."
     )
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}}))
+    output = json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}})
+    try:
+        output.encode("utf-8")   # a name that cannot be printed fails here, before anything is recorded
+        with open(reminded, "x") as f:
+            f.write(repr(time.time()))
+    except (OSError, UnicodeError):
+        return  # without the record it would remind again on every turn: stay silent instead
+    print(output)
 
 
 def main():
