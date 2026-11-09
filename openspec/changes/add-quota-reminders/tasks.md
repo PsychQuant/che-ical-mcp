@@ -31,6 +31,10 @@
 
 - [x] 2f.1（The reminder has one shape；Each period has a stable identity；v1 只做 per-period，紀錄要寫下來（verify 第 5 輪，可撤回的決定））拿掉 rule mode（`--written-mode`、滾過、重啟、`clear_recurrence`、兩個系列、模式翻轉）；每一期一則一次性提醒；紀錄寫成 `Record: <key>`，planner 以鍵分類、不以日期推；手改後的取代不自動保留任何提醒；`mode: rule` 的 entry 報為 v1 不支援；取代後 `per_period_through` 設為取代建立的最後一期；刪除放在最後。驗證：`quota-plan.test.sh`、`QuotaSkillDocsTests`、實機檢查 3.1d。
 
+## 2g. Verify 第 6 輪：紀錄只看新排程
+
+- [x] 2g.1（Each period has a stable identity；An update replaces the open reminders when the schedule changes；A retirement asks first；紀錄只看新排程（verify 第 6 輪，可撤回的決定））紀錄只以新排程判斷，取代不再讀舊期別；新排程下已重置的提醒寫 `Record:`、永不刪除；到期已過而未重置的只提議刪除後重建（`--delete-passed`）或等待；已在新日期上的提醒保留、不重建；任何寫入失敗就停；sync 對開著的期別上的紀錄暫停建立；別清單裡改了日期的提醒也算日期改了；`period-used` 自成一類；同一 id 出現兩次、鍵不是真實日期、鬧鐘格式不合都拒絕；planner 也收 `--local-tz`；update 由 planner 判斷排程是否改變；退役只刪 `matched` 且在本清單的；重複的手建提醒不收編。驗證：`quota-plan.test.sh` 的每個重現案例先紅後綠，`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

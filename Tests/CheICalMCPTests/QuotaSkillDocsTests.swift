@@ -126,11 +126,13 @@ final class QuotaSkillDocsTests: XCTestCase {
             "Record: <key>                                      (only on a record a replacement kept, section 8)",
             "| `record` | open, with a `Record:` line: the record a replacement kept. A record whatever its date |",
             "**A record is written down, never inferred.**",
-            "A due that has passed is never enough: such a reminder is listed and asked about",
-            "When the old entry is not known (the user edited the file by hand), no reminder is marked a record",
+            // #499 r6: a record is judged by the new dates only; a passed due on a period still open is never one.
+            "**A record is judged by the new dates only.**",
+            "is never made a record: the user chooses to delete it and create its period anew",
         ])
         let spec = try read(Self.spec)
         XCTAssertTrue(spec.contains("A record SHALL be written down, never inferred"))
+        assertOnce(spec, Self.spec, ["A record SHALL be judged by the current schedule only"])
         XCTAssertTrue(try read("plugin/bin/quota-plan.sh").contains("mark-record"))
     }
 
@@ -159,12 +161,32 @@ final class QuotaSkillDocsTests: XCTestCase {
         assertOnce(skill, Self.skill, [
             "3. **A new schedule replaces the open reminders.**",
             "The deletes come last: a failure there leaves an old reminder beside the new ones, never a period without a reminder.",
-            "write the new fields, and `per_period_through` as the planner's `through`",
+            "then `per_period_through` as the planner's `through`",
+            // #499 r6 #5 and #12: what already matches is kept; a failure stops before anything further.
+            "| `keep <id> <n>` | an open reminder already on the new dates",
+            "**A failure stops the replacement.**",
             "| `used <n>` | a new period whose key a completed reminder already carries; not created again |",
             "raise `per_period_through` to the last key created; sync never lowers it",
         ])
         let spec = try read(Self.spec)
         assertOnce(spec, Self.spec, ["### Requirement: An update replaces the open reminders when the schedule changes"])
+    }
+
+    /// #499 verify round 6: retire, adopt and sync follow the planner; old entries are not read.
+    func testRoundSixRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**Retire deletes only what the planner classes `matched` in the quota's list.**",
+            "**A hand-built reminder that repeats is never adopted.**",
+            "**Same schedule or a new one: the planner decides.**",
+            "| `hold <n> <why>` |",
+            "`period-used` (an open reminder on a period a completed reminder already used)",
+            "(plan again with `--delete-passed <id>`)",
+        ])
+        for gone in ["sed 's/^/old /'", "no `old` lines", "under the **old** dates"] {
+            XCTAssertFalse(skill.contains(gone), "\(Self.skill) still reads the old entry: \(gone)")
+        }
+        XCTAssertFalse(try read("plugin/bin/quota-plan.sh").contains("O_KEY"), "the planner still reads old periods")
     }
 
     func testListReportsEachCaseOnce() throws {
