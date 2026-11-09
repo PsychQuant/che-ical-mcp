@@ -613,14 +613,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.calendarNotFound(identifier: "\(identifier) (read-only)")
         }
 
+        // PR #507 round 2: re-read before applying, as `freshReminder` does, so the title before the
+        // rename and the values the change is taken against are the stored ones.
+        _ = calendar.refresh()
         // #273: the title before the rename, for the marker's listing.
         let titleBefore = calendar.title
         if let t = title { calendar.title = t }
         if let c = color { calendar.cgColor = parseColor(c) }
+        var requested: Set<ListFieldCopy.Field> = []
+        if title != nil { requested.insert(.title) }
+        if color != nil { requested.insert(.cgColor) }
 
-        try saveExistingCalendar(calendar)   // #274
+        let readBack = try saveExistingCalendar(calendar, requested: requested)   // #274
         markNeedsRefresh()
+        // Round 2 (HIGH): the marker is recorded also when the list could not be read back.
         await CalendarUndoManager.shared.record(.calendarOperation(kind: .updated, title: titleBefore))
+        guard readBack else { throw EventKitError.writeStoreReadBackFailed(kind: "reminder list", undo: .refusingMarker) }
         return calendar
     }
 
@@ -629,9 +637,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// that cannot be counted, is refused and nothing is deleted. The event check runs on this actor
     /// with no suspension; the one suspension is the reminder fetch, across which the write
     /// generation is compared, so no write by this server process lands between the check and
-    /// `removeCalendar` (PR #413 verify r1), except one that failed earlier and is still pending
-    /// (#274, `ExistingReminderSave`), which the check does not see and which the removal may commit
-    /// (not measured). A write by another app or a sync can still land in between: EventKit offers
+    /// `removeCalendar` (PR #413 verify r1), except a create whose save failed and is still pending
+    /// on the long-lived store (#261), which the check does not see. For a reminder list the removal
+    /// commits on a write store (#459), so it cannot commit that pending create; an event calendar's
+    /// removal on the long-lived store might (not measured). A write by another app or a sync can still land in between: EventKit offers
     /// no way to delete a calendar only if it is empty.
     @discardableResult
     func deleteCalendar(identifier: String, requireEmpty: Bool = false) async throws -> CalendarEmptiness.Checked? {
@@ -2741,13 +2750,32 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // PR #507 round 1: the save may give the reminder another identifier (a move to a list in
         // another account); `reminder` then becomes the object that identifier resolves to, so the
         // read-backs, the response and the undo record below use it.
+        // PR #507 round 2 (HIGH): a save that lands but cannot be read back still records its undo,
+        // from what the write store's copy held after the commit, before the error is reported.
         var saved = reminder
-        let dateSync = try ReminderUpdateWrite.apply(
-            request, to: reminder, calendar: calendar,
-            save: { saved = try saveExistingReminder(saved, handler: "updateReminder") },
-            reload: { saved.refresh() },
-            rollback: { saved.rollback() },
-            current: { saved })
+        var unread: CommittedReminder?
+        let requested = ReminderUpdateWrite.requestedFields(request)
+        let dateSync: ReminderDateSync.Report?
+        do {
+            dateSync = try ReminderUpdateWrite.apply(
+                request, to: reminder, calendar: calendar,
+                save: {
+                    switch try saveExistingReminder(saved, handler: "updateReminder", requested: requested) {
+                    case .readBack(let read): saved = read
+                    case .unread(let committed):
+                        unread = committed
+                        throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
+                    }
+                },
+                reload: { saved.refresh() },
+                rollback: { saved.rollback() },
+                current: { saved })
+        } catch {
+            guard let committed = unread else { throw error }
+            try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot)
+        }
+        // The #237 fallback's second save may be the one that could not be read back.
+        if let committed = unread { try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot) }
         markNeedsRefresh()
         // PR #438 verify: judged on the re-read reminder, absolute alarms included; if it could not
         // be re-read, nothing is reported as stored.
@@ -2768,6 +2796,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
                                                                 saved: postWriteSnapshot(reminderID: savedID, saved: saved)))
         return result
+    }
+
+    /// Records the undo of an update whose save landed but could not be read back, then reports it.
+    func recordUnreadUpdate(_ committed: CommittedReminder, oldSnapshot: ReminderSnapshot) async throws -> Never {
+        markNeedsRefresh()
+        await CalendarUndoManager.shared.record(.updateReminder(id: committed.identifier, oldSnapshot: oldSnapshot, saved: committed.snapshot))
+        throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
     }
 
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
@@ -3176,16 +3211,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
             let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })
-            try saveExistingReminder(reminder, handler: "undo")
+            let note = try saveForHistory(reminder, handler: "undo")
             markNeedsRefresh()
-            return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
+            return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state" + note
 
         case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-            try saveExistingReminder(reminder, handler: "undo")
+            let note = try saveForHistory(reminder, handler: "undo", requested: ReminderCompletionWrite.requestedFields)
             markNeedsRefresh()
-            return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)"
+            return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)" + note
 
         case .completeRecurringReminder(let before, _, _):
             return try await undoRecurringCompletion(operation, before: before)
@@ -3333,9 +3368,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // while the reminder is in the state the undo left (#236).
             let reminder = try await verifiedReminder(of: operation, verb: .redo)
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-            try saveExistingReminder(reminder, handler: "redo")
+            let note = try saveForHistory(reminder, handler: "redo", requested: ReminderCompletionWrite.requestedFields)
             markNeedsRefresh()
-            return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)"
+            return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)" + note
 
         case .completeRecurringReminder(let before, let requestedCompleted, _):
             return try await redoRecurringCompletion(operation, before: before, requestedCompleted: requestedCompleted)
@@ -3475,6 +3510,14 @@ struct LocationTriggerInput: Sendable {
 
 // MARK: - Errors
 
+/// #459 (PR #507 round 2): what a save that landed but could not be read back did with its undo.
+enum ReadBackUndo: Sendable, Equatable {
+    /// The undo entry was recorded from the write store's copy right after its commit.
+    case recorded
+    /// A marker that refuses its own undo was recorded (a reminder list, #273).
+    case refusingMarker
+}
+
 enum EventKitError: LocalizedError {
     private static func seriesName(_ series: String?) -> String {
         series.map { "the series' id, \($0)," } ?? "the series' id"
@@ -3558,7 +3601,8 @@ enum EventKitError: LocalizedError {
     case writeStoreLookupFailed(kind: String)
     /// #459 (PR #507 round 1): the save on the write store landed, but this server's store could not
     /// read the item back right after it, so the response cannot show it. Nothing is rolled back.
-    case writeStoreReadBackFailed(kind: String)
+    /// Round 2: the undo history was kept in step before this is thrown (`ReadBackUndo`).
+    case writeStoreReadBackFailed(kind: String, undo: ReadBackUndo)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
     /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
@@ -3710,11 +3754,16 @@ enum EventKitError: LocalizedError {
         case .standInRefused(let reason):
             return reason
         case .writeStoreBusy:
-            return "Nothing was written: the \(WriteStorePool<AnyObject>.capacity) separate stores this server writes reminders through are all in use by other calls. Try again when they have finished."
-        case .writeStoreReadBackFailed(let kind):
-            return "The change was saved through the separate store this server writes reminders through, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it."
+            return "Nothing was written: the \(WriteStorePool<AnyObject>.capacity) separate stores this server writes reminders through are all in use by other calls, or a new one could not see any data (too many stores open in this process). Try again when other calls have finished; if it persists, restart the server."
+        case .writeStoreReadBackFailed(let kind, let undo):
+            let undoText: String
+            switch undo {
+            case .recorded: undoText = "Its undo record was kept, so undo reverts this change."
+            case .refusingMarker: undoText = "A marker for it was put on the undo history, so undo refuses it instead of reverting an older operation."
+            }
+            return "The change was saved through the separate store this server writes reminders through, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it. \(undoText)"
         case .writeStoreLookupFailed(let kind):
-            return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again."
+            return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again. An item this server created but whose save failed may not be committed yet; it becomes visible once a later save commits it."
         case .eventLookupFailed(let identifier):
             return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
         case .historyLookupFailed(let verb):

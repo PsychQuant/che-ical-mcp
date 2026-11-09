@@ -73,8 +73,8 @@ extension EventKitManager {
         // Round 2 (LOW 3): only when the list's group is restored.
         let list = plan.restored.contains("list") ? try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate) : nil
         old.applyRestoring(Set(plan.restored), to: reminder, list: list, now: Date())
-        try saveExistingReminder(reminder, handler: "undo")
+        let note = try saveForHistory(reminder, handler: "undo")
         markNeedsRefresh()
-        return UndoKeepLaterEdits.undoneMessage(kind: .reminder, title: reminder.title ?? old.title, plan: plan)
+        return UndoKeepLaterEdits.undoneMessage(kind: .reminder, title: reminder.title ?? old.title, plan: plan) + note
     }
 }

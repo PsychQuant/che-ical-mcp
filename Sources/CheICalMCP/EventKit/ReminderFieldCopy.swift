@@ -15,7 +15,10 @@ import EventKit
 /// writes, has to be added here, or the write silently leaves it out.
 ///
 /// - Dates go through `ReminderDateSync.restore` (start and due in its order, #235/#237), with the
-///   stored start or due for whichever the call did not change, and the zone after them.
+///   stored start or due for whichever the call did not change, and the zone after them. The #237
+///   fallback's second save (`writeDueAroundStart`: clear the start, write the due, put the start
+///   back) therefore reaches the write store as its final values in `restore`'s order, not in the
+///   fallback's own order (PR #507 round 2 INFO 10; not measured on a source that drops the zone).
 /// - Alarms go through `AlarmSnapshot.restore` against the target's own alarms: an alarm equal to a
 ///   wanted one stays the same object, so what no snapshot rebuilds (a procedure alarm's URL)
 ///   survives, and no alarm object of the long-lived store is put on the target (doing so ended

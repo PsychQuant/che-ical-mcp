@@ -824,6 +824,8 @@ behaviour probe has confirmed the new binary. Use only a disposable list whose n
 3. Run `delete_reminders_batch` on three reminders, then `undo`: all three come back.
 4. Run `update_calendar` to rename the list: `list_calendars` shows the new name.
 5. After each step, `undo_history` shows the expected top record, and no step answers with `writeStoreBusy`.
+6. Dates through the copy (PR #507 round 2): on a reminder with a timed start and due in a zone other than the host's, `update_reminder` only the due (another time the same day), then only the title, then `undo` twice. After each step `list_reminders` shows the start, the due and their zone as the step leaves them (the start the call did not touch keeps its stored value; the zone survives).
+7. A list deletion on the write store: create a second disposable `#459` list, `delete_calendar` it, and right after it `list_calendars` and a `create_reminder` naming that list: the list is not listed and the create answers that the list is not found.
 
-Record the results on #459. Delete the list afterwards and confirm with `list_calendars`.
+Steps 6 and 7 cover the copy order of round 1 and the list removal, which the device run of 2026-11-09 did not exercise. Record the results on #459. Delete the list afterwards and confirm with `list_calendars`.
 

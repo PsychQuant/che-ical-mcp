@@ -71,10 +71,16 @@ final class CalendarUndoRecordWiringTests: XCTestCase {
         let body = try Self.body("func updateCalendar(")
         let title = try Self.only("let titleBefore = calendar.title", in: body)
         let rename = try Self.only("if let t = title { calendar.title = t }", in: body)
-        let save = try Self.only("try saveExistingCalendar(calendar)", in: body)
+        let save = try Self.only("let readBack = try saveExistingCalendar(calendar, requested: requested)", in: body)
         let record = try Self.only("await CalendarUndoManager.shared.record(.calendarOperation(kind: .updated, title: titleBefore))", in: body)
+        // PR #507 round 2: a save that landed but could not be read back still has its marker, and
+        // the list is re-read before the values are applied.
+        let unread = try Self.only("guard readBack else { throw EventKitError.writeStoreReadBackFailed(kind: ", in: body)
+        let refresh = try Self.only("_ = calendar.refresh()", in: body)
         XCTAssertLessThan(title, rename, "the title is read before the rename")
         XCTAssertLessThan(save, record, "recorded after the save")
+        XCTAssertLessThan(record, unread, "recorded before a failed read-back is reported")
+        XCTAssertLessThan(refresh, title, "the list is re-read before the values are applied")
         XCTAssertEqual(Self.offsets(of: "CalendarUndoManager.shared.record(", in: body).count, 1)
     }
 

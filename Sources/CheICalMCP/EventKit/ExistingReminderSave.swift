@@ -43,27 +43,65 @@ enum ExistingReminderSave {
     }
 }
 
+/// #459 (PR #507 round 2): what the write store's copy held right after its commit, taken before the
+/// copy is dropped, so a save that landed but cannot be read back still has the state its undo needs.
+struct CommittedReminder {
+    let identifier: String
+    let snapshot: ReminderSnapshot
+    let completion: ReminderCompletionSnapshot
+}
+
+/// The result of a save that committed: the reminder as this server's store reads it (another object
+/// after a move to a list in another account), or, when it cannot be read back, what was committed.
+enum ReminderSaveOutcome {
+    case readBack(EKReminder)
+    case unread(CommittedReminder)
+}
+
+/// Thrown by `savedOrUnread` and caught by its caller, never answered.
+struct UnreadSaveError: Error {
+    let committed: CommittedReminder
+}
+
 extension EventKitManager {
-    /// `handler` names the failure on stderr; the response gets the sanitized error. Returns the
-    /// reminder as this server's store reads it after the save: another object after a move to a
-    /// list in another account. Throws `writeStoreReadBackFailed` when it cannot be read back; the
-    /// save landed then, so nothing is rolled back.
-    @discardableResult
-    func saveExistingReminder(_ reminder: EKReminder, handler: String) throws -> EKReminder {
-        var saved: EKReminder?
+    /// `handler` names the failure on stderr; the response gets the sanitized error. A commit that
+    /// fails throws. A commit that lands answers `.readBack`, or `.unread` when the reminder cannot be
+    /// read back: the caller then records its undo from `CommittedReminder` before it reports
+    /// `writeStoreReadBackFailed`, so the undo history stays in step with the store (round 2 HIGH).
+    /// `requested` are the fields the request names, written also when the cache already held them.
+    func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {
+        var outcome: ReminderSaveOutcome?
         try ExistingReminderSave.run(
-            write: { saved = try commitReminderSave(reminder) },
+            write: { outcome = try commitReminderSave(reminder, requested: requested) },
             rollback: { reminder.rollback() },
             report: { failure in
                 ExistingReminderSave.failure(failure) {
                     EventKitErrorSanitizer.writeFailureLog(handler: handler, identifier: reminder.calendarItemIdentifier, error: $0)
                 }
             })
-        guard let saved else {
-            FileHandle.standardError.write(Data("\(handler): saved \(reminder.calendarItemIdentifier) on the write store but could not read it back\n".utf8))
-            throw EventKitError.writeStoreReadBackFailed(kind: "reminder")
+        guard let outcome else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
+        if case .unread(let committed) = outcome {
+            FileHandle.standardError.write(Data("\(handler): saved \(committed.identifier) on the write store but could not read it back\n".utf8))
         }
-        return saved
+        return outcome
+    }
+
+    /// The reminder after its save, or `UnreadSaveError` when it landed but cannot be read back, for a
+    /// caller that records its undo in a catch at its end (`completeReminder`).
+    func savedOrUnread(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> EKReminder {
+        switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
+        case .readBack(let read): return read
+        case .unread(let committed): throw UnreadSaveError(committed: committed)
+        }
+    }
+
+    /// An undo or redo whose save landed: the record has done its work, so the stacks move as for a
+    /// success; when the reminder cannot be read back the message says so (round 2 HIGH).
+    func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> String {
+        switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
+        case .readBack: return ""
+        case .unread: return " The change was saved, but this server could not read the reminder back right after it; read it again before relying on it."
+        }
     }
 
     func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {
@@ -78,24 +116,26 @@ extension EventKitManager {
     }
 
     /// A rename or recolor of a reminder list goes through the write store; an event calendar goes
-    /// straight through the long-lived store, as every event write does.
-    func saveExistingCalendar(_ calendar: EKCalendar) throws {
+    /// straight through the long-lived store, as every event write does. Returns whether the list was
+    /// read back after the save; when not, the caller records its #273 marker and reports it (round 2).
+    func saveExistingCalendar(_ calendar: EKCalendar, requested: Set<ListFieldCopy.Field> = []) throws -> Bool {
         guard calendar.allowedEntityTypes != .event else {
-            return try eventStore.saveCalendar(calendar, commit: true)
+            try eventStore.saveCalendar(calendar, commit: true)
+            return true
         }
         var readBack = true
         try ExistingReminderSave.run(
-            write: { readBack = try commitListSave(calendar) },
+            write: { readBack = try commitListSave(calendar, requested: requested) },
             rollback: { calendar.rollback() },
             report: { failure in
                 ExistingReminderSave.failure(failure) {
                     EventKitErrorSanitizer.writeFailureLog(handler: "updateCalendar", identifier: calendar.calendarIdentifier, error: $0)
                 }
             })
-        guard readBack else {
+        if !readBack {
             FileHandle.standardError.write(Data("updateCalendar: saved \(calendar.calendarIdentifier) on the write store but could not read it back\n".utf8))
-            throw EventKitError.writeStoreReadBackFailed(kind: "reminder list")
         }
+        return readBack
     }
 
     func removeExistingCalendar(_ calendar: EKCalendar) throws {
@@ -114,19 +154,23 @@ extension EventKitManager {
 
     // MARK: - #459: commits on the write store
 
-    /// Commits the caller's changes to `reminder` on the write store: only the fields the call
-    /// changed. Returns the reminder as this server's store reads it after the save, or nil.
-    func commitReminderSave(_ reminder: EKReminder) throws -> EKReminder? {
+    /// Commits the caller's changes to `reminder` on the write store: the fields the call changed and
+    /// the fields the request names (`requested`, round 2: a named value equal to a stale cache is
+    /// still written). Returns the reminder as this server's store reads it after the save, or what
+    /// the copy held after its commit when it cannot be read back.
+    func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {
         let wanted = ReminderFieldCopy.Values(reminder)
         reminder.rollback()
-        let fields = ReminderFieldCopy.changed(from: ReminderFieldCopy.Values(reminder), to: wanted)
-        let savedID: String = try onWriteStore { store in
+        let fields = ReminderFieldCopy.changed(from: ReminderFieldCopy.Values(reminder), to: wanted).union(requested)
+        let committed: CommittedReminder = try onWriteStore { store in
             guard let copy = store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
             try ReminderFieldCopy.apply(wanted, fields: fields, to: copy, calendar: { store.calendar(withIdentifier: $0) })
             try store.save(copy, commit: true)
-            return copy.calendarItemIdentifier
+            return CommittedReminder(identifier: copy.calendarItemIdentifier, snapshot: ReminderSnapshot(from: copy),
+                                     completion: ReminderCompletionSnapshot(from: copy))
         }
-        return resolvedAfterSave(reminder, savedID: savedID)
+        guard let saved = resolvedAfterSave(reminder, savedID: committed.identifier) else { return .unread(committed) }
+        return .readBack(saved)
     }
 
     /// The reminder after its save on the write store: the caller's object, refreshed, when the
@@ -151,10 +195,10 @@ extension EventKitManager {
 
     /// Commits the caller's rename or recolor on the write store: only the field the call changed.
     /// Returns whether this server's store reads the list back after the save.
-    func commitListSave(_ calendar: EKCalendar) throws -> Bool {
+    func commitListSave(_ calendar: EKCalendar, requested: Set<ListFieldCopy.Field> = []) throws -> Bool {
         let wanted = ListFieldCopy.Values(calendar)
         calendar.rollback()
-        let fields = ListFieldCopy.changed(from: ListFieldCopy.Values(calendar), to: wanted)
+        let fields = ListFieldCopy.changed(from: ListFieldCopy.Values(calendar), to: wanted).union(requested)
         try onWriteStore { store in
             guard let copy = store.calendar(withIdentifier: calendar.calendarIdentifier) else { throw EventKitError.writeStoreLookupFailed(kind: "reminder list") }
             ListFieldCopy.apply(wanted, fields: fields, to: copy)

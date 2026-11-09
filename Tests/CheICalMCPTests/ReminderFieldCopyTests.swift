@@ -235,4 +235,60 @@ final class ReminderFieldCopyTests: XCTestCase {
         XCTAssertEqual(stored.title, "New name")
         XCTAssertEqual(stored.cgColor, CGColor(red: 1, green: 0, blue: 0, alpha: 1), "the color changed elsewhere is kept")
     }
+
+    // MARK: - PR #507 round 2: a field the request names is always written
+
+    /// A/B/A: the cache holds A, another store wrote B, the request sets A again. Taken only from
+    /// the difference, the title would not be written and B would stay; named by the request, A is.
+    func testATitleTheRequestNamesIsWrittenEvenWhenTheCacheAlreadyHoldsIt() throws {
+        let a = list("A")
+        let cached = reminder(in: a)
+        cached.title = "A"; cached.notes = "cached notes"
+        let before = Values(cached)
+        cached.title = "A"
+        let wanted = Values(cached)
+        XCTAssertTrue(ReminderFieldCopy.changed(from: before, to: wanted).isEmpty)
+        let stored = reminder(in: a)
+        stored.title = "B"; stored.notes = "notes changed elsewhere"
+        let fields = ReminderFieldCopy.changed(from: before, to: wanted).union([.title])
+        try ReminderFieldCopy.apply(wanted, fields: fields, to: stored, calendar: { _ in a })
+        XCTAssertEqual(stored.title, "A")
+        XCTAssertEqual(stored.notes, "notes changed elsewhere", "a field the request does not name keeps the stored value")
+    }
+
+    /// The same for a list's color.
+    func testAColorTheRequestNamesIsWrittenEvenWhenTheCacheAlreadyHoldsIt() {
+        let blue = CGColor(red: 0, green: 0, blue: 1, alpha: 1), red = CGColor(red: 1, green: 0, blue: 0, alpha: 1)
+        let cached = list("Name")
+        cached.cgColor = blue
+        let before = ListFieldCopy.Values(cached)
+        cached.cgColor = blue
+        let wanted = ListFieldCopy.Values(cached)
+        let stored = list("Renamed elsewhere")
+        stored.cgColor = red
+        ListFieldCopy.apply(wanted, fields: ListFieldCopy.changed(from: before, to: wanted).union([.cgColor]), to: stored)
+        XCTAssertEqual(stored.cgColor, blue)
+        XCTAssertEqual(stored.title, "Renamed elsewhere")
+    }
+
+    /// What `update_reminder` names, by the fields each argument writes or derives.
+    func testTheFieldsAnUpdateRequestNames() {
+        func named(_ r: ReminderUpdateRequest) -> Set<ReminderFieldCopy.Field> { ReminderUpdateWrite.requestedFields(r) }
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r")), [])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", title: "t")), [.title])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", notes: "n")), [.notes])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", priority: 1)), [.priority])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", calendarName: "L")), [.calendar])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2027, month: 3, day: 1)))),
+                       [.dueDateComponents, .startDateComponents, .timeZone, .alarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearDueDate: true)), [.dueDateComponents, .startDateComponents, .timeZone, .alarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", realignToDue: true)), [.startDateComponents, .alarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", alarmOffsets: [15])), [.alarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearLocationTrigger: true)), [.alarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearRecurrence: true)), [.recurrenceRules])
+    }
+
+    func testACompletionNamesItsTwoFields() {
+        XCTAssertEqual(ReminderCompletionWrite.requestedFields, [.isCompleted, .completionDate])
+    }
 }

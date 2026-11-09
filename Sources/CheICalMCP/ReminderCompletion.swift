@@ -207,6 +207,10 @@ struct ReminderCompletionResult: Sendable {
 /// applies it. Setting `isCompleted` alone makes EventKit stamp "now", so a
 /// restore to completed must write the recorded instant afterwards.
 struct ReminderCompletionWrite: Equatable, Sendable {
+    /// PR #507 round 2: a completion, its undo and its redo always write these two, also when the
+    /// reminder already held the value.
+    static var requestedFields: Set<ReminderFieldCopy.Field> { [.isCompleted, .completionDate] }
+
     let isCompleted: Bool
     let completionDate: Date?
 

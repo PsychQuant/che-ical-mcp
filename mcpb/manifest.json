@@ -133,7 +133,7 @@
     },
     {
       "name": "delete_reminders_batch",
-      "description": "Delete multiple reminders at once (a row that fails with a code stays as it was, #459; a busy pool refuses the call before any row is deleted; one undo recreates them from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder)"
+      "description": "Delete multiple reminders at once (a row that fails with a code stays as it was, #459; a busy pool refuses the call before any row is deleted, and a later row whose new store sees no data answers write_store_busy; one undo recreates them from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder)"
     },
     {
       "name": "list_reminder_tags",
@@ -141,7 +141,7 @@
     },
     {
       "name": "cleanup_completed_reminders",
-      "description": "Delete all completed reminders in one call (dry_run=true by default; a row that fails with a code stays as it was, #459; a busy pool refuses the call before any row is deleted). Optional calendar_name / calendar_source to scope to a single list. Each call is one undo entry and clears the redo history; one undo recreates the deleted reminders, one at a time, from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder."
+      "description": "Delete all completed reminders in one call (dry_run=true by default; a row that fails with a code stays as it was, #459; a busy pool refuses the call before any row is deleted, and a later row whose new store sees no data answers write_store_busy). Optional calendar_name / calendar_source to scope to a single list. Each call is one undo entry and clears the redo history; one undo recreates the deleted reminders, one at a time, from the undo snapshot; the undo is refused before any write, and its entry kept, when a reminder's list is missing or read-only, and discarding it then drops every reminder."
     },
     {
       "name": "undo",

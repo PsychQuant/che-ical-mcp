@@ -12,6 +12,23 @@ import Foundation
 /// the reminder untouched; the reminder object lives on in the server's store, so a change left
 /// on it would be written by whatever saves it next.
 enum ReminderUpdateWrite {
+    /// PR #507 round 2: the fields this request names, with the ones it derives from them. The write
+    /// store's copy always gets these, also when the reminder already held the value (the cache may
+    /// be stale: A in the cache, B stored elsewhere, A asked for).
+    static func requestedFields(_ request: ReminderUpdateRequest) -> Set<ReminderFieldCopy.Field> {
+        var fields: Set<ReminderFieldCopy.Field> = []
+        if request.title != nil { fields.insert(.title) }
+        if request.notes != nil { fields.insert(.notes) }
+        if request.priority != nil { fields.insert(.priority) }
+        if request.calendarName != nil { fields.insert(.calendar) }
+        // A due date moves or clears the start and the absolute alarms, and may zone the item.
+        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .timeZone, .alarms]) }
+        if request.realignToDue { fields.formUnion([.startDateComponents, .alarms]) }
+        if request.alarmOffsets != nil || request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.alarms) }
+        if request.recurrenceRule != nil || request.clearRecurrence { fields.insert(.recurrenceRules) }
+        return fields
+    }
+
     /// #486: a value with the flag that clears it, refused before any write, as
     /// `ReminderRecurrenceWrite.bothMessage` is for the rule. The clear used to win silently.
     static let locationTriggerBothMessage = "Cannot specify both location_trigger and clear_location_trigger"

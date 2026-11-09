@@ -18,4 +18,6 @@
 - [x] 4.1 只寫入這次呼叫改到的欄位（呼叫端物件和自己 rollback 後比較）；日期走 `ReminderDateSync.restore` 再寫時區，鬧鐘走 `AlarmSnapshot.restore`（A failed write of an existing reminder or list does not stay pending in the long-lived store）。驗證：記憶體測試，未改的欄位保留資料庫的值、start 等於 due 的 undo、未改的鬧鐘仍是同一個物件、清單改名不寫顏色。
 - [x] 4.2 存檔後從寫入 store 的物件取識別碼，不同就重新解析，`update_reminder` 的回應與 undo 紀錄用它；讀不回來是錯誤（The saved reminder is read back under the identifier it has after the save）。驗證：wiring 測試。
 - [x] 4.3 批次的寫入 store 錯誤保留自己的代碼並寫 stderr，池滿在刪任何一列之前拒絕整個呼叫；失敗的 store 立刻丟掉、用到時才建新的，包在 autoreleasepool 裡，看不到資料的新 store 當成池滿（One write store per call, at most four open）。驗證：純單元測試與 wiring 測試。
-- [ ] 4.4 實機：單一 stdio process、名稱含 `#459` 的拋棄式清單，加做「別的 store 改了顏色後改名」與「有 URL 鬧鐘的提醒事項改鬧鐘」。
+- [x] 4.4 實機：單一 stdio process、名稱含 `#459` 的拋棄式清單，加做「別的 store 改了顏色後改名」與「有 URL 鬧鐘的提醒事項改鬧鐘」。2026-11-09 已做（iCloud，repo 的 release build，單一 process）：改名後保留別處改的顏色、反向也保留，但長駐 store 的快取在呼叫前已跟上別處的改動，所以這次分不出新舊寫法，過時快取只由記憶體內測試涵蓋；URL 鬧鐘用 repo build 建不出來（Swift 在 macOS 上不能設 `EKAlarm.url`，KVC 讀回 nil），改用別的 store 加的絕對鬧鐘代替，它在改鬧鐘與 undo 後都保留；1010 失敗沒有落地；批次失敗那列保留、下一列刪除；寫入池最後是 0；殘留檢查兩次都是 0。
+- [x] 4.5 PR #507 第 2 輪：commit 落地但讀不回來時，先用寫入 store 副本在 commit 後的狀態記下 undo（清單記 #273 的標記）再回錯誤；undo、redo 的存檔落地但讀不回來時當作完成並在訊息說明；呼叫指名的欄位一律寫入（`requestedFields`），`update_calendar` 套用前先重讀清單；`completeReminder` 與 completion 的 undo、redo 用存檔回傳的物件。驗證：記憶體內 A/B/A 測試（提醒事項標題、清單顏色）與 wiring 測試。
+- [ ] 4.6 release gate 第 6、7 步（日期經副本的順序、清單刪除）在重啟後的 session MCP 上做。

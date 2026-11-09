@@ -7,7 +7,7 @@ final class WriteStoreRowFailureTests: XCTestCase {
     func testWriteStoreErrorsKeepTheirOwnRowCodes() {
         XCTAssertEqual(WriteStoreRowFailure.code(for: EventKitError.writeStoreLookupFailed(kind: "reminder")), "write_store_lookup_failed")
         XCTAssertEqual(WriteStoreRowFailure.code(for: EventKitError.writeStoreBusy), "write_store_busy")
-        XCTAssertEqual(WriteStoreRowFailure.code(for: EventKitError.writeStoreReadBackFailed(kind: "reminder")), "write_store_read_back_failed")
+        XCTAssertEqual(WriteStoreRowFailure.code(for: EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)), "write_store_read_back_failed")
     }
 
     func testOtherErrorsAreLeftToTheSanitizer() {
