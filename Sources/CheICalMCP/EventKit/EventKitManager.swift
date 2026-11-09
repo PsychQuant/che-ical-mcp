@@ -1421,6 +1421,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours)
                 ? DetachedOccurrenceSpan.firstEditedOccurrenceRoute(reason) : reason)
         }
+        // #509: the store keeps the rule end as a fixed instant and re-expands the rule from the new
+        // start, so a start change over the rest of the series dropped every occurrence moved past
+        // that end, and answered updated (device). Refused before the first field is assigned.
+        if RuleEndShift.applies(
+            repeats: event.hasRecurrenceRules, reachesEnd: applyToAll || span == .futureEvents,
+            writesRule: recurrenceRule != nil || clearRecurrence,
+            storedStart: event.startDate, plannedStart: datePlan.datesToWrite?.start),
+           let plannedStart = datePlan.datesToWrite?.start {
+            let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+            let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
+            let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
+            let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
+            if let reason = ruleEndShiftRefusal(series: ruleHolder, seriesID: seriesID, storedStart: event.startDate,
+                                                plannedStart: plannedStart, storedZone: storedZone, newZone: newZone) {
+                throw EventKitError.seriesWriteRefused(reason: reason)
+            }
+        }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
         // stored pattern with a bound that keeps what happened; any other rewrote the past.
         // The stored count runs from the original first start, which only a call over the whole
