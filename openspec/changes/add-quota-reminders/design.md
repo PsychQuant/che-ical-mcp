@@ -4,6 +4,11 @@
 
 ## Decisions
 
+### v1 只做 per-period，紀錄要寫下來（verify 第 5 輪，可撤回的決定）
+
+五輪驗證的發現幾乎都出在 rule mode：一則重複提醒要推回它代表哪些期別（滾過、停住、重啟、寫入時的模式、沒有重複旗標、夏令時間讓模式翻轉）；另一個來源是「紀錄」是推出來的，不是記下來的。v1 收窄成只有 per-period：每一期一則一次性提醒、帶 `Period: <key>`，一律以鍵比對；被取代保留下來的紀錄寫一行 `Record: <key>`，之後不論日期都是紀錄；到期日已過、沒有 `Record:`、舊期別也沒說它已重置的提醒，列出來問，不自動保留或刪除。代價：沒有重複提醒自己往下走，sync 每 90 天至少要跑一次。下面「rule mode 與 per-period mode 的判準」「沒用完時 rule mode 會停住」「歷史邊界與重新配對分開」「寫入時的模式」四節是被取代的歷史，保留以說明為什麼收窄。
+
+
 ### 設定檔放 `~/.claude/.ical/quotas.yaml`，不放 `${CLAUDE_PLUGIN_DATA}`
 
 決策紀錄的提案是 `${CLAUDE_PLUGIN_DATA}` 裡的 JSON。官方文件（plugins reference）寫明該目錄是 `~/.claude/plugins/data/<id>/`，`<id>` 是 plugin 識別碼，且**從最後一處解除安裝時會被刪除**；從另一個 marketplace 安裝同一個 plugin 也是另一個目錄。額度宣告是使用者的資料，不該隨解除安裝消失。`~/.claude/.ical/` 已是本 plugin 的使用者層設定位置（`config.yaml`），跨更新保留、使用者看得到也能手改。決策紀錄要的性質（全域一份、標籤而非憑證、提醒由它產生）都保留。

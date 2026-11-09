@@ -27,8 +27,13 @@
 
 - [x] 2e.1（An update replaces the open reminders when the schedule changes；改排程改成取代，不再重新配對（verify 第 4 輪，可撤回的決定））改了日期或模式的 update 不再重新配對，而是取代：planner 以 `--replace` 加上舊期別（先用舊期別認出紀錄），列出要刪除的未重置提醒與要建立的新排程，問一次，同意才寫；沒人回答就不寫。`per_period_through` 只升不降；在別的清單的提醒只列出、佔住它的期別；滾過的期別只看最早的那個非模稜兩可的系列；沒有 `--replace` 時不移動任何東西。Known limit：改排程會取代未完成的提醒。驗證：`quota-plan.test.sh` 的每個仍在範圍內的重現案例。
 
+## 2f. Verify 第 5 輪：v1 只做 per-period
+
+- [x] 2f.1（The reminder has one shape；Each period has a stable identity；v1 只做 per-period，紀錄要寫下來（verify 第 5 輪，可撤回的決定））拿掉 rule mode（`--written-mode`、滾過、重啟、`clear_recurrence`、兩個系列、模式翻轉）；每一期一則一次性提醒；紀錄寫成 `Record: <key>`，planner 以鍵分類、不以日期推；手改後的取代不自動保留任何提醒；`mode: rule` 的 entry 報為 v1 不支援；取代後 `per_period_through` 設為取代建立的最後一期；刪除放在最後。驗證：`quota-plan.test.sh`、`QuotaSkillDocsTests`、實機檢查 3.1d。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。
 - [x] 3.1b Verify 第 1 輪之後重做（拋棄式 `#327` 清單，讀取都限定該清單）：rule mode 在重置前打勾後的狀態、per-period 的 `Period:` 行、停住的系列以 `clear_recurrence` 改成一次性且到期日不變。
+- [x] 3.1d 第 5 輪（拋棄式 `#327` 清單，讀取限定該清單）：寫入 `Record:` 行、讀回；一次取代：建立新排程、刪除舊的未完成提醒，紀錄與完成的提醒不動。
 - [ ] 3.2 下一個 binary release 之後，在重啟後的 session MCP 上走一次 `declare`、`update`、`list`、`retire`（拋棄式清單）。

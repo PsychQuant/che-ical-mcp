@@ -79,7 +79,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             let label = line[line.startIndex..<colon]
             return label.allSatisfy({ $0.isLetter }) && !label.isEmpty ? "`\(label):`" : nil
         }
-        XCTAssertEqual(labels.count, 11, "template labels changed: \(labels)")
+        XCTAssertEqual(labels.count, 12, "template labels changed: \(labels)")
         guard let open = skill.range(of: "one of the labels above ("),
               let close = skill.range(of: ")", range: open.upperBound..<skill.endIndex) else {
             return XCTFail("escape list not found")
@@ -90,134 +90,119 @@ final class QuotaSkillDocsTests: XCTestCase {
         }
     }
 
-    /// #327 verify rounds 1-2: periods have a stable identity, the history boundary comes from used periods
-    /// only, and past or completed reminders are never rewritten. Each phrase is a rule the planner and the
-    /// skill depend on; losing one reopens a HIGH finding.
-    func testPeriodModelRules() throws {
+    /// Each pin must occur exactly once in its document, so removing the rule removes the pin's only match.
+    private func assertOnce(_ text: String, _ doc: String, _ pins: [String], file: StaticString = #filePath, line: UInt = #line) {
+        for pin in pins {
+            XCTAssertEqual(text.components(separatedBy: pin).count - 1, 1, "\(doc) must hold exactly once: \(pin)", file: file, line: line)
+        }
+    }
+
+    /// #327 verify round 5: v1 is per-period only. Rule mode (one recurring reminder whose periods had to be
+    /// inferred) caused nearly every finding of rounds 1-5, so it is gone from the skill, the spec and the planner.
+    func testV1IsPerPeriodOnly() throws {
         let skill = try read(Self.skill)
-        for pinned in [
-            "**`key` is the period's identity**: the reset day in the reset zone",
-            "Periods are matched by key, never by order.",
-            "**The plan comes from the planner, never from reasoning over the list by hand.**",
-            "**An open reminder's own period is never used** until it is ticked.",
-            "**The history boundary** is the latest used period;",
-            "is never moved, never matched to another period, never deleted, and never offered for deletion.",
-            "This holds whether it is period 0 or older.",
-            "Period: <key>",
-        ] {
-            XCTAssertTrue(skill.contains(pinned), "\(Self.skill) lost: \(pinned)")
+        assertOnce(skill, Self.skill, [
+            "**v1 is per-period only.** There is no recurring reminder",
+            "| `recurrence` | not passed: every reminder is one-off |",
+            "**An entry with `mode: rule`** was written by a build before v1",
+            "**Unsupported in v1:** an entry with `mode: rule` is reported as such",
+        ])
+        for gone in ["--written-mode", "clear_recurrence", "rolled past", "restart", "two open series"] {
+            XCTAssertFalse(skill.contains(gone), "\(Self.skill) still describes rule mode: \(gone)")
+        }
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for gone in ["--written-mode", "restart", "--repair"] {
+            XCTAssertFalse(plan.contains(gone), "quota-plan.sh still has: \(gone)")
         }
         let spec = try read(Self.spec)
-        XCTAssertTrue(spec.contains("Period: <key>"), "spec lost the Period line")
+        XCTAssertTrue(spec.contains("The skill SHALL support per-period quotas only"))
+        XCTAssertFalse(spec.contains("rolled past") || spec.contains("re-pairing"))
+    }
+
+    /// Records are written down (`Record: <key>`), never inferred from a date (round 5 HIGH).
+    func testRecordsAreWrittenDown() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "Record: <key>                                      (only on a record a replacement kept, section 8)",
+            "| `record` | open, with a `Record:` line: the record a replacement kept. A record whatever its date |",
+            "**A record is written down, never inferred.**",
+            "A due that has passed is never enough: such a reminder is listed and asked about",
+            "When the old entry is not known (the user edited the file by hand), no reminder is marked a record",
+        ])
+        let spec = try read(Self.spec)
+        XCTAssertTrue(spec.contains("A record SHALL be written down, never inferred"))
+        XCTAssertTrue(try read("plugin/bin/quota-plan.sh").contains("mark-record"))
+    }
+
+    func testPeriodModelRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**`key` is the period's identity**: the reset day in the reset zone",
+            "**The plan comes from the planner, never from reasoning over the list by hand.**",
+            "**An open reminder's own period is never used** until it is ticked.",
+            "is never moved, never matched to another period, never deleted, and never offered for deletion.",
+            "**A reminder in another list is only ever listed**",
+            "**Read-back values never reach a shell unchecked.**",
+            "never put a read-back value into a command line",
+            "**The local zone is pinned.**",
+            "**After every yes, plan again before writing.**",
+            "**When the planner exits 2**, nothing is written for that quota.",
+        ])
+        let spec = try read(Self.spec)
         XCTAssertTrue(spec.contains("SHALL NOT be moved, matched to another period, deleted, or offered for deletion"))
-        XCTAssertTrue(spec.contains("SHALL NOT count an open reminder's own period, a second open series, or an open one-off reminder as evidence of use"))
+        XCTAssertTrue(spec.contains("matching SHALL be by key, never by order or by the distance of a due"))
+    }
+
+    /// A schedule change replaces the open reminders; the deletes come last; the high-water mark is the planner's.
+    func testReplacementRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "3. **A new schedule replaces the open reminders.**",
+            "The deletes come last: a failure there leaves an old reminder beside the new ones, never a period without a reminder.",
+            "write the new fields, and `per_period_through` as the planner's `through`",
+            "| `used <n>` | a new period whose key a completed reminder already carries; not created again |",
+            "raise `per_period_through` to the last key created; sync never lowers it",
+        ])
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, ["### Requirement: An update replaces the open reminders when the schedule changes"])
     }
 
     func testListReportsEachCaseOnce() throws {
         let skill = try read(Self.skill)
-        for state in ["- `used`: a completed reminder is on it;", "- `not used`: an open reminder is on it (the overdue record);",
-                      "- `rolled past`:", "- `no record`: none of these.", "- `open, due <due>`:",
-                      "- `open, deadline passed, resets <reset>`:", "- `no reminder`: none of these.",
-                      "**mode mismatch**", "**dates changed**", "**rule mode, running**", "**rule mode, stopped**", "**rule mode, missing**"] {
-            XCTAssertTrue(skill.contains(state), "list lost the case: \(state)")
-        }
-        XCTAssertTrue(skill.contains("It is not ticked with a \"not used\" note, because a ticked reminder reads as used."),
-                      "the stopped-series trade-off must say why the record is not ticked")
+        assertOnce(skill, Self.skill, [
+            "- `used`: a completed reminder carries its key;\n- `not used`:",
+            "- `open, deadline passed, resets <reset>`:",
+            "- `no reminder`: none of these.",
+            "- **dates changed**:",
+            "- **running**:",
+        ])
     }
 
-    /// Round 2: the mode is compared before anything else (notify_at can flip it), the local zone is pinned,
-    /// sync never creates next to reminders written under other dates, and a cleaned-up or half-retired
-    /// period is never recreated unasked.
-    func testRoundTwoRules() throws {
+    func testKnownLimits() throws {
         let skill = try read(Self.skill)
-        for pinned in [
-            "2. **Same schedule or a new one.**",
-            "Any field can change the mode, `notify_at` included",
-            "**The local zone is pinned.**",
-            "passes `--local-tz \"$local_tz\"`",
-            "**While the host is in another zone than `local_tz`**, the skill writes nothing",
-            "`sync` never creates or writes anything for this quota until the user says yes.",
-            "Listed with an offer to create it, never created unasked",
-            "So a deleted period is never created again.",
-            "or is another entry's id followed by `-` and more",
-            "bash \"${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh\"",
-        ] {
-            XCTAssertTrue(skill.contains(pinned), "\(Self.skill) lost: \(pinned)")
-        }
-        let root = try repoRoot()
-        for file in ["plugin/bin/quota-plan.sh", "plugin/bin/tests/quota-plan.test.sh"] {
-            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(file).path), "missing \(file)")
-        }
+        assertOnce(skill, Self.skill, [
+            "- **Sync must run at least once every 90 days**, or the reminders run out",
+            "- **Changing a schedule replaces the open reminders.**",
+        ])
+        XCTAssertTrue(try read(Self.spec).contains("sync must run at least once every 90 days, or the reminders run out"))
     }
 
     func testMarkerMustBeTheOnlyQuotaModuleLine() throws {
         let skill = try read(Self.skill)
-        XCTAssertTrue(skill.contains("only when its notes have exactly one line that starts with `quota-module:`, and that line is exactly `quota-module: <id>`"))
-        XCTAssertTrue(skill.contains("- **Any other count:** listed and never written."))
+        assertOnce(skill, Self.skill, [
+            "only when its notes have exactly one line that starts with `quota-module:`, that line is exactly `quota-module: <id>`",
+            "- **Any other count:** listed and never written.",
+        ])
     }
 
     func testHelperArgumentsAreNeverInterpolated() throws {
-        XCTAssertTrue(try read(Self.skill).contains("It is then passed as its own quoted argument (`--reset-tz \"$zone\"`), and never pasted into a command string."))
+        assertOnce(try read(Self.skill), Self.skill, ["It is then passed as its own quoted argument (`--reset-tz \"$zone\"`), and never pasted into a command string."])
     }
 
     func testScheduleLineCarriesNoPerPeriodReason() throws {
         let skill = try read(Self.skill)
-        XCTAssertTrue(skill.contains("Schedule: one recurring reminder | one reminder per period\n"),
-                      "the Schedule line must be constant so notes compare equal from period to period")
-        XCTAssertTrue(skill.contains("The reason goes in the report, never in the notes."))
+        XCTAssertTrue(skill.contains("Schedule: one reminder per period\n"), "the Schedule line is constant")
     }
-
-    /// Round 3: the planner is told the mode the reminders were written in, keep never hides another due,
-    /// ambiguous reminders hold their periods, and every yes is followed by a fresh plan. Each pin occurs once,
-    /// so removing the rule removes the pin's only match.
-    func testRoundThreeRulesOccurOnce() throws {
-        let skill = try read(Self.skill)
-        for pinned in [
-            "--written-mode \"$mode\"",
-            "`--written-mode` is the entry's stored `mode`: the mode the existing reminders were written in.",
-            "Search **every** list (no `calendar_name`)",
-            "| due | timed: the read-back `due.date_time`, `YYYY-MM-DDTHH:MM:SSZ` (UTC)",
-            "| `rewrite <id> <n>` | a finding, never a write on its own",
-            "A second open series, and open one-off reminders, are no evidence of use.",
-            "| `hold <n> <why>` |",
-            "`<id>` is the open past-period record with the **latest** due.",
-            "**A reminder in another list is only ever listed.**",
-            "**After every yes, plan again before writing.**",
-            "**When the planner exits 2**, nothing is written for that quota.",
-            "but it never proposes a replacement or a restart",
-        ] {
-            XCTAssertEqual(skill.components(separatedBy: pinned).count - 1, 1, "\(Self.skill) must hold exactly once: \(pinned)")
-        }
-        let spec = try read(Self.spec)
-        XCTAssertFalse(spec.contains("(never rewritten)"), "spec and skill must agree on when the Period line is written")
-        XCTAssertEqual(spec.components(separatedBy: "written only when the reminder is created, by a declare, a sync or a replacement").count - 1, 1)
-        XCTAssertEqual(skill.components(separatedBy: "written only when the reminder is created, by a declare, a sync or a replacement").count - 1, 1)
-    }
-
-
-    /// Round 4 narrowed v1: a schedule change replaces the open reminders instead of re-pairing them, records
-    /// are found with the old periods, the high-water mark never drops, and read-back values never reach a shell.
-    func testRoundFourNarrowedContractOccursOnce() throws {
-        let skill = try read(Self.skill)
-        for pinned in [
-            "3. **A new schedule replaces the open reminders.** The open reminders are not re-paired with the new periods.",
-            "The records are identified with the **old** periods before anything else.",
-            "**`per_period_through` is a high-water mark: it is never lowered**",
-            "**Known limit:** changing a schedule replaces the open reminders.",
-            "**Read-back values never reach a shell unchecked.**",
-            "never put a read-back value into a command line",
-            "When the old entry is not known (the user edited the file by hand), every open reminder whose due has passed is kept as a record.",
-        ] {
-            XCTAssertEqual(skill.components(separatedBy: pinned).count - 1, 1, "\(Self.skill) must hold exactly once: \(pinned)")
-        }
-        XCTAssertFalse(skill.contains("--repair"), "the re-pairing flag is gone from the contract")
-        let spec = try read(Self.spec)
-        XCTAssertEqual(spec.components(separatedBy: "### Requirement: An update replaces the open reminders when the schedule changes").count - 1, 1)
-        XCTAssertFalse(spec.contains("re-pairing"), "the spec no longer describes re-pairing")
-        let plan = try read("plugin/bin/quota-plan.sh")
-        XCTAssertTrue(plan.contains("--replace") && !plan.contains("--repair"))
-    }
-
 
     func testReadmeListsTheSkill() throws {
         let readme = try read("plugin/README.md")
