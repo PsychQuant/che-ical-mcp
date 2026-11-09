@@ -731,7 +731,8 @@ PY2
 check "a scandir that raises marks the walk as skipping" "$got" "True"
 
 # #2/#4: the prune skips every record of the current session, so a session resumed after 30 days keeps
-# its .reminded and is not reminded twice.
+# its .reminded and is not reminded twice, unless another session's start pruned its records first
+# (#500 r9: each start spares only its own session's records).
 T="$TMP/trips/twice8"; trip "$T"; run start "$(json twice8 "$T")"; printf x > "$T/a.md"
 run stop "$(json twice8 "$T")"; [ -n "$(context "$OUT")" ] && ok "resume after 30 days: first reminder" || bad "resume after 30 days: first reminder"
 touch -t 202001010000 "$SD/twice8.start" "$SD/twice8.reminded" "$SD/twice8.changed.json"
@@ -770,6 +771,70 @@ check "the pause stops at an hour" "$(cat "$SD/backoff8.slow")" "3600"
 touch -t 202001010000 "$SD/backoff8.slow"; printf x > "$T/found.md"
 run stop "$(json backoff8 "$T")"
 [ -e "$SD/backoff8.slow" ] && bad "a walk that finds a change clears the pause" || ok "a walk that finds a change clears the pause"
+
+# --- round 9 (#500 report r9) ---------------------------------------------------------------
+# #1: a listing that fails partway (EIO on next()) keeps what was found, marks the walk as skipping and
+# walks the other directories.
+T="$TMP/trips/iter9"; trip "$T"; mkdir -p "$T/a" "$T/b"; printf x > "$T/a/one.md"; printf x > "$T/a/two.md"; printf x > "$T/b/other.md"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$T" <<'PY2' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+real = os.scandir
+class Failing:   # yields the first entry of the listing, then raises EIO
+    def __init__(self, fd):
+        self.inner = real(fd)
+        self.entries = sorted(self.inner, key=lambda e: e.name)
+        self.fail = any(e.name == "one.md" for e in self.entries)
+    def __enter__(self): return self
+    def __exit__(self, *a): self.inner.close()
+    def __iter__(self):
+        for i, e in enumerate(self.entries):
+            if self.fail and i == 1:
+                raise OSError(5, "simulated EIO")
+            yield e
+m.os.scandir = Failing
+files, cut, skipped = m.changed_files(sys.argv[2], 1577836801, [])
+print(sorted(files), cut, skipped)
+files, cut, skipped = m.changed_files(sys.argv[2], 1577836801, [], order=lambda entries: entries)
+print(sorted(files), cut, skipped)
+PY2
+)
+check "a listing that fails partway keeps what was found and walks the rest" "$got" "$(printf "%s\n%s" "['a/one.md', 'b/other.md'] False True" "['b/other.md'] False True")"
+
+# #2: the deadline is checked before each directory, so many empty directories cannot run past it.
+T="$TMP/trips/empty9"; trip "$T"; for n in $(seq 1 30); do mkdir -p "$T/e$(printf %02d $n)"; done
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$T" <<'PY2' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+clock = [0.0]
+m.time.monotonic = lambda: clock[0]
+real = m.open_below
+def slow_open(top, rel):   # each directory below the top costs one second; its listing has no entries
+    clock[0] += 1.0
+    return real(top, rel)
+m.open_below = slow_open
+files, cut, skipped = m.changed_files(sys.argv[2], 1577836801, [])
+print(cut, int(clock[0]))
+PY2
+)
+check "30 empty directories at one second each: the walk stops at the deadline" "$got" "True 3"
+
+# #3: an entry that is gone by the time it is checked (a lock file, a directory removed) is not a
+# failure to check: the walk stays complete.
+T="$TMP/trips/gone9"; trip "$T"; mkdir -p "$T/tmpdir"; printf x > "$T/~\$lock.docx"; printf x > "$T/new.md"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$T" <<'PY2' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+trip = sys.argv[2]
+def remove_after_listing(entries):
+    if any(e.name == "new.md" for e in entries):
+        os.unlink(os.path.join(trip, "~$lock.docx"))
+        os.rmdir(os.path.join(trip, "tmpdir"))
+    return sorted(entries, key=lambda e: e.name)
+print(m.changed_files(trip, 1577836801, [], order=remove_after_listing))
+PY2
+)
+check "a file and a directory removed after the listing: complete, not skipped" "$got" "(['new.md'], False, False)"
 
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"

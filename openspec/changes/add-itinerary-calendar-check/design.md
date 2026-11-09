@@ -21,7 +21,7 @@ headless 的執行（`claude -p`、Agent SDK、排程或背景 session）多出�
 
 ### 走訪資料夾有上限
 
-只讀檔名與修改時間，不讀內容。略過 `.git/`、`.claude/`、`.DS_Store` 與 symlink。用 `os.scandir` 逐層、逐項讀（不先整個目錄排序），目錄與檔案都算項目，每個項目都檢查時限；走訪前先寫暫停標記、正常結束才移除，所以被 hook timeout 殺掉的走訪也會讓之後 5 分鐘不再走訪；2 秒或 50 000 個項目後停下，並說明清單提早停止；停下而沒找到任何變更時，5 分鐘內不再走訪（大資料夾每個回合都花 2 秒，代價是那 5 分鐘內的變更晚一點才提醒）。列出 20 個檔案，其餘只算數量。`hooks.json` 給這個指令 10 秒的 timeout。修改時間也會被別的來源改到（Dropbox 等同步、編輯器的暫存檔），這類提醒會是白提醒，用 `itinerary_ignore` 略過。
+只讀檔名與修改時間，不讀內容。略過 `.git/`、`.claude/`、`.DS_Store` 與 symlink。用 `os.scandir` 逐層、逐項讀（不先整個目錄排序），目錄與檔案都算項目，每個項目都檢查時限；走訪前先寫暫停標記、正常結束才移除，所以被 hook timeout 殺掉的走訪也會讓之後 5 分鐘不再走訪（同一 session 再慢就加倍，最長 1 小時，見第 8 輪）；2 秒或 50 000 個項目後停下，並說明清單提早停止；停下而沒找到任何變更時，5 分鐘內不再走訪，之後每次再慢就加倍到最長 1 小時（大資料夾每個回合都花 2 秒，代價是那 5 分鐘內的變更晚一點才提醒）。列出 20 個檔案，其餘只算數量。`hooks.json` 給這個指令 10 秒的 timeout。修改時間也會被別的來源改到（Dropbox 等同步、編輯器的暫存檔），這類提醒會是白提醒，用 `itinerary_ignore` 略過。
 
 ### 檔名是資料
 
@@ -37,11 +37,13 @@ macOS 的 python3 預設沒有 YAML 模組，所以用逐行解析讀這兩個�
 
 ### 檢查本身不寫入，使用者的同意是唯一的關卡
 
-`allowed-tools` 在呼叫 skill 的那個回合預先核准，而那個回合也讀不受信任的檔案，所以只列行事曆讀取工具與兩個限定範圍的 Bash 指令：設定檔查詢 `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/find-ical-config.sh *)` 與變更清單 helper `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/itinerary-changed.sh *)`，不列 `Read`（工作目錄外的讀取照常跳提示）；Claude Code 文件：結尾 ` *` 也比對單獨的指令，複合指令會先拆開再比對）。這只讓 skill 自己的回合維持唯讀，不是寫入的第二道檢查：使用者的設定可能已允許寫入工具或使用 auto mode。寫入的唯一關卡是使用者對那一列的同意。在本 skill 的路徑上，模組在使用者對本 skill 的表說 yes 之前什麼都不寫（建立、修改、刪除、讀回修正都算）；這是一條性質，不是一份清單，模組的對照表仍提供表格的列。旅程資料夾：提醒來的取 helper JSON 的 `trip_folder`，手動執行取工作目錄的邏輯祖先（hook 的規則），沒有設定檔時先請使用者確認資料夾、確認前不讀任何檔案。符合 `/` 結尾忽略樣式的目錄在走訪前就略過，不佔走訪額度；走訪超過 1 秒而沒找到變更時也暫停 5 分鐘。變更先依事件屬於誰分派（會議標記→會議模組、住宿標記→住宿模組、其他→`update_event`），沒有事件的事實再依種類（新發布的議程→會議模組的完整貼上、住宿→住宿模組、其他→`create_event`）。
+`allowed-tools` 在呼叫 skill 的那個回合預先核准，而那個回合也讀不受信任的檔案，所以只列行事曆讀取工具與兩個限定範圍的 Bash 指令：設定檔查詢 `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/find-ical-config.sh *)` 與變更清單 helper `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/itinerary-changed.sh *)`，不列 `Read`（工作目錄外的讀取照常跳提示）；Claude Code 文件：結尾 ` *` 也比對單獨的指令，複合指令會先拆開再比對）。這只讓 skill 自己的回合維持唯讀，不是寫入的第二道檢查：使用者的設定可能已允許寫入工具或使用 auto mode。寫入的唯一關卡是使用者對那一列的同意。在本 skill 的路徑上，模組在使用者對本 skill 的表說 yes 之前什麼都不寫（建立、修改、刪除、讀回修正都算）；這是一條性質，不是一份清單，模組的對照表仍提供表格的列。旅程資料夾：提醒來的取 helper JSON 的 `trip_folder`，手動執行取工作目錄的邏輯祖先（hook 的規則），沒有設定檔時先請使用者確認資料夾、確認前不讀任何檔案。符合 `/` 結尾忽略樣式的目錄在走訪前就略過，不佔走訪額度；走訪超過 1 秒而沒找到變更時也暫停，同樣從 5 分鐘起、每次加倍、最長 1 小時。變更先依事件屬於誰分派（會議標記→會議模組、住宿標記→住宿模組、其他→`update_event`），沒有事件的事實再依種類（新發布的議程→會議模組的完整貼上、住宿→住宿模組、其他→`create_event`）。
 
 PR #500 第 7 輪：skill 只有在完整檢查之後才給 all-clear（走訪完整、每個變更路徑都存下而且印得出、印出的路徑都讀過），否則說查了什麼、有幾個沒存或沒讀；真實路徑規則兩邊都 resolve，比對旅程資料夾自己的真實路徑，所以經 symlink 的 `~/Dropbox`（macOS 連到 `~/Library/CloudStorage/Dropbox`）底下的旅程資料夾讀得到檔案；hook 的旅程資料夾在邏輯祖先找不到時退回真實路徑的祖先；`itinerary_ignore` 的行內清單、區塊清單與註解共用一套引號規則（雙引號內 `\"`、`\\`，單引號內 `''`）；helper 把絕對路徑或含空、`.`、`..` 段的路徑算成 unreadable，旅程資料夾不是絕對路徑就 exit 1，`HOME` 空而沒有 `CLAUDE_CONFIG_DIR` 時 exit 2；30 天清理略過本 session 自己的開始紀錄；wrapper 用 `exec` 執行 python，hook timeout 殺掉的就是走訪本身。
 
 PR #500 第 8 輪：走訪時開不了或列不出的目錄、stat 不了的項目都讓清單 `complete: false`，提醒也說有資料夾沒列到，skill 因此不給 all-clear；30 天清理略過本 session 的所有紀錄（`.reminded` 也留著，resume 不會再提醒一次）；wrapper 用 `python3 -I -c` 以 runpy 在 catch-all 裡載入模組、一律 exit 0，模組讀不到時 python 不會 exit 2 而擋住 Stop；同一 session 走訪一再很慢時，暫停 5 分鐘、之後每次加倍，最長 1 小時。背景 job 的 session：devil's advocate 在有人回答的背景 job 裡讀到 `CLAUDE_CODE_SESSION_ATTENDED=0`，主 agent 的 Stop hook 是否也是 0 不知道；若是，這類 session 永遠不提醒。允許清單先不改，task 1.2 加一個只記錄這兩個變數的除錯 Stop hook，README 與 CHANGELOG 寫成已知限制。
+
+PR #500 第 9 輪：清單是逐項讀的，讀到一半失敗（例如離線的 File Provider 回 EIO）時保留已找到的、標成不完整、繼續走其他目錄；時限在每個目錄開始前也檢查，大量空目錄不會超過 2 秒；列出後才被刪掉的檔案或目錄（鎖定檔、暫存檔）不算檢查失敗，清單仍完整；30 天清理只放過自己 session 的紀錄，所以別的 session 先啟動時仍可能清掉舊 session 的 `.reminded`，宣稱縮小成「除非別的 session 先清掉」。
 
 ## Risks / Trade-offs
 

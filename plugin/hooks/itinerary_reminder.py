@@ -423,11 +423,16 @@ def ignored_dir(rel_dir, ignores):
 def open_below(top, rel):
     """A descriptor of the directory `rel` under the trip folder's descriptor, opened one component at a
     time with O_DIRECTORY|O_NOFOLLOW (#500 r6 #2), or None. A directory swapped for a symlink after the
-    walk saw it is refused here, not followed; only `depth` descriptors are open at once."""
+    walk saw it is refused here, not followed; only `depth` descriptors are open at once. A directory
+    that is gone (ENOENT) raises FileNotFoundError: it was removed after it was listed, which is not a
+    failure to check it (#500 r9 #3)."""
     fd = os.dup(top)
     for name in rel.split("/"):
         try:
             nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            os.close(fd)
+            raise
         except OSError:
             os.close(fd)
             return None
@@ -438,10 +443,11 @@ def open_below(top, rel):
 
 def changed_files(trip, since, ignores, order=None):
     """(changed files relative to trip, whether the walk stopped early, whether it skipped something it
-    could not check: a directory it could not open or list, or an entry it could not stat (#500 r8 #1),
-    so the stored list is not complete either way). Each directory is read one
-    entry at a time, every directory and file counts toward the entry limit, and the deadline is
-    checked for each entry, so the limits bound the scan itself. The caller sorts the result.
+    could not check: a directory it could not open or list, a listing that failed partway, or an entry
+    it could not stat (#500 r8 #1, r9 #1), so the stored list is not complete either way; an entry that
+    is gone by then is not counted, r9 #3). Each directory is read one entry at a time, every directory
+    and file counts toward the entry limit, and the deadline is checked before each directory and for
+    each entry (#500 r9 #2), so the limits bound the scan itself. The caller sorts the result.
     The trip folder is opened once; every directory below it is opened through its parents'
     descriptors with O_NOFOLLOW and listed by descriptor (#500 r6 #2), never by a path resolved again.
     `order` (tests only) reorders each directory's entries, so a test does not depend on the
@@ -457,8 +463,13 @@ def changed_files(trip, since, ignores, order=None):
     try:
         stack = [""]
         while stack:
+            if time.monotonic() - began > WALK_SECONDS:   # #500 r9 #2: empty directories have no entries
+                return found, True, skipped[0]
             here = stack.pop()
-            fd = os.dup(top) if not here else open_below(top, here)
+            try:
+                fd = os.dup(top) if not here else open_below(top, here)
+            except FileNotFoundError:
+                continue   # removed after it was listed: nothing left to check
             if fd is None:
                 skipped[0] = True
                 continue
@@ -470,15 +481,18 @@ def changed_files(trip, since, ignores, order=None):
                 continue
             try:
                 with entries:
-                    for entry in (entries if order is None else order(list(entries))):
-                        seen += 1
-                        if exit_at and seen >= exit_at:
-                            os._exit(1)
-                        if seen > limit or time.monotonic() - began > WALK_SECONDS:
-                            return found, True, skipped[0]
-                        rel = visit(entry, here, since, ignores, stack, skipped)
-                        if rel is not None:
-                            found.append(rel)
+                    try:   # #500 r9 #1: the listing is lazy, so reading the next entry can fail too
+                        for entry in (entries if order is None else order(list(entries))):
+                            seen += 1
+                            if exit_at and seen >= exit_at:
+                                os._exit(1)
+                            if seen > limit or time.monotonic() - began > WALK_SECONDS:
+                                return found, True, skipped[0]
+                            rel = visit(entry, here, since, ignores, stack, skipped)
+                            if rel is not None:
+                                found.append(rel)
+                    except OSError:
+                        skipped[0] = True   # keep what was found; walk the other directories
             finally:
                 os.close(fd)
     finally:
@@ -489,7 +503,7 @@ def changed_files(trip, since, ignores, order=None):
 def visit(entry, here, since, ignores, stack, skipped):
     """One directory entry of the directory `here` (relative to the trip folder, "" for the folder
     itself): queue a directory, return a changed file's relative path, else None. An entry that cannot
-    be checked sets skipped[0]."""
+    be checked sets skipped[0]; one that is gone by then (FileNotFoundError) does not (#500 r9 #3)."""
     rel = entry.name if not here else here + "/" + entry.name
     try:
         if entry.is_symlink():
@@ -502,6 +516,8 @@ def visit(entry, here, since, ignores, stack, skipped):
             return None
         if entry.stat(follow_symlinks=False).st_mtime <= since:
             return None
+    except FileNotFoundError:
+        return None   # removed after it was listed (a lock or swap file): not a failure to check it
     except OSError:
         skipped[0] = True
         return None
