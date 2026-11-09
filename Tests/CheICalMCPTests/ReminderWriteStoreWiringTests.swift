@@ -153,7 +153,7 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
         let completion = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager+ReminderCompletion.swift")))
         XCTAssertTrue(completion.contains("} catch let unread as UnreadSaveError { markNeedsRefresh() await CalendarUndoManager.shared.record(.forCompletion(before: unread.committed.completionBefore, requestedCompleted: completed, savedTitle: unread.committed.completion.title,"))
         XCTAssertTrue(completion.contains("throw EventKitError.writeStoreReadBackFailed(kind: \"reminder\", undo: .recorded, newIdentifier: unread.committed.newIdentifier(passed: identifier))"))
-        let history = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> String {", in: try SourcePins.source("EventKit/ExistingReminderSave.swift"))))
+        let history = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],", in: try SourcePins.source("EventKit/ExistingReminderSave.swift"))))
         // String literals are stripped by the pin reader: both cases return, neither throws.
         XCTAssertTrue(history.contains("{ case .readBack: return case .unread: return } }"), history)
     }

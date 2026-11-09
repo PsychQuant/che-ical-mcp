@@ -72,8 +72,10 @@ extension EventKitManager {
         // does (#242), so a missing list refuses with the reminder unchanged.
         // Round 2 (LOW 3): only when the list's group is restored.
         let list = plan.restored.contains("list") ? try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate) : nil
+        // PR #507 round 5: the verified reminder's identity, before the merge is applied to it.
+        let occurrence = ReminderCompletionSnapshot(from: reminder)
         old.applyRestoring(Set(plan.restored), to: reminder, list: list, now: Date())
-        let note = try saveForHistory(reminder, handler: "undo")
+        let note = try saveForHistory(reminder, handler: "undo", occurrence: occurrence)
         markNeedsRefresh()
         return UndoKeepLaterEdits.undoneMessage(kind: .reminder, title: reminder.title ?? old.title, plan: plan) + note
     }

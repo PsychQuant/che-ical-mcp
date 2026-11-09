@@ -79,7 +79,8 @@ extension EventKitManager {
     func undoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot) async throws -> String {
         let reminder = try await verifiedReminder(of: operation, verb: .undo)
         try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-        let note = try saveForHistory(reminder, handler: "undo", requested: ReminderCompletionWrite.requestedFields)
+        // PR #507 round 5: the occurrence `verifiedReminder` checked, checked again on the write store's copy.
+        let note = try saveForHistory(reminder, handler: "undo", requested: ReminderCompletionWrite.requestedFields, occurrence: before)
         markNeedsRefresh()
         return "Undone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(before.isCompleted)" + note
     }
@@ -87,7 +88,7 @@ extension EventKitManager {
     func redoRecurringCompletion(_ operation: UndoOperation, before: ReminderCompletionSnapshot, requestedCompleted: Bool) async throws -> String {
         let reminder = try await verifiedReminder(of: operation, verb: .redo)
         try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-        let note = try saveForHistory(reminder, handler: "redo", requested: ReminderCompletionWrite.requestedFields)
+        let note = try saveForHistory(reminder, handler: "redo", requested: ReminderCompletionWrite.requestedFields, occurrence: before)
         markNeedsRefresh()
         return "Redone: set recurring reminder '\(undoVisibleTitle(before.title))' completion to \(requestedCompleted)" + note
     }

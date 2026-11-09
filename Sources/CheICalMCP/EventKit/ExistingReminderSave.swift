@@ -64,6 +64,14 @@ enum ExistingReminderSave {
         return taken
     }
 
+    /// PR #507 round 5: what an undo or redo answers when its pre-write check found the write store's
+    /// copy at another occurrence than the one the history arm verified: the history's own refusal
+    /// (nothing written, the entry kept). Every other failure answers as itself.
+    static func historyFailure(_ error: Error, handler: String) -> Error {
+        guard case EventKitError.completionOccurrenceMoved = error else { return error }
+        return EventKitError.historyOccurrenceMoved(verb: handler == "redo" ? .redo : .undo)
+    }
+
     /// What a failed write answers: the failure itself (it did not land), after `code` logs it.
     static func failure(_ error: Error, code: (Error) -> String) -> Error {
         _ = code(error)
@@ -142,8 +150,17 @@ extension EventKitManager {
 
     /// An undo or redo whose save landed: the record has done its work, so the stacks move as for a
     /// success; when the reminder cannot be read back the message says so (round 2 HIGH).
-    func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> String {
-        switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
+    /// Round 5: `occurrence` is the identity the history arm verified on this server's reminder, taken
+    /// before the record was applied to it. The write store fetches the reminder again, so the copy is
+    /// checked against it before anything is written (`checkSameOccurrence`); it has no default, so
+    /// no history arm can leave it out.
+    func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],
+                        occurrence: ReminderCompletionSnapshot?) throws -> String {
+        let outcome: ReminderSaveOutcome
+        do {
+            outcome = try saveExistingReminder(reminder, handler: handler, requested: requested, occurrence: occurrence)
+        } catch { throw ExistingReminderSave.historyFailure(error, handler: handler) }
+        switch outcome {
         case .readBack: return ""
         case .unread: return " The save returned without an error, but this server could not read the reminder back right after it; read it again before relying on it."
         }

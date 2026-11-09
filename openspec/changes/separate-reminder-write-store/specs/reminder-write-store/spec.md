@@ -62,7 +62,7 @@ When the write store does not return the object, or the calendar it is moved to,
 ---
 ### Requirement: The saved reminder is read back under the identifier it has after the save
 
-After a successful commit the server SHALL take the identifier from the write store's object. When it differs from the caller's identifier, the server SHALL resolve the reminder again by it on the long-lived store, and `update_reminder` SHALL build its read-backs, its response (`id`, `id_changed`, `previous_id`) and its undo record from that reminder. A removal SHALL take its undo snapshot, and a batch row's only-completed check, from the write store's object before removing it. A completion of a repeating reminder SHALL be refused before anything is written when the write store's object is not at the occurrence the server read. The old state of an `update_reminder` or `complete_reminder` undo record SHALL be what the write store's object held before the call's fields were written (from the first save of the call), not the long-lived store's cached reminder, so the record holds only this call's differences. When the reminder cannot be read back after the save, the call SHALL first record its undo entry from what the write store's object held after the commit (for a list, the #273 marker), then fail with a store error that says the save returned without an error, names the identifier after the save when it differs from the one passed, and says where its undo is, and nothing SHALL be rolled back; an undo or redo whose save lands but cannot be read back SHALL count as done and SHALL say so.
+After a successful commit the server SHALL take the identifier from the write store's object. When it differs from the caller's identifier, the server SHALL resolve the reminder again by it on the long-lived store, and `update_reminder` SHALL build its read-backs, its response (`id`, `id_changed`, `previous_id`) and its undo record from that reminder. A removal SHALL take its undo snapshot, and a batch row's only-completed check, from the write store's object before removing it. A completion of a repeating reminder SHALL be refused before anything is written when the write store's object is not at the occurrence the server read; so SHALL every undo and redo that saves an existing reminder, against the occurrence the history arm verified (for a recurring completion, the record's own), with the entry kept. The old state of an `update_reminder` or `complete_reminder` undo record SHALL be what the write store's object held before the call's fields were written (from the first save of the call), not the long-lived store's cached reminder, so the record holds only this call's differences. When the reminder cannot be read back after the save, the call SHALL first record its undo entry from what the write store's object held after the commit (for a list, the #273 marker), then fail with a store error that says the save returned without an error, names the identifier after the save when it differs from the one passed, and says where its undo is, and nothing SHALL be rolled back; an undo or redo whose save lands but cannot be read back SHALL count as done and SHALL say so.
 
 #### Scenario: A move to a list in another account
 
@@ -93,6 +93,12 @@ After a successful commit the server SHALL take the identifier from the write st
 - **GIVEN** a weekly reminder the server read at one occurrence, which another app completed so that the store holds the next one
 - **WHEN** `complete_reminder` runs before the server reads it again
 - **THEN** the call is refused and nothing is written
+
+#### Scenario: An undo or redo whose copy moved on
+
+- **GIVEN** a recurring completion record whose occurrence the server verified, while another app completed that occurrence so that the store holds the next one
+- **WHEN** undo or redo of that record saves on the write store
+- **THEN** it is refused, nothing is written, and the entry is kept
 
 #### Scenario: An alarm of another kind added elsewhere
 

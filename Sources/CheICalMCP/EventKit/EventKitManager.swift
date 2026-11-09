@@ -3225,15 +3225,20 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .updateReminder(_, let oldSnapshot, _):
             // Undo update = restore old values
-            let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })
-            let note = try saveForHistory(reminder, handler: "undo")
+            // PR #507 round 5: the verified reminder's identity, before the record is applied to it; the
+            // write store's copy must still be at it (a repeating reminder completed elsewhere is not).
+            var occurrence: ReminderCompletionSnapshot?
+            let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate,
+                into: { let verified = try await verifiedReminder(of: operation, verb: .undo); occurrence = ReminderCompletionSnapshot(from: verified); return verified })
+            let note = try saveForHistory(reminder, handler: "undo", occurrence: occurrence)
             markNeedsRefresh()
             return "Undone: restored reminder '\(undoVisibleTitle(oldSnapshot.title))' to previous state" + note
 
         case .completeReminder(_, let wasCompleted, _, _, let title, _, _):
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
+            let occurrence = ReminderCompletionSnapshot(from: reminder)   // PR #507 round 5
             try apply(operation.completionWrite(undo: true, now: Date()), to: reminder)
-            let note = try saveForHistory(reminder, handler: "undo", requested: ReminderCompletionWrite.requestedFields)
+            let note = try saveForHistory(reminder, handler: "undo", requested: ReminderCompletionWrite.requestedFields, occurrence: occurrence)
             markNeedsRefresh()
             return "Undone: set reminder '\(undoVisibleTitle(title))' completion to \(wasCompleted)" + note
 
@@ -3382,8 +3387,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // wasCompleted — that reopened an idempotently completed reminder), and only
             // while the reminder is in the state the undo left (#236).
             let reminder = try await verifiedReminder(of: operation, verb: .redo)
+            let occurrence = ReminderCompletionSnapshot(from: reminder)   // PR #507 round 5
             try apply(operation.completionWrite(undo: false, now: Date()), to: reminder)
-            let note = try saveForHistory(reminder, handler: "redo", requested: ReminderCompletionWrite.requestedFields)
+            let note = try saveForHistory(reminder, handler: "redo", requested: ReminderCompletionWrite.requestedFields, occurrence: occurrence)
             markNeedsRefresh()
             return "Redone: set reminder '\(undoVisibleTitle(title))' completion to \(requestedCompleted)" + note
 
@@ -3620,6 +3626,8 @@ enum EventKitError: LocalizedError {
     /// PR #507 round 4: the write store's copy of a repeating reminder is at another occurrence than
     /// the one this server read; nothing was written (`ReminderCompletionWrite.checkSameOccurrence`).
     case completionOccurrenceMoved
+    /// PR #507 round 5: the same, met by an undo or redo; nothing was written and the entry is kept.
+    case historyOccurrenceMoved(verb: UndoHistoryVerb)
     /// Round 3: `newIdentifier` when the save gave the item another identifier than the one passed.
     case writeStoreReadBackFailed(kind: String, undo: ReadBackUndo, newIdentifier: String? = nil)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
@@ -3787,6 +3795,9 @@ enum EventKitError: LocalizedError {
             return "The save through the separate store this server writes reminders through returned without an error, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it.\(moved) \(undoText)"
         case .completionOccurrenceMoved:
             return "Nothing was written: this repeating reminder is no longer at the occurrence this server read (it was completed or its due date, rule or list changed elsewhere in between), so completing it now would complete an occurrence you have not seen. Read it again with list_reminders and complete the occurrence you mean."
+        case .historyOccurrenceMoved(let verb):
+            let kept = verb == .undo ? "This history entry was kept" : "This redo entry was kept"
+            return "Cannot \(verb.rawValue): this repeating reminder is no longer at the occurrence that was checked (it was completed or its due date, rule or list changed elsewhere in between), so nothing was written. \(kept); the next \(verb.rawValue) reads the reminder again."
         case .writeStoreLookupFailed(let kind):
             return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again. An item this server created but whose save failed may not be committed yet; it becomes visible once a later save commits it."
         case .eventLookupFailed(let identifier):

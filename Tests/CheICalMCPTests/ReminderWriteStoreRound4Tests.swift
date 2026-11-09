@@ -85,9 +85,13 @@ final class ReminderWriteStoreRound4Tests: XCTestCase {
         XCTAssertEqual(SetterLog.calls, ["start=nil", "due", "start"])
         XCTAssertEqual(copy.dueDateComponents?.hour, 10)
         XCTAssertEqual(copy.startDateComponents?.hour, 0)
+        // Round 5 LOW: the zone the fallback wrote reaches the copy through the caller's getter. In memory
+        // only: a source that drops the zone, which this fallback is for, was not available to measure.
+        XCTAssertEqual(copy.dueDateComponents?.timeZone, taipei)
     }
 
-    /// The first save keeps `restore`'s order, which writes the start before the due.
+    /// The first save keeps `restore`'s order: a date-only due is written before the start (a timed
+    /// due after it).
     func testTheFirstSaveKeepsTheRestoreOrder() throws {
         let l = list()
         let cached = EKReminder(eventStore: store)
