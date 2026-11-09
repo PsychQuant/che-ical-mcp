@@ -94,6 +94,11 @@ jobs:
           bash plugin/bin/tests/find-ical-config.test.sh
           bash plugin/bin/tests/quota-dates.test.sh
           bash plugin/bin/tests/quota-plan.test.sh
+      - name: itinerary reminder hook tests
+        # #341: the Stop hook reminds once per session when files changed in a folder with a
+        # project-level config, never blocks, and honours itinerary_check / itinerary_ignore.
+        # HOME, CLAUDE_PLUGIN_DATA and the trip folders are temp dirs; no calendar is read.
+        run: bash scripts/tests/itinerary-reminder-test.sh
 
       - name: swift build
         run: swift build

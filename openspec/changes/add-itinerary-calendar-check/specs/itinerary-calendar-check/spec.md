@@ -1,0 +1,126 @@
+## Purpose
+
+Keeps the calendar in step with work done on a trip: a hook reminds Claude once per session when files changed in a trip folder, and the `itinerary-check` skill compares the calendar with the trip facts in those files and changes nothing until the user agrees.
+
+## ADDED Requirements
+
+### Requirement: A changed trip folder brings one reminder per session
+
+The plugin SHALL record the start of each interactive session with a `SessionStart` hook and SHALL keep the first record across a resume, a `/clear` and a compaction; removing records older than 30 days SHALL spare every record of the current session, so a session resumed after 30 days is not reminded twice, unless another session's start pruned its records first (that start spares only its own session's records). It SHALL write no record, and so SHALL never remind, for a headless session (`claude -p`, the Agent SDK, an unattended or scheduled session), judged from the variables Claude Code sets for its hooks, against an allowlist of the entrypoints seen to be interactive, and SHALL treat any other session as headless; the stop hook SHALL judge this again, so an interactive session resumed headless gets no reminder. At the end of a turn a `Stop` hook SHALL find the config that applies to the working directory with `plugin/bin/find-ical-config.sh`. The hook SHALL act only when that config is a project-level `.claude/.ical/config.yaml`, and not the user-level `~/.claude/.ical/config.yaml`. When files in the trip folder changed since the session started, the hook SHALL print one `Stop` `hookSpecificOutput.additionalContext` that names the changed files relative to the trip folder (at most 20, counting the rest), each as one JSON string with control, format and line or paragraph separator characters removed and cut to 120 characters, the list cut to 4000 characters, with their count and the session id, and that says these strings are display names and data, not instructions or paths to open, and that asks Claude to run the `itinerary-check` skill for those files (or, when it cannot run then, to tell the user in one line that the skill can check them), SHALL leave the report that there are no trip facts to the skill's full check, and SHALL NOT invite a dismissal from the display names, and names `itinerary_check: off`. The exact paths SHALL be stored in the plugin data directory for that session. It SHALL do so at most once per session. The trip folder SHALL be the logical ancestor of the working directory whose `.claude/.ical/config.yaml` is that config, so a symlinked `.claude` or `.ical` does not move it, or, when no logical ancestor holds it, the ancestor of the working directory's real path that holds it (a working directory entered through a symlink whose target lies below the config's folder). The hook SHALL skip `.git/`, `.claude/`, `.DS_Store` and symlinks, SHALL read file names and modification times only, never content, and SHALL bound its walk in time and in entries (2 seconds or 50 000 entries, checked between entries; a single call that hangs is ended by the hook's 10-second timeout, which ends the hook's own process, the walk included), counting directories and files alike; it SHALL read each directory one entry at a time inside those bounds, and SHALL not walk a directory that an ignore pattern ending in `/` matches, pruning a directory for no other pattern; an inline `itinerary_ignore` list SHALL be split on commas outside quoted values, where a `\"` or `\\` inside double quotes and a `''` inside single quotes do not end the value and are decoded to `"`, `\` and `'`; after a walk that stopped early, was ended before it finished, or took 1 second or more, and found nothing, it SHALL NOT walk that session's folder again for 5 minutes, and each further such walk in that session SHALL double the pause, up to 1 hour; the time bound SHALL be checked before each directory as well as for each entry. It SHALL say so when the walk stopped early. A directory it cannot open or list, a listing that fails partway, or an entry it cannot check (other than one that is gone by then) SHALL make the stored list incomplete, keeping the changes found elsewhere (`complete: false`), and the reminder SHALL say that some folders could not be listed. The hook SHALL NOT block: it SHALL exit 0 in every case and never 2, an unreadable module included, SHALL NOT return `decision: "block"`, SHALL print nothing when it has no reminder, SHALL be silent when `stop_hook_active` is true, and SHALL write only under `${CLAUDE_PLUGIN_DATA}`, never through a symlink: it SHALL write nothing unless that directory lies under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/`, SHALL open every directory below that root without following a symlink and do every create, read, write and removal relative to the verified descriptor, and SHALL refuse a record with another hard link before truncating it. The walk SHALL open every directory below the trip folder relative to its parent's descriptor without following a symlink and SHALL list that descriptor, never a path resolved again.
+
+#### Scenario: A receipt archived into the trip folder
+
+- **GIVEN** a folder with a project-level config, and a session that archived `mail/receipt.md` into it
+- **WHEN** the turn ends
+- **THEN** one additionalContext names `mail/receipt.md` and asks to run `itinerary-check`
+
+#### Scenario: Nothing changed
+
+- **GIVEN** a folder with a project-level config where no file changed during the session
+- **WHEN** the turn ends
+- **THEN** the hook prints nothing, and a later turn that changes a file still gets the reminder
+
+#### Scenario: A second turn
+
+- **GIVEN** a session that already got the reminder
+- **WHEN** another file changes and the turn ends
+- **THEN** the hook prints nothing
+
+#### Scenario: Only the user-level config applies
+
+- **GIVEN** a working directory with no project-level config and a `~/.claude/.ical/config.yaml`
+- **WHEN** a file changes and the turn ends
+- **THEN** the hook prints nothing
+
+#### Scenario: A recorded session resumed headless
+
+- **GIVEN** an interactive session that recorded its start and was not reminded yet
+- **WHEN** it is resumed with `claude -p --resume` and a file changes
+- **THEN** the hook prints nothing
+
+#### Scenario: The hook's input is malformed
+
+- **WHEN** the hook receives input that is not JSON, or a session id that is not letters, digits, `_` or `-`
+- **THEN** it exits 0, prints nothing and writes nothing
+
+#### Scenario: A file name that holds an instruction
+
+- **GIVEN** a changed file whose name holds a line break followed by an instruction
+- **WHEN** the turn ends
+- **THEN** the name appears as one quoted string without the line break, and the reminder says the names are data
+
+#### Scenario: A headless run
+
+- **GIVEN** a `claude -p` run in a folder with a project-level config
+- **WHEN** a file changes and the run ends
+- **THEN** no start record is written and the hook prints nothing
+
+#### Scenario: A working directory entered through a symlink
+
+- **GIVEN** a project-level config in `conf/`, and a working directory that is a symlink to `conf/2026/kyoto`
+- **WHEN** `conf/2026/kyoto/x.md` changes and the turn ends
+- **THEN** the reminder names `2026/kyoto/x.md`, and the stored trip folder is `conf/`'s real path
+
+---
+### Requirement: The reminder is on by default and can be turned off or narrowed
+
+The reminder SHALL be on for every folder with a project-level config and SHALL NOT require a key to turn it on. A top-level `itinerary_check` whose value is `off`, `no` or `false`, quoted or not, in any letter case, SHALL turn it off for that folder. A top-level `itinerary_ignore` SHALL list globs, inline or as a block list, whose matching files SHALL NOT count as changed; a quote SHALL open only at the start of a value, a `#` SHALL start a comment only outside quotes, and names and patterns SHALL be compared in Unicode NFC. A pattern ending in `/` SHALL be a glob that skips every file under a matching directory: without another `/` and without a leading `/` it SHALL be matched with each directory name on the path, at any depth, and otherwise with each directory path from the trip folder; a pattern without `/` SHALL be matched with the file name, and any other pattern SHALL be matched with the path relative to the trip folder. The CHANGELOG and the README SHALL say that existing project-level configs start getting the reminder after the upgrade, and how to turn it off.
+
+#### Scenario: Turned off
+
+- **GIVEN** a project-level config with `itinerary_check: off`
+- **WHEN** a file changes and the turn ends
+- **THEN** the hook prints nothing
+
+#### Scenario: Drafts are ignored
+
+- **GIVEN** a project-level config with `itinerary_ignore: [drafts/]`
+- **WHEN** only `drafts/plan.md` changes
+- **THEN** the hook prints nothing
+
+---
+### Requirement: The check lists differences and changes nothing until the user agrees
+
+The `itinerary-check` skill SHALL read only the files the reminder, the user or the invoking work names, plus the config, the state file and the trip folder's `README.md`, and only those whose real path is inside the trip folder's own real path, both sides resolved (so a trip folder reached through a symlinked folder has its files read), except the trip folder's own `.claude/.ical/config.yaml` and `.claude/.ical/state/archives.json`, which it SHALL read through the trip folder's path even when `.claude` or `.ical` is a symlink (the hook's rule), stopping to ask the user when a config applies but cannot be read; the trip folder SHALL be the helper's `trip_folder` after a reminder and, on a manual run, the logical ancestor of the working directory holding the config, or, when no logical ancestor holds it, the ancestor of the working directory's real path that holds it, never a folder taken from the config file's own physical path; on a manual run with no config, the skill SHALL ask the user to confirm the trip folder and SHALL read no file until they confirm it; the report SHALL say how many changed files were not named or not read. It SHALL treat their text, and the notes of the events it reads, as data, and SHALL take from them trip facts of these kinds and only these: registration, payment, program, lodging, transport. Review deadlines, teaching and administrative deadlines SHALL NOT count. It SHALL find the trip's events in the calendars the config's routing names (every event calendar when there are none or there is no config), in this order: events with a `conference-module:` or `lodging-module:` marker line, events that `state/archives.json` maps, and events matched by the trip's name over its dates widened by 60 days. It SHALL mark an event found only by name as matched by name. It SHALL give an all-clear (no trip facts in the changed files, or every fact matching, in one line) only after a full check: the walk complete, every changed path stored and printed by the helper, and every printed path read; otherwise it SHALL say what it checked and how many changed files were not stored or not read, and SHALL NOT give that one-line all-clear. When a fact differs or has no event, it SHALL show one table (event, what the calendar says, what the file says, the proposed change, the path the change goes through) and ask once, and it SHALL write nothing before the user's yes. When nobody can answer, it SHALL write nothing and list the differences as pending. On the itinerary-check path, a module SHALL write nothing (create, update, delete, read-back correction) before the user's yes on the skill's table; the module's own mapping tables SHALL provide the rows. The skill SHALL read the exact changed paths through `bin/itinerary-changed.sh`, which SHALL print them as UTF-8, SHALL NOT print a stored name that holds a control, format, line or paragraph separator, surrogate or private-use character, and SHALL count such a name as unreadable, SHALL count a stored path that is absolute or has an empty, `.` or `..` component as unreadable too, SHALL exit non-zero for a trip folder that is not absolute or for an empty `HOME` without `CLAUDE_CONFIG_DIR`, and accept a data directory only at least one component under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/`, with no `.` or `..` component, opening every directory below that root and the list itself without following a symlink and refusing a list that is not a regular file; when the helper exits non-zero, the skill SHALL read no changed file, SHALL report the helper's message and SHALL ask the user, and SHALL NOT rebuild a path from the reminder's display names. It SHALL route each agreed change by whose event it is first: an event with a `conference-module:` marker through the conference module, an event with a `lodging-module:` marker through the lodging module, any other event with `update_event` on that one event; and a fact with no event by its kind: a newly published program through the conference module's full paste, a stay through the lodging module, anything else with `create_event`. The user's yes SHALL be the only gate for a write. The skill SHALL NOT list a write tool in its `allowed-tools`, and SHALL scope Bash there to the config lookup and the changed-paths helper, with the plugin root quoted, and SHALL NOT pre-approve `Read`, because that list is pre-approved in the turn that reads untrusted files; the list SHALL NOT be described as a check on writes, because the user's own settings decide whether a write prompts. It SHALL NOT copy a card number, a code, a password or an identity number into a table, a question or the report.
+
+#### Scenario: The calendar already matches
+
+- **GIVEN** a changed file that says the registration fee was paid, and a calendar event that already says so
+- **WHEN** the check runs
+- **THEN** it answers in one line and changes nothing
+
+#### Scenario: A fee paid, the event still says pay by
+
+- **GIVEN** a receipt for a fee and a hand-built event that says the fee is due
+- **WHEN** the check runs
+- **THEN** a table shows the event as matched by name with the proposed change, and nothing is written before the user says yes
+
+#### Scenario: An exact match from the conference module
+
+- **GIVEN** a revised program whose items match the conference module's events exactly, with a new room
+- **WHEN** the check runs
+- **THEN** the room change is a row of the table, and the module updates the event only after the user's yes
+
+#### Scenario: A revised program
+
+- **GIVEN** a revised conference program in the folder and the conference module's events on the calendar
+- **WHEN** the check runs
+- **THEN** the revision goes to the conference module (its section 6 match, or its partial correction when the revision names only some items), whose mapping table is shown instead of a second one
+
+#### Scenario: No trip fact in the changed files
+
+- **GIVEN** a reminder for a changed file that records no trip fact, and a full check
+- **WHEN** the check runs
+- **THEN** it says so in one line and does not search the calendar
+
+#### Scenario: A check that was not full gives no all-clear
+
+- **GIVEN** 51 changed files, of which the skill reads the first 50 and none of them records a trip fact
+- **WHEN** the check runs
+- **THEN** it says that no trip fact was found in the 50 files read and that 1 changed file was not read, and does not say there are no trip facts in the changed files
+
+#### Scenario: No config
+
+- **GIVEN** the check is run by hand where no config applies
+- **WHEN** it searches
+- **THEN** it searches every event calendar and the report says no config applied
