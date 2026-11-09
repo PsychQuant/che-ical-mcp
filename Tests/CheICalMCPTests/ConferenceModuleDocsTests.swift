@@ -20,6 +20,9 @@ final class ConferenceModuleDocsTests: XCTestCase {
     private let contract = "plugin/rules/modules/conference.md"
     private let spec = "openspec/changes/add-conference-module/specs/conference-module/spec.md"
     private let design = "openspec/changes/add-conference-module/design.md"
+    private let changelog = "plugin/CHANGELOG.md"
+    private let skill = "plugin/skills/archive-event/SKILL.md"
+    private let eventModules = "plugin/rules/event-modules.md"
 
     private var pins: [(String, String, String)] {
         [
@@ -40,7 +43,7 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (contract, "unless step 3 listed an all-day event on the new days", "an exact set's umbrella update asks first (r7 #2)"),
             (spec, "SHALL have the same update-anyway row with its own answer", "umbrella update-anyway row (spec, r7 #2)"),
             (spec, "#### Scenario: An exact set's umbrella moves onto a hand-built all-day event", "r7 #2 scenario"),
-            (spec, "ignoring all-day events, the program's own events and the old events the table maps (a clash with a hand-built event the table lists SHALL be reported as the routing requirement states)", "entry-points clash rule (spec, r7 #1 #3)"),
+            (spec, "ignoring all-day events, the program's own events and the old events that rows answered yes map to program items (a clash with a hand-built event the table lists SHALL be reported as the routing requirement states)", "entry-points clash rule (spec, r7 #1 #3, r8 #1 #4)"),
             (contract, "**It needs its own answer whenever it names a hand-built event**", "merged old-event row needs its own answer (r7 LOW 5)"),
             (contract, "the row reads \"no creates the item beside <event>\"", "merged row says what no does (r7 LOW 5)"),
             (contract, "are void and are asked again, as in the step 2 fallback", "same-calendar rerun voids the first table (r7 LOW 6)"),
@@ -58,7 +61,7 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (spec, "a clash with a hand-built event the table lists SHALL be reported on a line of its own", "listed hand-built clashes reported (spec, r6 #3)"),
             (spec, "when that set turns out not to be this program's, the run SHALL go back to the routed calendar", "the routing exception (spec, r6 LOW 7)"),
             (spec, "an event whose notes hold the pair more than once SHALL be listed like a hand-built event", "double pair listed (spec, r6 LOW 14)"),
-            (spec, "the one answer SHALL pick the candidate set, one same-day set or none", "candidate beside same-day sets (spec, r6 LOW 16)"),
+            (spec, "the one answer SHALL pick one of those sets or none", "several sets: one choice (spec, r6 LOW 16, r8 #2)"),
             (spec, "#### Scenario: A rejected set in another calendar, and a set in the routed calendar", "r6 #2 scenario"),
             (spec, "#### Scenario: A set-level no runs the hand-built search again", "r6 #5 scenario"),
             (spec, "#### Scenario: A plain yes and a hand-built row", "r6 LOW 13 scenario"),
@@ -71,11 +74,29 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (contract, "`conflicts already listed in the table: <event> with <session>`", "listed hand-built clashes reported (r6 #3, LOW 11)"),
             (contract, "That exception ends when the chosen set turns out not to be this program's", "the routing exception (r6 LOW 7)"),
             (contract, "A hand-built row needs **its own answer**", "hand-built rows need their own answer (r6 LOW 13)"),
-            (contract, "**A candidate set beside same-day sets.**", "candidate beside same-day sets (r6 LOW 16)"),
+            (contract, "**Several sets: the choice comes first.**", "several sets: one choice (r6 LOW 16, r8 #2)"),
             (contract, "the entry point maps the source to no event", "no umbrella event, no mapping (r6 LOW 15)"),
             (spec, "#### Scenario: The chosen set is another conference", "step 2 fallback scenario"),
             (spec, "#### Scenario: A hand-built all-day event of one day of the conference", "umbrella guard scenario"),
             (design, "### 採納從 v1 拿掉（PR #498 第 5 輪，2026-11-09）", "the deferral is recorded"),
+            // PR #498 round 8.
+            (contract, "No old event → item row, \"not in the set\" row or hand-built row is computed or asked until it is answered", "several sets: item rows after the choice (r8 #2)"),
+            (spec, "no item-level row SHALL be computed or asked until that choice is answered", "several sets: item rows after the choice (spec, r8 #2)"),
+            (spec, "#### Scenario: Several sets are listed and the choice comes first", "r8 #2 scenario"),
+            (contract, "only when that search found a set in another calendar; when it found none, step 2 asks nothing", "step 2 asks only for a set elsewhere (r8 #3)"),
+            (spec, "when it finds none, it SHALL ask nothing at this step", "step 2 asks only for a set elsewhere (spec, r8 #3)"),
+            (spec, "#### Scenario: A correction answered no leaves an overlapping old event", "r8 #1 scenario"),
+            (changelog, "skipping the old events that rows answered yes map to program items", "clash ignore set (CHANGELOG, r8 #4)"),
+            (design, "（已被下方 PR #498 第 8 輪取代：", "design #351 clash sentence marked replaced (r8 #4)"),
+            (design, "PR #498 第 8 輪補的", "round 8 recorded in the design"),
+            (contract, "except the hand-built rows, an \"update anyway?\" row and an old event's row that names a hand-built event", "plain-yes exceptions (r8 #5)"),
+            (spec, "other than the hand-built rows, an update-anyway row and an old event's row that names a hand-built event", "plain-yes exceptions (spec, r8 #5)"),
+            (contract, "**Naming the set answers only that choice**", "a rename answer answers no other row (r8 #8)"),
+            (spec, "and SHALL answer no other row: the rows of items not in the set and the hand-built rows SHALL need their own answers", "a rename answer answers no other row (spec, r8 #8)"),
+            (contract, "; it stays under the old marker <old name> | <old first day>`", "an umbrella left under its old marker is reported (r8 #7)"),
+            (skill, "kept, declined, not updated or pending", "no mapping to an umbrella left under the old marker (r8 #7)"),
+            (contract, "the conference module counts an event as its own only with both lines", "one-line events are hand-built (r8 #13)"),
+            (eventModules, "the conference module counts an event as its own only with both of its lines", "one-line events are hand-built (index, r8 #13)"),
         ]
     }
 
@@ -95,13 +116,25 @@ final class ConferenceModuleDocsTests: XCTestCase {
                      "adopted N", "an adopt answer",
                      // r6 #2: the fallback reruns the whole flow, not step 3 alone; r6 #3: listed hand-built events are not ignored.
                      "step 3 runs again in the routed calendar, its rows are asked", "and the hand-built events the table lists for an item; listed",
-                     "When the question names only one set, a yes names that set."] {
+                     "When the question names only one set, a yes names that set.",
+                     // r8 #2: several sets get one choice row first; r8 #8: a rename answer answers no other row; r8 #12.
+                     "Several candidate sets: ask which one", "the same answer applies the table", "no second question follows",
+                     "an adopted event's old notes"] {
             XCTAssertFalse(contractText.contains(gone), "\(contract): \(gone)")
         }
         let specText = try read(spec)
         // r7 #1: the entry-points requirement no longer ignores the events the table lists.
-        XCTAssertFalse(specText.contains("maps or lists"), "\(spec): maps or lists")
-        XCTAssertFalse(try read("plugin/CHANGELOG.md").contains("A correction that would move an old event onto"), "CHANGELOG: move or rename")
+        // r8 #1 #4: only old events that rows answered yes map are left out of the clash check; r8 #2 #8.
+        for gone in ["maps or lists", "the old events the table maps", "and the table applied", "no second question SHALL follow"] {
+            XCTAssertFalse(specText.contains(gone), "\(spec): \(gone)")
+        }
+        let changelogText = try read(changelog)
+        // r8 #6: the r5 "a yes names it" rule is gone from the CHANGELOG too; r8 #4: the clash ignore set.
+        for gone in ["A correction that would move an old event onto", "when one set is named a yes names it", "skipping the events the table maps"] {
+            XCTAssertFalse(changelogText.contains(gone), "CHANGELOG: \(gone)")
+        }
+        // r8 #7: an umbrella left under its old marker maps the source to no event.
+        XCTAssertFalse(try read(skill).contains("kept, declined or pending"), "\(skill): kept, declined or pending")
         for gone in ["adoption SHALL write the marker lines", "until the user agrees to adopt it", "Declining an adoption SHALL NOT create",
                      "#### Scenario: A hand-built umbrella with an inclusive end is adopted"] {
             XCTAssertFalse(specText.contains(gone), "\(spec): \(gone)")
