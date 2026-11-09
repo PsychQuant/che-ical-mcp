@@ -26,6 +26,7 @@ final class LodgingModuleDocsTests: XCTestCase {
     private let management = "plugin/skills/calendar-management/SKILL.md"
     private let archivingSpec = "openspec/specs/event-source-archiving/spec.md"
     private let conferenceSpec = "openspec/changes/add-conference-module/specs/conference-module/spec.md"
+    private let changelog = "plugin/CHANGELOG.md"
 
     /// (document, phrase, the #365 item it pins). One row per rule. Each phrase occurs exactly once in
     /// its document, so removing the rule removes the only copy and turns the row red.
@@ -73,12 +74,12 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "never updated, adopted or deleted", "an event with the marker line twice"),
             (lodging, "while one carries an `unconfirmed` marker for the same property", "the double-marker guard covers unconfirmed events (round 1 LOW)"),
             (lodging, "to read each one's number or `unconfirmed` property for the guard of section 4", "parsing vs. counting and reading markers (round 2 #20)"),
-            (lodging, "a cancellation notice that finds a record that counts for it (the same number and the same property) is reported as already cancelled and asks nothing", "a second cancellation"),
+            (lodging, "a cancellation notice that finds a record that counts for it (the same number, the same property, and a notice that states no dates or the record's days) is reported as already cancelled and asks nothing", "a second cancellation needs the dates too (round 7 #1)"),
             (lodging, "Everything else is parsed only above the marker line", "labelled lines parsed outside the module's half"),
             (lodging, "**What a mail may change without a question.**", "every mail-driven date move or delete asks (round 2 decision)"),
             (lodging, "3. **Applied without a question**: a **create** (a new stay, search step 4 (c)), and only that.", "only a create does not ask (round 5 decision)"),
             (lodging, "**every write from a mail to an existing stay**", "every write to an existing stay asks (round 5 decision)"),
-            (lodging, "A cancellation notice that finds its event always reaches section 7's question", "a cancellation reaches the deletion question (round 1 HIGH)"),
+            (lodging, "A cancellation notice that carries the reservation number and finds its event always reaches section 7's question", "a cancellation reaches the deletion question (round 1 HIGH, round 7 #5)"),
             (lodgingSpec, "(a cancellation notice SHALL never be unchanged this second way)", "the same-fields shortcut (spec, round 1 HIGH, round 5 #14)"),
             (lodgingSpec, "#### Scenario: A cancellation notice that states only the stay's own fields", "the HIGH scenario"),
             (lodging, "Each check below only adds a flag to the message's row; no flag, and no missing flag, skips the question.", "checks are flags only (round 2 decision)"),
@@ -179,13 +180,37 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "or the user asks to delete it (section 7's delete the user asked for, which leaves a record;", "the thread section points to section 7 (round 6 #4)"),
             (lodging, "next to `created`, the flags of section 4 that the creating message would have had", "a create reports its flags (round 6 #5)"),
             (lodging, "asks first. Nobody to ask: pending, nothing created.", "an untrusted-Date create with nobody to ask (round 6 #6)"),
-            (shared, "a create from a message whose date is not trusted)", "the shared parenthesis has the create case (round 6 #6)"),
+            (shared, "a create from a message whose date is not trusted, a create after a cancellation record or after a mapped event was deleted)", "the shared parenthesis has the create cases (round 6 #6, round 7 #8)"),
             (lodging, "such a message never creates (step 3 of", "stale step reference fixed (round 6 #7)"),
             (lodging, "The steps below apply to **every** booking-party message", "stale check reference fixed (round 6 #7)"),
             (lodgingSpec, "a message for that number SHALL create nothing in its place and SHALL ask which event is the stay", "a two-module event creates nothing and asks (spec, round 6 #8)"),
             (lodgingSpec, "#### Scenario: An event carries both modules' markers", "two-module event scenario (round 6 #8)"),
             (lodging, "**the source line stays on the newer message**", "an older mail's yes keeps the source line (round 6 #9)"),
             (lodgingSpec, "#### Scenario: An older change notice answered yes", "an older mail's yes keeps the source line (spec, round 6 #9)"),
+            // Round 7
+            (lodgingSpec, "a cancellation notice for which a record counts (the same number and property, and the notice states no dates or the record's days) SHALL be reported as already cancelled", "the search shortcut needs the dates (spec, round 7 #1)"),
+            (lodgingSpec, "a second cancellation notice for which such a record counts SHALL be reported as already cancelled without a question", "the record shortcut needs the dates (spec, round 7 #1)"),
+            (lodgingSpec, "#### Scenario: A reused number at the same property on other dates", "same number and property, other dates (spec, round 7 #1)"),
+            (lodging, "they move to the message only when it is newer", "the first yes resets the sender, order moves the rest (round 7 #2 #9)"),
+            (lodging, "where only the source line's sender is reset", "the order paragraph states the precedence (round 7 #2 #9)"),
+            (lodgingSpec, "SHALL move to the message only when it is newer", "the first-yes precedence (spec, round 7 #2 #9)"),
+            (lodgingSpec, "also on the first yes on an event the module did not write itself", "the older-mail precedence (spec, round 7 #2 #9)"),
+            (lodgingSpec, "#### Scenario: An older message is the first yes on an event the module did not write", "first yes from an older message (spec, round 7 #2)"),
+            (lodging, "a hit carries the number when its marker or the `(also …)` part of its `Reservation:` line holds it", "the search reads the second number (round 7 #3)"),
+            (lodging, "in its marker or in the `(also …)` part of its `Reservation:` line", "the state hint reads the second number (round 7 #3)"),
+            (lodging, "writes an entry for the message under the other number", "a same-stay answer maps the second number (round 7 #3 #6)"),
+            (lodgingSpec, "a hit carrying the number when its marker or the `(also …)` part of its `Reservation:` line holds it", "the search reads the second number (spec, round 7 #3)"),
+            (lodgingSpec, "SHALL write an entry for the message under the other number", "a same-stay answer maps the second number (spec, round 7 #3 #6)"),
+            (lodgingSpec, "#### Scenario: A change notice under a stay's second number", "second number found directly (spec, round 7 #3)"),
+            (archive, "also write an entry for that message under the other number", "a same-stay answer maps the second number (archive-event, round 7 #3)"),
+            (archive, "if its marker, or the `(also …)` part of its `Reservation:` line, holds the same reservation number", "the mapped event's second number (archive-event, round 7 #3)"),
+            (archivingSpec, "SHALL also record that message under the other number", "a same-stay answer maps the second number (archiving spec, round 7 #3)"),
+            (lodgingSpec, "a cancellation notice that carries the reservation number, which SHALL always reach the deletion question", "a thread-only notice is not a deletion (spec, round 7 #5)"),
+            (lodgingSpec, "a create from a message whose date is not trusted, a create after a cancellation record or after a mapped event was deleted)", "nobody to ask lists the create cases (spec, round 7 #8)"),
+            (lodging, "before the stay is created again (nobody to ask: pending, nothing created)", "a reconfirmation with nobody to ask (round 7 #8)"),
+            (lodging, "that shares no night with the booking is named in the report next to `created`", "a nearby unconfirmed stay is named (round 7 #10)"),
+            (lodgingSpec, "SHALL be named in the report next to the created stay", "a nearby unconfirmed stay is named (spec, round 7 #10)"),
+            (changelog, "a record or a `by_user` record silences a cancellation notice only on the same number, the same property and its days", "CHANGELOG names the round 6 and 7 changes (round 7 #7)"),
         ]
     }
 
@@ -232,6 +257,24 @@ final class LodgingModuleDocsTests: XCTestCase {
             for phrase in ["no-question gate", "known-sender condition", "step 3 (b)", "step-3 (b)", "except two:", "never takes steps 2 or 3", "The check below applies", "or the user deletes it by hand"] {
                 XCTAssertFalse(text.contains(phrase), "\(document) still says \(phrase)")
             }
+        }
+    }
+
+    /// Round 7: the wording each fix replaced is gone, so no second, looser rule stays behind.
+    func testTheRound7WordingIsGone() throws {
+        let removed: [(String, String)] = [
+            (lodging, "(the same number and the same property) is reported as already cancelled"),
+            (lodgingSpec, "finds a record with the same number and the same property SHALL be reported as already cancelled"),
+            (lodgingSpec, "a second cancellation notice SHALL find a record with its number and property"),
+            (lodging, "replaces the source line with the message's"),
+            (lodgingSpec, "the write SHALL remove that line and replace the source line"),
+            (lodging, "still finds no event by marker"),
+            (lodging, "A cancellation notice that finds its event always reaches"),
+            (lodgingSpec, "and a cancellation notice, which SHALL always reach"),
+            (changelog, "above the marker.  A skipped"),
+        ]
+        for (document, phrase) in removed {
+            XCTAssertFalse(try read(document).contains(phrase), "\(document) still says \(phrase)")
         }
     }
 
