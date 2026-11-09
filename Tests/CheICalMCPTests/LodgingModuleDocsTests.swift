@@ -108,7 +108,9 @@ final class LodgingModuleDocsTests: XCTestCase {
 
     /// The marker prefixes are listed in one place, the shared rule; the two contracts refer to it.
     func testTheEscapedPrefixesAreListedOnce() throws {
-        XCTAssertTrue(try read(shared).contains("and only these: `conference-module`, `lodging-module`"))
+        // #346 verify round 1 widened the conference prefix to `conference-`, which also covers the
+        // recommendation layer's block lines.
+        XCTAssertTrue(try read(shared).contains("and only these: `conference-` (the conference module's marker lines and the block lines of its recommendation layer), `lodging-module`"))
         for document in [lodging, conference, conferenceSpec, lodgingSpec] {
             XCTAssertFalse(try read(document).contains("(`lodging-module`, `conference-module`)"), document)
             XCTAssertFalse(try read(document).contains("(`conference-module`, `lodging-module`)"), document)

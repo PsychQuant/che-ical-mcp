@@ -14,7 +14,7 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     static let blockLines = [
         "conference-recommend: begin",
-        "conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM>",
+        "conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>",
         "conference-recommend-location: <standard location>",
         "conference-recommend-marks: <line numbers",
         "conference-recommend: end",
@@ -61,7 +61,7 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         for line in Self.blockLines {
             XCTAssertTrue(spec.contains(line.components(separatedBy: " <").first!), "spec does not name \(line)")
         }
-        XCTAssertTrue(spec.contains("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM>`"))
+        XCTAssertTrue(spec.contains("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>`"))
     }
 
     func testModeIsAClosedThreeStepOrder() throws {
@@ -97,6 +97,67 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         XCTAssertTrue(five.contains("**One `update_event` per event**"))
         XCTAssertTrue(five.contains("It is never `create_event`, and never `delete_event`."))
         XCTAssertTrue(five.contains("`calendar_name` set to the set's calendar"), "read-backs must stay scoped to the set's calendar")
+    }
+
+    // MARK: - #346 verify round 1
+
+    /// HIGH 1 / MEDIUM 5: a link can carry the passcode (`?pwd=`), so "never written" must cover links.
+    func testMeetingLinksNeverCarryACode() throws {
+        let two = Self.section(try read(Self.layer), 2)
+        XCTAssertTrue(two.contains("**A meeting link is written only in one of these forms** (closed list):"))
+        XCTAssertTrue(two.contains("`https://<host>/j/<digits>`"), "the Zoom form must drop the query (pwd)")
+        XCTAssertTrue(two.contains("Any other link is **left out**"))
+        let spec = try read(Self.spec)
+        XCTAssertTrue(spec.contains("#### Scenario: A link with an embedded passcode"))
+        XCTAssertTrue(spec.contains("`pwd=` appears nowhere"))
+    }
+
+    /// MEDIUM 2 / LOW 9: stored values round-trip, and the start is read after the last separator.
+    func testStoredValuesAreEncodedReversibly() throws {
+        let three = Self.section(try read(Self.layer), 3)
+        XCTAssertTrue(three.contains("a backslash as `\\\\`, a line feed as `\\n` and a carriage return as `\\r`"),
+                      "the encoding of the stored title and location must be reversible")
+        XCTAssertTrue(three.contains("the text after the **last** ` | `"))
+        XCTAssertTrue(try read(Self.spec).contains("#### Scenario: A location on two lines survives a restore"))
+    }
+
+    /// MEDIUM 3 / LOW 13: a block that is not well-formed is dropped, never moved below the marker.
+    func testMalformedBlockIsDroppedNotMoved() throws {
+        let standard = try read(Self.standard)
+        XCTAssertTrue(standard.contains("an event whose block is not well-formed has the block's lines and marks dropped, not moved below the marker pair"),
+                      "conference.md must say what happens to a block that is not well-formed")
+        let three = Self.section(try read(Self.layer), 3)
+        XCTAssertTrue(three.contains("Lines below the marker pair are the user's and are never parsed as block lines."))
+    }
+
+    /// MEDIUM 4: program text cannot plant a block. The shared escape list owns the prefix.
+    func testCopiedTextCannotFormABlock() throws {
+        let index = try read(Self.index)
+        XCTAssertTrue(index.contains("and only these: `conference-` (the conference module's marker lines and the block lines of its recommendation layer), `lodging-module`."),
+                      "the shared copy escape must cover every conference- line")
+        let three = Self.section(try read(Self.layer), 3)
+        let wellFormed = three.components(separatedBy: "\n").filter { $0.range(of: #"^[0-9]+\. "#, options: .regularExpression) != nil }
+        XCTAssertEqual(wellFormed.count, 6, "well-formed criteria changed: \(wellFormed)")
+        XCTAssertTrue(wellFormed.contains { $0.contains("it starts on the first line of the notes") })
+    }
+
+    /// MEDIUM 6: the server skips only an equal title, so the client compares the standard form first.
+    func testClientSideSkipBeforeEveryCreate() throws {
+        let six = Self.section(try read(Self.standard), 6)
+        XCTAssertTrue(six.contains("**Before every `create_event` of a session**"))
+        XCTAssertTrue(six.contains("so it never skips a decorated event (#346, measured 2026-11-09)"))
+    }
+
+    /// LOW 7, 8, 10, 11, 12, 14.
+    func testSmallerRulesOfRoundOne() throws {
+        let layer = try read(Self.layer)
+        let one = Self.section(layer, 1)
+        XCTAssertTrue(one.contains("A request that names slots is a `recommend` run with `none` for those slots"))
+        XCTAssertTrue(one.contains("any field of its standard form changes (title, start, end, location, notes, registration)"))
+        XCTAssertTrue(one.contains("from 60 days before to 365 days after the date the message names, or today when it names none"))
+        XCTAssertTrue(one.contains("**On a first paste with picks**, the standard flow creates and reads back first"))
+        let index = try read(Self.index)
+        XCTAssertTrue(index.contains("no trigger, switch or calendar of its own"), "the index row must say the layer is not a module")
     }
 
     func testIndexListsTheLayer() throws {
