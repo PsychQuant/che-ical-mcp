@@ -37,6 +37,10 @@ The manager SHALL reject removal from an empty stack, removal with a nonmatching
 - **WHEN** undo finds that the event or reminder was changed after the recorded operation, in a field the undo would overwrite or delete and that is not already at the value the undo writes
 - **THEN** nothing is written, the error names the changed fields, the record stays on top with the same id, and undo with that id as discard_id removes it
 
+#### Scenario: Keeping later edits when undoing an update (#265, opt-in)
+- **WHEN** the record is an `update_event` of a one-off event or an `update_reminder`, undo finds the item changed after it, and the caller passes `keep_later_edits: true`
+- **THEN** the fields are compared in groups (an event's start, end, all-day flag, time zone, alarms, calendar and availability; its location and place; a reminder's due date, start date, alarms, repetition, completion and list; every other field alone; what the update changed compared without the guard's geocode exemption, its other tolerances kept): when no later edit is in a group the update changed, only those groups are written back from the record, the later edits are kept, the answer names both, and the record is used up; otherwise, or when a changed field is in no group, nothing is written and the refusal is the one above; when the update changed none of the fields undo restores, the undo runs as without `keep_later_edits`. Without `keep_later_edits`, and for every other record, the scenario above applies unchanged. The refusal of an update-undo lists the fields the update changed and the fields changed after it separately, and says whether `keep_later_edits` applies
+
 #### Scenario: Series occurrences could not be checked
 - **WHEN** undo of `create_event` for a recurring event cannot look for occurrences edited on their own (the series has no identifier or calendar)
 - **THEN** nothing is written, the error names `unchecked_occurrences`, and the record stays on top with the same id until it is discarded

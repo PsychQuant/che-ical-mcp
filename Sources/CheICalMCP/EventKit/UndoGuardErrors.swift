@@ -112,7 +112,11 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
     let changedFields: [String]
     var errorDescription: String? { message }
 
-    init(verb: UndoHistoryVerb, kind: UndoPostState.Kind, title: String, changedFields: [String], situation: Situation? = nil) {
+    /// `updateNote` (#265): for the undo of an update, what the update changed and what changed
+    /// after it, and the way on with `keep_later_edits` (`UndoKeepLaterEdits.refusalNote`); appended
+    /// to the revertable undo text only.
+    init(verb: UndoHistoryVerb, kind: UndoPostState.Kind, title: String, changedFields: [String], situation: Situation? = nil,
+         updateNote: String? = nil) {
         self.changedFields = changedFields
         let item = "\(kind.rawValue) '\(undoShownTitle(title))'"
         let fields = changedFields.joined(separator: ", ")
@@ -128,6 +132,7 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
         switch situation ?? derived {
         case .revertable where verb == .undo:
             message = "Cannot undo: the \(item) was changed after this operation, \(changedBy) (\(fields)). Undoing now would overwrite or delete that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id."
+                + (updateNote.map { " " + $0 } ?? "")
         case .revertable:
             message = "Cannot redo: the \(item) was changed after the undo, \(changedBy) (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run redo again; any new change clears the redo history."
         case .editedOccurrences:
@@ -230,7 +235,22 @@ extension UndoOperation {
             situation = .unconfirmedOccurrence
         }
         return UndoTargetChangedError(verb: verb, kind: expected?.kind ?? .reminder, title: expected?.title ?? "",
-                                      changedFields: changedFields, situation: situation)
+                                      changedFields: changedFields, situation: situation,
+                                      updateNote: verb == .undo ? updateRefusalNote(changedElsewhere: changedFields) : nil)
+    }
+
+    /// #265: the note of an update-undo's refusal; nil for every other record.
+    func updateRefusalNote(changedElsewhere: [String]) -> String? {
+        switch self {
+        case .updateEvent(_, let old, let saved):
+            return UndoKeepLaterEdits.refusalNote(changedByUpdate: UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved),
+                                                  changedElsewhere: changedElsewhere, groups: UndoKeepLaterEdits.eventGroups)
+        case .updateReminder(_, let old, let saved):
+            return UndoKeepLaterEdits.refusalNote(changedByUpdate: UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved),
+                                                  changedElsewhere: changedElsewhere, groups: UndoKeepLaterEdits.reminderGroups)
+        default:
+            return nil
+        }
     }
 
     /// Round 3, finding 8: the unconfirmed recurring completion in the successor shape. Permanent,

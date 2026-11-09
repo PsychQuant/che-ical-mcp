@@ -119,7 +119,11 @@ extension EventKitManager {
     ///   discarded when the reminder still repeats and has the opposite completion (the shape a
     ///   rollover leaves, round 3 finding 8), and refused and kept otherwise; the refusal gets
     ///   the refreshed item to tell the two apart (`postStateRefusal`).
-    func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb) async throws -> EKCalendarItem? {
+    ///
+    /// `keepingLaterEdits` (#265, `undo` with `keep_later_edits`): given the item and the fields the
+    /// default comparison found, returns the fields that still block; nil keeps the default.
+    func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb,
+                               keepingLaterEdits: ((EKCalendarItem, [String]) -> [String])? = nil) async throws -> EKCalendarItem? {
         guard let expected = verb == .undo ? operation.undoPostState : operation.redoPostState else { return nil }
         let refusal: (EKCalendarItem, [String]) -> Error = { item, fields in
             operation.postStateRefusal(verb: verb, changedFields: fields, current: item)
@@ -154,7 +158,7 @@ extension EventKitManager {
                                                                           isDetached: event.isDetached) {
                             throw refusal
                         }
-                        let fields = expected.changedFields(in: event)
+                        let fields = keepingLaterEdits?(event, expected.changedFields(in: event)) ?? expected.changedFields(in: event)
                         guard deletesSeries, event.hasRecurrenceRules else { return fields }
                         return fields + UndoPostState.seriesConflicts(
                             modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
@@ -176,7 +180,7 @@ extension EventKitManager {
                 refresh: { $0.refresh() },
                 conflicts: { reminder in
                     if let identity { try ensureSameOccurrence(identity, reminder, verb: verb.rawValue) }
-                    return expected.changedFields(in: reminder)
+                    return keepingLaterEdits?(reminder, expected.changedFields(in: reminder)) ?? expected.changedFields(in: reminder)
                 },
                 refusal: refusal)
         }
