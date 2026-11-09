@@ -17,7 +17,7 @@ Claude Code hooks 參考文件（`hooks.md` 的 Stop decision control 一節，2
 
 ### 只在互動式 session 提醒
 
-headless 的執行（`claude -p`、Agent SDK、排程或背景 session）多出的一個回合會取代它的最終結果，所以不提醒：SessionStart 時判斷，headless 就不寫開始紀錄。hooks 參考文件沒有記載可判斷互動與否的輸入欄位，因此讀 Claude Code 給 hook 的兩個環境變數（2.1.319 實測、未記載）：`CLAUDE_CODE_ENTRYPOINT` 只有 `cli`（實測的互動值）算互動，其他值或未設定都當 headless（allowlist，判斷不了就當 headless：少一次提醒的代價比較小）；`CLAUDE_CODE_SESSION_ATTENDED` 為 `0` 時也是。Stop 時再判斷一次，所以互動 session 用 `claude -p --resume` 接續時也不提醒。
+headless 的執行（`claude -p`、Agent SDK、排程或背景 session）多出的一個回合會取代它的最終結果，所以不提醒：SessionStart 時判斷，headless 就不寫開始紀錄。hooks 參考文件沒有記載可判斷互動與否的輸入欄位，因此讀 Claude Code 給 hook 的兩個環境變數（2.1.319 實測、未記載）：`CLAUDE_CODE_ENTRYPOINT` 只有 `cli`（實測的互動值）算互動，其他值或未設定都當 headless（allowlist，判斷不了就當 headless：少一次提醒的代價比較小）；`CLAUDE_CODE_SESSION_ATTENDED` 為 `0` 時也是。`cli` 本身不代表有人在場：背景 job 的 `CLAUDE_CODE_ENTRYPOINT` 也是 `cli`，只靠 `CLAUDE_CODE_SESSION_ATTENDED=0` 排除（PR #500 第 7 輪驗證的背景 job 實測）；從互動 session 的 Bash 啟動的 `claude -p` 讀到什麼還沒看過，列在 task 1.2。Stop 時再判斷一次，所以互動 session 用 `claude -p --resume` 接續時也不提醒。
 
 ### 走訪資料夾有上限
 
@@ -25,7 +25,7 @@ headless 的執行（`claude -p`、Agent SDK、排程或背景 session）多出�
 
 ### 檔名是資料
 
-檔名由任何人決定，可能含換行與指示，或用 `; ` 假裝成另一個檔案。提醒裡每個檔名只是顯示名稱：以 JSON 字串呈現，去掉 Cc、Cf、Zl、Zp 類字元，每個截到 120 字、整串截到 4000 字（`additionalContext` 上限 10k），附上數量，並說明這些字串是資料，不是指示，也不是可開啟的路徑。確切路徑存在 plugin data 該 session 的檔案裡，skill 用 `bin/itinerary-changed.sh` 讀取，不從顯示名稱重建路徑。旅程資料夾取工作目錄的邏輯祖先，所以 symlink 的 `.claude` 不會把它移到別處。
+檔名由任何人決定，可能含換行與指示，或用 `; ` 假裝成另一個檔案。提醒裡每個檔名只是顯示名稱：以 JSON 字串呈現，去掉 Cc、Cf、Zl、Zp 類字元，每個截到 120 字、整串截到 4000 字（`additionalContext` 上限 10k），附上數量，並說明這些字串是資料，不是指示，也不是可開啟的路徑。確切路徑存在 plugin data 該 session 的檔案裡，skill 用 `bin/itinerary-changed.sh` 讀取，不從顯示名稱重建路徑。旅程資料夾取工作目錄的邏輯祖先，所以 symlink 的 `.claude` 不會把它移到別處；邏輯祖先都沒有那個設定檔時（工作目錄經 symlink 進入、設定檔在 symlink 目標的上層），改取工作目錄真實路徑的祖先，也就是 finder 找到它的地方。
 
 ### 設定鍵不用 YAML 函式庫讀
 
@@ -38,6 +38,8 @@ macOS 的 python3 預設沒有 YAML 模組，所以用逐行解析讀這兩個�
 ### 檢查本身不寫入，使用者的同意是唯一的關卡
 
 `allowed-tools` 在呼叫 skill 的那個回合預先核准，而那個回合也讀不受信任的檔案，所以只列行事曆讀取工具與兩個限定範圍的 Bash 指令：設定檔查詢 `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/find-ical-config.sh *)` 與變更清單 helper `Bash(bash "${CLAUDE_PLUGIN_ROOT}"/bin/itinerary-changed.sh *)`，不列 `Read`（工作目錄外的讀取照常跳提示）；Claude Code 文件：結尾 ` *` 也比對單獨的指令，複合指令會先拆開再比對）。這只讓 skill 自己的回合維持唯讀，不是寫入的第二道檢查：使用者的設定可能已允許寫入工具或使用 auto mode。寫入的唯一關卡是使用者對那一列的同意。在本 skill 的路徑上，模組在使用者對本 skill 的表說 yes 之前什麼都不寫（建立、修改、刪除、讀回修正都算）；這是一條性質，不是一份清單，模組的對照表仍提供表格的列。旅程資料夾：提醒來的取 helper JSON 的 `trip_folder`，手動執行取工作目錄的邏輯祖先（hook 的規則），沒有設定檔時先請使用者確認資料夾、確認前不讀任何檔案。符合 `/` 結尾忽略樣式的目錄在走訪前就略過，不佔走訪額度；走訪超過 1 秒而沒找到變更時也暫停 5 分鐘。變更先依事件屬於誰分派（會議標記→會議模組、住宿標記→住宿模組、其他→`update_event`），沒有事件的事實再依種類（新發布的議程→會議模組的完整貼上、住宿→住宿模組、其他→`create_event`）。
+
+PR #500 第 7 輪：skill 只有在完整檢查之後才給 all-clear（走訪完整、每個變更路徑都存下而且印得出、印出的路徑都讀過），否則說查了什麼、有幾個沒存或沒讀；真實路徑規則兩邊都 resolve，比對旅程資料夾自己的真實路徑，所以經 symlink 的 `~/Dropbox`（macOS 連到 `~/Library/CloudStorage/Dropbox`）底下的旅程資料夾讀得到檔案；hook 的旅程資料夾在邏輯祖先找不到時退回真實路徑的祖先；`itinerary_ignore` 的行內清單、區塊清單與註解共用一套引號規則（雙引號內 `\"`、`\\`，單引號內 `''`）；helper 把絕對路徑或含空、`.`、`..` 段的路徑算成 unreadable，旅程資料夾不是絕對路徑就 exit 1，`HOME` 空而沒有 `CLAUDE_CONFIG_DIR` 時 exit 2；30 天清理略過本 session 自己的開始紀錄；wrapper 用 `exec` 執行 python，hook timeout 殺掉的就是走訪本身。
 
 ## Risks / Trade-offs
 

@@ -7,9 +7,12 @@
 #         "files": [...at most 200]}. A stored name holding a character of the categories the reminder's
 #         display names drop (Cc, Cf, Zl, Zp, Cs, Co: a newline, a bidi override, a zero-width space,
 #         a lone surrogate from an undecodable byte, a private-use character) is never printed, raw
-#         or escaped: it is counted in "unreadable" (#500 r4 #4 and its security review).
-# Exit: 0 printed, 1 no list for that session (or a trip folder whose name holds such a character), 2 bad
-#       arguments, a symlink or a non-regular file on the way, a list with another hard link, 3 no usable
+#         or escaped: it is counted in "unreadable" (#500 r4 #4 and its security review). So is a stored
+#         path that is absolute or has an empty, `.` or `..` component (#500 r7 #4): the hook stores
+#         only names relative to the trip folder, so such a path did not come from it.
+# Exit: 0 printed, 1 no list for that session (or a trip folder whose name holds such a character, or
+#       that is not absolute or has an empty, `.` or `..` component), 2 bad arguments (an empty HOME
+#       with no CLAUDE_CONFIG_DIR included), a symlink or a non-regular file on the way, a list with another hard link, 3 no usable
 #       python3. "complete" is always a bool and "total" a non-negative int (stored values of another
 #       type are replaced by false and the number of stored paths).
 # Reads one file and writes nothing. The allowed root is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/
@@ -26,7 +29,12 @@ case "$data" in
   /*) ;;
   *) echo "itinerary-changed.sh: the data directory must be absolute" >&2; exit 2 ;;
 esac
-root="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/plugins/data"
+# #500 r7 #8: an empty or unset HOME is refused, as the hook refuses it, instead of giving /.claude.
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -z "${HOME:-}" ]; then
+  echo "itinerary-changed.sh: HOME (or CLAUDE_CONFIG_DIR) must be set" >&2
+  exit 2
+fi
+root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data"
 case "$root" in
   /*) ;;
   *) echo "itinerary-changed.sh: CLAUDE_CONFIG_DIR (or HOME) must be absolute" >&2; exit 2 ;;
@@ -50,6 +58,10 @@ def fail(code, message):
     sys.exit(code)
 def text(s):
     return isinstance(s, str) and not any(unicodedata.category(c) in DROPPED for c in s)
+def relative(p):   # #500 r7 #4: a name relative to the trip folder, with no empty, . or .. component
+    return not p.startswith("/") and all(c not in ("", ".", "..") for c in p.split("/"))
+def absolute(p):   # #500 r7 #4: the trip folder: absolute, with no empty, . or .. component
+    return p.startswith("/") and (p == "/" or relative(p[1:]))
 root, data, sid = sys.argv[1], sys.argv[2], sys.argv[3]
 def parts(path):
     p = path.split("/")[1:]
@@ -90,9 +102,11 @@ except (ValueError, OSError):
     fail(1, "the list cannot be read")
 if not isinstance(d, dict) or not text(d.get("trip_folder")):
     fail(1, "the trip folder's name holds a control or format character")
+if not absolute(d["trip_folder"]):
+    fail(1, "the trip folder is not an absolute path without empty, . or .. components")
 files = d.get("files", [])
 files = files if isinstance(files, list) else []
-readable = [p for p in files if text(p)]
+readable = [p for p in files if text(p) and relative(p)]
 # The counts come before the paths, so they stay in a cut preview of a long output (#500 r5 #11).
 # #500 r6 #5: `complete` is printed only as a bool and `total` only as a non-negative int (a bool is
 # not taken as one); anything else is replaced, so no stored string reaches the output through them.

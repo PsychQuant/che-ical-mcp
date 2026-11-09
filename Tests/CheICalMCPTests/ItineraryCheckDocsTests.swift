@@ -91,7 +91,8 @@ final class ItineraryCheckDocsTests: XCTestCase {
             "then by the kind of fact, and only these paths",
             "Never write to an event matched by name before the user said yes to that row.",
             // #500 r6 #8: the one-line answer sits in sections 3 and 4; the pin names the section 3 sentence.
-            "**Everything matches** → one line: `Calendar matches <trip>: <n> events checked.` Nothing else.",
+            // #500 r7 #1: the one-line success is for a full check only.
+            "**Everything matches, after a full check (§1)** → one line: `Calendar matches <trip>: <n> events checked.` Nothing else.",
             "a revision of some items is its partial correction",
         ] {
             XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
@@ -114,6 +115,69 @@ final class ItineraryCheckDocsTests: XCTestCase {
             XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
         }
         XCTAssertFalse(text.contains("the folder that holds the config's `.claude` directory"))
+    }
+
+    /// #500 r7 #1: an all-clear needs a full check (the walk complete, every changed path stored and
+    /// printed, every printed path read); otherwise the skill says what it checked and what it did not.
+    /// The skill is prose a model follows, so the 51st-file case is pinned here and in the hook test
+    /// (the helper gives all 51 paths), not run.
+    func testOnlyAFullCheckGivesAnAllClear() throws {
+        let text = try read(skill)
+        for phrase in [
+            "**A full check** needs all four of these, and only these: the helper printed `complete: true`; `unreadable` is 0; `total` equals the number of paths in `files`; and every printed path was read (none left beyond the 50, none that could not be opened or lies outside the trip folder).",
+            "On a manual run without a reminder, a full check needs every file the user or the work named to have been read.",
+            "Only a full check gives an all-clear.",
+            "after a full check, say `No trip facts in the changed files; the calendar was not checked.` and stop; otherwise say `No trip facts in the <r> files read; <m> changed files were not stored or not read, so this is not an all-clear.`",
+            "**Everything matches, after a check that was not full** → `The facts in the <r> files read match the calendar (<trip>: <n> events checked); <m> changed files were not stored or not read, so this is not an all-clear.`",
+            "after one that was not full, the line of §3 that says it is not an all-clear",
+        ] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
+        }
+        XCTAssertFalse(text.contains("When none of them states a trip fact, say `No trip facts in the changed files"),
+                       "the unconditional all-clear is gone")
+        let spec = try read("openspec/changes/add-itinerary-calendar-check/specs/itinerary-calendar-check/spec.md")
+        for phrase in [
+            "It SHALL give an all-clear (no trip facts in the changed files, or every fact matching, in one line) only after a full check",
+            "#### Scenario: A check that was not full gives no all-clear",
+        ] {
+            XCTAssertEqual(spec.components(separatedBy: phrase).count - 1, 1, "spec lacks, or repeats: \(phrase)")
+        }
+        XCTAssertFalse(spec.contains("When every fact matches, it SHALL answer in one line."))
+    }
+
+    /// #500 r7 #3 and #5: the real-path rule resolves both sides, so a trip folder reached through a
+    /// symlinked folder (such as ~/Dropbox) has its files read; a working directory entered through a
+    /// symlink falls back to the ancestor of its real path.
+    func testTheRealPathRuleResolvesBothSides() throws {
+        let text = try read(skill)
+        for phrase in [
+            "resolve the file's path and compare it with the trip folder's own real path, resolving both",
+            "a name whose real path is outside the trip folder's real path",
+            "when no logical ancestor has it, the ancestor of the working directory's real path that has it",
+        ] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
+        }
+        let spec = try read("openspec/changes/add-itinerary-calendar-check/specs/itinerary-calendar-check/spec.md")
+        for phrase in [
+            "only those whose real path is inside the trip folder's own real path, both sides resolved",
+            "or, when no logical ancestor holds it, the ancestor of the working directory's real path that holds it (a working directory entered through a symlink",
+            "or, when no logical ancestor holds it, the ancestor of the working directory's real path that holds it, never a folder taken from the config file's own physical path",
+            "#### Scenario: A working directory entered through a symlink",
+        ] {
+            XCTAssertEqual(spec.components(separatedBy: phrase).count - 1, 1, "spec lacks, or repeats: \(phrase)")
+        }
+    }
+
+    /// #500 r7 #6: `cli` alone does not mean a person is there; background jobs report it too.
+    func testBackgroundJobsReportCliAndAreExcludedByAttended() throws {
+        let pins = [
+            "openspec/changes/add-itinerary-calendar-check/design.md": "背景 job 的 `CLAUDE_CODE_ENTRYPOINT` 也是 `cli`，只靠 `CLAUDE_CODE_SESSION_ATTENDED=0` 排除",
+            "plugin/CHANGELOG.md": "background jobs report `cli` too and are excluded only by `CLAUDE_CODE_SESSION_ATTENDED=0`",
+            "openspec/changes/add-itinerary-calendar-check/tasks.md": "互動 session 裡啟動的 `claude -p`",
+        ]
+        for (document, phrase) in pins {
+            XCTAssertEqual(try read(document).components(separatedBy: phrase).count - 1, 1, "\(document) lacks, or repeats: \(phrase)")
+        }
     }
 
     /// #500 r5 #6: a failing helper means no changed file is read, and the user is asked.

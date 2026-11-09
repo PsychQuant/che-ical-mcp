@@ -4,7 +4,8 @@ Called by itinerary-reminder.sh with one argument, `start` or `stop`, and the ho
 
 start  In an interactive session only (see `interactive`), record the session's start time in
        $CLAUDE_PLUGIN_DATA/itinerary-sessions/<session>.start, once: a resume, /clear or compaction
-       keeps the first record. Records older than 30 days are removed.
+       keeps the first record. Records older than 30 days are removed, except this session's own start
+       record (#500 r7 #7: a session resumed after 30 days still gets its reminder).
 stop   When the session has a start record, the working directory has a project-level
        .claude/.ical/config.yaml (the nearest one found by plugin/bin/find-ical-config.sh, not the
        user-level ~/.claude/.ical/config.yaml) and files in that folder changed since the session
@@ -73,8 +74,9 @@ def interactive():
     so the hook reads two variables Claude Code sets in its subprocesses (observed on 2.1.319,
     undocumented): CLAUDE_CODE_ENTRYPOINT is `cli` in an interactive terminal session (`sdk-*` for
     `claude -p` and the Agent SDK), and CLAUDE_CODE_SESSION_ATTENDED is `0` for an unattended
-    (background or scheduled) session. Only the entrypoints in INTERACTIVE_ENTRYPOINTS count as
-    interactive; any other value, or none, counts as headless: in a headless run the reminder's
+    (background or scheduled) session. `cli` alone does not mean a person is there: a background job
+    reports `cli` too and is excluded only by CLAUDE_CODE_SESSION_ATTENDED=0 (#500 r7 #6, observed).
+    Only the entrypoints in INTERACTIVE_ENTRYPOINTS count as interactive; any other value, or none, counts as headless: in a headless run the reminder's
     extra turn replaces the run's final result, which costs more than a missed reminder. Checked at
     start and again at stop, so an interactive session resumed headless gets no reminder."""
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") not in INTERACTIVE_ENTRYPOINTS:
@@ -205,6 +207,8 @@ def start(data, folder):
             return
         cutoff = time.time() - KEEP_DAYS * 86400
         for name in os.listdir(dfd):
+            if name == record:
+                continue   # #500 r7 #7: this session's own record stays, however old
             st = record_stat(dfd, name)
             try:
                 if st is not None and st.st_mtime < cutoff:
@@ -232,11 +236,18 @@ def project_config(cwd):
 
 
 def trip_folder(cwd, config):
-    """The logical ancestor of cwd whose .claude/.ical/config.yaml is the config the finder chose.
-    The finder prints a physical path, so a symlinked .claude or .ical would otherwise move the trip
-    folder to the link target's parent."""
+    """The logical ancestor of cwd whose .claude/.ical/config.yaml is the config the finder chose, else
+    the ancestor of cwd's real path that has it (#500 r7 #5). The finder prints a physical path, so a
+    symlinked .claude or .ical would otherwise move the trip folder to the link target's parent; and a
+    working directory entered through a symlink whose target lies below the config's folder has no
+    logical ancestor holding it: the finder walked the real path, so the fallback walks it too."""
     target = os.path.realpath(config)
-    d = os.path.abspath(cwd)
+    return ancestor_with(os.path.abspath(cwd), target) or ancestor_with(os.path.realpath(cwd), target)
+
+
+def ancestor_with(start, target):
+    """The first of start and its ancestors whose .claude/.ical/config.yaml resolves to target, or None."""
+    d = start
     while True:
         candidate = os.path.join(d, ".claude", ".ical", "config.yaml")
         if os.path.exists(candidate) and os.path.realpath(candidate) == target:
@@ -257,23 +268,57 @@ def opens_quote(text, i):
     return j < 0 or text[j] in "[,"
 
 
+# One set of quote rules for comments, inline lists and scalars (#500 r7 #2): a quote opens only at the
+# start of a value (opens_quote); inside double quotes a backslash escapes the next character, inside
+# single quotes '' is a quote. quoted_end finds where a quoted value ends; unquote decodes it.
+
+def quoted_end(text, i):
+    """The index just past the quoted value that opens at text[i], or None when it does not close."""
+    q, j = text[i], i + 1
+    while j < len(text):
+        c = text[j]
+        if q == '"' and c == "\\":
+            j += 2
+            continue
+        if c == q:
+            if q == "'" and text[j + 1: j + 2] == "'":
+                j += 2
+                continue
+            return j + 1
+        j += 1
+    return None
+
+
+def unquote(q, body):
+    """The text of a quoted value. In double quotes \\" is a quote, \\\\ a backslash and \\/ a slash;
+    any other escape is kept as written (a file name has no use for \\n or \\t). In single quotes ''
+    is a quote."""
+    if q == "'":
+        return body.replace("''", "'")
+    out, i = [], 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body) and body[i + 1] in '"\\/':
+            out.append(body[i + 1])
+            i += 2
+        else:
+            out.append(body[i])
+            i += 1
+    return "".join(out)
+
+
 def strip_comment(text):
-    """Cut a YAML comment: a # at the start or after whitespace, outside single or double quotes
-    (#500 r5 #2), so a quoted pattern such as "receipts # paid/" keeps its #. A quote opens only at the
-    start of a value (opens_quote)."""
-    quote, prev, i = None, " ", 0
+    """Cut a YAML comment: a # at the start or after whitespace, outside a quoted value (#500 r5 #2),
+    so a quoted pattern such as "receipts # paid/" keeps its #."""
+    prev, i = " ", 0
     while i < len(text):
         c = text[i]
-        if quote == '"' and c == "\\":
-            i += 2
-            prev = "x"
+        if c in "\"'" and opens_quote(text, i):
+            end = quoted_end(text, i)
+            if end is None:
+                return text
+            prev, i = "x", end
             continue
-        if quote:
-            if c == quote:
-                quote = None
-        elif c in "\"'" and opens_quote(text, i):
-            quote = c
-        elif c == "#" and prev.isspace():
+        if c == "#" and prev.isspace():
             return text[:i]
         prev = c
         i += 1
@@ -281,31 +326,31 @@ def strip_comment(text):
 
 
 def scalar(text):
+    """A value without its comment; a value that is one whole quoted string is decoded (unquote)."""
     text = strip_comment(text).strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
-        text = text[1:-1]
+    if text[:1] in ("\"", "'") and quoted_end(text, 0) == len(text):
+        return unquote(text[0], text[1:-1])
     return text
 
 
 def inline_list(text):
-    """The items of an inline [a, "b, c"] list: split on commas outside single or double quotes
-    (#500 r4 #3), each item read as a scalar."""
-    items, current, quote = [], "", None
-    for c in text:
-        if quote:
-            current += c
-            if c == quote:
-                quote = None
-        elif c in "\"'" and not current.strip():   # a quote opens only at the start of an item (#500 r6 #3)
-            quote = c
-            current += c
-        elif c == ",":
-            items.append(current)
-            current = ""
-        else:
-            current += c
-    items.append(current)
-    return [scalar(i) for i in items if scalar(i)]
+    """The items of an inline [a, "b, c"] list: split on commas outside quoted values (#500 r4 #3,
+    r7 #2: an escaped quote does not end one), each item read as a scalar."""
+    items, start, i = [], 0, 0
+    while i < len(text):
+        c = text[i]
+        if c in "\"'" and opens_quote(text, i):
+            end = quoted_end(text, i)
+            if end is None:
+                break
+            i = end
+            continue
+        if c == ",":
+            items.append(text[start:i])
+            start = i + 1
+        i += 1
+    items.append(text[start:])
+    return [v for v in (scalar(x) for x in items) if v]
 
 
 def settings(config):
@@ -328,13 +373,13 @@ def settings(config):
         top = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$", line)
         if not top:
             continue
-        key, rest = top.group(1), scalar(top.group(2))
-        if key == "itinerary_check" and rest.lower() in ("off", "no", "false"):
+        key, raw = top.group(1), strip_comment(top.group(2)).strip()
+        if key == "itinerary_check" and scalar(raw).lower() in ("off", "no", "false"):
             enabled = False
         elif key == "itinerary_ignore":
-            if rest.startswith("[") and rest.endswith("]"):
-                ignores += inline_list(rest[1:-1])
-            elif not rest:
+            if raw.startswith("[") and raw.endswith("]"):
+                ignores += inline_list(raw[1:-1])
+            elif not raw:
                 in_list = True
     return enabled, ignores
 
@@ -572,11 +617,11 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     if mode not in ("start", "stop"):
         return
-    data = read_input()
-    folder = sessions_dir()
-    if data is None or folder is None:
-        return
-    try:
+    try:  # the wrapper execs python (#500 r7 #9), so python's exit status is the hook's: never fail
+        data = read_input()
+        folder = sessions_dir()
+        if data is None or folder is None:
+            return
         if mode == "start":
             start(data, folder)
         else:

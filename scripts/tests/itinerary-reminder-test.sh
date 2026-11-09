@@ -587,6 +587,109 @@ except subprocess.TimeoutExpired:
   check "the helper refuses a $sid list at once" "$rc" "2"
 done
 
+# --- round 7 (#500 report r7) ---------------------------------------------------------------
+# #1: when only the 51st changed file holds the trip fact, the helper still gives the skill all 51 paths
+# and the counts it needs to say that one was not read (the skill's own rule is pinned in the docs tests).
+T="$TMP/trips/fiftyone"; trip "$T"; run start "$(json fiftyone "$T")"; mkdir -p "$T/n"
+for n in $(seq -w 1 50); do printf 'nothing about the trip\n' > "$T/n/f$n.md"; done
+printf 'flight changed to 09:40\n' > "$T/n/f51.md"
+run stop "$(json fiftyone "$T")"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" fiftyone | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["total"], d["unreadable"], len(d["files"]), d["files"][50])')
+check "51 changed files: the helper gives all 51 paths, the 51st last" "$got" "True 51 0 51 n/f51.md"
+
+# #2: inline and block lists follow strip_comment's quote and escape rules: \" and \\ inside double
+# quotes, '' inside single quotes.
+T="$TMP/trips/esc7"; trip "$T" 'itinerary_ignore: ["a\"b,c.md", "back\\slash.md", '"'it''s.md'"']'
+run start "$(json esc7 "$T")"
+printf x > "$T/a\"b,c.md"; printf x > "$T/back\\slash.md"; printf x > "$T/it's.md"; printf x > "$T/keep.md"
+run stop "$(json esc7 "$T")"; ctx=$(context "$OUT")
+hasnt "an escaped quote and a comma in one quoted pattern: that file is skipped" "$ctx" 'b,c.md'
+hasnt "an escaped backslash in a quoted pattern: that file is skipped" "$ctx" 'slash.md'
+hasnt "a doubled quote in a single-quoted pattern: that file is skipped" "$ctx" 's.md'
+has "and the rest is listed" "$ctx" "keep.md"
+T="$TMP/trips/esc7b"; mkdir -p "$T/.claude/.ical"
+printf '%s\n' 'itinerary_ignore:' '  - "a\"b,c.md"  # one file' '  - "x\\y #1.md"' 'other: 1' > "$T/.claude/.ical/config.yaml"
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.settings(sys.argv[2])[1])' "$PROJECT_DIR/plugin/hooks" "$T/.claude/.ical/config.yaml")
+check "a block list decodes \\\" and \\\\ the same way" "$got" "['a\"b,c.md', 'x\\\\y #1.md']"
+printf '%s\n' 'itinerary_ignore: ["a\"b, c.md", x.tmp] # mine' > "$T/.claude/.ical/config.yaml"
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.settings(sys.argv[2])[1])' "$PROJECT_DIR/plugin/hooks" "$T/.claude/.ical/config.yaml")
+check "an inline list splits only on commas outside the quoted value" "$got" "['a\"b, c.md', 'x.tmp']"
+
+# #3 and #5: a working directory entered through a symlink. With the config above the symlink's target,
+# the logical walk finds nothing and the hook falls back to the config's physical ancestor.
+R="$TMP/real7/conf"; trip "$R"; mkdir -p "$R/2026/kyoto" "$TMP/lnk7"; ln -s "$R/2026/kyoto" "$TMP/lnk7/kyoto"
+run start "$(json sym7 "$TMP/lnk7/kyoto")"; printf x > "$R/2026/kyoto/x.md"
+run stop "$(json sym7 "$TMP/lnk7/kyoto")"; ctx=$(context "$OUT")
+has "cwd through a symlink, config above its target: the reminder comes" "$ctx" "2026/kyoto/x.md"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" sym7 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["trip_folder"], d["files"])')
+check "and the stored trip folder is the config's physical ancestor" "$got" "$R ['2026/kyoto/x.md']"
+# A symlinked ~/Dropbox (as macOS File Provider sets it up): the trip folder is the logical path.
+mkdir -p "$HOME/Library/CloudStorage/Dropbox/Trips"; ln -s "$HOME/Library/CloudStorage/Dropbox" "$HOME/Dropbox"
+D="$HOME/Dropbox/Trips/kyoto"; trip "$D"; mkdir -p "$TMP/outside7"; printf secret > "$TMP/outside7/s.md"
+run start "$(json dbx7 "$D")"; mkdir -p "$D/mail"; printf 'paid\n' > "$D/mail/receipt.md"; ln -s "$TMP/outside7/s.md" "$D/mail/link.md"
+run stop "$(json dbx7 "$D")"; ctx=$(context "$OUT")
+has "a trip folder under a symlinked ~/Dropbox: the reminder comes" "$ctx" "mail/receipt.md"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" dbx7 | python3 -c 'import json,sys; print(json.load(sys.stdin)["trip_folder"])')
+check "and the stored trip folder is the logical path" "$got" "$D"
+# The skill's real-path rule, applied as SKILL.md states it: both sides resolved. The ordinary file is
+# readable; a symlink that leads outside the trip folder is not. Resolving only the file would refuse both.
+got=$(python3 -I - "$D" "mail/receipt.md" "mail/link.md" <<'PY'
+import os, sys
+trip = os.path.realpath(sys.argv[1])
+def inside(rel):
+    real = os.path.realpath(os.path.join(sys.argv[1], rel))
+    return os.path.commonpath([trip, real]) == trip
+def one_side(rel):
+    real = os.path.realpath(os.path.join(sys.argv[1], rel))
+    return os.path.commonpath([sys.argv[1], real]) == sys.argv[1]
+print(inside(sys.argv[2]), inside(sys.argv[3]), one_side(sys.argv[2]))
+PY
+)
+check "the skill's rule: both sides resolved reads the ordinary file and refuses the outside link" "$got" "True False False"
+grep -qF "compare it with the trip folder's own real path, resolving both" "$PROJECT_DIR/plugin/skills/itinerary-check/SKILL.md" && ok "SKILL.md states the both-sides rule" || bad "SKILL.md states the both-sides rule"
+
+# #4: the helper drops a stored path that is absolute or has an empty, . or .. component (counted as
+# unreadable), refuses a trip folder that is not absolute, and refuses an empty HOME.
+printf '{"trip_folder":"/t","files":["/abs.md","a/../b.md","a//b.md","./c.md","d/.","ok.md",""],"total":7,"complete":true}' > "$SD/shape7.changed.json"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" shape7)
+check "the helper prints only relative paths without empty, . or .. components" "$got" '{"trip_folder": "/t", "complete": true, "total": 7, "unreadable": 6, "files": ["ok.md"]}'
+printf '{"trip_folder":"t/rel","files":["ok.md"],"total":1,"complete":true}' > "$SD/rel7.changed.json"
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" rel7 >/dev/null 2>&1; check "the helper refuses a relative trip folder" "$?" "1"
+printf '{"trip_folder":"/t/../x","files":["ok.md"],"total":1,"complete":true}' > "$SD/dot7.changed.json"
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" dot7 >/dev/null 2>&1; check "the helper refuses a trip folder with a .. component" "$?" "1"
+( unset CLAUDE_CONFIG_DIR; HOME="" bash "$HELPER" "/.claude/plugins/data/x" s >/dev/null 2>&1; echo "rc=$?" ) > "$TMP/emptyhome"
+check "the helper refuses an empty HOME" "$(cat "$TMP/emptyhome")" "rc=2"
+( unset CLAUDE_CONFIG_DIR HOME; bash "$HELPER" "/.claude/plugins/data/x" s >/dev/null 2>&1; echo "rc=$?" ) > "$TMP/nohome"
+check "the helper refuses an unset HOME" "$(cat "$TMP/nohome")" "rc=2"
+
+# #7: the 30-day prune keeps the current session's own record, so a session resumed after 30 days still
+# gets its reminder.
+T="$TMP/trips/old7"; trip "$T"; run start "$(json old7 "$T")"
+touch -t 202001010000 "$SD/old7.start"
+run start "$(json old7 "$T")"
+[ -f "$SD/old7.start" ] && ok "a resumed session older than 30 days keeps its start record" || bad "a resumed session older than 30 days keeps its start record"
+printf x > "$T/late.md"; run stop "$(json old7 "$T")"
+has "and still gets its reminder" "$(context "$OUT")" "late.md"
+printf 1 > "$SD/other7.start"; touch -t 202001010000 "$SD/other7.start"
+run start "$(json old7b "$T")"
+[ -e "$SD/other7.start" ] && bad "another session's old record is still pruned" || ok "another session's old record is still pruned"
+
+# #9: the wrapper execs python, so a timeout that kills the hook's process kills the walk itself.
+grep -qE '^exec "\$py" -I ' "$HOOK" && ok "the wrapper execs python" || bad "the wrapper execs python"
+got=$(python3 -I - "$HOOK" <<'PY'
+import os, subprocess, sys, time
+p = subprocess.Popen(["bash", sys.argv[1], "stop"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(1.0)   # python is waiting for the end of stdin
+cmd = subprocess.run(["ps", "-o", "command=", "-p", str(p.pid)], capture_output=True, text=True).stdout
+p.stdin.close(); p.wait(timeout=5)
+print("python" if "itinerary_reminder.py" in cmd else "not python: " + cmd.strip())
+PY
+)
+check "the hook's own process is python, not a bash parent" "$got" "python"
+# With exec, python's exit status is the hook's: a missing module still ends in 0 (never a 2, which blocks).
+W="$TMP/wrap7"; mkdir -p "$W"; cp "$HOOK" "$W/"
+printf '%s' "$(json w7 "$T")" | bash "$W/itinerary-reminder.sh" stop >/dev/null 2>&1; check "the wrapper without its module exits 0" "$?" "0"
+
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"
 for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done
