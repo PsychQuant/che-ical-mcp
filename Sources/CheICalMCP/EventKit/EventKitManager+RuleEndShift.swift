@@ -27,26 +27,18 @@ extension RuleEndShift {
 
 extension EventKitManager {
     /// #509: the refusal for a start or zone change that would move an occurrence of the series past
-    /// one of the ends it is checked against, or nil. `series` carries the rules (the series object,
-    /// or the occurrence a span future starts from); its own occurrences are listed by `seriesID`
-    /// around each end and placed by their original slot (PR #510 round 1, HIGH 1, MEDIUM 4: an
-    /// occurrence edited on its own and moved within a year is listed; one that cannot be placed, or
-    /// an empty listing, refuses). Read only, so it runs before the first field is assigned.
-    func ruleEndShiftRefusal(series: EKEvent?, seriesID: String?, ends: [Date], plan: RuleEndShift.Plan,
-                             from: Date?, ruleWritable: Bool) -> String? {
-        guard !ends.isEmpty else { return nil }
-        guard let series, let seriesID, let calendar = series.calendar else { return RuleEndShift.unknownReason(ruleWritable: ruleWritable) }
-        let ids = UndoPostState.OccurrenceIDs(eventIdentifier: seriesID, externalIdentifier: series.calendarItemExternalIdentifier)
-        for ruleEnd in ends {
-            // PR #510 round 1 (MEDIUM 3): refused before any read when nothing would remain.
-            if RuleEndShift.startsPastEnd(plannedStart: plan.plannedStart, ruleEnd: ruleEnd) {
-                return RuleEndShift.pastEndReason(ruleEnd: ruleEnd, zone: plan.newZone)
-            }
-            guard let range = RuleEndShift.listingRange(ruleEnd: ruleEnd, plan: plan),
-                  let listed = try? events(from: range.start, to: range.end, calendars: [calendar]) else {
-                return RuleEndShift.unknownReason(ruleWritable: ruleWritable)
-            }
-            let own: [RuleEndShift.Listed] = listed.compactMap { event in
+    /// one of the ends it is checked against, or nil (`RuleEndShift.refusal` decides). `series` is the
+    /// object the rules were read from (the series object, or the occurrence a span future starts
+    /// from); its own occurrences are listed by `seriesID` and placed by their original slot (PR #510
+    /// round 1, HIGH 1, MEDIUM 4). A series or calendar that cannot be read lists nothing, which
+    /// refuses. Read only, so it runs before the first field is assigned.
+    func ruleEndShiftRefusal(series: EKEvent, seriesID: String?, storedEnds: [Date], passedRule: RuleEndShift.PassedRule?,
+                             plan: RuleEndShift.Plan, from: Date?, allDay: Bool, route: RuleEndShift.Route) -> String? {
+        RuleEndShift.refusal(storedEnds: storedEnds, passedRule: passedRule, plan: plan, from: from, allDay: allDay, route: route) { range in
+            guard let seriesID, let calendar = series.calendar,
+                  let listed = try? events(from: range.start, to: range.end, calendars: [calendar]) else { return nil }
+            let ids = UndoPostState.OccurrenceIDs(eventIdentifier: seriesID, externalIdentifier: series.calendarItemExternalIdentifier)
+            return listed.compactMap { event in
                 let occurrence = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
                                                              externalIdentifier: event.calendarItemExternalIdentifier)
                 guard UndoPostState.isOccurrence(occurrence, of: ids) else { return nil }
@@ -59,12 +51,6 @@ extension EventKitManager {
                 }
                 return RuleEndShift.Listed(isDetached: event.isDetached, ridSlot: slot, occurrenceDate: event.occurrenceDate, start: event.startDate)
             }
-            guard let slots = RuleEndShift.place(own) else { return RuleEndShift.unknownReason(ruleWritable: ruleWritable) }
-            if let slot = RuleEndShift.firstLost(slots: slots, ruleEnd: ruleEnd, plan: plan, from: from) {
-                return RuleEndShift.lostReason(slot: slot, ruleEnd: ruleEnd, movedTo: RuleEndShift.latestMove(slot: slot, plan: plan),
-                                               zone: plan.newZone, ruleWritable: ruleWritable)
-            }
         }
-        return nil
     }
 }

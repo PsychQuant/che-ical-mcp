@@ -1434,19 +1434,26 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             movesStart: !UndoPostState.sameInstant(shiftStart, event.startDate), changesZone: changesZone) {
             let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
             let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
-            if addressesOwnOccurrence { _ = ruleHolder?.refresh() }   // as #505 reads it; a failure is fine (#326)
-            let rules = ruleHolder?.recurrenceRules ?? []
+            // A series object that fails to refresh still holds its rules (#326); none read refuses below.
+            if addressesOwnOccurrence { _ = ruleHolder?.refresh() }
+            // PR #510 round 2 (HIGH 1): the series is known to repeat here, so no series object or no
+            // rules is a failure to read, refused before the plan, not a rule with no end.
+            guard let holder = ruleHolder, let rules = RuleEndShift.readRules(holder.recurrenceRules) else {
+                throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.unreadable))
+            }
             let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
             let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
             let plan = RuleEndShift.Plan(
                 storedStarts: addressesOwnOccurrence ? [event.startDate, eventSlot] : [event.startDate],
                 plannedStart: shiftStart, storedZone: storedZone, newZone: newZone,
                 unit: RuleEndShift.unit(of: rules), keepsDays: rules.contains(where: RuleEndShift.keepsDays))
-            let ends = RuleEndShift.ends(stored: rules.compactMap { $0.recurrenceEnd?.endDate },
-                                         passedRule: RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence))
+            // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
+            // through an occurrence's own id the route is Calendar (LOW 6).
             if let reason = ruleEndShiftRefusal(
-                series: ruleHolder, seriesID: seriesID, ends: ends, plan: plan,
-                from: applyToAll ? nil : eventSlot, ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil) {
+                series: holder, seriesID: seriesID, storedEnds: rules.compactMap { $0.recurrenceEnd?.endDate },
+                passedRule: RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence), plan: plan,
+                from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
+                route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence)) {
                 throw EventKitError.seriesWriteRefused(reason: reason)
             }
         }
