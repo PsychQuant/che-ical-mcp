@@ -39,6 +39,20 @@ enum DeletedOccurrenceCheck {
         /// No occurrence that was not edited on its own follows the last deleted one; span future
         /// with a time field through an edited occurrence is refused (#416).
         case nothingAfter
+        /// Round 7 (MEDIUM 1, LOW 3): the write moves the series to another account, which checks
+        /// every slot from any occurrence, so a span-future retry is refused the same way.
+        case crossAccount
+        /// Round 7 (LOW 5): through the first occurrence's own id; the series' id reads as edited
+        /// before there (#428), so no identifier takes span future.
+        case firstOccurrenceOwnID
+    }
+
+    /// Round 7: the route block a refusal gives. Another account takes precedence over every other
+    /// cause; the first occurrence's own id replaces only an offered route.
+    static func refusalRoute(_ blocked: RouteBlock?, crossesAccounts: Bool, throughFirstOwnID: Bool) -> RouteBlock? {
+        if crossesAccounts { return .crossAccount }
+        if blocked == nil, throughFirstOwnID { return .firstOccurrenceOwnID }
+        return blocked
     }
 
     /// PR #505 round 5 (LOW): why the first slot cannot be shown, one cause each (`firstSlotResult`).
@@ -128,6 +142,8 @@ enum DeletedOccurrenceCheck {
     /// `.combined`; `startChanges` nil (no proven slot to compare with) is `.unproven`.
     static func changeKind(allDayChanges: Bool, startChanges: Bool?, endChanges: Bool, changesZone: Bool, changesPattern: Bool,
                            changesAccount: Bool) -> ChangeKind {
+        // Round 7 (LOW 3): another account with any other change is combined.
+        if changesAccount, allDayChanges || startChanges != false || endChanges || changesZone || changesPattern { return .combined }
         if allDayChanges { return .allDay }
         guard let startChanges else { return .unproven }
         if startChanges { return changesZone || changesPattern || changesAccount ? .combined : .start }
@@ -381,13 +397,17 @@ enum DeletedOccurrenceCheck {
             route = "No update route keeps the deletions here: the series' first occurrence was deleted, so a write from a later occurrence reads the series through its first remaining occurrence and is refused the same way. Change the series in Calendar (not measured)."
         case .nothingAfter?:
             route = "No update route keeps the deletions here: no occurrence that was not edited on its own follows the last deleted one, so there is nowhere to start span 'future' from. Change the series in Calendar (not measured)."
+        case .crossAccount?:
+            route = "No update route keeps the deletions while the series moves to a calendar of another account: such a write checks every occurrence of the series, from any occurrence. Move it in Calendar (not measured), or drop the account change."
+        case .firstOccurrenceOwnID?:
+            route = "No update route keeps the deletions through this occurrence's own id: span 'future' from a later occurrence is not taken here (the series' id reads as edited before, #428). Change the series in Calendar (not measured)."
         }
         let found = "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach)"
         // Round 6 (LOW 9): a new pattern alone is refused because it was not measured; no time route.
         if change == .pattern {
-            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day or time zone brought them back, measured on iCloud, and a new end_date alone kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
+            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought them back, measured on iCloud, and a new end_date alone kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
         }
-        return "\(found), and changing the start, end, all_day or time zone of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. \(keptText) \(route) Nothing was written."
+        return "\(found), and changing the start, end, all_day, or a time zone across a daylight-saving divergence, of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. \(keptText) \(route) Nothing was written."
     }
 
     /// PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete; whether the
@@ -434,7 +454,7 @@ enum DeletedOccurrenceCheck {
     }
 
     static func unknownReason(_ cause: UnknownCause) -> String {
-        "This write changes the start, end, all_day, time zone or rule of more than one occurrence of a series; a change of the start, end, all_day or time zone brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: \(unknownCause(cause)). \(keptText) Nothing was written."
+        "This write changes the start, end, all_day, time zone or rule of more than one occurrence of a series; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: \(unknownCause(cause)). \(keptText) Nothing was written."
     }
 }
 

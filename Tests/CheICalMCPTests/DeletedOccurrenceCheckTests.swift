@@ -561,4 +561,58 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
     func testANegativeMonthDayIsNamed() {
         XCTAssertTrue(DeletedOccurrenceCheck.unknownReason(.ruleNotFollowed).contains("counted from the month's end"))
     }
+
+    // MARK: - Round 7 of PR #505
+
+    /// MEDIUM 1, LOW 3: a cross-account write checks every slot, so a span-future retry from after the
+    /// last deletion is refused the same way; the refusal offers no route and says to drop the account
+    /// change. A deletion before the anchor, a start change and another account.
+    func testACrossAccountRefusalOffersNoRoute() {
+        let found = verdict(observed: ["2026-12-07", "2026-12-21", "2026-12-28", "2027-01-04"])
+        XCTAssertEqual(found, .deleted(blocked: nil), "the check alone would offer the route")
+        let route = DeletedOccurrenceCheck.refusalRoute(nil, crossesAccounts: true, throughFirstOwnID: false)
+        XCTAssertEqual(route, .crossAccount)
+        let change = DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: true, endChanges: true, changesZone: false,
+                                                       changesPattern: false, changesAccount: true)
+        XCTAssertEqual(change, .combined)
+        let text = DeletedOccurrenceCheck.deletedReason(blocked: route, change: change)
+        XCTAssertFalse(text.contains("span 'future' with the occurrence_date"), text)
+        XCTAssertTrue(text.contains("drop the account change"), text)
+        XCTAssertTrue(text.contains("Nothing was written."))
+        // Any blocked cause gives way to the account: no route passes while the account changes.
+        XCTAssertEqual(DeletedOccurrenceCheck.refusalRoute(.nothingAfter, crossesAccounts: true, throughFirstOwnID: true), .crossAccount)
+        // An account change with anything else is combined, never an end or zone alone.
+        func kind(end: Bool = false, zone: Bool = false, pattern: Bool = false) -> DeletedOccurrenceCheck.ChangeKind {
+            DeletedOccurrenceCheck.changeKind(allDayChanges: false, startChanges: false, endChanges: end, changesZone: zone,
+                                              changesPattern: pattern, changesAccount: true)
+        }
+        XCTAssertEqual(kind(end: true), .combined)
+        XCTAssertEqual(kind(zone: true), .combined)
+        XCTAssertEqual(kind(pattern: true), .combined)
+        XCTAssertEqual(kind(), .account)
+    }
+
+    /// LOW 5: through the first occurrence's own id no identifier takes the span-future route (#428:
+    /// the series' id reads as edited before), so the refusal sends the change to Calendar.
+    func testThroughTheFirstOccurrencesOwnIdNoRouteIsOffered() {
+        let route = DeletedOccurrenceCheck.refusalRoute(nil, crossesAccounts: false, throughFirstOwnID: true)
+        XCTAssertEqual(route, .firstOccurrenceOwnID)
+        let text = DeletedOccurrenceCheck.deletedReason(blocked: route, change: .start)
+        XCTAssertFalse(text.contains("span 'future' with the occurrence_date"), text)
+        XCTAssertTrue(text.contains("Change the series in Calendar"), text)
+        XCTAssertEqual(DeletedOccurrenceCheck.refusalRoute(.notCovered, crossesAccounts: false, throughFirstOwnID: true), .notCovered)
+        XCTAssertNil(DeletedOccurrenceCheck.refusalRoute(nil, crossesAccounts: false, throughFirstOwnID: false))
+    }
+
+    /// LOW 4: a time zone brought deletions back only across a daylight-saving divergence (measured);
+    /// the refusal texts say so.
+    func testTheZoneResultCarriesItsCondition() {
+        let condition = "a time zone across a daylight-saving divergence"
+        XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil).contains(condition))
+        XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil, change: .pattern).contains(condition))
+        XCTAssertTrue(DeletedOccurrenceCheck.unknownReason(.notListed).contains(condition))
+        for text in [DeletedOccurrenceCheck.deletedReason(blocked: nil), DeletedOccurrenceCheck.unknownReason(.notListed)] {
+            XCTAssertFalse(text.contains("all_day or time zone"), text)
+        }
+    }
 }

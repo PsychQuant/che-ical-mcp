@@ -1591,7 +1591,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             switch verdict {
             case .none: break
             case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
-            case .deleted(let blocked): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: blocked, change: change))
+            case .deleted(let blocked):
+                // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
+                let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
+                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change))
             case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
             }
         }
