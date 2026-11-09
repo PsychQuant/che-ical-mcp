@@ -112,6 +112,18 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (spec, "an old event of the set whose row was answered no SHALL NOT be ignored", "a declined correction's old event is clash-checked (spec, r9 #2)"),
             (contract, "an answer that leaves a set without one is not an answer", "every step 2 set needs an answer (r9 #8)"),
             (spec, "every set the question lists SHALL need one of these answers", "every step 2 set needs an answer (spec, r9 #8)"),
+            // PR #498 round 10.
+            (contract, "when a listed event of the item's kind (a timed event for a session, an all-day one for the umbrella) has the item's title and covers its start", "the same-title guard is per kind (r10 #1)"),
+            (contract, "A listed event of the other kind (an all-day event with a session's title) does not block the create", "the other kind asks (r10 #1)"),
+            (spec, "a listed event of the other kind SHALL NOT block the create", "the same-title guard is per kind (spec, r10 #1)"),
+            (spec, "#### Scenario: A same-title all-day hand-built event does not block a session", "r10 #1 scenario"),
+            (contract, "and an umbrella row that names another set's umbrella, which need their own answer", "plain-yes exceptions (r10 #2)"),
+            (spec, "and an umbrella row that names another set's umbrella,", "plain-yes exceptions (spec, r10 #2)"),
+            (spec, "the row SHALL name it as possibly this conference's umbrella left under an old marker", "another set's umbrella is named (spec, r10 #3)"),
+            (spec, "and the hand-built search SHALL run for the corrected items", "a partial correction runs step 3 (spec, r10 #3)"),
+            (contract, "a listed all-day event is titled with the official name exactly and starts on the first day", "the umbrella guard needs the first day (r10 #5)"),
+            (spec, "a listed all-day event titled with the official name exactly that starts on the first day", "the umbrella guard needs the first day (spec, r10 #5)"),
+            (contract, "fewer than two non-common sessions overlap by date and time", "the known limit as a criterion (r10 #6)"),
         ]
     }
 
@@ -134,7 +146,9 @@ final class ConferenceModuleDocsTests: XCTestCase {
                      "When the question names only one set, a yes names that set.",
                      // r8 #2: several sets get one choice row first; r8 #8: a rename answer answers no other row; r8 #12.
                      "Several candidate sets: ask which one", "the same answer applies the table", "no second question follows",
-                     "an adopted event's old notes"] {
+                     "an adopted event's old notes",
+                     // r10 #6: the known limit is a criterion, not one shape.
+                     "a program whose official name, short name and first day all changed fits none of step 1's kinds"] {
             XCTAssertFalse(contractText.contains(gone), "\(contract): \(gone)")
         }
         let specText = try read(spec)
