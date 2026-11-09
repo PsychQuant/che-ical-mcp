@@ -83,10 +83,24 @@ def interactive():
 
 
 def sessions_dir():
+    """(root, components) of the plugin data directory, or None (#500 r6 #1). The same rule as
+    bin/itinerary-changed.sh: the root is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data, the data
+    directory must be absolute, lie under it by at least one component, and hold no empty, `.` or `..`
+    component. Outside the root the hook writes nothing."""
     base = os.environ.get("CLAUDE_PLUGIN_DATA", "")
-    if not base or not os.path.isabs(base) or not os.path.isdir(base):
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.environ.get("HOME", ""), ".claude")
+    root = os.path.join(config, "plugins", "data")
+    if not base.startswith("/") or not root.startswith("/"):
         return None
-    return os.path.join(base, "itinerary-sessions")
+    parts = base.split("/")[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]          # one trailing slash is allowed
+    root_parts = [c for c in root.split("/") if c]
+    if any(c in ("", ".", "..") for c in parts):
+        return None
+    if parts[: len(root_parts)] != root_parts or len(parts) <= len(root_parts):
+        return None
+    return root, parts[len(root_parts):]
 
 
 def read_input():
@@ -102,23 +116,36 @@ def read_input():
     return data
 
 
-# #500 r4 #2: the sessions directory and its records are never reached through a symlink. The
-# directory is opened with O_NOFOLLOW and every record is read, written, listed and removed relative
-# to that descriptor without following a symlink, so a planted link cannot send a write outside it.
+# #500 r4 #2 and r6 #1: the sessions directory and its records are never reached through a symlink.
+# The root is opened normally (it is the user's own configuration directory); every directory below it,
+# down to itinerary-sessions, is opened through the one above it with O_NOFOLLOW, and every record is
+# created, read, written, listed and removed relative to the last descriptor. A symlink anywhere below
+# the root, the data directory itself included, stops the hook before it writes anything.
 
-def open_sessions(folder, create):
-    """A descriptor of the sessions directory, or None when it is missing (and not created) or a
-    symlink, or anything but a directory."""
-    if create:
-        try:
-            os.mkdir(folder, 0o700)
-        except FileExistsError:
-            pass
+def open_sessions(spec, create):
+    """A descriptor of the sessions directory, or None when a level is missing, a symlink or not a
+    directory. `create` makes itinerary-sessions (only that level) inside the verified data directory."""
+    root, parts = spec
     try:
-        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return None
-    return fd
+    try:
+        for name in parts:
+            nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        if create:
+            try:
+                os.mkdir("itinerary-sessions", 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+        sessions = os.open("itinerary-sessions", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+    except OSError:
+        os.close(fd)
+        return None
+    os.close(fd)
+    return sessions
 
 
 def record_stat(dfd, name):
@@ -131,13 +158,15 @@ def record_stat(dfd, name):
 
 
 def open_regular(dfd, name, flags, mode=0o600):
-    """Open a record that must be a regular file. O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a
-    FIFO or device at that name from holding the hook in open() (#500 r5 #4), and the fstat refuses
-    anything that is not a regular file once it is open."""
+    """Open a record that must be a regular file with one link. O_NOFOLLOW refuses a symlink;
+    O_NONBLOCK keeps a FIFO or device at that name from holding the hook in open() (#500 r5 #4); the
+    fstat refuses anything that is not a regular file, or one with another hard link (#500 r6 #4),
+    once it is open. Callers never pass O_TRUNC: a write truncates only after these checks."""
     fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dfd)
-    if (os.fstat(fd).st_mode & 0o170000) != 0o100000:
+    st = os.fstat(fd)
+    if (st.st_mode & 0o170000) != 0o100000 or st.st_nlink != 1:
         os.close(fd)
-        raise OSError(f"{name} is not a regular file")
+        raise OSError(f"{name} is not a regular file with one link")
     return fd
 
 
@@ -149,8 +178,14 @@ def read_record(dfd, name):
 def write_record(dfd, name, text, exclusive=False):
     """Write a regular file in the sessions directory, never through a symlink or into a FIFO, and
     never into an existing file when `exclusive`."""
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
-    with os.fdopen(open_regular(dfd, name, flags), "w", encoding="utf-8") as f:
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else 0)
+    fd = open_regular(dfd, name, flags)
+    try:
+        os.ftruncate(fd, 0)
+    except OSError:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -212,9 +247,20 @@ def trip_folder(cwd, config):
         d = parent
 
 
+def opens_quote(text, i):
+    """Whether a quote at text[i] opens a quoted value: only at the start of a value, that is with
+    nothing but spaces before it since the start or since a `[` or `,` (#500 r6 #3). An apostrophe
+    inside a value (`Bob's drafts/`) is a character."""
+    j = i - 1
+    while j >= 0 and text[j] == " ":
+        j -= 1
+    return j < 0 or text[j] in "[,"
+
+
 def strip_comment(text):
     """Cut a YAML comment: a # at the start or after whitespace, outside single or double quotes
-    (#500 r5 #2), so a quoted pattern such as "receipts # paid/" keeps its #."""
+    (#500 r5 #2), so a quoted pattern such as "receipts # paid/" keeps its #. A quote opens only at the
+    start of a value (opens_quote)."""
     quote, prev, i = None, " ", 0
     while i < len(text):
         c = text[i]
@@ -225,7 +271,7 @@ def strip_comment(text):
         if quote:
             if c == quote:
                 quote = None
-        elif c in "\"'":
+        elif c in "\"'" and opens_quote(text, i):
             quote = c
         elif c == "#" and prev.isspace():
             return text[:i]
@@ -250,7 +296,7 @@ def inline_list(text):
             current += c
             if c == quote:
                 quote = None
-        elif c in "\"'":
+        elif c in "\"'" and not current.strip():   # a quote opens only at the start of an item (#500 r6 #3)
             quote = c
             current += c
         elif c == ",":
@@ -294,9 +340,9 @@ def settings(config):
 
 
 def ignored(rel, ignores):
-    """A pattern ending in / skips the files under a matching directory: without another / it is
-    matched with every directory name on the path, at any depth; with one, with each directory path
-    from the trip folder. A pattern without / is matched with the file name; any other pattern with
+    """A pattern ending in / skips the files under a matching directory: without another / (and not
+    starting with one) it is matched with every directory name on the path, at any depth; with one,
+    or starting with /, with each directory path from the trip folder. A pattern without / is matched with the file name; any other pattern with
     the whole path. Matching is fnmatch, case-sensitive, with the path and the patterns both in NFC
     (#500 r5 #9): macOS keeps names as they were created, often NFD, and a pattern typed in an
     editor is NFC. Only the matching is normalized; the listed paths keep their stored form."""
@@ -308,7 +354,8 @@ def ignored(rel, ignores):
     for pattern in ignores:
         if pattern.endswith("/"):
             p = pattern.strip("/")
-            pool = prefixes if "/" in p else dirs
+            # A leading / anchors the pattern at the trip folder, as another / inside it does (#500 r6 #7).
+            pool = prefixes if (pattern.startswith("/") or "/" in p) else dirs
             if any(fnmatch.fnmatchcase(d, p) for d in pool):
                 return True
         elif "/" not in pattern:
@@ -326,46 +373,78 @@ def ignored_dir(rel_dir, ignores):
     return ignored(rel_dir + "/x", [p for p in ignores if p.endswith("/")])
 
 
+def open_below(top, rel):
+    """A descriptor of the directory `rel` under the trip folder's descriptor, opened one component at a
+    time with O_DIRECTORY|O_NOFOLLOW (#500 r6 #2), or None. A directory swapped for a symlink after the
+    walk saw it is refused here, not followed; only `depth` descriptors are open at once."""
+    fd = os.dup(top)
+    for name in rel.split("/"):
+        try:
+            nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError:
+            os.close(fd)
+            return None
+        os.close(fd)
+        fd = nxt
+    return fd
+
+
 def changed_files(trip, since, ignores, order=None):
     """(changed files relative to trip, whether the walk stopped early). Each directory is read one
     entry at a time, every directory and file counts toward the entry limit, and the deadline is
     checked for each entry, so the limits bound the scan itself. The caller sorts the result.
+    The trip folder is opened once; every directory below it is opened through its parents'
+    descriptors with O_NOFOLLOW and listed by descriptor (#500 r6 #2), never by a path resolved again.
     `order` (tests only) reorders each directory's entries, so a test does not depend on the
     filesystem's enumeration order (#500 r4 #1). A single call that hangs (a File Provider folder
     listed for the first time, a network mount) is not bounded here: the hook's 10 s timeout ends it,
     and the .slow record written before the walk pauses the next ones (#500 r4 #11)."""
     found, seen = [], 0
     limit, began, exit_at = walk_limit(), time.monotonic(), walk_exit_at()
-    stack = [trip]
-    while stack:
-        here = stack.pop()
-        try:
-            entries = os.scandir(here)
-        except OSError:
-            continue
-        with entries:
-            for entry in (entries if order is None else order(list(entries))):
-                seen += 1
-                if exit_at and seen >= exit_at:
-                    os._exit(1)
-                if seen > limit or time.monotonic() - began > WALK_SECONDS:
-                    return found, True
-                rel = visit(entry, trip, since, ignores, stack)
-                if rel is not None:
-                    found.append(rel)
+    try:
+        top = os.open(trip, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return found, False
+    try:
+        stack = [""]
+        while stack:
+            here = stack.pop()
+            fd = os.dup(top) if not here else open_below(top, here)
+            if fd is None:
+                continue
+            try:
+                entries = os.scandir(fd)
+            except OSError:
+                os.close(fd)
+                continue
+            try:
+                with entries:
+                    for entry in (entries if order is None else order(list(entries))):
+                        seen += 1
+                        if exit_at and seen >= exit_at:
+                            os._exit(1)
+                        if seen > limit or time.monotonic() - began > WALK_SECONDS:
+                            return found, True
+                        rel = visit(entry, here, since, ignores, stack)
+                        if rel is not None:
+                            found.append(rel)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(top)
     return found, False
 
 
-def visit(entry, trip, since, ignores, stack):
-    """One directory entry: queue a directory, return a changed file's relative path, else None."""
+def visit(entry, here, since, ignores, stack):
+    """One directory entry of the directory `here` (relative to the trip folder, "" for the folder
+    itself): queue a directory, return a changed file's relative path, else None."""
+    rel = entry.name if not here else here + "/" + entry.name
     try:
         if entry.is_symlink():
             return None
         if entry.is_dir(follow_symlinks=False):
-            if entry.name not in SKIPPED_DIRS:
-                rel_dir = os.path.relpath(entry.path, trip).replace(os.sep, "/")
-                if not ignored_dir(rel_dir, ignores):   # an ignored directory is pruned, not walked
-                    stack.append(entry.path)
+            if entry.name not in SKIPPED_DIRS and not ignored_dir(rel, ignores):
+                stack.append(rel)   # an ignored directory is pruned, not walked
             return None
         if not entry.is_file(follow_symlinks=False) or entry.name in SKIPPED_FILES:
             return None
@@ -373,7 +452,6 @@ def visit(entry, trip, since, ignores, stack):
             return None
     except OSError:
         return None
-    rel = os.path.relpath(entry.path, trip).replace(os.sep, "/")
     return None if ignored(rel, ignores) else rel
 
 

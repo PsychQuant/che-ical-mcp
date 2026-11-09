@@ -12,4 +12,5 @@
 
 - [x] 3.1 `plugin/skills/itinerary-check/SKILL.md`（The check lists differences and changes nothing until the user agrees；檢查本身不寫入，使用者的同意是唯一的關卡）。驗證：spec 的每個 requirement 在 skill 裡都有對應文字，逐一對照情境審閱。
 - [x] 3.3 第 1 輪驗證的修正（PR #500）：`allowed-tools` 的 Bash 限定為設定檔查詢；檔名是資料（JSON 字串、宣告為資料）；走訪計入目錄；旅程資料夾取邏輯祖先；目錄樣式用 glob；只在互動式 session 提醒；寫入依事件屬於誰分派。驗證：hook 測試與 `ItineraryCheckDocsTests` 先紅後綠。
+- [x] 3.4 第 6 輪驗證的修正（PR #500）：寫入端以根目錄逐層描述子開啟資料目錄、走訪以描述子逐層開啟並 scandir、紀錄檔拒絕其他硬連結、引號只在值的開頭開啟、開頭 `/` 的目錄樣式錨定在旅程資料夾、helper 的 `complete`／`total` 限定型別。驗證：hook 測試先紅後綠。
 - [x] 3.2 `plugin/CLAUDE.md`、`plugin/README.md`、`plugin/CHANGELOG.md`，以及 `plugin/rules/event-modules.md` 的一行指引。驗證：`ItineraryCheckDocsTests` 通過。

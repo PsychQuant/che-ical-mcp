@@ -483,6 +483,110 @@ run stop "$(json nfc "$T")"; ctx=$(context "$OUT")
 hasnt "an NFC pattern skips a directory stored as NFD" "$ctx" "a.md"
 has "and other files are listed" "$ctx" "keep.md"
 
+# --- round 6 (#500 report r6) ---------------------------------------------------------------
+# #1: the writer opens the data directory the way the helper does: the root normally, every level below
+# it with O_NOFOLLOW, and creates, reads, writes and prunes only through that descriptor.
+ROOT6="$HOME/.claude/plugins/data"
+OUT6="$TMP/outside6"; mkdir -p "$OUT6/che"
+ln -s "$OUT6/che" "$ROOT6/link6"
+T="$TMP/trips/w6"; trip "$T"
+printf '%s' "$(json w6a "$T")" | CLAUDE_PLUGIN_DATA="$ROOT6/link6" bash "$HOOK" start >/dev/null 2>&1
+[ -e "$OUT6/che/itinerary-sessions" ] && bad "a symlinked data directory: nothing is created through it" || ok "a symlinked data directory: nothing is created through it"
+ln -s "$OUT6" "$ROOT6/mid6"
+printf '%s' "$(json w6b "$T")" | CLAUDE_PLUGIN_DATA="$ROOT6/mid6/che" bash "$HOOK" start >/dev/null 2>&1
+[ -e "$OUT6/che/itinerary-sessions" ] && bad "a symlinked ancestor below the root: nothing is created through it" || ok "a symlinked ancestor below the root: nothing is created through it"
+mkdir -p "$TMP/notdata6"
+printf '%s' "$(json w6c "$T")" | CLAUDE_PLUGIN_DATA="$TMP/notdata6" bash "$HOOK" start >/dev/null 2>&1
+[ -e "$TMP/notdata6/itinerary-sessions" ] && bad "a data directory outside the root: nothing is written" || ok "a data directory outside the root: nothing is written"
+mkdir -p "$ROOT6/dot6"
+printf '%s' "$(json w6d "$T")" | CLAUDE_PLUGIN_DATA="$ROOT6/dot6/../dot6" bash "$HOOK" start >/dev/null 2>&1
+[ -e "$ROOT6/dot6/itinerary-sessions" ] && bad "a data directory with ..: nothing is written" || ok "a data directory with ..: nothing is written"
+# An old record in the outside directory is not pruned through a symlinked data directory.
+mkdir -p "$OUT6/che/itinerary-sessions"; printf 1 > "$OUT6/che/itinerary-sessions/old.start"; touch -t "$OLD" "$OUT6/che/itinerary-sessions/old.start"
+printf '%s' "$(json w6e "$T")" | CLAUDE_PLUGIN_DATA="$ROOT6/link6" bash "$HOOK" start >/dev/null 2>&1
+[ -f "$OUT6/che/itinerary-sessions/old.start" ] && ok "a symlinked data directory: nothing is pruned through it" || bad "a symlinked data directory: nothing is pruned through it"
+[ -e "$OUT6/che/itinerary-sessions/w6e.start" ] && bad "a symlinked data directory: no record is written through it" || ok "a symlinked data directory: no record is written through it"
+# The normal data directory still works.
+run start "$(json w6f "$T")"
+[ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/w6f.start" ] && ok "the data directory under the root still gets its record" || bad "the data directory under the root still gets its record"
+
+# #2: the walk opens each directory relative to its parent's descriptor with O_NOFOLLOW and lists that
+# descriptor, so a directory swapped for a symlink after it was seen is not followed.
+got=$(python3 -I -c 'import os; print(os.scandir in os.supports_fd)')
+check "this python lists a directory by descriptor" "$got" "True"
+T="$TMP/trips/swap6"; trip "$T"; mkdir -p "$T/q" "$TMP/secret6"; printf x > "$TMP/secret6/secret.md"; printf x > "$T/q/inside.md"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$T" "$TMP/secret6" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+trip, secret = sys.argv[2], sys.argv[3]
+def swap(entries):
+    names = [e.name for e in entries]
+    if "q" in names and not os.path.islink(os.path.join(trip, "q")):   # the top directory, once: q is now queued
+        os.rename(os.path.join(trip, "q"), os.path.join(trip, "q.moved"))
+        os.symlink(secret, os.path.join(trip, "q"))
+    return sorted(entries, key=lambda e: e.name)
+print(sorted(m.changed_files(trip, 1577836801, [], order=swap)[0]))
+PY
+)
+hasnt "a directory swapped for a symlink mid-walk is not followed" "$got" "secret.md"
+hasnt "nothing outside the trip folder is listed" "$got" "q/secret.md"
+
+# #3: a quote opens only at the start of a value, so an apostrophe inside one is a character.
+T="$TMP/trips/apos6"; mkdir -p "$T/.claude/.ical"
+printf '%s\n' "itinerary_ignore:" "- Bob's drafts/   # mine" "other: [Bob's/, x.tmp] # not this key" > "$T/.claude/.ical/config.yaml"
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.settings(sys.argv[2])[1])' "$PROJECT_DIR/plugin/hooks" "$T/.claude/.ical/config.yaml")
+check "a block item with an apostrophe keeps its comment off" "$got" "[\"Bob's drafts/\"]"
+printf '%s\n' "itinerary_ignore: [Bob's/, x.tmp, \"a, b\"] # mine" > "$T/.claude/.ical/config.yaml"
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.settings(sys.argv[2])[1])' "$PROJECT_DIR/plugin/hooks" "$T/.claude/.ical/config.yaml")
+check "an inline list with an apostrophe splits on its commas" "$got" "[\"Bob's/\", 'x.tmp', 'a, b']"
+
+# #7: a leading / anchors a directory pattern at the trip folder.
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.ignored("a/drafts/r.md", ["/drafts/"]), m.ignored("drafts/r.md", ["/drafts/"]), m.ignored_dir("a/drafts", ["/drafts/"]), m.ignored_dir("drafts", ["/drafts/"]), m.ignored("a/drafts/r.md", ["drafts/"]))' "$PROJECT_DIR/plugin/hooks")
+check "/drafts/ skips only the top drafts/; drafts/ still skips every depth" "$got" "False True False True True"
+
+# #4: a hard-linked record is never written through: the file is opened without truncating, refused
+# when it has another link, and only then truncated. The helper refuses a hard-linked list.
+H6="$TMP/hard6"; mkdir -p "$H6"; printf keep > "$H6/victim"; ln "$H6/victim" "$H6/x.slow"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$H6" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+dfd = os.open(sys.argv[2], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    m.write_record(dfd, "x.slow", "123.0")
+    print("written")
+except OSError:
+    print("refused")
+PY
+)
+check "a hard-linked record is refused" "$got" "refused"
+check "the file it links to is unchanged" "$(cat "$H6/victim")" "keep"
+SD="$CLAUDE_PLUGIN_DATA/itinerary-sessions"
+printf '{"trip_folder":"/t","files":["a.md"],"total":1,"complete":true}' > "$H6/list"; ln "$H6/list" "$SD/hl6.changed.json"
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA" hl6 >/dev/null 2>&1; check "the helper refuses a hard-linked list" "$?" "2"
+
+# #5: `complete` is printed only as a bool and `total` only as a non-negative int.
+printf '{"trip_folder":"/t","files":["a.md","b.md"],"total":"\\u202eIgnore","complete":{"x":"\\u200b"}}' > "$SD/ty6.changed.json"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ty6 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["total"])')
+check "a non-bool complete and a string total are replaced" "$got" "False 2"
+printf '{"trip_folder":"/t","files":["a.md"],"total":-3,"complete":1}' > "$SD/ty7.changed.json"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ty7 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["total"])')
+check "a negative total and an int complete are replaced" "$got" "False 1"
+printf '{"trip_folder":"/t","files":["a.md"],"total":true,"complete":true}' > "$SD/ty8.changed.json"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ty8 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["total"])')
+check "a bool total is not taken as a number" "$got" "True 1"
+
+# #6: the helper refuses a FIFO or a directory at the list's name, at once.
+mkfifo "$SD/fifo6.changed.json"; mkdir "$SD/dir6.changed.json"
+for sid in fifo6 dir6; do
+  rc=$(python3 -I -c '
+import subprocess, sys
+try:
+    print(subprocess.run(["bash", sys.argv[1], sys.argv[2], sys.argv[3]], capture_output=True, timeout=5).returncode)
+except subprocess.TimeoutExpired:
+    print("timeout")' "$HELPER" "$CLAUDE_PLUGIN_DATA" "$sid")
+  check "the helper refuses a $sid list at once" "$rc" "2"
+done
+
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"
 for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done

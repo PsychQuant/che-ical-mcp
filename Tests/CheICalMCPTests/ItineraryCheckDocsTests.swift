@@ -90,10 +90,11 @@ final class ItineraryCheckDocsTests: XCTestCase {
             "Trip facts are of these kinds, and only these",
             "then by the kind of fact, and only these paths",
             "Never write to an event matched by name before the user said yes to that row.",
-            "`Calendar matches <trip>: <n> events checked.`",
+            // #500 r6 #8: the one-line answer sits in sections 3 and 4; the pin names the section 3 sentence.
+            "**Everything matches** → one line: `Calendar matches <trip>: <n> events checked.` Nothing else.",
             "a revision of some items is its partial correction",
         ] {
-            XCTAssertTrue(text.contains(phrase), "\(skill) lacks: \(phrase)")
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
         }
     }
 
@@ -129,10 +130,23 @@ final class ItineraryCheckDocsTests: XCTestCase {
     }
 
     func testTheUpgradeNoticeAndTheSwitchAreDocumented() throws {
-        for document in ["plugin/CHANGELOG.md", "plugin/README.md"] {
+        // #500 r6 #8: each document's own sentences, exactly once each (in the README both bare phrases
+        // occur twice, once in its changelog mirror, so a bare phrase would survive losing the main one).
+        let sentences = [
+            "plugin/CHANGELOG.md": [
+                "**Upgrade effect: the reminder is on by default, so existing project-level configs start getting the reminder after this upgrade.**",
+                "Put `itinerary_check: off` (or `no`, or `false`) in the config to turn it off",
+            ],
+            "plugin/README.md": [
+                "It is on by default: existing project-level configs start getting the reminder after upgrading.",
+                "Put `itinerary_check: off` in that config to turn it off",
+            ],
+        ]
+        for (document, phrases) in sentences {
             let text = try read(document)
-            XCTAssertTrue(text.contains("itinerary_check: off"), "\(document) lacks the off switch")
-            XCTAssertTrue(text.contains("start getting the reminder"), "\(document) lacks the upgrade notice")
+            for phrase in phrases {
+                XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(document) lacks, or repeats: \(phrase)")
+            }
         }
         XCTAssertTrue(try read("plugin/CLAUDE.md").contains("itinerary-check"))
         XCTAssertTrue(try read("plugin/rules/event-modules.md").contains("skills/itinerary-check/SKILL.md"))

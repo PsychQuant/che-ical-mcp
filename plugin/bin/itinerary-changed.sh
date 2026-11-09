@@ -9,7 +9,9 @@
 #         a lone surrogate from an undecodable byte, a private-use character) is never printed, raw
 #         or escaped: it is counted in "unreadable" (#500 r4 #4 and its security review).
 # Exit: 0 printed, 1 no list for that session (or a trip folder whose name holds such a character), 2 bad
-#       arguments, a symlink or a non-regular file on the way, 3 no usable python3.
+#       arguments, a symlink or a non-regular file on the way, a list with another hard link, 3 no usable
+#       python3. "complete" is always a bool and "total" a non-negative int (stored values of another
+#       type are replaced by false and the number of stored paths).
 # Reads one file and writes nothing. The allowed root is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/
 # (#500 r5 #8: CLAUDE_CONFIG_DIR is how several accounts run side by side). The data directory must be
 # absolute, lie under that root by at least one component, and hold no `.` or `..` component (#500 r5
@@ -76,8 +78,11 @@ for name in data_parts[len(root_parts):] + ["itinerary-sessions"]:
     dfd = nxt
 fd = opened(dfd, sid + ".changed.json", os.O_RDONLY | os.O_NONBLOCK)
 os.close(dfd)
-if (os.fstat(fd).st_mode & 0o170000) != 0o100000:
+st = os.fstat(fd)
+if (st.st_mode & 0o170000) != 0o100000:
     fail(2, "the list is not a regular file")
+if st.st_nlink != 1:   # #500 r6 #4: the hook never writes a list with another hard link
+    fail(2, "the list has another hard link")
 try:
     with os.fdopen(fd, encoding="ascii") as f:
         d = json.load(f)
@@ -89,7 +94,12 @@ files = d.get("files", [])
 files = files if isinstance(files, list) else []
 readable = [p for p in files if text(p)]
 # The counts come before the paths, so they stay in a cut preview of a long output (#500 r5 #11).
-out = {"trip_folder": d["trip_folder"], "complete": d.get("complete", False),
-       "total": d.get("total", len(files)), "unreadable": len(files) - len(readable), "files": readable}
+# #500 r6 #5: `complete` is printed only as a bool and `total` only as a non-negative int (a bool is
+# not taken as one); anything else is replaced, so no stored string reaches the output through them.
+complete = d.get("complete") if isinstance(d.get("complete"), bool) else False
+total = d.get("total")
+total = total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else len(files)
+out = {"trip_folder": d["trip_folder"], "complete": complete,
+       "total": total, "unreadable": len(files) - len(readable), "files": readable}
 sys.stdout.buffer.write((json.dumps(out, ensure_ascii=False) + "\n").encode("utf-8"))
 PY
