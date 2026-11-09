@@ -25,9 +25,11 @@ final class RuleEndShiftTests: XCTestCase {
     }
 
     private func plan(planned: Date, stored: Date? = nil, storedZone: TimeZone? = nil, newZone: TimeZone? = nil,
-                      unit: RuleEndShift.Unit = .day, keepsDays: Bool = false) -> RuleEndShift.Plan {
+                      unit: RuleEndShift.Unit = .day, keepsDays: Bool = false, dayFromStart: Bool? = nil,
+                      expandable: Bool = true) -> RuleEndShift.Plan {
         .init(storedStarts: [stored ?? mondays[0]], plannedStart: planned, storedZone: storedZone ?? taipei,
-              newZone: newZone ?? storedZone ?? taipei, unit: unit, keepsDays: keepsDays)
+              newZone: newZone ?? storedZone ?? taipei, unit: unit, keepsDays: keepsDays,
+              dayFromStart: dayFromStart ?? !keepsDays, expandable: expandable)
     }
 
     private func lost(end: String, planned: String, keepsDays: Bool = false) -> Date? {
@@ -134,7 +136,8 @@ final class RuleEndShiftTests: XCTestCase {
         XCTAssertFalse(RuleEndShift.repeats(masterHasRules: false, addressesOwnOccurrence: false))
         // The stored start is read both from the shown start and the original slot.
         let p = RuleEndShift.Plan(storedStarts: [at("2026-12-07T12:00", taipei), mondays[0]], plannedStart: at("2026-12-07T11:00", taipei),
-                                  storedZone: taipei, newZone: taipei, unit: .day, keepsDays: false)
+                                  storedZone: taipei, newZone: taipei, unit: .day, keepsDays: false,
+                                  dayFromStart: true, expandable: true)
         XCTAssertEqual(RuleEndShift.firstLost(slots: mondays, ruleEnd: mondays[4], plan: p), mondays[4])
     }
 
@@ -192,7 +195,7 @@ final class RuleEndShiftTests: XCTestCase {
                                                keepEnd: at("2027-01-04T11:00", taipei), zone: taipei, route: .unwritableRule)
         XCTAssertFalse(calendar.contains("end_date"), calendar)
         XCTAssertTrue(calendar.contains("Calendar"), calendar)
-        for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd] {
+        for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd, .unexpandable] {
             let text = RuleEndShift.uncheckedReason(cause)
             XCTAssertTrue(text.contains("Nothing was written") && text.contains("Calendar"), text)
             XCTAssertFalse(text.contains("end_date") || text.contains("recurrence"), text)
@@ -281,9 +284,12 @@ final class RuleEndShiftTests: XCTestCase {
     /// LOW 3, LOW 6: a route only where one works. Through an occurrence's own id (#416, #428) a call
     /// cannot also pass the rule, so it points to Calendar, as an unwritable rule does.
     func testEachCauseHasARouteThatWorks() {
-        func route(_ writable: Bool, own: Bool = false, days: Bool = false, ended: Bool = false) -> RuleEndShift.Route {
-            RuleEndShift.route(ruleWritable: writable, addressesOwnOccurrence: own, keepsDays: days, endedAfterHappening: ended)
+        func route(_ writable: Bool, own: Bool = false, standIn: Bool = false, days: Bool = false, ended: Bool = false) -> RuleEndShift.Route {
+            RuleEndShift.route(ruleWritable: writable, addressesOwnOccurrence: own, viaStandIn: standIn, keepsDays: days,
+                               endedAfterHappening: ended)
         }
+        // Round 4 LOW 1: through a stand-in (#326) passing recurrence is refused, so Calendar.
+        XCTAssertEqual(route(true, standIn: true), .standIn)
         XCTAssertEqual(route(true), .passRule)
         XCTAssertEqual(route(true, own: true), .ownOccurrence)
         XCTAssertEqual(route(false), .unwritableRule)
@@ -385,5 +391,69 @@ final class RuleEndShiftTests: XCTestCase {
                        RuleEndShift.uncheckedReason(.empty))
         XCTAssertNotEqual(RuleEndShift.uncheckedReason(.empty), RuleEndShift.uncheckedReason(.unplaced))
         XCTAssertTrue(RuleEndShift.uncheckedReason(.empty).contains("no occurrence of the series was found"))
+    }
+
+    // MARK: - Round 4 findings
+
+    private func parts(_ rule: EKRecurrenceRule) -> RuleEndShift.RuleParts { RuleEndShift.parts(rule) }
+
+    private func yearly(months: [NSNumber]? = nil, weeks: [NSNumber]? = nil, positions: [NSNumber]? = nil,
+                        weekdays: [EKRecurrenceDayOfWeek]? = nil, monthDays: [NSNumber]? = nil, yearDays: [NSNumber]? = nil) -> EKRecurrenceRule {
+        EKRecurrenceRule(recurrenceWith: .yearly, interval: 1, daysOfTheWeek: weekdays, daysOfTheMonth: monthDays, monthsOfTheYear: months,
+                         weeksOfTheYear: weeks, daysOfTheYear: yearDays, setPositions: positions, end: nil)
+    }
+
+    /// HIGH: months of the year alone do not fix the day (it comes from the start), so a yearly rule
+    /// on February with no day, moved from the 28th to the 29th, is refused as near the month end.
+    func testAYearlyRuleOnFebruaryWithNoDayIsCheckedForTheMonthEnd() {
+        let february = parts(yearly(months: [2]))
+        XCTAssertFalse(february.fixesDay)
+        XCTAssertTrue(february.expandable)
+        let slots = ["2028-02-28", "2029-02-28", "2030-02-28", "2031-02-28"].map { at($0 + "T10:00", taipei) }
+        let p = plan(planned: at("2028-02-29T10:00", taipei), stored: slots[0], unit: .year,
+                     keepsDays: february.fixesDay, dayFromStart: !february.fixesDay)
+        XCTAssertTrue(RuleEndShift.nearMonthEnd(p))
+        XCTAssertEqual(refusal(slots, stored: [at("2032-03-01T10:00", taipei)], plan: p), RuleEndShift.uncheckedReason(.monthEnd))
+        // A rule whose day is fixed is not; months with a day of the month fix the day.
+        XCTAssertTrue(parts(yearly(months: [2], monthDays: [28])).fixesDay)
+        XCTAssertTrue(parts(yearly(yearDays: [59])).fixesDay)
+        // Several rules, one of them on the start's day: still checked for the month end.
+        let mixed = plan(planned: at("2028-02-29T10:00", taipei), stored: slots[0], unit: .year, keepsDays: true, dayFromStart: true)
+        XCTAssertTrue(RuleEndShift.nearMonthEnd(mixed))
+    }
+
+    /// HIGH, the other BY parts: weeks of the year or set positions with no day leave the day to the
+    /// start in a way the check does not expand, so they are refused as not checked.
+    func testWeeksOrPositionsWithNoDayAreNotChecked() {
+        XCTAssertFalse(parts(yearly(weeks: [10])).expandable)
+        XCTAssertFalse(parts(yearly(months: [2], positions: [-1])).expandable)
+        let monday = EKRecurrenceDayOfWeek(.monday)
+        XCTAssertTrue(parts(yearly(weeks: [10], weekdays: [monday])).expandable)
+        XCTAssertTrue(parts(yearly(months: [2], positions: [-1], weekdays: [monday])).expandable)
+        let p = plan(planned: at("2026-12-07T11:00", taipei), expandable: false)
+        XCTAssertEqual(refusal(mondays, stored: [mondays[4]], plan: p), RuleEndShift.uncheckedReason(.unexpandable))
+        XCTAssertNil(refusal(mondays, stored: [], plan: p), "no end: nothing to check")
+    }
+
+    /// LOW 5: the past-end refusal gives the route, and from the last occurrence before the end it
+    /// points to span 'this'.
+    func testThePastEndRefusalGivesARoute() {
+        let past = plan(planned: at("2027-01-05T10:00", taipei))
+        let reason = refusal(mondays, stored: [mondays[4]], plan: past)!
+        XCTAssertTrue(reason.contains("may be dropped") && reason.contains("end_date at or after"), reason)
+        let fromLast = plan(planned: at("2027-01-04T11:00", taipei), stored: mondays[4])
+        let last = refusal(mondays, stored: [mondays[4]], plan: fromLast, from: mondays[4])!
+        XCTAssertTrue(last.contains("span 'this'"), last)
+        XCTAssertFalse(last.contains("end_date"), last)
+        let calendar = refusal(mondays, stored: [mondays[4]], plan: past, route: .unwritableRule)!
+        XCTAssertTrue(calendar.contains("Calendar") && !calendar.contains("end_date"), calendar)
+    }
+
+    /// INFO: an end passed in the call is named as that, not as the series' rule end.
+    func testAPassedEndIsNamedAsTheCallsEnd() {
+        let reason = refusal(mondays, stored: [mondays[4]], passed: .end(mondays[4]), plan: plan(planned: at("2026-12-07T11:00", taipei)))!
+        XCTAssertTrue(reason.contains("the end_date in this call is"), reason)
+        let stored = refusal(mondays, stored: [mondays[4]], plan: plan(planned: at("2026-12-07T11:00", taipei)))!
+        XCTAssertTrue(stored.contains("the series' rule ends at"), stored)
     }
 }

@@ -2,12 +2,11 @@ import EventKit
 import Foundation
 
 extension RuleEndShift {
-    /// Whether a rule names days of its own (weekdays, days of the month or year, weeks, months or
-    /// set positions): such a rule keeps its days when the start moves, instead of shifting whole.
-    static func keepsDays(_ rule: EKRecurrenceRule) -> Bool {
-        [rule.daysOfTheWeek?.count, rule.daysOfTheMonth?.count, rule.daysOfTheYear?.count,
-         rule.weeksOfTheYear?.count, rule.monthsOfTheYear?.count, rule.setPositions?.count]
-            .contains { ($0 ?? 0) > 0 }
+    /// Which BY parts a rule has (PR #510 round 4, HIGH: `RuleParts.fixesDay` apart from having one).
+    static func parts(_ rule: EKRecurrenceRule) -> RuleParts {
+        func has(_ list: [Any]?) -> Bool { !(list ?? []).isEmpty }
+        return RuleParts(daysOfWeek: has(rule.daysOfTheWeek), daysOfMonth: has(rule.daysOfTheMonth), daysOfYear: has(rule.daysOfTheYear),
+                         weeksOfYear: has(rule.weeksOfTheYear), monthsOfYear: has(rule.monthsOfTheYear), setPositions: has(rule.setPositions))
     }
 
     /// The unit a plain rule repeats by; the coarsest of several rules (fail closed).

@@ -23,7 +23,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
         XCTAssertTrue(code.contains("from:applyToAll?nil:eventSlot,"))
         XCTAssertTrue(code.contains("route:RuleEndShift.route(ruleWritable:SeriesRuleWrite.writableRule(seriesRules)!=nil,addressesOwnOccurrence:addressesOwnOccurrence,"
-                                    + "keepsDays:plan.keepsDays,endedAfterHappening:happened&&storedEnds.contains{$0<now}))"))
+                                    + "viaStandIn:resolved.viaStandIn,keepsDays:plan.keepsDays,endedAfterHappening:happened&&storedEnds.contains{$0<now}))"))
         // Round 2 LOW 7: an all-day series, before or after the write, is not checked and refused.
         XCTAssertTrue(code.contains("allDay:event.isAllDay||datePlan.isAllDay||holder.isAllDay,"))
         XCTAssertTrue(code.contains("throwEventKitError.seriesWriteRefused(reason:reason)"))
@@ -44,6 +44,10 @@ final class RuleEndShiftWiringTests: XCTestCase {
         let plan = try XCTUnwrap(code.range(of: "letplan=RuleEndShift.Plan("))
         XCTAssertLessThan(read.lowerBound, plan.lowerBound)
         XCTAssertFalse(code.contains("ruleHolder?.recurrenceRules??[]"))
+        // Round 4 (HIGH): the day comes from the rule's parts, apart from whether it has BY parts.
+        XCTAssertTrue(code.contains("letparts=rules.map(RuleEndShift.parts)"))
+        XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:parts.contains{!$0.fixesDay},"
+                                    + "expandable:parts.allSatisfy{$0.expandable})"))
     }
 
     func testTheSeriesIdRouteThroughAnEditedFirstOccurrenceReentersTheCheck() throws {
@@ -67,7 +71,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // The order of the decision (round 2): all-day, past the end, over a year, listing, placing.
         let source2 = try SourcePins.source("EventKit/RuleEndShift.swift")
         let decision = flat(try XCTUnwrap(SourcePins.body(of: "static func refusal(", in: source2)))
-        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifstartsPastEnd(", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
+        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "if!plan.expandable{returnuncheckedReason(.unexpandable)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifstartsPastEnd(", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
                      "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "iflisted.isEmpty{returnuncheckedReason(.empty)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}"]
         let found = try steps.map { try XCTUnwrap(decision.range(of: $0), $0).lowerBound }
         XCTAssertEqual(found, found.sorted())

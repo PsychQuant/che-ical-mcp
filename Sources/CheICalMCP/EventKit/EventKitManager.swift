@@ -1444,10 +1444,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
             let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
+            // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
+            let parts = rules.map(RuleEndShift.parts)
             let plan = RuleEndShift.Plan(
                 storedStarts: addressesOwnOccurrence ? [event.startDate, eventSlot] : [event.startDate],
-                plannedStart: shiftStart, storedZone: storedZone, newZone: newZone,
-                unit: RuleEndShift.unit(of: rules), keepsDays: rules.contains(where: RuleEndShift.keepsDays))
+                plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: RuleEndShift.unit(of: rules),
+                keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay },
+                expandable: parts.allSatisfy { $0.expandable })
             // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
             // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
             // rule with days of its own (MEDIUM 3) and a series that ended after an occurrence
@@ -1458,7 +1461,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 passedRule: RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence), plan: plan,
                 from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
                 route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence,
-                                          keepsDays: plan.keepsDays, endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
+                                          viaStandIn: resolved.viaStandIn, keepsDays: plan.keepsDays, endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
                 throw EventKitError.seriesWriteRefused(reason: reason)
             }
         }
