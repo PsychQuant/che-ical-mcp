@@ -10,6 +10,12 @@ extension EventKitManager {
     /// (by identifier, refreshed): for a recurring event that is the series' first occurrence,
     /// not necessarily the object the write saved. Falls back to the saved object when the
     /// identifier does not resolve yet; the undo then fails as not found, which keeps the record.
+    /// Read back rather than taken from `saved` so that a value the store normalizes on save is
+    /// recorded as the undo will see it. Known limit (#424): the read runs in the same synchronous
+    /// stretch as the save, so only another process can write in between, but a change it makes then
+    /// is recorded as this write's, and a later undo writes over it in the fields the undo writes back.
+    /// Comparing with what was written (#424, option (b), not chosen) would need a measured list of
+    /// the store's normalizations; a missed one would refuse the undo for good.
     func postWriteSnapshot(eventID: String, saved: EKEvent) -> EventSnapshot {
         // A failed lookup falls back like a missing one: this is a snapshot taken after the write,
         // and the undo that reads it looks the event up itself.
@@ -19,7 +25,9 @@ extension EventKitManager {
         return EventSnapshot(from: saved)
     }
 
-    /// Reminder counterpart of `postWriteSnapshot(eventID:saved:)`.
+    /// Reminder counterpart of `postWriteSnapshot(eventID:saved:)`, with the same known limit
+    /// (#424): a change another process makes between the save and this read is recorded as this
+    /// write's, and a later undo writes over it in the fields the undo writes back.
     func postWriteSnapshot(reminderID: String, saved: EKReminder) -> ReminderSnapshot {
         if !reminderID.isEmpty, let reminder = eventStore.calendarItem(withIdentifier: reminderID) as? EKReminder,
            reminder.refresh() {
@@ -111,7 +119,11 @@ extension EventKitManager {
     ///   discarded when the reminder still repeats and has the opposite completion (the shape a
     ///   rollover leaves, round 3 finding 8), and refused and kept otherwise; the refusal gets
     ///   the refreshed item to tell the two apart (`postStateRefusal`).
-    func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb) async throws -> EKCalendarItem? {
+    ///
+    /// `keepingLaterEdits` (#265, `undo` with `keep_later_edits`): given the item and the fields the
+    /// default comparison found, returns the fields that still block; nil keeps the default.
+    func verifiedHistoryTarget(of operation: UndoOperation, verb: UndoHistoryVerb,
+                               keepingLaterEdits: ((EKCalendarItem, [String]) -> [String])? = nil) async throws -> EKCalendarItem? {
         guard let expected = verb == .undo ? operation.undoPostState : operation.redoPostState else { return nil }
         let refusal: (EKCalendarItem, [String]) -> Error = { item, fields in
             operation.postStateRefusal(verb: verb, changedFields: fields, current: item)
@@ -146,7 +158,7 @@ extension EventKitManager {
                                                                           isDetached: event.isDetached) {
                             throw refusal
                         }
-                        let fields = expected.changedFields(in: event)
+                        let fields = keepingLaterEdits?(event, expected.changedFields(in: event)) ?? expected.changedFields(in: event)
                         guard deletesSeries, event.hasRecurrenceRules else { return fields }
                         return fields + UndoPostState.seriesConflicts(
                             modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
@@ -168,7 +180,7 @@ extension EventKitManager {
                 refresh: { $0.refresh() },
                 conflicts: { reminder in
                     if let identity { try ensureSameOccurrence(identity, reminder, verb: verb.rawValue) }
-                    return expected.changedFields(in: reminder)
+                    return keepingLaterEdits?(reminder, expected.changedFields(in: reminder)) ?? expected.changedFields(in: reminder)
                 },
                 refusal: refusal)
         }
