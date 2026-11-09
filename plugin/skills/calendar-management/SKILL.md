@@ -83,10 +83,12 @@ list_reminders          → See tasks by list or completion status
 | Delete multiple | `delete_events_batch` | Cleanup old events |
 | Find duplicates | `find_duplicate_events` | Before merging calendars |
 
+**Stays.** An event whose notes hold a `lodging-module:` marker line is a stay: it is changed or deleted only through the lodging module (its end-day rule and read-back, its questions), never by `update_event`, `delete_event`, `delete_events_batch` or `move_events_batch` in any workflow of this skill, a cleanup or a migration included, and also when the user asks here ("I changed it by phone" is the module's section 5, an address, a calendar move or text below the marker is its "Other changes the user asks for", a delete is its section 7). A batch that would include a stay leaves it out and names it.
+
 ## Common Workflows
 
 ### Schedule a Meeting
-If the input matches a module's trigger in `rules/event-modules.md` (today: a conference program or a booking for a stay) and that module is on, build it as the module says instead of the steps below for what the module handles (a program, a stay); other items in the same message, such as a flight, still go through the steps below; otherwise carry on below. An event whose notes hold a `lodging-module:` marker line is a stay: it is changed or deleted only through the lodging module (its end-day rule and read-back, its questions), never by the update or delete steps of this skill, also when the user asks to change or delete it here ("I changed it by phone" is the module's section 5; a delete the user asks for is the module's section 7).
+If the input matches a module's trigger in `rules/event-modules.md` (today: a conference program or a booking for a stay) and that module is on, build it as the module says instead of the steps below for what the module handles (a program, a stay); other items in the same message, such as a flight, still go through the steps below; otherwise carry on below.
 
 ```
 1. Resolve calendar_name  → name from the user, else the folder's calendar_routing rules (rules/calendar-routing.md), else ask
