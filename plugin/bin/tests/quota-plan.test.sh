@@ -37,52 +37,56 @@ M28="$(p --cadence monthly --day 28 --from "$NOW")"
 RULE=(--now "$NOW" --written-mode rule)
 PER=(--now "$NOW" --written-mode per-period)
 
-# --- rule mode, the reset time moves (round 2 HIGH 1-2) ------------------------------------------------
-check "rule, reset earlier, unticked" "reminder A class=off-schedule period=1 dates=differ
-used none
-action move A 1 due=2026-11-10T02:30:00+08:00" "action move A 2" -- "${RULE[@]}" --repair <<EOF
-$W19
-reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
-EOF
-check "rule, reset earlier, ticked" "reminder C class=history period=1 dates=-
-used 1
-action move A 2 due=2026-11-17T02:30:00+08:00" "action move A 1" -- "${RULE[@]}" --repair <<EOF
-$W19
-reminder C completed 2026-11-10T03:30:00+08:00 - - list
-reminder A open 2026-11-17T03:30:00+08:00 - 330,0 list
-EOF
-check "rule, reset later, unticked" "action move A 1 due=2026-11-10T04:30:00+08:00" "" -- "${RULE[@]}" --repair <<EOF
-$W21
-reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
-EOF
+# --- list / sync (no --replace): nothing is moved or deleted --------------------------------------------
 check "rule, running" "reminder A class=matched period=2 dates=ok
 used 1
-action keep A 2 due=2026-11-17T03:30:00+08:00" "action create|repair-needed" -- "${RULE[@]}" <<EOF
+action keep A 2 due=2026-11-17T03:30:00+08:00" "action create|repair-needed|move" -- "${RULE[@]}" <<EOF
 $W20
 reminder C completed 2026-11-10T03:30:00+08:00 - - list
 reminder A open 2026-11-17T03:30:00+08:00 - 330,0 list
 EOF
-# Alarms read back differ from the file (notify_at edited): a dates change, never a silent keep (round 3).
-check "rule, alarms differ without repair" "action repair-needed dates-changed" "action keep" -- "${RULE[@]}" <<EOF
+# Alarms read back differ (notify_at edited by hand): a finding, then dates changed; never a silent keep.
+check "rule, alarms differ" "action rewrite A 1 due=2026-11-10T03:30:00+08:00
+action repair-needed dates-changed" "action keep" -- "${RULE[@]}" <<EOF
 $W20
 reminder A open 2026-11-10T03:30:00+08:00 - 0 list
 EOF
-# A leftover Period: line on a running series is ignored in rule mode (MEDIUM 11). On Nov 11 the week of
-# Nov 9 has reset (period 0, ticked) and the series is on the current period.
+check "off schedule (dates edited by hand)" "action repair-needed dates-changed" "action create|move" -- "${RULE[@]}" <<EOF
+$W19
+reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
+EOF
+check "written mode unknown" "action repair-needed written-mode-unknown" "action create|action keep" -- --now "$NOW" --written-mode unknown <<EOF
+$W20
+EOF
+# A leftover Period: line on a running series is ignored in rule mode. On Nov 11 the week of Nov 9 has reset
+# (period 0, ticked) and the series is on the current period.
 check "rule, leftover Period line ignored" "reminder A class=matched period=1 dates=ok
 action keep A 1 due=2026-11-17T03:30:00+08:00" "restart|past-record" -- --now 2026-11-11T10:00:00+08:00 --written-mode rule <<EOF
 $(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-11T10:00:00+08:00)
 reminder C completed 2026-11-10T03:30:00+08:00 2026-11-09 - list
 reminder A open 2026-11-17T03:30:00+08:00 2026-11-09 330,0 list
 EOF
-# A stall of two periods (round 2 MEDIUM 6) restarts at period 1, never at period 0.
+# Two open series (round 4 MEDIUM 5): the later one is listed; it marks nothing used and nothing moves.
+check "rule, two open series" "used none
+action keep A 1 due=2026-11-10T03:30:00+08:00
+action list B two-open-reminders" "move|used 1" -- "${RULE[@]}" <<EOF
+$W20
+reminder B open 2026-11-17T03:30:00+08:00 - 330,0 list
+reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
+EOF
 D1=2026-12-01T10:00:00+08:00
+P1D="$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz "$TPE" --from "$D1")"
 check "rule, stalled two periods" "reminder A class=past-record period=- dates=-
 action restart A 1 due=2026-12-08T03:30:00+08:00" "restart A 0" -- --now "$D1" --written-mode rule <<EOF
-$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz "$TPE" --from "$D1")
+$P1D
 reminder A open 2026-11-17T03:30:00+08:00 - 330,0 list
 EOF
-# Two open records after a second stall: the restart takes the latest one in either input order (MEDIUM 9).
+# A stopped series moved to another list (round 4 MEDIUM 3, 6): listed, no restart, no new series beside it.
+check "rule, stopped series in another list" "action list A outside-list
+action hold 1 outside-list" "restart|action create" -- --now "$D1" --written-mode rule <<EOF
+$P1D
+reminder A open 2026-11-17T03:30:00+08:00 - 330,0 other
+EOF
 D8=2026-12-08T10:00:00+08:00
 P8="$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz "$TPE" --from "$D8")"
 check "restart picks the latest record (new first)" "action restart NEW 1 due=2026-12-15T03:30:00+08:00
@@ -97,55 +101,37 @@ $P8
 reminder OLD open 2026-11-17T03:30:00+08:00 - 330,0 list
 reminder NEW open 2026-12-01T03:30:00+08:00 - 330,0 list
 EOF
-check "off schedule without repair" "action repair-needed dates-changed" "action create" -- "${RULE[@]}" <<EOF
-$W19
-reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
-EOF
-check "written mode unknown" "action repair-needed written-mode-unknown" "action create|action keep" -- --now "$NOW" --written-mode unknown <<EOF
+check "outside the list: listed, nothing created for it" "action list A outside-list" "action create|action keep" -- "${RULE[@]}" <<EOF
 $W20
+reminder A open 2026-11-10T03:30:00+08:00 - 330,0 other
+EOF
+# A series ticked past the 90 days (round 4 LOW 12, 16): its own action, every listed period used.
+M21="$(p --cadence monthly --day 21 --lead-days 1 --count 3 --from "$NOW" | sed 's/^period [4-9].*//')"
+check "a series beyond the horizon" "reminder A class=beyond period=4 dates=-
+used 1 2 3
+action beyond A" "repair-needed|leftover|action keep|action create" -- "${RULE[@]}" <<EOF
+$M21
+reminder C1 completed 2026-11-20 - - list
+reminder A open 2027-03-20 - none list
+EOF
+check "a series beyond the horizon, in another list" "action list A outside-list" "action beyond|action keep|action create" -- "${RULE[@]}" <<EOF
+$M21
+reminder A open 2027-03-20 - none other
+EOF
+check "ambiguous series blocks a second series" "action list A ambiguous
+action hold 1 ambiguous" "action create|restart" -- --now "$NOW" --written-mode rule <<EOF
+$(p --cadence monthly --day 6 --count 3 --from "$NOW")
+reminder A open 2026-11-21 - none list
+EOF
+# A completed reminder exactly between two periods is listed and holds both (round 4 LOW 10).
+check "completed and ambiguous" "reminder C class=ambiguous period=0 dates=-
+action list C ambiguous
+action hold 1 ambiguous" "action create 1 " -- --now 2026-11-25T10:00:00+08:00 --written-mode rule <<EOF
+$(bash "$DATES" --cadence monthly --day 6 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-25T10:00:00+08:00)
+reminder C completed 2026-11-21 - - list
 EOF
 
-# --- mode transitions (round 3 HIGH 1, 3, 4) -----------------------------------------------------------
-# per-period -> rule, day 31 -> 28, three open one-offs: they rolled past nothing, so the series starts on the
-# current period with the earliest reminder.
-check "per-period to rule, all open" "used none
-action move N 1 due=2026-11-28
-action leftover D
-action leftover J" "used 1|action move N 3" -- "${PER[@]}" --repair <<EOF
-$M28
-reminder N open 2026-11-30 2026-11-30 none list
-reminder D open 2026-12-31 2026-12-31 none list
-reminder J open 2027-01-31 2027-01-31 none list
-EOF
-# rule -> per-period (notify_at added in a DST zone; the series is on period 2 and period 1's copy was cleaned
-# up): the series rolled past period 1, so period 1 is used and never created again.
-LA=(--cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --previous --horizon-days 90 --local-tz America/Los_Angeles --from 2026-11-09T10:00:00-08:00)
-check "rule to per-period, rolled-past period kept used" "mode per-period
-used 1
-action rewrite A 2 due=2026-11-16T11:30:00-08:00" "action create 1 " -- --now 2026-11-09T10:00:00-08:00 --written-mode rule --repair <<EOF
-$(bash "$DATES" "${LA[@]}" --notify-at 22:00)
-reminder A open 2026-11-16T11:30:00-08:00 - 0 list
-EOF
-# rule, monthly day 30 -> 31, series on Dec 30 (period 2): it moves to Dec 31, never back to November.
-check "rule day 30 to 31, never moved back" "reminder A class=off-schedule period=2 dates=differ
-action move A 2 due=2026-12-31" "action move A 1" -- "${RULE[@]}" --repair <<EOF
-$(p --cadence monthly --day 31 --count 3 --from "$NOW" | sed 's/^rule none.*/rule monthly days_of_month=31 due_time=date-only/')
-reminder A open 2026-12-30 - none list
-EOF
-
-# --- per-period: same key, other due (round 3 HIGH 2, 5) ----------------------------------------------
-check "per-period, time changed, same keys: rewritten with the new due" "action rewrite N 1 due=2026-11-30T20:00:00+08:00
-action rewrite D 2 due=2026-12-31T20:00:00+08:00
-action rewrite J 3 due=2027-01-31T20:00:00+08:00" "action keep|action move" -- "${PER[@]}" --repair <<EOF
-$M31T12
-reminder N open 2026-11-30T08:00:00+08:00 2026-11-30 0 list
-reminder D open 2026-12-31T08:00:00+08:00 2026-12-31 0 list
-reminder J open 2027-01-31T08:00:00+08:00 2027-01-31 0 list
-EOF
-check "per-period, time changed by hand: sync asks" "action repair-needed dates-changed" "action keep|action create" -- "${PER[@]}" <<EOF
-$M31T12
-reminder N open 2026-11-30T08:00:00+08:00 2026-11-30 0 list
-EOF
+# --- per-period, list / sync ---------------------------------------------------------------------
 check "per-period, nothing changed: kept" "action keep N 1 due=2026-11-30
 action keep D 2 due=2026-12-31
 action keep J 3 due=2027-01-31" "rewrite|move|create" -- "${PER[@]}" <<EOF
@@ -154,37 +140,41 @@ reminder N open 2026-11-30 2026-11-30 none list
 reminder D open 2026-12-31 2026-12-31 none list
 reminder J open 2027-01-31 2027-01-31 none list
 EOF
-check "per-period, day 31 to 30, re-paired in order" "action keep N 1 due=2026-11-30
-action move D 2 due=2026-12-30
-action move J 3 due=2027-01-30" "leftover" -- "${PER[@]}" --repair <<EOF
-$M30
-reminder N open 2026-11-30 2026-11-30 none list
-reminder D open 2026-12-31 2026-12-31 none list
-reminder J open 2027-01-31 2027-01-31 none list
+check "per-period, time changed by hand: finding, then dates changed" "action rewrite N 1 due=2026-11-30T20:00:00+08:00
+action repair-needed dates-changed" "action keep|action create" -- "${PER[@]}" <<EOF
+$M31T12
+reminder N open 2026-11-30T08:00:00+08:00 2026-11-30 0 list
 EOF
-# A later period ticked before an earlier open one does not push the earlier one away (MEDIUM 8).
 check "per-period, later period ticked early" "used 2
 action keep N 1 due=2026-11-30
-action keep J 3 due=2027-01-31" "leftover|action move" -- "${PER[@]}" --repair <<EOF
+action keep J 3 due=2027-01-31" "two-open|create" -- "${PER[@]}" <<EOF
 $M31
 reminder N open 2026-11-30 2026-11-30 none list
 reminder D completed 2026-12-31 2026-12-31 - list
 reminder J open 2027-01-31 2027-01-31 none list
 EOF
-# --repair respects --through: December, used and cleaned up, is not created again (MEDIUM 12).
-check "repair keeps a cleaned-up period missing" "action rewrite N 1 due=2026-11-30T20:00:00+08:00
-action missing 2
-action rewrite J 3 due=2027-01-31T20:00:00+08:00" "action create 2|action move" -- "${PER[@]}" --through 2027-01-31 --repair <<EOF
-$M31T12
-reminder N open 2026-11-30T08:00:00+08:00 2026-11-30 0 list
-reminder J open 2027-01-31T08:00:00+08:00 2027-01-31 0 list
-EOF
-check "repair, day changed, cleaned-up period not filled from a later one" "action keep N 1 due=2026-11-30
-action missing 2
-action move J 3 due=2027-01-30" "action move J 2|action create 2" -- "${PER[@]}" --through 2027-01-31 --repair <<EOF
-$M30
+# A duplicate on one period never pushes the others (round 4 LOW 11).
+check "per-period, duplicate on one period" "action keep N 1 due=2026-11-30
+action list N2 two-open-reminders
+action keep D 2 due=2026-12-31
+action keep J 3 due=2027-01-31" "move|leftover" -- "${PER[@]}" <<EOF
+$M31
 reminder N open 2026-11-30 2026-11-30 none list
+reminder N2 open 2026-11-30 2026-11-30 none list
+reminder D open 2026-12-31 2026-12-31 none list
 reminder J open 2027-01-31 2027-01-31 none list
+EOF
+# A reminder in another list holds its own period and only that one (round 4 MEDIUM 8).
+check "per-period, outside reminder holds its own period" "action list O outside-list
+action create 1 due=2026-11-30
+action create 3 due=2027-01-31" "action create 2 |action keep O" -- "${PER[@]}" <<EOF
+$M31
+reminder O open 2026-12-31 2026-12-31 none other
+EOF
+check "per-period, outside beyond holds nothing listed" "action list A outside-list
+action create 3 due=2027-01-31" "action keep|action beyond" -- "${PER[@]}" <<EOF
+$M31
+reminder A open 2027-03-31 2027-03-31 none other
 EOF
 D5=2026-12-05T10:00:00+08:00
 check "per-period, cleaned-up period not recreated" "action missing 1
@@ -193,41 +183,92 @@ action create 3 due=2027-02-28" "action create 1 " -- --now "$D5" --written-mode
 $(bash "$DATES" --cadence monthly --day 31 --previous --horizon-days 90 --local-tz "$TPE" --from "$D5")
 reminder J open 2027-01-31 2027-01-31 none list
 EOF
+# per_period_through is a high-water mark (round 4 HIGH 2): the last period deleted stays missing.
+check "per-period, last period deleted stays missing" "action keep N 1 due=2026-11-30
+action keep D 2 due=2026-12-31
+action missing 3" "action create 3" -- "${PER[@]}" --through 2027-01-31 <<EOF
+$M31
+reminder N open 2026-11-30 2026-11-30 none list
+reminder D open 2026-12-31 2026-12-31 none list
+EOF
 check "per-period, first run" "action create 1 due=2026-11-30
 action create 2 due=2026-12-31
 action create 3 due=2027-01-31" "" -- "${PER[@]}" <<EOF
 $M31
 EOF
-
-# --- ambiguous, outside the list, horizon edge (round 3 MEDIUM 6, 7, 10, LOW 16) ------------------------
 check "ambiguous blocks the periods it may hold" "reminder X class=ambiguous period=1 dates=-
 action list X ambiguous
-action hold 1 ambiguous" "action create 1 |action create 2 " -- "${PER[@]}" <<EOF
+action hold 1 ambiguous
+action hold 2 ambiguous" "action create 1 |action create 2 " -- "${PER[@]}" <<EOF
 $M31
 reminder X open 2026-12-16T00:00:00Z - none list
-EOF
-check "ambiguous series blocks a second series" "action list A ambiguous
-action hold 1 ambiguous" "action create|restart" -- --now "$NOW" --written-mode rule <<EOF
-$(p --cadence monthly --day 6 --count 3 --from "$NOW")
-reminder A open 2026-11-21 - none list
-EOF
-check "outside the list: listed, nothing created for it" "action list A outside-list" "action create|action keep" -- "${RULE[@]}" <<EOF
-$W20
-reminder A open 2026-11-10T03:30:00+08:00 - 330,0 other
-EOF
-check "a series beyond the horizon" "reminder A class=beyond period=3 dates=-
-action keep A beyond" "repair-needed|leftover" -- "${RULE[@]}" <<EOF
-$(p --cadence monthly --day 21 --lead-days 1 --count 3 --from "$NOW" | sed 's/^period [4-9].*//')
-reminder C1 completed 2026-11-20 - - list
-reminder C2 completed 2026-12-20 - - list
-reminder C3 completed 2027-01-20 - - list
-reminder A open 2027-03-20 - none list
 EOF
 check "every period used: no target, no crash" "used 1 2 3" "unbound" -- "${PER[@]}" <<EOF
 $M31
 reminder N completed 2026-11-30 2026-11-30 - list
 reminder D completed 2026-12-31 2026-12-31 - list
 reminder J completed 2027-01-31 2027-01-31 - list
+EOF
+
+# --- --replace: a schedule change deletes the open reminders and creates the new schedule ---------------------
+old() { sed 's/^/old /'; }
+# Round 4 HIGH 1: Sunday's reset already passed, updated on Monday to Tuesday. Identified with the OLD periods,
+# the unticked Sunday reminder is the record: it is not deleted, moved or paired.
+SUN="$(p --cadence weekly --weekday 1 --time 20:00 --from "$NOW" | old)"
+TUE="$(p --cadence weekly --weekday 3 --time 20:00 --from "$NOW")"
+check "replace keeps the old record" "reminder A class=past-record period=0 dates=ok (old periods)
+action create 1 due=2026-11-11T04:00:00+08:00" "action delete A|move|action record" -- --now "$NOW" --written-mode per-period --replace <<EOF
+$SUN
+$TUE
+reminder A open 2026-11-09T04:00:00+08:00 2026-11-08 0 list
+EOF
+check "replace, rule: the series is deleted and recreated, the repeating record made one-off" "action record OLD
+action delete A
+action create 1 due=2026-11-10T02:30:00+08:00" "action delete OLD|action create 2 " -- "${RULE[@]}" --replace <<EOF
+$(printf '%s\n' "$W20" | old)
+$W19
+reminder OLD open 2026-11-03T03:30:00+08:00 - 330,0 list
+reminder C completed 2026-11-10T03:30:00+08:00 - - list
+reminder A open 2026-11-17T03:30:00+08:00 - 330,0 list
+EOF
+check "replace, per-period to rule" "action delete N
+action delete D
+action delete J
+action create 1 due=2026-11-28" "action create 2 |move|leftover" -- "${PER[@]}" --replace <<EOF
+$(printf '%s\n' "$M31" | old)
+$M28
+reminder N open 2026-11-30 2026-11-30 none list
+reminder D open 2026-12-31 2026-12-31 none list
+reminder J open 2027-01-31 2027-01-31 none list
+EOF
+check "replace, per-period time change writes the new dues" "action delete N
+action create 1 due=2026-11-30T20:00:00+08:00
+action create 2 due=2026-12-31T20:00:00+08:00
+action create 3 due=2027-01-31T20:00:00+08:00" "rewrite|move" -- "${PER[@]}" --replace <<EOF
+$(printf '%s\n' "$M31" | old)
+$M31T12
+reminder N open 2026-11-30 2026-11-30 none list
+EOF
+check "replace blocked by a reminder in another list" "action list O outside-list
+action replace-blocked outside-list" "action delete|action create" -- "${PER[@]}" --replace <<EOF
+$(printf '%s\n' "$M31" | old)
+$M28
+reminder O open 2026-12-31 2026-12-31 none other
+EOF
+check "replace blocked by an ambiguous reminder" "action list X ambiguous
+action replace-blocked ambiguous" "action delete|action create" -- "${PER[@]}" --replace <<EOF
+$(printf '%s\n' "$M31" | old)
+$M28
+reminder X open 2026-12-16T00:00:00Z - none list
+EOF
+
+# Sync after a hand edit has no old entry: an open reminder whose due has passed stays as the record.
+check "replace without old periods keeps a passed due as the record" "action record R
+action delete A
+action create 1 due=2026-11-10T02:30:00+08:00" "action delete R" -- "${RULE[@]}" --replace <<EOF
+$W19
+reminder R open 2026-11-03T03:30:00+08:00 - 330,0 list
+reminder A open 2026-11-10T03:30:00+08:00 - 330,0 list
 EOF
 
 # --- bad input (LOW 17, 19) -------------------------------------------------------------------------
@@ -246,6 +287,8 @@ err "glob in an id is refused, not expanded" "bad reminder id" "$W20
 reminder quota-*.sh open 2026-11-10T03:30:00+08:00 - 0 list" --now "$NOW" --written-mode rule
 err "bad key" "bad period key" "$W20
 reminder A open 2026-11-10T03:30:00+08:00 find-*.sh 0 list" --now "$NOW" --written-mode rule
+err "replace, old periods without the old rule" "old periods given without the old rule line" "old period 0 key=2026-11-02 state=past due=2026-11-03
+$W20" --now "$NOW" --written-mode rule --replace
 err "old six-field reminder line" "want 7 fields" "$W20
 reminder A open 2026-11-10T03:30:00+08:00 - list" --now "$NOW" --written-mode rule
 [ ! -e /tmp/quota-plan-x ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL the period number was evaluated"; rm -f /tmp/quota-plan-x; }

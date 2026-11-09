@@ -6,7 +6,7 @@
 
 ## 2. Skill 與文件
 
-- [x] 2.1 `plugin/skills/quota/SKILL.md`：五個操作、設定檔的封閉鍵表、提醒的欄位與 notes 範本與標記（The reminder has one shape）、讀回（Writes are read back）、更新與逾期的那一則不移動（An update edits the reminder in place）、退役（A retirement asks first）、清單與同步（List and sync）、報告、虛構實例。驗證：對照 spec 逐條；`QuotaSkillDocsTests` 釘住範本、標記、設定檔路徑與 helper 名稱。
+- [x] 2.1 `plugin/skills/quota/SKILL.md`：五個操作、設定檔的封閉鍵表、提醒的欄位與 notes 範本與標記（The reminder has one shape）、讀回（Writes are read back）、更新與逾期的那一則不移動（An update replaces the open reminders when the schedule changes）、退役（A retirement asks first）、清單與同步（List and sync）、報告、虛構實例。驗證：對照 spec 逐條；`QuotaSkillDocsTests` 釘住範本、標記、設定檔路徑與 helper 名稱。
 - [x] 2.2 `plugin/README.md`、`plugin/CLAUDE.md`、`plugin/CHANGELOG.md` 的 `[Unreleased]`。驗證：skill 列在 README 的 Skills 表與 CLAUDE.md 的 Skills 段；changelog 寫明需要 #333 與 #354 的 binary。
 
 ## 2b. Verify 第 1 輪的修正
@@ -16,12 +16,16 @@
 
 ## 2c. Verify 第 2 輪的修正
 
-- [x] 2c.1（Each period has a stable identity；An update edits the reminder in place；List and sync）歷史邊界只由已用的期別決定（已完成的提醒；rule mode 中未完成提醒滾過的期別），未完成提醒自己的期別不算；要重新配對的是尚未重置的未完成提醒。規劃由新的 `quota-plan.sh` 算，skill 不再手動推。驗證：`quota-plan.test.sh`（重置提前、延後、per-period 多則未來提醒、清掉後不重建、停兩期以上的重啟、手改日期不建立、模稜兩可）。
+- [x] 2c.1（Each period has a stable identity；An update replaces the open reminders when the schedule changes；List and sync）歷史邊界只由已用的期別決定（已完成的提醒；rule mode 中未完成提醒滾過的期別），未完成提醒自己的期別不算；要重新配對的是尚未重置的未完成提醒。規劃由新的 `quota-plan.sh` 算，skill 不再手動推。驗證：`quota-plan.test.sh`（重置提前、延後、per-period 多則未來提醒、清掉後不重建、停兩期以上的重啟、手改日期不建立、模稜兩可）。
 - [x] 2c.2 update 先比新舊模式（`notify_at` 也會翻轉）；`local_tz` 在 declare 時釘住並一律傳入；主機在別的時區時不寫入；`mode`、`per_period_through`、`retiring` 由 skill 寫入；互為前綴的 id 無效；第一次 declare 沒有 `~/.claude` 時看最近存在的上層；symlink 的 `.ical` 看實體路徑的上層；helper 的數字最多六位、計算失敗一律停下。驗證：三個 shell 測試檔、`QuotaSkillDocsTests`。
 
 ## 2d. Verify 第 3 輪的修正
 
 - [x] 2d.1（Each period has a stable identity；寫入時的模式（verify 第 3 輪））planner 必須知道既有提醒是用哪個模式寫的（`--written-mode`，取自 entry 的 `mode`；沒有就只回 `repair-needed`）：只有 rule mode 寫的系列才算「滾過」前面的期別，rule mode 一律用到期日配對、忽略殘留的 `Period:` 行；同一期但到期日或鬧鐘不同的是 `rewrite`（寫入新的到期日），`list`／`sync` 報為 dates changed、不默默 keep；模稜兩可的提醒擋住它可能所屬的期別（`hold`）；一律依到期日排序；重啟選到期日最晚的紀錄；`--repair` 也遵守 `--through`；在別的清單找到的提醒佔住它的期別、不寫入；每次答 yes 之後重新搜尋、重新規劃再寫入。驗證：`quota-plan.test.sh` 的每個重現案例，且斷言實際寫入的 due。
+
+## 2e. Verify 第 4 輪：v1 收窄
+
+- [x] 2e.1（An update replaces the open reminders when the schedule changes；改排程改成取代，不再重新配對（verify 第 4 輪，可撤回的決定））改了日期或模式的 update 不再重新配對，而是取代：planner 以 `--replace` 加上舊期別（先用舊期別認出紀錄），列出要刪除的未重置提醒與要建立的新排程，問一次，同意才寫；沒人回答就不寫。`per_period_through` 只升不降；在別的清單的提醒只列出、佔住它的期別；滾過的期別只看最早的那個非模稜兩可的系列；沒有 `--replace` 時不移動任何東西。Known limit：改排程會取代未完成的提醒。驗證：`quota-plan.test.sh` 的每個仍在範圍內的重現案例。
 
 ## 3. 實機檢查
 

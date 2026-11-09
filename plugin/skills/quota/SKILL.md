@@ -95,7 +95,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh" --cadence weekly --weekday 2 --t
 
 **The local zone is pinned.** `declare` records the host's zone as `local_tz` (the target of `/etc/localtime`, the part after `zoneinfo/`). Every later call of the helper and of the planner (section 5) passes `--local-tz "$local_tz"`. Without the pin, a host that moves into a zone with daylight saving time would turn a rule-mode quota into per-period mode with no change to the file, and `sync` would then add one-off reminders beside a series that is still running.
 
-**While the host is in another zone than `local_tz`**, the skill writes nothing. `list` still reads the reminders correctly, because the planner gets each due with its offset (section 5), but it never proposes a re-pairing, a transition or a restart; it says the host is in another zone. The skill says why it writes nothing: a recurring reminder repeats on the clock of the zone it is saved in, and that would now be the host's. To move a quota to the new zone for good, change `local_tz` with `update`.
+**While the host is in another zone than `local_tz`**, the skill writes nothing. `list` still reads the reminders correctly, because the planner gets each due with its offset (section 5), but it never proposes a replacement or a restart; it says the host is in another zone. The skill says why it writes nothing: a recurring reminder repeats on the clock of the zone it is saved in, and that would now be the host's. To move a quota to the new zone for good, change `local_tz` with `update`.
 
 **Arguments are built from validated values only.** Every value taken from the file is checked first against section 2: `id`, `weekday`, `day`, `time`, `reset_tz`, the leads and `notify_at` must have their declared form. It is then passed as its own quoted argument (`--reset-tz "$zone"`), and never pasted into a command string. A value that fails its check makes the entry invalid; it never reaches a shell.
 
@@ -155,7 +155,7 @@ Due: <lead in words>                               "30 minutes before the reset"
 Notify: the latest <HH:MM> local before the due    (only with notify_at)
 Check: <check_note>                                (only when set)
 Verify: the reset is not confirmed yet; check it in the next period.   (only with verify_next_period)
-Period: <key>                                      (per-period mode only: this reminder's period; written, rewritten or removed only by a re-pairing: an update, or a sync re-pairing after a yes)
+Period: <key>                                      (per-period mode only: this reminder's period; written only when the reminder is created, by a declare, a sync or a replacement)
 Schedule: one recurring reminder | one reminder per period
 Source: ~/.claude/.ical/quotas.yaml (change the entry there and run /che-ical-mcp:quota sync; text above the marker line is rewritten)
 quota-module: <id>
@@ -176,28 +176,30 @@ The last line the module writes is `quota-module: <id>`. Everything **above** it
 - **A marker that names another id in the file:** that quota's reminder. It is skipped here and not listed.
 - **Any other count:** listed and never written. This covers a second marker, a marker for an id that is not in the file, and a quotation of one.
 
-**The plan comes from the planner, never from reasoning over the list by hand.** Use **one** `--from` time for both helpers (`now`, written with its offset), so the period states and the planner's "due before now" test agree:
+**The plan comes from the planner, never from reasoning over the list by hand.** Use **one** `--from` time for both helpers (`now`, written with its offset), so the period states and the planner's "due before now" test agree.
+
+**Read-back values never reach a shell unchecked.** Each `reminder` line is built from values read back from the server, and the notes they come from can be edited by the user or by anyone the list is shared with. Check every field against its closed form below. A reminder with a field that does not match is listed and left out. Write the checked lines with `Write` to a file in the job's temporary directory, then give that file to the planner on stdin; never put a read-back value into a command line:
 
 ```bash
 { bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh" <entry arguments> --previous --horizon-days 90 --local-tz "$local_tz" --from "$now"
-  printf 'reminder %s %s %s %s %s %s\n' "$id" open "$due" "$key" "$alarms" list ; } \
-| bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh" --now "$now" --written-mode "$mode" [--through "$per_period_through"] [--repair]
+  cat "$reminders_file"; } \
+| bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh" --now "$now" --written-mode "$mode" [--through "$per_period_through"]
 ```
 
-One `reminder` line per reminder of the quota, each value its own field (closed list):
+One line per reminder of the quota, `reminder <id> <state> <due> <key> <alarms> <place>` (closed list of fields and forms):
 
-| Field | Value |
+| Field | Form |
 |---|---|
-| id | the server's identifier |
+| id | the server's identifier: letters, digits and `:/._=-` only |
 | state | `open` or `completed` |
-| due | timed: the read-back `due.date_time` (UTC, ending in `Z`), so a host in another zone reads it right; date-only: `due.date` |
-| key | the `Period:` line's key, or `-` |
-| alarms | the relative alarms' `minutes_before`, comma-separated (`330,0`), or `none` |
+| due | timed: the read-back `due.date_time`, `YYYY-MM-DDTHH:MM:SSZ` (UTC), so a host in another zone reads it right; date-only: `due.date`, `YYYY-MM-DD` |
+| key | the `Period:` line's key, `YYYY-MM-DD`, or `-` |
+| alarms | the relative alarms' `minutes_before`, digits joined by `,` (`330,0`), or `none` |
 | place | `list` when it is in the quota's list, `other` when it is not |
 
 `--written-mode` is the entry's stored `mode`: the mode the existing reminders were written in. The rule line gives the mode to write in. With no stored `mode`, pass `unknown`: the planner says `repair-needed` and nothing is written.
 
-**When the planner exits 2**, nothing is written for that quota. The report gives its message, for example a `Period:` line with a space in it, or a reminder whose due was cleared.
+**When the planner exits 2**, nothing is written for that quota. The report gives its message, for example a reminder whose due was cleared.
 
 **Each reminder's class:**
 
@@ -208,39 +210,47 @@ One `reminder` line per reminder of the quota, each value its own field (closed 
 | `history` | completed. Matched to its period, or, when its due matches none (the dates changed, the copies were cleaned up), to the period whose due is nearest |
 | `older` | completed and older than period 0; counted only |
 | `off-schedule` | open, matching no period, and not a `past-record`: its nearest period has not reset, or its due is still ahead. The file's dates changed |
-| `beyond` | open, after the last listed period (ticked ahead of the 90 days); it holds its own period, and nothing is planned for it |
-| `ambiguous` | open, matching no period, its due exactly between two periods. Listed; it holds both periods (in rule mode every period), so nothing is created or moved there until the user answers |
+| `beyond` | open, after the last listed period (a series ticked ahead of the 90 days). Every listed period counts as rolled past; nothing is planned for it |
+| `ambiguous` | open or completed, matching no period, its due exactly between two periods. Listed; it holds both periods (an open one in rule mode holds every period), so nothing is created there until the user answers |
 
 **Used periods:**
 
 - every period with a completed reminder (`matched` or `history`);
-- when the **written** mode is rule, also every period from period 1 up to, but not including, the open reminder's period. A recurring reminder moves on only when it is ticked, so it has rolled past them. Open one-off reminders roll past nothing.
+- when the **written** mode is rule, also every period from period 1 up to, but not including, the period of the **earliest** open reminder that is not `ambiguous`. A recurring reminder moves on only when it is ticked, so it has rolled past them. A second open series, and open one-off reminders, are no evidence of use.
 
 **An open reminder's own period is never used** until it is ticked. **The history boundary** is the latest used period; the report shows it.
 
 **Targets:** the periods whose reset is ahead and that are not used. In rule mode, the first one only; in per-period mode, every one within the 90 days.
 
-**Actions (closed list). Every one that writes carries the due to write (`due=…`), which is the due the skill passes:**
+**Actions without `--replace` (list and sync; closed list).** Nothing is moved or deleted. Every action that writes carries the due to write (`due=…`):
 
 | Action | Meaning |
 |---|---|
 | `keep <id> <n>` | the reminder is on its period and its due and alarms agree; update the other fields in place if they differ (title, notes above the marker, rule) |
-| `rewrite <id> <n>` | `--repair` only: the reminder is on its period (same key), but its due or alarms differ; write the due and alarms in place |
-| `move <id> <n>` | `--repair` only: rewrite the reminder onto period n: due, alarms, title, notes, and in per-period mode its `Period:` line. Never onto an earlier period than its own |
+| `rewrite <id> <n>` | a finding, never a write on its own: the reminder is on its period but its due or alarms differ from the file. Always comes with `repair-needed dates-changed` |
 | `create <n>` | create the reminder of period n |
-| `missing <n>` | per-period, also under `--repair`: period n has no reminder but is not after `per_period_through`. The skill created one before, and it was deleted, perhaps after the period was used. Listed with an offer to create it, never created unasked |
-| `leftover <id>` | an open reminder with no period left; listed, and deleted only as in section 9 |
+| `missing <n>` | per-period: period n has no reminder and is not after `per_period_through`, the highest period the skill ever created. It was created and then deleted, perhaps after the period was used. Listed with an offer to create it, never created unasked |
+| `beyond <id>` | a series ticked past the 90 days; listed, nothing written |
 | `restart <id> <n>` | rule mode: the series stopped. `<id>` is the open past-period record with the **latest** due. After a yes (section 10): make it one-off (`clear_recurrence: true`, nothing else changed), do the same for every `record` that still repeats, and start the series at period n, whose reset is ahead |
 | `record <id>` | another open past-period record; listed with the restart |
-| `hold <n> ambiguous` | period n may belong to an `ambiguous` reminder; listed and asked about, never written |
+| `hold <n> <why>` | period n is held, `ambiguous` (it may belong to an ambiguous reminder) or `outside-list` (a reminder in another list sits on it, or a stopped series was moved there); listed, never written |
 | `list <id> <why>` | listed, never written: `ambiguous`, `two-open-reminders`, `outside-list` |
-| `repair-needed <why>` | without `--repair`. `dates-changed`: an open reminder is off schedule, a matched one has other dates, or the written mode differs from the mode to write in. `written-mode-unknown`: the entry has no `mode`. Nothing is created; the re-pairing of section 8 is offered |
+| `repair-needed <why>` | `dates-changed`: an open reminder is off schedule, a matched one has other dates, or the written mode differs from the mode to write in. `written-mode-unknown`: the entry has no `mode`. Nothing is created; the replacement of section 8 is offered |
 
-**How `--repair` pairs.** Every list is taken in due order, whatever order the search returned. Each open reminder takes its own period when that is a target; otherwise it takes the first free target after its own period. In rule mode the earliest open reminder takes the one target, and the rest are `leftover`. Free targets that are left become `create`, `missing` (not after `per_period_through`) or `hold`.
+**A reminder in another list is only ever listed.** Whatever the planner would have done with it (keep, restart, record, beyond) becomes `list <id> outside-list`, and the periods it sits on are held: nothing is created next to it.
 
-**Without `--repair`**, nothing is moved or rewritten.
+**Actions with `--replace` (a schedule change, section 8):**
 
-**A past-period record** (open, period reset) is never moved, never matched to another period, and never offered for deletion. The only write on it is clearing its recurrence in rule mode, after the yes of a restart (section 10) or a retirement (section 9). This holds whether it is period 0 or older.
+| Action | Meaning |
+|---|---|
+| `delete <id>` | an open reminder of a period not yet reset under the **old** dates |
+| `create <n>` | the new schedule: in rule mode the series at period 1, in per-period mode every period of the 90 days |
+| `record <id>` | an open past-period record; it stays. In rule mode its recurrence is cleared on the same yes when it still repeats |
+| `list <id> <why>`, `replace-blocked <why>` | an `ambiguous` reminder or one in another list blocks the whole replacement; nothing is deleted or created |
+
+With `--replace`, the old entry's helper output goes in too, each line prefixed with `old ` (`… | sed 's/^/old /'`). The records are identified with the **old** periods before anything else. A reminder that was the record of a period that reset under the old dates is never deleted, moved or paired, even when its due lies close to a new period. When the old entry is not known (the user edited the file by hand), every open reminder whose due has passed is kept as a record.
+
+**A past-period record** (open, period reset) is never moved, never matched to another period, never deleted, and never offered for deletion. The only write on it is clearing its recurrence in rule mode, after the yes of a restart (section 10), a replacement (section 8) or a retirement (section 9). This holds whether it is period 0 or older.
 
 ## 6. After every write, read back
 
@@ -277,26 +287,28 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
 
 ## 8. Update
 
-1. Keep the entry as it was (**old**). Change only the fields the user changed (**new**) and validate the new entry. Run the helper for both, each with the entry's `local_tz` (the new one, if `local_tz` is what changed).
-2. **The mode, compared first.** Compare the old and the new rule lines; with `mode` in the entry, compare that too. Any change of field can change the mode, `notify_at` included. In a zone with daylight saving time, an evening alarm's offset changes in the week the clocks change, so no single rule fits any more. Whether the mode changed decides the row below. The fields that changed do not.
-3. **Re-pair.** Run the planner (section 5) for the **new** entry with `--repair`, `--written-mode` set to the **old** stored `mode`, and `--through` when it is set, giving it every reminder of the quota. The planner counts as used only completed reminders and, when the old reminders form a recurring series, the periods that series rolled past; an open reminder's own period, and open one-off reminders, are never evidence of use. So:
-   - a reset moved **earlier** in the same week still gets this week's reminder;
-   - a reset moved **later** keeps this week's reminder in this week;
-   - in per-period mode, every open reminder of a period not yet reset keeps its period (same key: `rewrite` when the due or alarms changed, so the new due is written) or takes the first free period after its own; none is skipped, and a period used and cleaned up stays `missing`;
-   - per-period to rule starts the series on the first period not used, with the earliest open reminder; rule to per-period keeps the periods the series rolled past as used.
-4. **What is written** (closed list):
+1. Keep the entry as it was (**old**). Change only the fields the user changed (**new**) and validate the new entry. Run the helper for both, with the same `--from` and each with its `local_tz`.
+2. **Same schedule or a new one.** Compare the two helper outputs: every period line and the rule line.
+   - They are the same when only `name`, `account`, `amount`, `check_note` or `verify_next_period` changed, or when nothing changed in the dates. Then run the planner for the new entry without `--replace`, apply its `keep` actions (title, notes above the marker) and nothing else. A `restart` or `missing` it prints is offered as in section 10.
+   - They differ when the dates or the mode changed. Any field can change the mode, `notify_at` included: in a zone with daylight saving time, an evening alarm's offset changes in the week the clocks change. Go to step 3.
+3. **A new schedule replaces the open reminders.** The open reminders are not re-paired with the new periods. Run the planner for the **new** entry with `--replace`, `--written-mode` set to the **old** stored `mode`, and the old helper output prefixed with `old `.
+   - Show the plan in one table: the reminders to delete (title, due), the records that stay, the reminders to create (title, due). Then ask once: "Replace the N open reminders of <id> with the new schedule?"
+   - A record of a period that already reset under the old dates stays as it is. Completed reminders stay.
+4. **Only after a yes** about that quota, asked in this run, plan again (section 11, "After every yes"). Then:
+   - clear the recurrence of each `record` that still repeats;
+   - delete each `delete` with `delete_reminder` (not pre-approved, so the harness asks once more);
+   - create each `create` as section 4 says.
 
-| Mode, old → new | Write, for each action |
-|---|---|
-| unchanged | `keep`, `rewrite`, `move`, `create` as section 5 defines them, each with the `due=` it prints. `alarms_minutes_offsets` is always the section 4 value: `[<alarm_minutes>, 0]` or `[0]` for a timed reset, `[]` for a date-only one |
-| rule → per-period | the reminder that is kept, rewritten or moved gets `clear_recurrence: true` and its `Period:` line; the other targets are created |
-| per-period → rule | the reminder that is kept, rewritten or moved gets `recurrence` from the new rule line and loses its `Period:` line; `leftover` reminders are listed and deleted only as in section 9 |
-
-   `leftover`, `missing` and `hold` are never written without a yes; `list` is never written.
-5. Write `mode` from the new rule line, and in per-period mode `per_period_through` as the key of the last period that has a reminder now.
+   A failed delete stops the replacement before anything is created, and the report says what was deleted.
+   - **No:** nothing is written, and the entry keeps its old fields.
+   - **Nobody to ask:** nothing is written, and the update is listed as pending.
+   - **`replace-blocked`:** nothing is written. The report names the ambiguous reminder or the one in another list, and says what the user can do (tell which period it is; move it back).
+5. Write the new fields, `mode` from the new rule line, and in per-period mode `per_period_through` as the later of its old value and the last period created. **`per_period_through` is a high-water mark: it is never lowered**, so a period that was created and then deleted stays `missing` and is never recreated unasked.
 6. Read back every write (section 6), the notes included: a `Period:` line left on a rule-mode reminder is reported.
 
-**Never written by an update:** a past-period record, a completed reminder, or a reminder listed in section 5.
+**Never written by an update:** a completed reminder, a reminder listed in section 5, a reminder in another list, and a past-period record (except clearing its recurrence on the yes above).
+
+**Known limit:** changing a schedule replaces the open reminders. Text a user wrote below the marker of a deleted reminder goes with it, and a period already used under the old dates can get a reminder again under the new ones. The table of step 3 shows both before the user answers.
 
 ## 9. Retire
 
@@ -320,7 +332,7 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
 
 ## 10. List
 
-`list` writes nothing. For every active entry (not `retired`, not `retiring`), run the helper and the planner without `--repair` (section 5), and report one block per quota.
+`list` writes nothing. For every active entry (not `retired`, not `retiring`), run the helper and the planner without `--replace` (section 5), and report one block per quota.
 
 **Last period** (period 0), exactly one of:
 
@@ -338,8 +350,8 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
 
 **Schedule**, exactly one of:
 
-- **mode mismatch**: the planner says `repair-needed dates-changed` because the written mode (the entry's `mode`) differs from the mode the rule line gives, or `repair-needed written-mode-unknown` because the entry has no `mode`. The reminders were written in another mode, so nothing is applied. `list` offers the transition of section 8 (old = the entry as it is, written in its stored mode).
-- **dates changed**: the planner says `repair-needed dates-changed`: an open reminder is off schedule, or a matched one has another due or other alarms than its period (the file's dates or `notify_at` changed by hand). `list` offers the re-pairing of section 8. `sync` never creates or rewrites anything for this quota until the user says yes.
+- **mode mismatch**: the planner says `repair-needed dates-changed` because the written mode (the entry's `mode`) differs from the mode the rule line gives, or `repair-needed written-mode-unknown` because the entry has no `mode`. The reminders were written in another mode, so nothing is applied. `list` offers the replacement of section 8 (old = the entry as it is, written in its stored mode).
+- **dates changed**: the planner says `repair-needed dates-changed`: an open reminder is off schedule, or a matched one has another due or other alarms than its period (the file's dates or `notify_at` changed by hand). `list` shows each `rewrite` finding and offers the replacement of section 8. `sync` never creates or writes anything for this quota until the user says yes.
 - **rule mode, running**: `keep` for the open reminder, plus the fields that differ from the file, if any.
 - **rule mode, stopped**: the planner says `restart`; the only open reminder is a past-period record.
   - A recurring reminder moves on only when it is ticked, so an unticked period stops every later notification.
@@ -353,7 +365,7 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
   - the `create` ones;
   - "run sync" when the last period with a reminder is due within 30 days.
 
-**Also listed:** reminders listed by section 5; the planner's `list`, `hold`, `record` and `leftover` lines; completed reminders counted as `history` or `older`, in one line.
+**Also listed:** reminders listed by section 5; the planner's `list`, `hold`, `record`, `rewrite` and `beyond` lines; completed reminders counted as `history` or `older`, in one line.
 
 Retired entries are counted in one line, not listed. An entry with `retiring` is listed as an unfinished retirement.
 
@@ -361,11 +373,11 @@ Retired entries are counted in one line, not listed. An entry with `retiring` is
 
 For every active entry, take the `list` result, then (closed list):
 
-- **mode mismatch, or dates changed:** create nothing. Offer the section 8 re-pairing, and on a yes for that quota run it as an update, old = the entry as stored. Nobody to ask: pending. This is the path after the user edited the dates in the file by hand. Without it, sync would create the new periods' reminders next to the old ones.
-- **`keep`:** update the reminder in place if its fields differ (title, notes above the marker, alarms, rule). Its due is not changed, because the planner matched it by its due or its key.
-- **`create`:** create it. In per-period mode, set `per_period_through` to the last key created.
+- **mode mismatch, or dates changed:** create nothing. Offer the replacement of section 8, and on a yes for that quota run it. When the user edited the dates in the file by hand, the old entry is not known: run the planner with `--replace` and no `old` lines, so every open reminder whose due has passed stays as a record. Nobody to ask: pending. Without this path, sync would create the new periods' reminders next to the old ones.
+- **`keep`:** update the reminder in place if its fields differ (title, notes above the marker, rule). Its due and alarms already agree: the planner prints `keep` only then.
+- **`create`:** create it. In per-period mode, raise `per_period_through` to the last key created; it is never lowered.
 - **`restart`:** ask once (section 10), then clear the recurrence of the record and of every `record` that still repeats, and create the new series.
-- **`missing`, `leftover`, `hold`, `record`, `list`:** listed. `missing` is created after a yes; `leftover` is deleted only as in section 9; `hold` waits for the user to say which period the ambiguous reminder is.
+- **`missing`, `hold`, `record`, `beyond`, `list`:** listed. `missing` is created after a yes; `hold` waits for the user to say which period the ambiguous reminder is, or to move a reminder back from another list.
 - **an entry with `retiring`:** write nothing; offer to finish the retirement (section 9).
 
 Never written by sync:
@@ -374,7 +386,7 @@ Never written by sync:
 - a completed reminder;
 - a reminder listed by section 5.
 
-Sync applies `keep` and `create` without asking: the file is the source of truth, and the user asked for it. It asks before any move, rewrite, delete, restart or `missing` creation.
+Sync applies `keep` and `create` without asking: the file is the source of truth, and the user asked for it. It asks before any replacement, restart or `missing` creation.
 
 **After every yes, plan again before writing.** Search the reminders again and run the planner again, immediately before the first write. If the plan is not the one the user said yes to (for example the user ticked the overdue record in the meantime, so the series moved on and there is nothing to restart), write nothing, show the new plan, and ask again. The same holds for `update` (section 8) and `retire` (section 9).
 
@@ -385,11 +397,11 @@ Sync applies `keep` and `create` without asking: the file is the source of truth
 One block, in this order:
 
 1. the file used, or why none (`no quotas declared`, `<file> not trusted: <warning>`, `<file> could not be parsed`);
-2. per quota touched: `created / adopted / updated / moved / unchanged / restarted / retired / pending`, the title, the period and due as read back, the alarm as read back, and the mode (with the helper's reason for per-period mode);
+2. per quota touched: `created / adopted / updated / replaced / unchanged / restarted / retired / pending`, the title, the period and due as read back, the alarm as read back, and the mode (with the helper's reason for per-period mode);
 3. the `list` lines of section 10 for each quota touched;
 4. differences found by the read-back, and a server too old for #333 or #354;
 5. entries skipped as invalid, with the reason; unknown keys; a host in another zone than `local_tz`;
-6. reminders listed but not written (section 5, the planner's `list`, `leftover` and `missing`, a hand-built one left alone);
+6. reminders listed but not written (section 5, the planner's `list`, `hold`, `missing` and `rewrite`, a hand-built one left alone);
 7. once per create, that the list row shows the notification time, not the due (#433); after a retire, that `delete_reminder` can be undone only while the server is running.
 
 ## 13. Worked example (fictional)
@@ -427,12 +439,7 @@ The entry gets `mode: rule`.
 
 `list` reports the last period, the current period `used`, and the schedule running. `sync` writes nothing.
 
-**The reset moves earlier, to 19:00 UTC** (update, rule to rule). The planner on the new entry with `--repair`:
-
-| This week | Planner output | Result |
-|---|---|---|
-| not ticked | `reminder A class=off-schedule period=1`, `used none`, `action move A 1` | the open reminder moves to this Tuesday 02:30 |
-| ticked | `reminder C class=history period=1`, `used 1`, `action move A 2` | next Tuesday 02:30, never back to this week |
+**The reset moves earlier, to 19:00 UTC** (update). The two helper outputs differ, so the update is a replacement. The planner on the new entry with `--replace`, the old output prefixed with `old `, prints `action delete A` and `action create 1 due=2026-11-10T02:30:00+08:00`. After one yes, the open reminder is deleted and a new series starts this Tuesday at 02:30. A record of a week that already reset under the old dates stays. When this week was already ticked, the new series still starts this week (the known limit of section 8), and the table shows that before the user answers.
 
 **Not used.** The week of 2026-11-16 is never ticked. On 2026-11-24 at 01:00, before that week's reset (04:00 local), the planner says `reminder A class=past-record period=0` and `restart A 1`: the 2026-11-17 reminder is the record, and the current period (key 2026-11-23) has no reminder. `list` reports the series stopped and offers the restart. On a yes:
 
