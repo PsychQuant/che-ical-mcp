@@ -243,10 +243,10 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "a different spelling with a different or missing address and no shared night is not found", "comparing numbers no longer over-promises (round 9 #1)"),
             (lodging, "names the event's calendar and carries the flag `in another calendar`", "a guard row in another calendar (round 9 #4)"),
             (lodging, "writes nothing to it, no `(also …)` part included", "a neither-module event gets no alias (round 9 #5)"),
-            (lodging, "leaves out an event the user already answered about in this run", "no second question after 4 (b) (round 9 #6)"),
+            (lodging, "leaves out an event the user already answered about for this message", "no second question for one message (round 9 #6, round 10)"),
             (lodging, "the escape ignores letter case, and only an unescaped `(also …)` part, which only a same-stay answer writes, is read", "an escaped (also is never read (round 9 #7)"),
             (lodging, "appends its number to that list and never replaces one", "a third number appends (round 9 #2)"),
-            (lodging, "`<cancelling message-id>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (round 9 #3)"),
+            (lodging, "`<cancelling message-id, percent-encoded>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (round 9 #3)"),
             (lodging, "Before every create, whether or not it already asks for another reason", "the guard runs before every create (round 9 #10)"),
             (lodging, "archiving the same confirmation again later creates the stay again", "a stateless entry point says what comes back (round 9 #12)"),
             (lodgingSpec, "or its street address equals the message's address", "the guard compares the address too (spec, round 9 #1)"),
@@ -254,16 +254,33 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodgingSpec, "the `(also …)` part SHALL hold a list", "the (also) list (spec, round 9 #2)"),
             (lodgingSpec, "SHALL append its number and SHALL NOT replace one", "a third number appends (spec, round 9 #2)"),
             (lodgingSpec, "and one for each state entry that names the deleted event", "every number of a stay records (spec, round 9 #2)"),
-            (lodgingSpec, "`<cancelling message-id>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (spec, round 9 #3)"),
+            (lodgingSpec, "`<cancelling message-id, percent-encoded>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (spec, round 9 #3)"),
             (lodgingSpec, "Before every create, whether or not it already asks", "the guard runs before every create (spec, round 9 #10)"),
             (lodgingSpec, "#### Scenario: A property spelled differently at the same address", "the address match (spec, round 9 #1)"),
             (lodgingSpec, "#### Scenario: Three numbers, a cancellation, then an old confirmation under a dropped number", "three numbers (spec, round 9 #2)"),
             (archive, "and one for each state entry that names the deleted event", "every number of a stay records (archive-event, round 9 #2)"),
-            (archive, "`<cancelling message-id>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (archive-event, round 9 #3)"),
+            (archive, "`<cancelling message-id, percent-encoded>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (archive-event, round 9 #3)"),
             (archive, "if its marker holds another number and the message's number is in neither place, it is a possible-match row", "the mapped event under another number (archive-event, round 9 #9)"),
             (archivingSpec, "and one for each state entry that names the deleted event", "every number of a stay records (archiving spec, round 9 #2)"),
             (changelog, "The guard matches the property name or the street address", "CHANGELOG names the round 9 changes (round 9)"),
-            (archivingSpec, "`<cancelling message-id>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (archiving spec, round 9 #3)"),
+            // Round 10
+            (lodgingSpec, "an event the user already answered about for this message SHALL be left out", "the guard's skip is per message (spec, round 10 #1)"),
+            (archive, "an answer about an event carries only within the message it was given for", "the guard's skip is per message (archive-event, round 10 #1)"),
+            (lodgingSpec, "#### Scenario: Several confirmations in one run", "several messages in one run (spec, round 10 #1)"),
+            (lodging, "from one year before the stay's check-in to one year after its check-out (the range of search step 2)", "the guard's range (round 10 #2)"),
+            (lodgingSpec, "from one year before the check-in to one year after the check-out", "the guard's range (spec, round 10 #2)"),
+            (archive, "within one year of the stay's nights", "the guard's range (archive-event, round 10 #2)"),
+            (lodging, "a guest who returns to the same property within a year is asked each time", "the guard's cost is stated (round 10 #2)"),
+            (lodging, "A number that contains a comma or a parenthesis is not added to the list", "the (also) list stays parseable (round 10 LOW)"),
+            (lodging, "is also search step 3's answer to update it in place", "a guard row in another calendar (round 10 LOW)"),
+            (lodging, "On every deletion, whatever the `Reservation:` line names", "records do not depend on the line (round 10 LOW)"),
+            (lodgingSpec, "every deletion SHALL leave one record for each number on the `Reservation:` line", "records do not depend on the line (spec, round 10 LOW)"),
+            (lodging, "no entry is written while the message stays pending", "no alias entry while pending (round 10 LOW)"),
+            (archive, "no entry is written while the message stays pending", "no alias entry while pending (archive-event, round 10 LOW)"),
+            (lodging, "about an `unconfirmed` stay is section 5's upgrade, not an `(also …)` part", "an unconfirmed guard hit (round 10 LOW)"),
+            (lodging, "the entry written on a same-stay answer does not make the event one the module wrote itself", "the trust reset still runs (round 10 LOW)"),
+            (lodging, "**Known limitation:** `cancelled_at` is the cancelling message's own date", "an untrusted cancelled_at is a known limit (round 10 LOW)"),
+            (archivingSpec, "`<cancelling message-id, percent-encoded>-<deleted event id, percent-encoded>#lodging:<number>`", "a mail cancellation key holds the event (archiving spec, round 9 #3)"),
             (changelog, "a record or a `by_user` record silences a cancellation notice only on the same number, the same property and its days", "CHANGELOG names the round 6 and 7 changes (round 7 #7)"),
         ]
     }
@@ -354,6 +371,28 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "as `<marker number> (also <other number>)` at once"),
             (lodgingSpec, "Before any create that would not ask (a new stay from a mail"),
             (archive, "\"<cancelling-message-id>#lodging:<reservation>\""),
+        ]
+        for (document, phrase) in removed {
+            XCTAssertFalse(try read(document).contains(phrase), "\(document) still says \(phrase)")
+        }
+    }
+
+    /// Round 10: the guard's skip is no longer per run, its range is no longer 30 days, and records no
+    /// longer depend on the line naming other numbers.
+    func testTheRound10WordingIsGone() throws {
+        let removed: [(String, String)] = [
+            (lodging, "already answered about in this run"),
+            (lodgingSpec, "already answered about in this run"),
+            (lodging, "from 30 days before the stay's check-in"),
+            (lodgingSpec, "from 30 days before the check-in"),
+            (archive, "within 30 days of the stay's nights"),
+            (changelog, "30 days around the nights"),
+            (lodging, "For a stay whose `Reservation:` line names other numbers"),
+            (lodgingSpec, "a stay whose `Reservation:` line names other numbers SHALL"),
+            (lodging, "`<cancelling message-id>-<deleted event id"),
+            (lodgingSpec, "`<cancelling message-id>-<deleted event id"),
+            (archive, "`<cancelling message-id>-<deleted event id"),
+            (archivingSpec, "`<cancelling message-id>-<deleted event id"),
         ]
         for (document, phrase) in removed {
             XCTAssertFalse(try read(document).contains(phrase), "\(document) still says \(phrase)")
