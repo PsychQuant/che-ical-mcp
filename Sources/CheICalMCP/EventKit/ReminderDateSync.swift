@@ -271,7 +271,7 @@ enum ReminderDateSync {
     ///   otherwise `error_<domain>_<N>`, or `error_unknown` for a Swift error), never the
     ///   reminder's content. A failed fallback
     ///   save is not thrown: the update itself is saved and recorded for undo, and the report then
-    ///   says `aligned: false`. `rollback` does not drop that save (#274), so it may still land. A read-back after the fallback that fails is treated
+    ///   says `aligned: false`. For an update that save ran on a write store and did not land (#459); for a create it ran on the long-lived store, where `rollback` does not drop it (#274), so it may still land. A read-back after the fallback that fails is treated
     ///   like the first one: not confirmed, `aligned: false`.
     ///
     /// Known limit: a source that never hands the due's zone back would save twice on every timed
@@ -328,11 +328,12 @@ enum ReminderDateSync {
             do {
                 try save()
             } catch {
-                // #274: this answers with `aligned: false`, not an error, and `rollback` does not
-                // drop the change, so the due date written here may still land with the next save.
+                // This answers with `aligned: false`, not an error. For an update the save ran on a
+                // write store and did not land (#459); for a create it ran on the long-lived store,
+                // where `rollback` does not drop it, so it may still land with the next save (#274).
                 rollback()
-                let code = (error as? EventKitError)?.mayLandCode ?? EventKitErrorSanitizer.sanitize(error).code
-                log("\(tool): saving the due date again failed (\(code)); it may still be written by the next save\n")
+                let code = EventKitErrorSanitizer.sanitize(error).code
+                log("\(tool): saving the due date again failed (\(code)); for a create it may still be written by the next save\n")
             }
             confirmed.reread = reload()
             guard confirmed.reread == true, reminder.dueDateComponents != nil else {

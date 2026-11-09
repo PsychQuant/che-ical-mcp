@@ -35,6 +35,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     // Internal for same-actor feature extensions; still actor-isolated. It counts its own commits
     // (`CountingEventStore`, #328).
     let eventStore: CountingEventStore
+    /// #459: the separate stores existing reminder and list writes commit on (`ExistingReminderSave`).
+    let writeStores = WriteStorePool<EKEventStore>(make: { EKEventStore() })
+    /// #459 / #328: every write attempted on a write store, so `writeGeneration` moves with those
+    /// commits too (`onWriteStore` counts each in the same synchronous step as the commit).
+    var writeStoreCommits = 0
     private let authorizationSource: AuthorizationStatusSource
     private var needsRefresh = false
     /// #322: a test's `SeriesExceptionsStoreSource` (`forTesting(probe:seriesExceptionsStore:)`);
@@ -440,7 +445,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// `deleteCalendar(requireEmpty:)` compares it across its one suspension, so a write committed
     /// during it is seen even when its writer marks the store stale later (in a `defer`, or after
     /// its own `await`).
-    var writeGeneration: Int { eventStore.commitCount &+ refreshMarks }
+    var writeGeneration: Int { eventStore.commitCount &+ writeStoreCommits &+ refreshMarks }
 
     // MARK: - Calendars
 
@@ -2852,105 +2857,105 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Delete multiple reminders at once
     func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false) async throws -> BatchDeleteResult {
-        try await ensureReminderAccess()
+        // #459: one write store for every row of the call; a failed row's store is replaced before the next.
+        try await withWriteLease {
+            try await ensureReminderAccess()
 
-        var successCount = 0
-        var failures: [(String, String)] = []
-        // #243: a snapshot per reminder actually removed, so the whole call is one undo entry, as
-        // in deleteEventsBatch (#185). Both delete_reminders_batch and cleanup_completed_reminders
-        // come through here.
-        var undoSnapshots: [ReminderSnapshot] = []
-        var mayLandCount = 0
+            var successCount = 0
+            var failures: [(String, String)] = []
+            // #243: a snapshot per reminder actually removed, so the whole call is one undo entry, as
+            // in deleteEventsBatch (#185). Both delete_reminders_batch and cleanup_completed_reminders
+            // come through here.
+            var undoSnapshots: [ReminderSnapshot] = []
 
-        for id in identifiers {
-            do {
-                // #236 (PR #259 round 3, finding 1): refreshed, like deleteReminder, so the
-                // only-completed check below reads the current completion.
-                guard let reminder = freshReminder(id: id) else {
-                    failures.append((id, "Reminder not found"))
-                    continue
+            for id in identifiers {
+                do {
+                    // #236 (PR #259 round 3, finding 1): refreshed, like deleteReminder, so the
+                    // only-completed check below reads the current completion.
+                    guard let reminder = freshReminder(id: id) else {
+                        failures.append((id, "Reminder not found"))
+                        continue
+                    }
+                    // #28 F1: when the caller asks for "only completed reminders"
+                    // (binding mode on cleanup_completed_reminders), honor the
+                    // invariant the tool schema promises. Without this gate, a
+                    // reminder un-completed between dry_run and execute would be
+                    // deleted anyway — silently contradicting the schema line
+                    // "Any ID that is no longer completed ... surfaces in failures[]".
+                    //
+                    // #33: extracted to `BatchDeleteFilter.shouldSkipUncompleted`
+                    // so the destructive contract has a unit-test-falsifiable
+                    // surface (the inline form has no TCC-free testable seam).
+                    if BatchDeleteFilter.shouldSkipUncompleted(
+                        isCompleted: reminder.isCompleted,
+                        onlyCompleted: onlyCompleted
+                    ) {
+                        failures.append((id, "Reminder is no longer completed"))
+                        continue
+                    }
+                    let snapshot = ReminderSnapshot(from: reminder)
+                    try commitReminderRemoval(reminder)   // #459: on the batch's write store
+                    successCount += 1
+                    undoSnapshots.append(snapshot)
+                } catch {
+                    // #32: never forward Apple-produced `localizedDescription` to
+                    // the MCP client — it could in a future macOS interpolate
+                    // reminder content. Route through the sanitizer so the
+                    // response carries only stable codes; the raw text still
+                    // reaches stderr for operator debugging.
+                    //
+                    // Spec R3 binds this catch to `sanitize(_:)` directly (NOT
+                    // `sanitizeForResponse`) — preserves the narrow regex
+                    // value-domain. #37 verify (Codex) noted the stderr write was
+                    // missing the control-char escape applied by `writeFailureLog`;
+                    // we share `escapeForStderr` to keep both paths consistent
+                    // without violating R3.
+                    //
+                    // #69: defensive symmetry with R7's trusted-branch carve-out
+                    // at writeFailureLog. Note the rationale differs here: R3
+                    // binds to `sanitize(_:)` directly (NOT `sanitizeForResponse`)
+                    // so trusted errors at this site receive a framework-style
+                    // code (e.g. "error_unknown") that does NOT equal `rawLog`.
+                    // The gate is therefore forward-compat hardening — if a
+                    // future caller of `deleteRemindersBatch` propagates a
+                    // `TrustedErrorMessage` conformer through this path, the
+                    // stderr-amplification window stays closed by construction.
+                    // In practice today, the write store's removal
+                    // only throws NSError, so the gate doesn't fire on hot paths.
+                    let sanitized = EventKitErrorSanitizer.sanitize(error)
+                    if !(error is TrustedErrorMessage) {
+                        let safeId = EventKitErrorSanitizer.escapeForStderr(id)
+                        let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
+                        // #70 thread-safety note: this stderr write site shares
+                        // the same best-effort posture documented on
+                        // `writeFailureLog` — POSIX `write(2)` atomicity holds
+                        // only for byte counts ≤ macOS `PIPE_BUF` (512 bytes),
+                        // and a `deleteRemindersBatch(<id>) failed: <rawLog>\n`
+                        // line can easily exceed 512 bytes when `rawLog` carries
+                        // a non-trivial `NSError` description. Concurrent batch
+                        // failures CAN interleave on stderr; operators relying
+                        // on per-line parsing should use a structured logger
+                        // instead. See `writeFailureLog` doc for the full
+                        // deferral rationale on the StderrLogger actor option.
+                        FileHandle.standardError.write(
+                            Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
+                        )
+                    }
+                    failures.append((id, sanitized.code))
                 }
-                // #28 F1: when the caller asks for "only completed reminders"
-                // (binding mode on cleanup_completed_reminders), honor the
-                // invariant the tool schema promises. Without this gate, a
-                // reminder un-completed between dry_run and execute would be
-                // deleted anyway — silently contradicting the schema line
-                // "Any ID that is no longer completed ... surfaces in failures[]".
-                //
-                // #33: extracted to `BatchDeleteFilter.shouldSkipUncompleted`
-                // so the destructive contract has a unit-test-falsifiable
-                // surface (the inline form has no TCC-free testable seam).
-                if BatchDeleteFilter.shouldSkipUncompleted(
-                    isCompleted: reminder.isCompleted,
-                    onlyCompleted: onlyCompleted
-                ) {
-                    failures.append((id, "Reminder is no longer completed"))
-                    continue
-                }
-                let snapshot = ReminderSnapshot(from: reminder)
-                try eventStore.remove(reminder, commit: true)
-                successCount += 1
-                undoSnapshots.append(snapshot)
-            } catch {
-                // #32: never forward Apple-produced `localizedDescription` to
-                // the MCP client — it could in a future macOS interpolate
-                // reminder content. Route through the sanitizer so the
-                // response carries only stable codes; the raw text still
-                // reaches stderr for operator debugging.
-                //
-                // Spec R3 binds this catch to `sanitize(_:)` directly (NOT
-                // `sanitizeForResponse`) — preserves the narrow regex
-                // value-domain. #37 verify (Codex) noted the stderr write was
-                // missing the control-char escape applied by `writeFailureLog`;
-                // we share `escapeForStderr` to keep both paths consistent
-                // without violating R3.
-                //
-                // #69: defensive symmetry with R7's trusted-branch carve-out
-                // at writeFailureLog. Note the rationale differs here: R3
-                // binds to `sanitize(_:)` directly (NOT `sanitizeForResponse`)
-                // so trusted errors at this site receive a framework-style
-                // code (e.g. "error_unknown") that does NOT equal `rawLog`.
-                // The gate is therefore forward-compat hardening — if a
-                // future caller of `deleteRemindersBatch` propagates a
-                // `TrustedErrorMessage` conformer through this path, the
-                // stderr-amplification window stays closed by construction.
-                // In practice today, `eventStore.remove(reminder:commit:)`
-                // only throws NSError, so the gate doesn't fire on hot paths.
-                let sanitized = EventKitErrorSanitizer.sanitize(error)
-                if !(error is TrustedErrorMessage) {
-                    let safeId = EventKitErrorSanitizer.escapeForStderr(id)
-                    let safeRawLog = EventKitErrorSanitizer.escapeForStderr(sanitized.rawLog)
-                    // #70 thread-safety note: this stderr write site shares
-                    // the same best-effort posture documented on
-                    // `writeFailureLog` — POSIX `write(2)` atomicity holds
-                    // only for byte counts ≤ macOS `PIPE_BUF` (512 bytes),
-                    // and a `deleteRemindersBatch(<id>) failed: <rawLog>\n`
-                    // line can easily exceed 512 bytes when `rawLog` carries
-                    // a non-trivial `NSError` description. Concurrent batch
-                    // failures CAN interleave on stderr; operators relying
-                    // on per-line parsing should use a structured logger
-                    // instead. See `writeFailureLog` doc for the full
-                    // deferral rationale on the StderrLogger actor option.
-                    FileHandle.standardError.write(
-                        Data("deleteRemindersBatch(\(safeId)) failed: \(safeRawLog)\n".utf8)
-                    )
-                }
-                failures.append((id, sanitized.code))
-                mayLandCount += 1
             }
-        }
 
-        markNeedsRefresh()
-        // #243: one entry for the call (partial failure: only the reminders actually removed).
-        if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) {
-            await CalendarUndoManager.shared.record(undo)
+            markNeedsRefresh()
+            // #243: one entry for the call (partial failure: only the reminders actually removed).
+            if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) {
+                await CalendarUndoManager.shared.record(undo)
+            }
+            return BatchDeleteResult(
+                successCount: successCount,
+                failedCount: failures.count,
+                failures: failures
+            )
         }
-        return BatchDeleteResult(
-            successCount: successCount,
-            failedCount: failures.count,
-            failures: failures,
-            mayLandCount: mayLandCount
-        )
     }
 
     // MARK: - Helpers
@@ -3014,6 +3019,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// item first gets it from `verifiedEvent` / `verifiedReminder`, which refuse when the item
     /// no longer holds the state the operation left, and writes to that refreshed object.
     func executeUndo(_ operation: UndoOperation) async throws -> String {
+        // #459: one write store for the whole undo (a batch record's members share it).
+        guard WriteStoreContext.current is WriteStoreLease<EKEventStore> else { return try await withWriteLease { try await self.executeUndo(operation) } }
         switch operation {
         case .createEvent(_, let title, _):
             // Undo create = delete. #182 verify: the record is already popped, so a
@@ -3183,6 +3190,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// #287: `undo` with `restore_available`. Only a batch can be restored in part; every other
     /// record runs the plain undo.
     func executeUndo(_ operation: UndoOperation, restoreAvailable: Bool) async throws -> String {
+        guard WriteStoreContext.current is WriteStoreLease<EKEventStore> else { return try await withWriteLease { try await self.executeUndo(operation, restoreAvailable: restoreAvailable) } }
         if restoreAvailable, case .batch(let ops) = operation {
             return try await undoBatch(ops, restoreAvailable: true).message
         }
@@ -3297,6 +3305,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     /// Execute an operation again (for redo). Only completions are written again (#247).
     func executeRedo(_ operation: UndoOperation) async throws -> String {
+        guard WriteStoreContext.current is WriteStoreLease<EKEventStore> else { return try await withWriteLease { try await self.executeRedo(operation) } }
         switch operation {
         case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
              .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder,
@@ -3530,13 +3539,11 @@ enum EventKitError: LocalizedError {
     /// the fixed strings on `EventKitManager` (`standInSplitReason`, `standInAccountReason`,
     /// `standInSeriesPropertyReason`): no EventKit text, no user input.
     case standInRefused(reason: String)
-    /// #274: a save or a removal of an existing reminder failed, and it stays pending in the store,
-    /// where the next save of anything can commit it (`ExistingReminderSave`). `code` is sanitized.
-    case reminderSaveMayLand(code: String)
-    case reminderRemovalMayLand(code: String)
-    /// The same for a reminder list. A removal takes every reminder in the list.
-    case listChangeMayLand(code: String)
-    case listRemovalMayLand(code: String)
+    /// #459: every write store is in use; nothing was written.
+    case writeStoreBusy
+    /// #459: the write store returned nothing for an identifier the caller holds. A store error, not
+    /// a missing reminder or list: nothing was written.
+    case writeStoreLookupFailed(kind: String)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
     /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
@@ -3687,14 +3694,10 @@ enum EventKitError: LocalizedError {
             return reason
         case .standInRefused(let reason):
             return reason
-        case .reminderSaveMayLand(let code):
-            return "The reminder could not be saved (\(code)), but the change may still be written by the next save this server makes, and that write would have no undo record of its own. Reading the reminder back now does not rule this out: an unchanged reminder does not mean the change is gone."
-        case .reminderRemovalMayLand(let code):
-            return "The reminder could not be deleted (\(code)), but it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own. Reading the reminders back now does not rule this out: seeing it does not mean it stays."
-        case .listChangeMayLand(let code):
-            return "The reminder list could not be saved (\(code)), but the change may still be written by the next save this server makes, and that change would have no undo record of its own: undo reverts the newest recorded operation, not this one. Reading the list back now does not rule this out: an unchanged list does not mean the change is gone."
-        case .listRemovalMayLand(let code):
-            return "The reminder list could not be deleted (\(code)), but the list and every reminder in it may still be deleted by the next save this server makes, and that deletion would have no undo record of its own: undo reverts the newest recorded operation, not this one, so do not call undo to cancel it. Reading the lists back now does not rule this out: seeing it does not mean it stays."
+        case .writeStoreBusy:
+            return "Nothing was written: the \(WriteStorePool<AnyObject>.capacity) separate stores this server writes reminders through are all in use by other calls. Try again when they have finished."
+        case .writeStoreLookupFailed(let kind):
+            return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again."
         case .eventLookupFailed(let identifier):
             return "\(EventKitManager.eventLookupFailedReason): \(identifier)"
         case .historyLookupFailed(let verb):
@@ -3792,13 +3795,6 @@ enum EventKitError: LocalizedError {
 
 extension EventKitError: TrustedErrorMessage {}
 
-extension EventKitError {
-    /// The sanitized code a may-land error carries (#274), for a log line that outlives the error.
-    var mayLandCode: String? {
-        if case .reminderSaveMayLand(let code) = self { return code }
-        return nil
-    }
-}
 
 extension EventKitError {
     /// #269: the refusal of a move-undo whose original calendar no longer resolves, from what the
@@ -3850,21 +3846,9 @@ extension UndoOperation {
 /// [`EventKitErrorSanitizer`](EventKitErrorSanitizer.swift) for the full
 /// sanitizer surface.
 struct BatchDeleteResult {
-    /// #274: the response field for `mayLandCount`, shared by `delete_reminders_batch` and
-    /// `cleanup_completed_reminders`, whose rows are bound to stable codes (spec R3).
-    static let failedRowsNote = "Rows that failed with a code may already be deleted by a later row of this call, or may be deleted by the next save this server makes, with no undo record of their own. Reading the reminders back now does not rule this out: seeing one does not mean it stays."
-
-    /// The field to add to a response: nothing when no row can still land.
-    var failedRowsNoteField: [String: Any] {
-        mayLandCount > 0 ? ["failed_rows_note": Self.failedRowsNote] : [:]
-    }
-
     let successCount: Int
     let failedCount: Int
     let failures: [(identifier: String, error: String)]
-    /// #274: rows whose removal threw: unlike a row that was not found or was refused, it can still
-    /// land with the next save (`ExistingReminderSave`). The row itself keeps its stable code.
-    var mayLandCount: Int = 0
     /// Span "future" items an earlier removal of their series already reached (#325).
     var coveredCount: Int = 0
     /// #452 review r1 item 3: rows named by id that deleted an occurrence and the later ones of its

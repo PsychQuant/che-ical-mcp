@@ -127,7 +127,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [ReminderSnapshot] = []"), in: reminders))
         XCTAssertEqual(Self.count("undoSnapshots.append(snapshot)", in: reminders), 1)
         // Round 7: the append comes after the remove, so a reminder whose remove threw is not recorded.
-        let remove = Self.offset(of: Self.call("try eventStore.remove(reminder, commit: true)"), in: reminders)
+        let remove = Self.offset(of: Self.call("try commitReminderRemoval(reminder)"), in: reminders)
         let append = Self.offset(of: Self.call("undoSnapshots.append(snapshot)"), in: reminders)
         XCTAssertLessThan(try XCTUnwrap(remove), try XCTUnwrap(append))
 
@@ -311,7 +311,7 @@ final class UndoBatchWiringTests: XCTestCase {
         let body = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false)", in: Self.manager))
         let gate = try XCTUnwrap(Self.offset(of: Self.call("BatchDeleteFilter.shouldSkipUncompleted("), in: body))
         let snapshot = try XCTUnwrap(Self.offset(of: Self.call("let snapshot = ReminderSnapshot(from: reminder)"), in: body))
-        let remove = try XCTUnwrap(Self.offset(of: Self.call("try eventStore.remove(reminder, commit: true)"), in: body))
+        let remove = try XCTUnwrap(Self.offset(of: Self.call("try commitReminderRemoval(reminder)"), in: body))
         let keep = try XCTUnwrap(Self.offset(of: Self.call("undoSnapshots.append(snapshot)"), in: body))
         let loopEnd = try XCTUnwrap(Self.offset(of: Self.call("failures.append((id, sanitized.code))"), in: body))
         let record = try XCTUnwrap(Self.offset(of: Self.call("if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) { await CalendarUndoManager.shared.record(undo)"), in: body))

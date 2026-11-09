@@ -761,3 +761,20 @@ session MCP 上只做批次刪除（一律帶 `dry_run: false`）、`undo`、`re
    calendar or list in place`，不叫人帶 `restore_available`），紀錄整筆保留；之後用 `discard_id` 放棄它。
 
 結果記在 #287。結束後用 `--cli` 刪掉拋棄式日曆與清單（G 由使用者刪），隔一段時間再用 `list_calendars` 確認兩次。
+
+## Release gate: the reminder write store (#459)
+
+#459 commits existing reminder and list writes on a separate store. The commit itself, the failed-commit
+case (1010) and the batch's store replacement were checked on 2026-11-09 in one process, through a lease
+injected by a local probe. Undo and redo are stateful, and `--cli` cannot reach them (see the table above).
+**Before tagging the release that ships #459**, run these on the session MCP after a restart, once a
+behaviour probe has confirmed the new binary. Use only a disposable list whose name contains `#459`:
+
+1. Run `create_reminder` and then `update_reminder` on the title and notes. A `list_reminders` read shows the new values. Then `undo`: the old values come back. Then `redo`.
+2. Run `complete_reminder` on a weekly reminder: it rolls over. Then `undo`: the occurrence is restored.
+3. Run `delete_reminders_batch` on three reminders, then `undo`: all three come back.
+4. Run `update_calendar` to rename the list: `list_calendars` shows the new name.
+5. After each step, `undo_history` shows the expected top record, and no step answers with `writeStoreBusy`.
+
+Record the results on #459. Delete the list afterwards and confirm with `list_calendars`.
+
