@@ -100,7 +100,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             "Periods are matched by key, never by order.",
             "**The plan comes from the planner, never from reasoning over the list by hand.**",
             "**An open reminder's own period is never used** until it is ticked.",
-            "**The history boundary** is the latest used period.",
+            "**The history boundary** is the latest used period;",
             "is never moved, never matched to another period, and never offered for deletion.",
             "This holds whether it is period 0 or older.",
             "Period: <key>",
@@ -110,7 +110,7 @@ final class QuotaSkillDocsTests: XCTestCase {
         let spec = try read(Self.spec)
         XCTAssertTrue(spec.contains("Period: <key>"), "spec lost the Period line")
         XCTAssertTrue(spec.contains("SHALL NOT be moved, matched to another period, or offered for deletion"))
-        XCTAssertTrue(spec.contains("SHALL NOT count an open reminder's own period as used"))
+        XCTAssertTrue(spec.contains("SHALL NOT count an open reminder's own period, or any period before an open one-off reminder, as used"))
     }
 
     func testListReportsEachCaseOnce() throws {
@@ -136,7 +136,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             "**The local zone is pinned.**",
             "passes `--local-tz \"$local_tz\"`",
             "**While the host is in another zone than `local_tz`**, the skill writes nothing",
-            "`sync` never creates anything for this quota until the user says yes.",
+            "`sync` never creates or rewrites anything for this quota until the user says yes.",
             "Listed with an offer to create it, never created unasked",
             "So a deleted period is never created again.",
             "or is another entry's id followed by `-` and more",
@@ -166,6 +166,34 @@ final class QuotaSkillDocsTests: XCTestCase {
                       "the Schedule line must be constant so notes compare equal from period to period")
         XCTAssertTrue(skill.contains("The reason goes in the report, never in the notes."))
     }
+
+    /// Round 3: the planner is told the mode the reminders were written in, keep never hides another due,
+    /// ambiguous reminders hold their periods, and every yes is followed by a fresh plan. Each pin occurs once,
+    /// so removing the rule removes the pin's only match.
+    func testRoundThreeRulesOccurOnce() throws {
+        let skill = try read(Self.skill)
+        for pinned in [
+            "--written-mode \"$mode\"",
+            "`--written-mode` is the entry's stored `mode`: the mode the existing reminders were written in.",
+            "Search **every** list (no `calendar_name`)",
+            "| due | timed: the read-back `due.date_time` (UTC, ending in `Z`)",
+            "| `rewrite <id> <n>` | `--repair` only: the reminder is on its period (same key), but its due or alarms differ",
+            "Open one-off reminders roll past nothing.",
+            "| `hold <n> ambiguous` |",
+            "`<id>` is the open past-period record with the **latest** due.",
+            "Every list is taken in due order, whatever order the search returned.",
+            "**After every yes, plan again before writing.**",
+            "**When the planner exits 2**, nothing is written for that quota.",
+            "but it never proposes a re-pairing, a transition or a restart",
+        ] {
+            XCTAssertEqual(skill.components(separatedBy: pinned).count - 1, 1, "\(Self.skill) must hold exactly once: \(pinned)")
+        }
+        let spec = try read(Self.spec)
+        XCTAssertFalse(spec.contains("(never rewritten)"), "spec and skill must agree on when the Period line is rewritten")
+        XCTAssertEqual(spec.components(separatedBy: "written, rewritten or removed only by a re-pairing").count - 1, 1)
+        XCTAssertEqual(skill.components(separatedBy: "written, rewritten or removed only by a re-pairing").count - 1, 1)
+    }
+
 
     func testReadmeListsTheSkill() throws {
         let readme = try read("plugin/README.md")
