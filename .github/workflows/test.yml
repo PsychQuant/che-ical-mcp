@@ -89,11 +89,12 @@ jobs:
 
       - name: plugin config and quota helper tests
         # #337 / #327: find-ical-config.sh (walk-up, trust check, --quotas), quota-dates.sh (resets, dues,
-        # alarms, whether one recurrence rule fits) and quota-plan.sh (periods, history boundary, re-pairing). Temp dirs and fixed --from / --local-tz; no network, no build.
+        # alarms, whether one recurrence rule fits) and quota-plan.sh (keys, records, replacements and their invariant). Temp dirs and fixed --from / --local-tz; no network, no build.
         run: |
           bash plugin/bin/tests/find-ical-config.test.sh
           bash plugin/bin/tests/quota-dates.test.sh
           bash plugin/bin/tests/quota-plan.test.sh
+
       - name: itinerary reminder hook tests
         # #341: the Stop hook reminds once per session when files changed in a folder with a
         # project-level config, never blocks, and honours itinerary_check / itinerary_ignore.
