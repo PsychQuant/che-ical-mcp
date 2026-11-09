@@ -20,7 +20,7 @@ A module never chooses a calendar. It resolves the calendar **once for the whole
 
 ## Keeping the calendar in step with a trip
 
-When work on a trip (a fee paid, a program revised, lodging booked) changes files in a folder with a project-level config, the plugin's Stop hook reminds once per session to run [`skills/itinerary-check/SKILL.md`](../skills/itinerary-check/SKILL.md). The check lists differences first and sends a program revision to the conference module's partial correction and a stay to the lodging module; it does not restate either module.
+When work on a trip (a fee paid, a program revised, lodging booked) changes files in a folder with a project-level config, the plugin's Stop hook reminds once per session to run [`skills/itinerary-check/SKILL.md`](../skills/itinerary-check/SKILL.md). The check lists differences first and routes a change by whose event it is: an event with a module's marker goes to that module; it does not restate either module.
 
 ## Turning a module off
 

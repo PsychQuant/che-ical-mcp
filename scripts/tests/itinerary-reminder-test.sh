@@ -252,6 +252,41 @@ done
 # The stub python3 (no Command Line Tools) is never run.
 grep -q 'xcode-select -p' "$HOOK" && ok "the hook checks for the Command Line Tools before running /usr/bin/python3" || bad "the hook checks for the Command Line Tools before running /usr/bin/python3"
 
+# --- round 1, remaining findings (#500 report #12, #13, #18, #19, #20) --------------------
+# #18 (2): a path pattern matches from the trip folder.
+T="$TMP/trips/pathpat"; trip "$T" 'itinerary_ignore: ["mail/*.tmp"]'
+run start "$(json pathpat "$T")"; mkdir -p "$T/mail" "$T/other"; printf x > "$T/mail/a.tmp"; printf x > "$T/other/b.tmp"
+run stop "$(json pathpat "$T")"; ctx=$(context "$OUT")
+hasnt "mail/*.tmp skips mail/a.tmp" "$ctx" "mail/a.tmp"
+has "mail/*.tmp does not skip other/b.tmp" "$ctx" "other/b.tmp"
+# #18 (4): a symlinked file is not listed.
+T="$TMP/trips/filelink"; trip "$T"; run start "$(json filelink "$T")"
+printf x > "$TMP/outside/target.md"; ln -s "$TMP/outside/target.md" "$T/linked.md"; printf x > "$T/real.md"
+run stop "$(json filelink "$T")"; ctx=$(context "$OUT")
+hasnt "a symlinked file is not listed" "$ctx" "linked.md"
+has "a real file next to it is" "$ctx" "real.md"
+# #18 (5): with CLAUDE_PLUGIN_DATA unset, nothing is written.
+before=$(find "$TMP" -newer "$TMP/stderr" -name '*.start' | wc -l | tr -d ' ')
+( unset CLAUDE_PLUGIN_DATA; cd "$T1"; printf '%s' "$(json nodata2 "$T1")" | bash "$HOOK" start >/dev/null 2>&1 )
+check "CLAUDE_PLUGIN_DATA unset: no start record anywhere" "$(find "$TMP" "$HOME" -name 'nodata2.start' | wc -l | tr -d ' ')" "0"
+# #12: YAML 1.1 `no` turns it off.
+T="$TMP/trips/no"; trip "$T" "itinerary_check: no"; run start "$(json no1 "$T")"; printf x > "$T/n.md"
+run stop "$(json no1 "$T")"; check "itinerary_check: no turns it off" "$OUT" ""
+# #19: the wording says since the session started, not during it.
+T="$TMP/trips/word"; trip "$T"; run start "$(json word "$T")"; printf x > "$T/w.md"
+run stop "$(json word "$T")"; ctx=$(context "$OUT")
+has "the reminder says since this session started" "$ctx" "since this session started"
+hasnt "the reminder does not say during this session" "$ctx" "during this session"
+# #13: after a walk that stopped early and found nothing, the next walks wait 5 minutes.
+T="$TMP/trips/slow"; trip "$T"; run start "$(json slow "$T")"
+for n in $(seq 1 30); do mkdir -p "$T/d$(printf %02d $n)"; done
+OUT=$(printf '%s' "$(json slow "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
+check "a walk that stopped early with nothing found: silent" "$OUT" ""
+[ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/slow.slow" ] && ok "it records the slow folder" || bad "it records the slow folder"
+printf x > "$T/zzz.md"
+OUT=$(printf '%s' "$(json slow "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
+check "within 5 minutes the folder is not walked again" "$OUT" ""
+
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"
 for d in $(seq 1 40); do mkdir -p "$T/d$d"; for f in $(seq 1 50); do : > "$T/d$d/f$f"; done; done
@@ -272,6 +307,7 @@ s = [x for x in cmds("SessionStart") if "itinerary-reminder.sh" in x["command"]]
 t = [x for x in cmds("Stop") if "itinerary-reminder.sh" in x["command"]]
 assert len(s) == 1 and s[0]["command"].endswith(" start") and s[0].get("timeout", 99) <= 10
 assert len(t) == 1 and t[0]["command"].endswith(" stop") and t[0].get("timeout", 99) <= 10
+assert all(x["command"].startswith('"${CLAUDE_PLUGIN_ROOT}"/') for x in s + t)
 PY
 
 echo

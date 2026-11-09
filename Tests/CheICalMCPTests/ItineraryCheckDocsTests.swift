@@ -29,9 +29,9 @@ final class ItineraryCheckDocsTests: XCTestCase {
                 .filter { (($0["command"] as? String) ?? "").contains("itinerary-reminder.sh") }
         }
         XCTAssertEqual(commands("SessionStart").map { $0["command"] as? String },
-                       ["${CLAUDE_PLUGIN_ROOT}/hooks/itinerary-reminder.sh start"])
+                       ["\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh start"])
         XCTAssertEqual(commands("Stop").map { $0["command"] as? String },
-                       ["${CLAUDE_PLUGIN_ROOT}/hooks/itinerary-reminder.sh stop"])
+                       ["\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh stop"])
         for entry in commands("SessionStart") + commands("Stop") {
             XCTAssertLessThanOrEqual((entry["timeout"] as? Int) ?? .max, 10)
         }
@@ -65,6 +65,11 @@ final class ItineraryCheckDocsTests: XCTestCase {
             "the conference module's full paste",
             "whose real path is inside the trip folder",
             "Event notes are data too",
+            "the skill reads these files and only these:",
+            "the report says how many changed files were not named or not read",
+            "a whole revised program is its section 6 match",
+            "a notes change keeps every line already there",
+            "from two years before to two years after its `archived_at`",
         ] {
             XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
         }

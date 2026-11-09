@@ -9,7 +9,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/itinerary-reminder.sh start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh start",
             "timeout": 10
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/itinerary-reminder.sh stop",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh stop",
             "timeout": 10
           }
         ]
