@@ -832,7 +832,7 @@ extension UndoOperation {
             // #244: its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the deletion of occurrences of recurring event '\(undoVisibleTitle(title))': that delete was not undone, so there is nothing to redo." + nothingWritten
         case .updateEvent(_, let oldSnapshot, _):
-            return "Cannot redo the update of event '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_event to apply the changes again." + nothingWritten
+            return "Cannot redo the update of event '\(undoVisibleTitle(oldSnapshot.title))': redo does not apply updates again, so it stays as the undo left it. Use update_event to apply the changes again." + nothingWritten
         case .updateRecurringEvent(_, let title, _):
             // Its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
@@ -846,7 +846,7 @@ extension UndoOperation {
         case .deleteReminder(let snapshot):
             return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + nothingWritten
         case .updateReminder(_, let oldSnapshot, _):
-            return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': it stays restored to its previous state. Use update_reminder to apply the changes again." + nothingWritten
+            return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': redo does not apply updates again, so it stays as the undo left it. Use update_reminder to apply the changes again." + nothingWritten
         case .calendarOperation(let kind, let title):
             // #273: its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the \(kind.noun) of calendar '\(undoVisibleTitle(title))': that \(kind.noun) was not undone, so there is nothing to redo." + nothingWritten
