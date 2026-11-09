@@ -161,7 +161,7 @@ final class QuotaSkillDocsTests: XCTestCase {
         assertOnce(skill, Self.skill, [
             "3. **A new schedule replaces the open reminders.**",
             "The deletes come last: a failure there leaves an old reminder beside the new ones, never a period without a reminder.",
-            "then `per_period_through` as the planner's `through`",
+            "after the last create, write the planner's `through`",
             // #499 r6 #5 and #12: what already matches is kept; a failure stops before anything further.
             "| `keep <id> <n>` | an open reminder already on the new dates",
             "**A failure stops the replacement.**",
@@ -187,6 +187,34 @@ final class QuotaSkillDocsTests: XCTestCase {
             XCTAssertFalse(skill.contains(gone), "\(Self.skill) still reads the old entry: \(gone)")
         }
         XCTAssertFalse(try read("plugin/bin/quota-plan.sh").contains("O_KEY"), "the planner still reads old periods")
+    }
+
+    /// #499 verify round 7: a replacement never deletes a reminder whose create the server would skip; the
+    /// high-water mark names only periods that were created; a failed date helper stops the entry.
+    func testRoundSevenRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**A date helper that exits 2 stops the entry before the planner runs.**",
+            "| `realarm <id> <n> due=<D> alarms=<A>` |",
+            "**A `skipped` create is never a reminder created.**",
+            "**A `skipped` create stops a replacement before any delete**",
+            "**`per_period_through` is written after the creates, never before:**",
+            "**while waiting, no period of the new schedule has a reminder**",
+            "**A record holds every open period its keys name**",
+            "`same-due`: a reminder the replacement would delete has the due of a period it would create",
+        ])
+        XCTAssertFalse(skill.contains("cat \"$reminders_file\"; }"), "the helper is still piped into the planner in one group")
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, [
+            "the planner SHALL refuse an input that lacks the helper's last line (the rule line)",
+            "SHALL be kept, with its alarms rewritten in place, and SHALL NOT be deleted and created again",
+            "a create the server answers as `skipped` SHALL count as a failed write",
+            "SHALL be written after the creates, raised only once a create succeeded and read back, never before",
+        ])
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for pinned in ["action realarm", "same-due", "no rule line"] {
+            XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
+        }
     }
 
     func testListReportsEachCaseOnce() throws {

@@ -41,7 +41,7 @@ The plugin SHALL read quota declarations only from `~/.claude/.ical/quotas.yaml`
 ---
 ### Requirement: The dates come from the helper
 
-The skill SHALL compute every reset, due and alarm offset with `quota-dates.sh` and SHALL NOT compute them otherwise. The due SHALL be the reset minus `lead_minutes` for a timed reset, and the reset day minus `lead_days` for a date-only reset; a date-only reset SHALL be a day with no zone conversion. A monthly `day` from 29 to 31 SHALL fall on the month's last day in a shorter month and SHALL return to the declared day in the next month that has it. A period SHALL be listed while its reset is after the reference time, even when its due has passed. Each period SHALL carry a key, its reset day in the reset zone, and a state (`past` for the latest period whose reset has passed, listed on request; `current` for the first period whose reset is ahead; `future`). Numbers SHALL be read as decimal and SHALL have at most six digits. A failure inside the computation SHALL stop the helper with exit 2. Every call SHALL pass the entry's `local_tz` as `--local-tz`, and while the host's zone is not `local_tz` the skill SHALL write nothing.
+The skill SHALL compute every reset, due and alarm offset with `quota-dates.sh` and SHALL NOT compute them otherwise. The due SHALL be the reset minus `lead_minutes` for a timed reset, and the reset day minus `lead_days` for a date-only reset; a date-only reset SHALL be a day with no zone conversion. A monthly `day` from 29 to 31 SHALL fall on the month's last day in a shorter month and SHALL return to the declared day in the next month that has it. A period SHALL be listed while its reset is after the reference time, even when its due has passed. Each period SHALL carry a key, its reset day in the reset zone, and a state (`past` for the latest period whose reset has passed, listed on request; `current` for the first period whose reset is ahead; `future`). Numbers SHALL be read as decimal and SHALL have at most six digits. A failure inside the computation SHALL stop the helper with exit 2. The skill SHALL write the helper's output to a file and check its exit status before running the planner, and SHALL write nothing for an entry whose helper exited non-zero; the planner SHALL refuse an input that lacks the helper's last line (the rule line). Every call SHALL pass the entry's `local_tz` as `--local-tz`, and while the host's zone is not `local_tz` the skill SHALL write nothing.
 
 #### Scenario: A reset at night in another zone
 
@@ -59,6 +59,12 @@ The skill SHALL compute every reset, due and alarm offset with `quota-dates.sh` 
 
 - **WHEN** the helper runs with `--day 08`
 - **THEN** the reset is on day 8, not an octal error or another day
+
+#### Scenario: The helper stops after some periods
+
+- **GIVEN** the helper printed some periods and then exited 2
+- **WHEN** the skill plans that entry
+- **THEN** the planner is not run, and nothing is written for the entry
 
 ---
 ### Requirement: The reminder has one shape
@@ -86,7 +92,7 @@ The skill SHALL support per-period quotas only: one one-off reminder for each pe
 ---
 ### Requirement: Each period has a stable identity
 
-The skill SHALL plan every write with `quota-plan.sh`, from the helper's periods and the quota's reminders (their dues as instants, their `Period:` and `Record:` keys, their alarms read back, and whether they are in the quota's list), and SHALL NOT plan by reading the list by hand. Every read-back value SHALL match its closed form before it is written to the planner's input file, and SHALL NOT be put into a command line. A reminder's period SHALL be the period whose key equals its `Period:` line; matching SHALL be by key, never by order or by the distance of a due. A period SHALL be used when a completed reminder carries its key, and an open reminder's own period SHALL NOT be used. A record SHALL be written down, never inferred: an open reminder with a `Record:` line SHALL be a record whatever its date, and an open reminder whose key is period 0 or earlier than period 0's key SHALL be the record of an unused period. A record SHALL be judged by the current schedule only (the new one in an update); a reminder whose due has passed but whose period has not reset under it SHALL NOT be made a record. The planner SHALL refuse an input that names one reminder twice. Without a schedule change the planner SHALL NOT move or delete anything; a reminder on its period whose due or alarms differ SHALL be a listed finding with `repair-needed dates-changed`, never a silent keep; a second open reminder on one period, or an open reminder on a used period, SHALL be listed and push nothing. A reminder found in another list SHALL only be listed and SHALL hold its period, and SHALL count toward `repair-needed dates-changed` when it is off schedule or on other dates. A record whose `Record:` key is a period still open SHALL hold that period in sync as in a replacement. `per_period_through` SHALL be a high-water mark that sync never lowers; a period not after it that has no reminder SHALL be offered and SHALL NOT be created unasked. A record SHALL NOT be moved, matched to another period, deleted, or offered for deletion. After any yes the skill SHALL search and plan again immediately before the first write, and SHALL ask again when the plan changed.
+The skill SHALL plan every write with `quota-plan.sh`, from the helper's periods and the quota's reminders (their dues as instants, their `Period:` and `Record:` keys, their alarms read back, and whether they are in the quota's list), and SHALL NOT plan by reading the list by hand. Every read-back value SHALL match its closed form before it is written to the planner's input file, and SHALL NOT be put into a command line. A reminder's period SHALL be the period whose key equals its `Period:` line; matching SHALL be by key, never by order or by the distance of a due. A period SHALL be used when a completed reminder carries its key, and an open reminder's own period SHALL NOT be used. A record SHALL be written down, never inferred: an open reminder with a `Record:` line SHALL be a record whatever its date, and an open reminder whose key is period 0 or earlier than period 0's key SHALL be the record of an unused period. A record SHALL be judged by the current schedule only (the new one in an update); a reminder whose due has passed but whose period has not reset under it SHALL NOT be made a record. The planner SHALL refuse an input that names one reminder twice. Without a schedule change the planner SHALL NOT move or delete anything; a reminder on its period whose due or alarms differ SHALL be a listed finding with `repair-needed dates-changed`, never a silent keep; a second open reminder on one period, or an open reminder on a used period, SHALL be listed and push nothing. A reminder found in another list SHALL only be listed and SHALL hold its period, and SHALL count toward `repair-needed dates-changed` when it is off schedule or on other dates. A record whose `Record:` key or `Period:` key is a period still open SHALL hold that period in sync as in a replacement, in the quota's list or in another. `per_period_through` SHALL be a high-water mark that sync never lowers, SHALL name only periods that were created, kept or used, and SHALL be written after the creates, raised only once a create succeeded and read back, never before; a create the server answers as `skipped` SHALL NOT raise it unless the reminder it names is this quota's reminder of that period; a period not after it that has no reminder SHALL be offered and SHALL NOT be created unasked. A record SHALL NOT be moved, matched to another period, deleted, or offered for deletion. After any yes the skill SHALL search and plan again immediately before the first write, and SHALL ask again when the plan changed.
 
 #### Scenario: Used before the reset
 
@@ -118,6 +124,18 @@ The skill SHALL plan every write with `quota-plan.sh`, from the helper's periods
 - **WHEN** `sync` runs
 - **THEN** `per_period_through` stays in January and January is listed as missing, never created unasked
 
+#### Scenario: The first create of a declare fails
+
+- **GIVEN** a new quota whose first `create_reminder` fails
+- **WHEN** the next `sync` runs
+- **THEN** `per_period_through` names no period that was not created, and sync creates the periods without asking instead of listing them as missing
+
+#### Scenario: A record moved to another list
+
+- **GIVEN** a record whose `Record:` key is a period still open, moved by the user to another list
+- **WHEN** `sync` runs
+- **THEN** that period is held and nothing is created next to the record
+
 #### Scenario: A record kept by a replacement survives the next sync
 
 - **GIVEN** a replacement kept last Sunday's unticked reminder and wrote `Record:` into it, and the new schedule resets on Wednesday
@@ -144,7 +162,7 @@ After every `create_reminder` and `update_reminder` the skill SHALL read the rem
 ---
 ### Requirement: An update replaces the open reminders when the schedule changes
 
-An update SHALL let the planner decide whether the schedule changed: without `--replace`, when it reports no `repair-needed dates-changed`, the update SHALL write the new fields and apply the planner's keeps and creates. Otherwise it SHALL NOT re-pair reminders with the new periods: it SHALL run the planner for the new entry with `--replace`, without the old entry, and SHALL show every open reminder that would be deleted or kept, every record that stays or would get a `Record:` line, and every reminder that would be created, and ask once. A reminder whose period reset under the new dates SHALL get `Record: <key>` and stay, and SHALL NOT be deleted; a reminder already on the new dates SHALL be kept and its period SHALL NOT be created again. An open reminder whose due has passed and whose period has not reset under the new dates SHALL block the replacement and SHALL be offered only for deletion with its period created anew, after a yes, or for waiting until its reset; it SHALL NOT be offered as a record. So SHALL an open reminder in another list, one without a `Period:` line, and a second reminder for a period kept or used block it. Only on a yes asked in this run SHALL the skill write the `Record:` lines, update the kept reminders, write the new fields, create the new schedule (every new period of the 90 days with no kept reminder and whose key no completed reminder carries), write `per_period_through` as the last key created or kept, and then delete the other open reminders; a failed write SHALL stop the replacement there. With no answer, a no, or a block, it SHALL write nothing. A record and a completed reminder SHALL NOT be deleted. The skill SHALL state as a known limit that changing a schedule replaces the open reminders.
+An update SHALL let the planner decide whether the schedule changed: without `--replace`, when it reports no `repair-needed dates-changed`, the update SHALL write the new fields and apply the planner's keeps and creates. Otherwise it SHALL NOT re-pair reminders with the new periods: it SHALL run the planner for the new entry with `--replace`, without the old entry, and SHALL show every open reminder that would be deleted or kept, every record that stays or would get a `Record:` line, and every reminder that would be created, and ask once. A reminder whose period reset under the new dates SHALL get `Record: <key>` and stay, and SHALL NOT be deleted; a reminder already on the new dates SHALL be kept and its period SHALL NOT be created again. A reminder on its period whose due is the period's and whose alarms alone differ SHALL be kept, with its alarms rewritten in place, and SHALL NOT be deleted and created again. An open reminder whose due has passed and whose period has not reset under the new dates SHALL block the replacement and SHALL be offered only for deletion with its period created anew, after a yes, or for waiting until its reset; it SHALL NOT be offered as a record. While one does, every reminder the replacement would delete whose due comes before the new reset that makes it a record SHALL be listed with that due and that reset, so that one yes deletes them all, and the skill SHALL say that while waiting no period of the new schedule has a reminder. So SHALL an open reminder in another list that is not a record with a `Record:` line, one without a `Period:` line, a second reminder for a period kept or used, and a reminder the replacement would delete whose due is that of a period it would create block it. Only on a yes asked in this run SHALL the skill write the `Record:` lines, update the kept reminders, write the new fields, create the new schedule (every new period of the 90 days with no kept reminder and whose key no completed reminder carries), write `per_period_through` as the last key created, kept or used once every create succeeded, and then delete the other open reminders; a failed write SHALL stop the replacement there, and a create the server answers as `skipped` SHALL count as a failed write. With no answer, a no, or a block, it SHALL write nothing. A record and a completed reminder SHALL NOT be deleted. The skill SHALL state as a known limit that changing a schedule replaces the open reminders.
 
 #### Scenario: The reset time moves
 
@@ -164,6 +182,18 @@ An update SHALL let the planner decide whether the schedule changed: without `--
 - **GIVEN** the user edited the file by hand, and an open reminder's due has passed while its period has not reset under the new dates
 - **WHEN** `sync` offers the replacement
 - **THEN** the replacement is blocked, and the user is asked whether to delete the reminder and create its period anew, or to wait until its reset; it is never offered as a record
+
+#### Scenario: Only the notification changes
+
+- **GIVEN** a weekly quota with open reminders whose alarm is `[0]`
+- **WHEN** the user adds `notify_at` and says yes to the replacement
+- **THEN** each open reminder keeps its due and gets its new alarms in place, and none is deleted or created again
+
+#### Scenario: The reset moves to another weekday
+
+- **GIVEN** a weekly quota moved from Monday to Friday on a Tuesday, with this Monday's reminder past its due and the later Monday reminders still ahead
+- **WHEN** the replacement is offered
+- **THEN** every old reminder whose due comes before the Friday reset after its key is listed with both dates, one yes deletes them all, and the question says that while waiting the new schedule has no reminder
 
 #### Scenario: Recovery after a failed delete
 

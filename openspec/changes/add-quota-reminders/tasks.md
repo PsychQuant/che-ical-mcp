@@ -35,6 +35,10 @@
 
 - [x] 2g.1（Each period has a stable identity；An update replaces the open reminders when the schedule changes；A retirement asks first；紀錄只看新排程（verify 第 6 輪，可撤回的決定））紀錄只以新排程判斷，取代不再讀舊期別；新排程下已重置的提醒寫 `Record:`、永不刪除；到期已過而未重置的只提議刪除後重建（`--delete-passed`）或等待；已在新日期上的提醒保留、不重建；任何寫入失敗就停；sync 對開著的期別上的紀錄暫停建立；別清單裡改了日期的提醒也算日期改了；`period-used` 自成一類；同一 id 出現兩次、鍵不是真實日期、鬧鐘格式不合都拒絕；planner 也收 `--local-tz`；update 由 planner 判斷排程是否改變；退役只刪 `matched` 且在本清單的；重複的手建提醒不收編。驗證：`quota-plan.test.sh` 的每個重現案例先紅後綠，`QuotaSkillDocsTests`。
 
+## 2h. Verify 第 7 輪：只改鬧鐘就地改寫、高水位寫在建立之後
+
+- [x] 2h.1（An update replaces the open reminders when the schedule changes；Each period has a stable identity；The dates come from the helper；只改鬧鐘時就地改寫、`per_period_through` 寫在建立之後（verify 第 7 輪））只有鬧鐘不同的提醒以 `realarm` 就地改寫、不刪除重建；取代中 `skipped` 的建立算失敗、在任何刪除之前停下；要刪的提醒與要建立的期別到期相同時以 `same-due` 擋下；紀錄依 `Record:` 鍵與 `Period:` 鍵保留開著的期別、在別的清單也一樣，且在別的清單不擋取代；declare 與取代在建立讀回之後才寫 `per_period_through`，它也算用過的期別，sync 會印出要推到的 `through`；date helper 的輸出先寫檔、檢查 exit code，planner 拒絕沒有規則行的輸入；`due-passed` 一次列出每一則會在等待中擋下的舊提醒（到期與重置日），一次同意全部刪除，並說明等待期間新排程沒有提醒。驗證：`quota-plan.test.sh` 的每個重現案例先紅後綠，`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

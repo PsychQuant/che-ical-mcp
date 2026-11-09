@@ -124,7 +124,8 @@ EOF
 # Sunday's reset passed, the user changes it to Wednesday on Monday: under the new dates the Sunday reminder's
 # period has not reset (its key is later than the new period 0), so it is not a record. Its due has passed: it is
 # asked about (delete and recreate after a yes, or wait for the reset), never marked and never deleted unasked.
-check "Sunday to Wednesday on Monday: the Sunday reminder is asked about, not marked" "action list R due-passed
+check "Sunday to Wednesday on Monday: the Sunday reminder is asked about, not marked" "action list R due-passed due=2026-11-09T03:30:00+08:00 resets=2026-11-11T20:00:00+00:00
+action list S due-passed due=2026-11-16T03:30:00+08:00 resets=2026-11-18T20:00:00+00:00
 action replace-blocked due-passed" "mark-record|action delete R|action create" -- "${A[@]}" --replace <<EOF
 $WED
 reminder R open 2026-11-09T03:30:00+08:00 2026-11-08 - 0 list
@@ -133,7 +134,7 @@ EOF
 check "after a yes to delete it, it is deleted and its period created anew" "action delete R
 action delete S
 action create 1 due=2026-11-12T03:30:00+08:00
-action through 2027-02-03" "mark-record|due-passed" -- "${A[@]}" --replace --delete-passed R <<EOF
+action through 2027-02-03" "mark-record|due-passed" -- "${A[@]}" --replace --delete-passed R --delete-passed S <<EOF
 $WED
 reminder R open 2026-11-09T03:30:00+08:00 2026-11-08 - 0 list
 reminder S open 2026-11-16T03:30:00+08:00 2026-11-15 - 0 list
@@ -186,7 +187,7 @@ EOF
 # A passed due whose period has not reset under the new dates is asked about; after a yes it is deleted and
 # its period created anew.
 MON2="$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 60 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-10T03:45:00+08:00)"
-check "replace asks about a passed due" "action list A due-passed
+check "replace asks about a passed due" "action list A due-passed due=2026-11-10T03:30:00+08:00 resets=2026-11-09T20:00:00+00:00
 action replace-blocked due-passed" "action delete|action create|mark-record" -- --now 2026-11-10T03:45:00+08:00 --local-tz "$TPE" --replace <<EOF
 $MON2
 reminder A open 2026-11-10T03:30:00+08:00 2026-11-09 - 0 list
@@ -201,11 +202,20 @@ action create 1 due=2026-11-10T03:00:00+08:00" "due-passed|mark-record" -- "${A[
 $(p --cadence weekly --weekday 2 --time 20:00 --lead-minutes 60 --from "$NOW")
 reminder A open 2026-11-10T03:30:00+08:00 2026-11-09 - 0 list
 EOF
-# Any open reminder in another list blocks the whole replacement, a record included (round 5 MEDIUM 8).
+# An open reminder in another list blocks the whole replacement (round 5 MEDIUM 8); a record with a `Record:`
+# line there does not (round 7 #8): the replacement never writes or deletes it.
 check "replace blocked by a reminder in another list" "action list O outside-list
 action replace-blocked outside-list" "action delete|action create" -- "${A[@]}" --replace <<EOF
 $WED
-reminder O open 2026-11-09T03:30:00+08:00 2026-11-08 2026-11-08 0 other
+reminder O open 2026-11-09T03:30:00+08:00 2026-11-08 - 0 other
+EOF
+check "replace: a record in another list stays and does not block" "reminder O class=record period=- dates=- place=other
+action record O
+action delete S
+action create 1 due=2026-11-12T03:30:00+08:00" "replace-blocked|outside-list|action delete O" -- "${A[@]}" --replace <<EOF
+$WED
+reminder O open 2026-11-02T03:30:00+08:00 2026-11-01 2026-11-01 0 other
+reminder S open 2026-11-23T03:30:00+08:00 2026-11-22 - 0 list
 EOF
 # Round 6 #1: the reset moved earlier on the same weekday, run between the new reset and the old one. Under the
 # new dates the period reset unticked: the reminder is the record, gets its Record line, and is not deleted.
@@ -220,7 +230,7 @@ EOF
 # Round 6 #2: the reset moved later, run after the old reset time. The period is still open under the new dates:
 # no Record line, no second reminder for that key. It is asked about; after a yes it is replaced.
 check "reset moved later: a passed due on an open period is asked about, never marked" "reminder A class=matched period=1 dates=differ place=list
-action list A due-passed
+action list A due-passed due=2026-11-09T20:00:00Z resets=2026-11-09T23:00:00+00:00
 action replace-blocked due-passed" "mark-record|action create 1 " -- --now "$E" --local-tz UTC --replace <<EOF
 $(U --cadence weekly --weekday 2 --time 23:00)
 reminder A open 2026-11-09T20:00:00Z 2026-11-09 - 0 list
@@ -230,10 +240,10 @@ action create 1 due=2026-11-09T23:00:00+00:00" "mark-record|due-passed" -- --now
 $(U --cadence weekly --weekday 2 --time 23:00)
 reminder A open 2026-11-09T20:00:00Z 2026-11-09 - 0 list
 EOF
-# Round 6 #3: notify_at added between the due and the reset: the remedy is delete or wait, never a record.
+# Round 6 #3, round 7 #1: notify_at added between the due and the reset changes only the alarms. The reminder
+# is never marked, and since its due is the period's, it is realarmed in place, not deleted and created again.
 E3=2026-11-09T19:45:00Z
-check "notify_at added after the due: asked about, never marked" "action list A due-passed
-action replace-blocked due-passed" "mark-record" -- --now "$E3" --local-tz UTC --replace <<EOF
+check "notify_at added after the due: realarmed in place, never marked" "action realarm A 1 due=2026-11-09T19:30:00+00:00 alarms=0,450" "mark-record|due-passed|action delete|action create 1 " -- --now "$E3" --local-tz UTC --replace <<EOF
 $(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 12:00 --reset-tz UTC --previous --horizon-days 20 --local-tz UTC --from "$E3")
 reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
 EOF
@@ -294,6 +304,119 @@ reminder N open 2026-11-30 2026-11-30 - none list
 reminder Nc completed 2026-11-30 2026-11-30 - - list
 EOF
 
+# --- round 7 -------------------------------------------------------------------------------------------
+# #1 (HIGH): only the alarms differ. create_reminder's duplicate check is title + due, so a create on the due of
+# a reminder about to be deleted returns that reminder, and the delete then removes the only one. The alarms are
+# rewritten in place instead (realarm); nothing is deleted or created for those periods.
+MONN="$(p --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --from "$NOW")"
+MON0="$(p --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --from "$NOW")"
+check "replace, notify_at added: alarms rewritten in place" "reminder A class=matched period=1 dates=differ place=list
+action realarm A 1 due=2026-11-10T03:30:00+08:00 alarms=0,330
+action realarm B 2 due=2026-11-17T03:30:00+08:00 alarms=0,330
+action realarm C 3 due=2026-11-24T03:30:00+08:00 alarms=0,330
+action create 4 due=2026-12-01T03:30:00+08:00" "action delete|action create 1 |action create 2 |action create 3 |replace-blocked" -- "${A[@]}" --replace <<EOF
+$MONN
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
+reminder B open 2026-11-16T19:30:00Z 2026-11-16 - 0 list
+reminder C open 2026-11-23T19:30:00Z 2026-11-23 - 0 list
+EOF
+check "replace, notify_at removed: alarms rewritten to the due alarm only" "action realarm A 1 due=2026-11-10T03:30:00+08:00 alarms=0" "action delete|action create 1 " -- "${A[@]}" --replace <<EOF
+$MON0
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 330,0 list
+EOF
+check "replace, local_tz moved with notify_at: same dues, alarms rewritten in place" "action realarm A 1 due=2026-11-10T04:30:00+09:00 alarms=0,390" "action delete|action create 1 " -- --now "$NOW" --local-tz Asia/Tokyo --replace <<EOF
+$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz Asia/Tokyo --from "$NOW")
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 330,0 list
+EOF
+check "replace: two reminders realarmed on one period wait" "action list A2 two-open-reminders
+action replace-blocked two-open-reminders" "action delete" -- "${A[@]}" --replace <<EOF
+$MONN
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
+reminder A2 open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
+EOF
+# #10 and the planner half of #1: a reminder the replacement would delete has the due of a period it would
+# create (the same reset written in another reset_tz changes every key). The server would take the create as a
+# duplicate of it; the replacement waits instead of writing anything.
+TUE="$(bash "$DATES" --cadence weekly --weekday 3 --time 04:00 --reset-tz Asia/Taipei --lead-minutes 30 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-12T10:00:00+08:00)"
+check "replace: a delete and a create on one due wait (same-due)" "action list F same-due
+action list G same-due
+action replace-blocked same-due" "action delete|action create" -- --now 2026-11-12T10:00:00+08:00 --local-tz "$TPE" --replace <<EOF
+$TUE
+reminder F open 2026-11-23T19:30:00Z 2026-11-23 - 0 list
+reminder G open 2026-11-30T19:30:00Z 2026-11-30 - 0 list
+EOF
+# #2 and #6: a record in another list still holds the open period of its Record: key.
+check "sync: a record in another list holds its open period" "action list X record-on-open-period
+action hold 1 record-on-open-period
+action create 2 due=2026-12-31" "action create 1 " -- "${A[@]}" <<EOF
+$M31
+reminder X open 2026-11-30 2026-11-30 2026-11-30 none other
+EOF
+check "sync: a timed record in another list holds its open period" "action hold 1 record-on-open-period" "action create 1 " -- "${A[@]}" <<EOF
+$MON0
+reminder R1 open 2026-11-09T19:30:00Z 2026-11-09 2026-11-09 0 other
+EOF
+# #12: a record whose Period: key is an open period holds that period too, whatever its Record: key.
+check "sync: a record whose Period: is an open period holds it" "action list X record-on-open-period
+action hold 1 record-on-open-period" "action create 1 " -- "${A[@]}" <<EOF
+$M31
+reminder X open 2026-11-30 2026-11-30 2026-10-31 none list
+EOF
+check "replace: a record whose Period: is an open period blocks" "action list X record-on-open-period
+action replace-blocked record-on-open-period" "action create 1 " -- "${A[@]}" --replace <<EOF
+$M31
+reminder X open 2026-11-30 2026-11-30 2026-10-31 none list
+EOF
+# #5: Monday changed to Friday. Every old reminder that can block a later run while the user waits is listed with
+# its due and the reset that turns it into a record, so one answer settles them all.
+FRI="$(bash "$DATES" --cadence weekly --weekday 6 --time 20:00 --lead-minutes 30 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-10T10:00:00+08:00)"
+OLDMON="reminder R09 open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
+reminder R16 open 2026-11-16T19:30:00Z 2026-11-16 - 0 list
+reminder R23 open 2026-11-23T19:30:00Z 2026-11-23 - 0 list
+reminder R30 open 2026-11-30T19:30:00Z 2026-11-30 - 0 list"
+check "due-passed lists every reminder that would block while waiting" "action list R09 due-passed due=2026-11-09T19:30:00Z resets=2026-11-13T20:00:00+00:00
+action list R16 due-passed due=2026-11-16T19:30:00Z resets=2026-11-20T20:00:00+00:00
+action list R23 due-passed due=2026-11-23T19:30:00Z resets=2026-11-27T20:00:00+00:00
+action list R30 due-passed due=2026-11-30T19:30:00Z resets=2026-12-04T20:00:00+00:00
+action replace-blocked due-passed" "action delete|action create" -- --now 2026-11-10T10:00:00+08:00 --local-tz "$TPE" --replace <<EOF
+$FRI
+$OLDMON
+EOF
+check "one yes for all of them goes through" "action delete R09
+action delete R16
+action delete R23
+action delete R30
+action create 1 due=2026-11-14T03:30:00+08:00" "due-passed|replace-blocked" -- --now 2026-11-10T10:00:00+08:00 --local-tz "$TPE" --replace --delete-passed R09 --delete-passed R16 --delete-passed R23 --delete-passed R30 <<EOF
+$FRI
+$OLDMON
+EOF
+check "a yes for only the passed one still waits on the others" "action list R16 due-passed due=2026-11-16T19:30:00Z resets=2026-11-20T20:00:00+00:00
+action replace-blocked due-passed" "action create" -- --now 2026-11-10T10:00:00+08:00 --local-tz "$TPE" --replace --delete-passed R09 <<EOF
+$FRI
+$OLDMON
+EOF
+# #11: per_period_through counts a used period, in a replacement and in sync, so a used period that is later
+# cleaned up is offered as missing, never recreated unasked.
+check "replace: through counts the last period when it is used" "action used 3
+action through 2027-01-28" "action through 2026-12-28|action create 3 " -- "${A[@]}" --replace <<EOF
+$M28
+reminder N open 2026-11-30 2026-11-30 - none list
+reminder J completed 2027-01-28 2027-01-28 - - list
+EOF
+check "sync: through counts kept, created and used periods" "action keep N 1 due=2026-11-30
+action create 2 due=2026-12-31
+action through 2027-01-31" "" -- "${A[@]}" --through 2026-11-30 <<EOF
+$M31
+reminder N open 2026-11-30 2026-11-30 - none list
+reminder J completed 2027-01-31 2027-01-31 - - list
+EOF
+check "sync: through is not printed when it would not rise" "action keep N 1 due=2026-11-30" "action through" -- "${A[@]}" --through 2027-01-31 <<EOF
+$M31
+reminder N open 2026-11-30 2026-11-30 - none list
+reminder D open 2026-12-31 2026-12-31 - none list
+reminder J open 2027-01-31 2027-01-31 - none list
+EOF
+
 # --- bad input -----------------------------------------------------------------------------------------
 err() {
   local name="$1" want="$2" input="$3"; shift 3
@@ -324,6 +447,9 @@ err "alarms out of form (5-3)" "bad alarms" "$M31
 reminder A open 2026-11-30 2026-11-30 - 5-3 list" --now "$NOW"
 err "alarms out of form (,)" "bad alarms" "$M31
 reminder A open 2026-11-30 2026-11-30 - , list" --now "$NOW"
+err "the date helper stopped before its rule line (round 7 #4)" "no rule line" "$(printf '%s\n' "$M31" | grep -v '^rule ')" --now "$NOW"
+err "a period after the rule line" "after the rule line" "$M31
+$(printf '%s\n' "$M31" | grep '^period 3 ')" --now "$NOW"
 err "--delete-passed without --replace" "only read with --replace" "$M31" --now "$NOW" --delete-passed A
 err "--delete-passed for a reminder that is not due-passed" "does not list that reminder as due-passed" "$M31
 reminder N open 2026-11-30 2026-11-30 - none list" --now "$NOW" --local-tz "$TPE" --replace --delete-passed N
