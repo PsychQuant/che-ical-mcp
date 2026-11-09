@@ -19,7 +19,8 @@ import Foundation
 /// Not covered: an earlier move that brings in an occurrence after the end (nothing is lost, and it
 /// is visible), and an occurrence edited on its own and moved more than a year from its slot, which
 /// the listing does not reach (the margin #285 and #442 list with). Refused as not checked (PR #510
-/// round 2): an all-day series with an end, whose rule end was not compared with its days on a device.
+/// round 2): an all-day series with an end, whose rule end was not compared with its days on a device;
+/// round 3: a plain monthly or yearly rule whose start is or would be on the 29th to 31st.
 enum RuleEndShift {
     /// How a plain rule repeats: by days (daily, weekly), months or years.
     enum Unit: Equatable { case day, month, year }
@@ -57,15 +58,20 @@ enum RuleEndShift {
 
     /// Why a write cannot be checked (PR #510 round 2). Each refuses, and none has a route through
     /// this tool: a retry with a passed rule meets the same cause.
-    enum Unchecked: Equatable { case unreadable, unlisted, unplaced, tooFar, allDay }
+    enum Unchecked: Equatable { case unreadable, unlisted, unplaced, empty, tooFar, allDay, monthEnd }
 
     /// What the refusal offers (PR #510 round 2, LOW 6): the passed rule only for a rule this tool can
     /// write and a call that can carry it; through an occurrence's own id (#416, #428) a call that
-    /// moves the start cannot also pass the rule.
-    enum Route: Equatable { case passRule, unwritableRule, ownOccurrence }
+    /// moves the start cannot also pass the rule. Round 3: not for a rule with days of its own (MEDIUM
+    /// 3: an end_date late enough for every reading can bring in an occurrence the series never had),
+    /// nor for a series whose rule ended after an occurrence happened (LOW 7: #451 refuses a later end).
+    enum Route: Equatable { case passRule, unwritableRule, ownOccurrence, ruleWithDays, endedSeries }
 
-    static func route(ruleWritable: Bool, addressesOwnOccurrence: Bool) -> Route {
-        addressesOwnOccurrence ? .ownOccurrence : (ruleWritable ? .passRule : .unwritableRule)
+    static func route(ruleWritable: Bool, addressesOwnOccurrence: Bool, keepsDays: Bool, endedAfterHappening: Bool) -> Route {
+        if addressesOwnOccurrence { return .ownOccurrence }
+        if !ruleWritable { return .unwritableRule }
+        if keepsDays { return .ruleWithDays }
+        return endedAfterHappening ? .endedSeries : .passRule
     }
 
     /// The series' rules as read, or nil when none could be read (PR #510 round 2, HIGH 1). The check
@@ -88,9 +94,10 @@ enum RuleEndShift {
         masterHasRules || addressesOwnOccurrence
     }
 
-    /// Whether the check runs: a start or zone change over the rest of a series.
-    static func applies(repeats: Bool, reachesEnd: Bool, movesStart: Bool, changesZone: Bool) -> Bool {
-        repeats && reachesEnd && (movesStart || changesZone)
+    /// Whether the check runs: a start, zone or all-day change over the rest of a series (PR #510
+    /// round 3, MEDIUM 2: an all_day change that keeps the start instant and zone, as at midnight).
+    static func applies(repeats: Bool, reachesEnd: Bool, movesStart: Bool, changesZone: Bool, changesAllDay: Bool) -> Bool {
+        repeats && reachesEnd && (movesStart || changesZone || changesAllDay)
     }
 
     /// The ends to check: the stored rule's, or, when the call passes a rule, that rule's own end
@@ -106,7 +113,17 @@ enum RuleEndShift {
         }
     }
 
-    /// The new start is already after the end: nothing the write reaches would remain.
+    /// PR #510 round 3 (HIGH 1): a plain monthly or yearly rule repeats on its start's day and skips a
+    /// month (or year) without it, while the readings clamp to the month's end (Jan 31 plus a month
+    /// reads Feb 28), so a stored or new start on the 29th, 30th or 31st is not checked.
+    static func nearMonthEnd(_ plan: Plan) -> Bool {
+        guard plan.unit != .day, !plan.keepsDays else { return false }
+        let days = plan.storedStarts.map { Calendar.gregorian(in: plan.storedZone).component(.day, from: $0) }
+            + [Calendar.gregorian(in: plan.newZone).component(.day, from: plan.plannedStart)]
+        return days.contains { $0 >= 29 }
+    }
+
+    /// The new start is already after the end: the occurrences after the first it moves may be dropped.
     static func startsPastEnd(plannedStart: Date, ruleEnd: Date) -> Bool {
         plannedStart > ruleEnd
     }
@@ -222,6 +239,7 @@ enum RuleEndShift {
         let ends = ends(stored: storedEnds, passedRule: passedRule)
         guard !ends.isEmpty else { return nil }
         if allDay { return uncheckedReason(.allDay) }
+        if nearMonthEnd(plan) { return uncheckedReason(.monthEnd) }
         for end in ends {
             // PR #510 round 1 (MEDIUM 3): refused before any read when nothing would remain.
             if startsPastEnd(plannedStart: plan.plannedStart, ruleEnd: end.rule) {
@@ -230,6 +248,8 @@ enum RuleEndShift {
             if exceedsMaxShift(plan) { return uncheckedReason(.tooFar) }
             guard let range = listingRange(ruleEnd: end.listAround, plan: plan) else { return uncheckedReason(.tooFar) }
             guard let listed = list(range) else { return uncheckedReason(.unlisted) }
+            // Round 3 (LOW 4): never safe, in its own words.
+            if listed.isEmpty { return uncheckedReason(.empty) }
             guard let slots = place(listed) else { return uncheckedReason(.unplaced) }
             if let slot = firstLost(slots: slots, ruleEnd: end.rule, plan: plan, from: from) {
                 return lostReason(slot: slot, ruleEnd: end.rule, movedTo: latestMove(slot: slot, plan: plan),
@@ -255,6 +275,10 @@ enum RuleEndShift {
             return "This series' rule has parts this tool cannot write, so to move it, change the series in Calendar."
         case .ownOccurrence:
             return "This write goes through an occurrence edited on its own, and such a call cannot also pass the series' rule (#416), so to move it, change the series in Calendar."
+        case .ruleWithDays:
+            return "This series' rule has days of its own, and passing it with an end late enough for every reading of the move can bring in an occurrence the series never had, so to move it, change the series in Calendar."
+        case .endedSeries:
+            return "This series' rule has already ended and an occurrence of it has happened, so a rule passed with a later end is refused (#451); to move it, change the series in Calendar."
         }
     }
 
@@ -269,8 +293,8 @@ enum RuleEndShift {
     }
 
     static func pastEndReason(ruleEnd: Date, zone: TimeZone) -> String {
-        "Cannot move the start of this recurring event after the end of the series' rule (\(iso(ruleEnd, zone))): no occurrence it "
-            + "moves would remain, and undo cannot bring them back (#509). Nothing was written."
+        "Cannot move the start of this recurring event after the end of the series' rule (\(iso(ruleEnd, zone))): the occurrences after "
+            + "the first that it moves may be dropped, and undo cannot bring them back (#509; not measured). Nothing was written."
     }
 
     /// PR #510 round 2 (MEDIUM 2, LOW 3, LOW 7): each cause in its own words, and Calendar as the
@@ -281,8 +305,10 @@ enum RuleEndShift {
         case .unreadable: why = "the series or its rule could not be read"
         case .unlisted: why = "the series' occurrences near that end could not be listed"
         case .unplaced: why = "an occurrence edited on its own near that end has no original slot in its identifier"
+        case .empty: why = "no occurrence of the series was found near that end"
         case .tooFar: why = "the start moves later by more than a year, more than the check lists"
         case .allDay: why = "it is an all-day series before or after the write, and how an all-day rule's end compares with its days was not measured"
+        case .monthEnd: why = "a monthly or yearly rule with no days of its own starts, or would start, on the 29th, 30th or 31st, and such a rule skips a month without that day"
         }
         return "Cannot move the start or zone of this recurring event: the series' rule ends at a fixed time, and whether the move would "
             + "push an occurrence past it cannot be checked (#509): \(why). Nothing was written. To move it, change the series in Calendar."

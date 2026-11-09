@@ -12,7 +12,8 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // PR #510 round 1 (HIGH 2): gated on the series' rules, so the own-id routes are checked.
         XCTAssertTrue(code.contains("repeats:RuleEndShift.repeats(masterHasRules:masterEvent.hasRecurrenceRules,addressesOwnOccurrence:addressesOwnOccurrence),"
                                     + "reachesEnd:applyToAll||span==.futureEvents,"
-                                    + "movesStart:!UndoPostState.sameInstant(shiftStart,event.startDate),changesZone:changesZone)"))
+                                    + "movesStart:!UndoPostState.sameInstant(shiftStart,event.startDate),changesZone:changesZone,"
+                                    + "changesAllDay:datePlan.isAllDay!=event.isAllDay)"))
         XCTAssertFalse(code.contains("repeats:event.hasRecurrenceRules"))
         XCTAssertTrue(code.contains("letruleHolder:EKEvent?=addressesOwnOccurrence?tryseriesObject(ofOccurrence:identifier):event"))
         XCTAssertTrue(code.contains("storedStarts:addressesOwnOccurrence?[event.startDate,eventSlot]:[event.startDate]"))
@@ -21,7 +22,8 @@ final class RuleEndShiftWiringTests: XCTestCase {
         XCTAssertTrue(code.contains("unit:RuleEndShift.unit(of:rules)"))
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
         XCTAssertTrue(code.contains("from:applyToAll?nil:eventSlot,"))
-        XCTAssertTrue(code.contains("route:RuleEndShift.route(ruleWritable:SeriesRuleWrite.writableRule(seriesRules)!=nil,addressesOwnOccurrence:addressesOwnOccurrence))"))
+        XCTAssertTrue(code.contains("route:RuleEndShift.route(ruleWritable:SeriesRuleWrite.writableRule(seriesRules)!=nil,addressesOwnOccurrence:addressesOwnOccurrence,"
+                                    + "keepsDays:plan.keepsDays,endedAfterHappening:happened&&storedEnds.contains{$0<now}))"))
         // Round 2 LOW 7: an all-day series, before or after the write, is not checked and refused.
         XCTAssertTrue(code.contains("allDay:event.isAllDay||datePlan.isAllDay||holder.isAllDay,"))
         XCTAssertTrue(code.contains("throwEventKitError.seriesWriteRefused(reason:reason)"))
@@ -65,8 +67,8 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // The order of the decision (round 2): all-day, past the end, over a year, listing, placing.
         let source2 = try SourcePins.source("EventKit/RuleEndShift.swift")
         let decision = flat(try XCTUnwrap(SourcePins.body(of: "static func refusal(", in: source2)))
-        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "ifstartsPastEnd(", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
-                     "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}"]
+        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifstartsPastEnd(", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
+                     "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "iflisted.isEmpty{returnuncheckedReason(.empty)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}"]
         let found = try steps.map { try XCTUnwrap(decision.range(of: $0), $0).lowerBound }
         XCTAssertEqual(found, found.sorted())
     }
