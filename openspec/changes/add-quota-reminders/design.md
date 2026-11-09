@@ -59,11 +59,17 @@ per-period 一次建 90 天：週額度約 13 則、月額度 3 則；`list` 在
 
 ### 只改鬧鐘時就地改寫、`per_period_through` 寫在建立之後（verify 第 7 輪）
 
-`create_reminder` 的重複檢查只比對標題與到期（一分鐘內）。取代先建立後刪除，所以只改了鬧鐘（加、改、拿掉 `notify_at`，或帶 `notify_at` 改 `local_tz`）時，新建立的那則會被判成重複而略過、回傳舊提醒的 id，接著的刪除就把那一期唯一的提醒刪掉。改成：期別與到期都對、只有鬧鐘不同的提醒是 `realarm`，用 `update_reminder` 就地寫 `alarms_minutes_offsets`；取代中任何 `skipped` 的建立都算失敗，在刪除之前停下；要刪的提醒與要建立的期別到期相同（例如同一個重置換個 `reset_tz` 寫，鍵全變）時，planner 以 `same-due` 擋下。
+`create_reminder` 的重複檢查只比對標題與到期（一分鐘內）。取代先建立後刪除，所以只改了鬧鐘（加、改、拿掉 `notify_at`，或帶 `notify_at` 改 `local_tz`）時，新建立的那則會被判成重複而略過、回傳舊提醒的 id，接著的刪除就把那一期唯一的提醒刪掉。改成：期別與到期都對、只有鬧鐘不同的提醒是 `realarm`，用 `update_reminder` 就地寫 `alarms_minutes_offsets`；取代中任何 `skipped` 的建立都算失敗，在刪除之前停下。（第 7 輪另加的 `same-due` 檢查在第 8 輪拿掉，見下。）
 
 `per_period_through` 只記真的建立過（或保留、用過）的期別：declare 先寫 entry 不帶它，每則建立成功並讀回後才往上推；取代寫新欄位時拿掉它，建立完才寫 planner 的 `through`（也算用過的期別）。否則第一則建立失敗時，高水位已經說那些期別建立過，sync 只會把它們列成 missing、不會自動補。
 
 `due-passed` 只在至少一則已過到期時擋下，但那時會把每一則「到期早於讓它變成紀錄的新重置」的舊提醒都列出來（含到期與重置日），一次同意全部刪掉；問句明說等待期間新排程的每一期都沒有提醒。紀錄（帶 `Record:`）不論在哪個清單都不擋取代，並以 `Record:` 鍵與 `Period:` 鍵保留仍開著的期別。日期 helper 的輸出先寫到檔案、檢查 exit code 才跑 planner，planner 也拒絕沒有最後那行規則行的輸入。
+
+### `same-due` 拿掉、`per_period_through` 也是排程的簽章（verify 第 8 輪）
+
+`same-due` 擋住了每一個把 date-only 到期挪一天的取代（兩邊都是 date-only 時也做了 00:00 的換算），而它要防的情況其實不會發生：伺服器只在標題相同時才略過建立，標題由宣告的重置組成，而重置也決定鍵；鍵變了標題就變，鍵沒變則到期至少差一個 lead（一分鐘或一天）。所以拿掉，只留「取代中的 `skipped` 建立算失敗」作為手改標題時的後備。
+
+`per_period_through` 是寫下它的排程的鍵。落在列出的期別之間、卻不是其中一期的值，表示鍵變了（`keys-changed`）：即使沒有開著的提醒，也能看出排程改過，不再把新期別報成 missing。鍵沒變的取代（只改到期或鬧鐘）照常讀 `--through`，使用者刪掉的那一期仍是 missing，不在取代時重建。為了讓剛超過 90 天的合法期不被當成 off-schedule，helper 列 125 天、planner 只建立 90 天內的（`--create-days 90`）。其他清單裡的 past-record 比照紀錄，不擋取代、不寫入；搜尋固定先 open 後 completed；sync 先處理保留（hold）再處理本清單，結果不隨 id 順序改變。
 
 ## Risks
 

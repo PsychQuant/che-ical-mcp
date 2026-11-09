@@ -201,7 +201,6 @@ final class QuotaSkillDocsTests: XCTestCase {
             "**`per_period_through` is written after the creates, never before:**",
             "**while waiting, no period of the new schedule has a reminder**",
             "**A record holds every open period its keys name**",
-            "`same-due`: a reminder the replacement would delete has the due of a period it would create",
         ])
         XCTAssertFalse(skill.contains("cat \"$reminders_file\"; }"), "the helper is still piped into the planner in one group")
         let spec = try read(Self.spec)
@@ -212,7 +211,32 @@ final class QuotaSkillDocsTests: XCTestCase {
             "SHALL be written after the creates, raised only once a create succeeded and read back, never before",
         ])
         let plan = try read("plugin/bin/quota-plan.sh")
-        for pinned in ["action realarm", "same-due", "no rule line"] {
+        for pinned in ["action realarm", "no rule line"] {
+            XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
+        }
+    }
+
+    /// #499 verify round 8: same-due is gone (no create can collide with a delete); a per_period_through the
+    /// current schedule does not produce is stale (keys-changed); the planner judges 125 days and creates 90.
+    func testRoundEightRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**first with `completed: false`, then with `completed: true`**",
+            "**The planner judges 125 days and creates 90.**",
+            "| `keys-changed` | `per_period_through` is not a key of the current schedule",
+            "**No create can collide with a delete.**",
+            "`outside-list`: an open reminder in another list that is neither a `record` nor a `past-record`.",
+        ])
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, [
+            "the open reminders before the completed ones",
+            "SHALL judge the reminders against the periods of the next 125 days",
+        ])
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for doc in [(Self.skill, skill), (Self.spec, spec), ("plugin/bin/quota-plan.sh", plan)] {
+            XCTAssertFalse(doc.1.contains("same-due"), "\(doc.0) still has the same-due guard")
+        }
+        for pinned in ["action keys-changed", "--create-days"] {
             XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
         }
     }

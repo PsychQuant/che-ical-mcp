@@ -334,13 +334,15 @@ $MONN
 reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
 reminder A2 open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
 EOF
-# #10 and the planner half of #1: a reminder the replacement would delete has the due of a period it would
-# create (the same reset written in another reset_tz changes every key). The server would take the create as a
-# duplicate of it; the replacement waits instead of writing anything.
+# Round 8: the same-due guard is gone. The server skips a create only on an equal title, and a changed key always
+# changes the title (it is built from the declared reset), so the same reset written in another reset_tz is an
+# ordinary replacement. A skipped create still stops a replacement before any delete (SKILL section 8).
 TUE="$(bash "$DATES" --cadence weekly --weekday 3 --time 04:00 --reset-tz Asia/Taipei --lead-minutes 30 --previous --horizon-days 90 --local-tz "$TPE" --from 2026-11-12T10:00:00+08:00)"
-check "replace: a delete and a create on one due wait (same-due)" "action list F same-due
-action list G same-due
-action replace-blocked same-due" "action delete|action create" -- --now 2026-11-12T10:00:00+08:00 --local-tz "$TPE" --replace <<EOF
+check "replace: the same reset in another reset_tz is replaced, not blocked" "action delete F
+action delete G
+action create 1 due=2026-11-17T03:30:00+08:00
+action create 2 due=2026-11-24T03:30:00+08:00
+action keys-changed" "same-due|replace-blocked" -- --now 2026-11-12T10:00:00+08:00 --local-tz "$TPE" --replace <<EOF
 $TUE
 reminder F open 2026-11-23T19:30:00Z 2026-11-23 - 0 list
 reminder G open 2026-11-30T19:30:00Z 2026-11-30 - 0 list
@@ -417,6 +419,102 @@ reminder D open 2026-12-31 2026-12-31 - none list
 reminder J open 2027-01-31 2027-01-31 - none list
 EOF
 
+# --- round 8 -------------------------------------------------------------------------------------------
+# #1: a date-only due moved by a day is an ordinary replacement (lead_days 1->2, 2->1, 1->0).
+ld() { p --cadence monthly --day 21 --lead-days "$1" --from "$NOW"; }
+D21="reminder A open DA 2026-11-21 - none list
+reminder B open DB 2026-12-21 - none list
+reminder C open DC 2027-01-21 - none list"
+d21() { printf '%s\n' "$D21" | sed "s/DA/$1/; s/DB/$2/; s/DC/$3/"; }
+check "lead_days 1 to 2: replaced, no block" "action delete A
+action delete B
+action delete C
+action create 1 due=2026-11-19" "same-due|replace-blocked" -- "${A[@]}" --replace <<EOF
+$(ld 2)
+$(d21 2026-11-20 2026-12-20 2027-01-20)
+EOF
+check "lead_days 2 to 1: replaced, no block" "action delete A
+action create 1 due=2026-11-20" "same-due|replace-blocked" -- "${A[@]}" --replace <<EOF
+$(ld 1)
+$(d21 2026-11-19 2026-12-19 2027-01-19)
+EOF
+check "lead_days 1 to 0: replaced, no block" "action delete A
+action create 1 due=2026-11-21" "same-due|replace-blocked" -- "${A[@]}" --replace <<EOF
+$(ld 0)
+$(d21 2026-11-20 2026-12-20 2027-01-20)
+EOF
+# #2: a replacement that keeps every key (notify_at added) honours per_period_through: the period the user deleted
+# stays missing instead of being created again.
+check "replace with the keys kept: a deleted period stays missing" "action realarm A 1 due=2026-11-10T03:30:00+08:00 alarms=0,330
+action missing 2
+action realarm C 3 due=2026-11-24T03:30:00+08:00 alarms=0,330
+action create 5 due=2026-12-08T03:30:00+08:00" "action create 2 |keys-changed|replace-blocked" -- "${A[@]}" --replace --through 2026-11-30 <<EOF
+$MONN
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list
+reminder C open 2026-11-23T19:30:00Z 2026-11-23 - 0 list
+reminder D open 2026-11-30T19:30:00Z 2026-11-30 - 0 list
+EOF
+check "replace with the keys changed: the old through is not read" "action keys-changed
+action create 1 due=2026-11-12T03:30:00+08:00" "action missing" -- "${A[@]}" --replace --through 2026-11-30 <<EOF
+$WED
+reminder S open 2026-11-16T03:30:00+08:00 2026-11-15 - 0 list
+EOF
+# The calibrated MEDIUM: a schedule change with no reminder left open. The old through names a key the new schedule
+# does not have, so it is stale: the new periods are created, not reported missing. The skill lists 125 days and
+# creates 90 (--create-days), so a high-water mark written under the old dates lies inside the listed periods.
+M28W="$(bash "$DATES" --cadence monthly --day 28 --previous --horizon-days 125 --local-tz "$TPE" --from "$NOW")"
+check "day 31 to 28, every reminder completed: created, not missing" "action keys-changed
+action create 1 due=2026-11-28
+action create 2 due=2026-12-28
+action create 3 due=2027-01-28
+action through 2027-01-28" "action missing|action create 4 " -- "${A[@]}" --create-days 90 --through 2027-01-31 <<EOF
+$M28W
+reminder N completed 2026-10-31 2026-10-31 - - list
+EOF
+check "day 31 to 28, every reminder cleaned up: created, not missing" "action keys-changed
+action create 1 due=2026-11-28
+action through 2027-01-28" "action missing" -- "${A[@]}" --create-days 90 --through 2027-01-31 <<EOF
+$M28W
+EOF
+check "a through the schedule still has is not stale" "action missing 1" "keys-changed|action create 1 " -- "${A[@]}" --through 2026-12-31 <<EOF
+$M31
+reminder D open 2026-12-31 2026-12-31 - none list
+EOF
+# #3: a past-record in another list stays, like a record: no block, nothing written.
+M30="$(p --cadence monthly --day 30 --from "$NOW")"
+check "replace: a past-record in another list stays and does not block" "action record OLD
+action delete N" "replace-blocked|outside-list|mark-record OLD|action delete OLD" -- "${A[@]}" --replace <<EOF
+$M30
+reminder OLD open 2026-09-30 2026-09-30 - none other
+reminder N open 2026-11-29 2026-11-29 - none list
+EOF
+# #5: only local_tz moves west for a date-only weekly quota. The helper judges a wider window than the one that is
+# created (--create-days), so the last reminder is matched, not off schedule, and nothing is offered.
+LA=America/Los_Angeles
+SAT13="$(for k in 11-14 11-21 11-28 12-05 12-12 12-19 12-26; do echo "reminder R$k open 2026-$k 2026-$k - none list"; done
+for k in 01-02 01-09 01-16 01-23 01-30 02-06; do echo "reminder R$k open 2027-$k 2027-$k - none list"; done)"
+check "local_tz moved west: the last reminder is still on its period" "action keep R02-06 13 due=2027-02-06" "off-schedule|repair-needed|action create" -- --now "$NOW" --local-tz "$LA" --create-days 90 <<EOF
+$(bash "$DATES" --cadence weekly --weekday 7 --previous --horizon-days 125 --local-tz "$LA" --from "$NOW")
+$SAT13
+EOF
+check "create-days limits creates, not judging" "action create 1 due=2026-11-14
+action create 13 due=2027-02-06" "action create 14 |action create 17 " -- --now "$NOW" --local-tz "$TPE" --create-days 90 <<EOF
+$(bash "$DATES" --cadence weekly --weekday 7 --previous --horizon-days 125 --local-tz "$TPE" --from "$NOW")
+EOF
+# INFO: one period with a reminder in the list and one in another list gives the same plan whatever the ids.
+check "in list and in another list, in-list id first" "action list A two-open-reminders
+action hold 1 outside-list" "action keep A" -- "${A[@]}" <<EOF
+$M31
+reminder A open 2026-11-30 2026-11-30 - none list
+reminder B open 2026-11-30 2026-11-30 - none other
+EOF
+check "in list and in another list, in-list id last" "action list B two-open-reminders
+action hold 1 outside-list" "action keep B" -- "${A[@]}" <<EOF
+$M31
+reminder A open 2026-11-30 2026-11-30 - none other
+reminder B open 2026-11-30 2026-11-30 - none list
+EOF
+
 # --- bad input -----------------------------------------------------------------------------------------
 err() {
   local name="$1" want="$2" input="$3"; shift 3
@@ -450,6 +548,7 @@ reminder A open 2026-11-30 2026-11-30 - , list" --now "$NOW"
 err "the date helper stopped before its rule line (round 7 #4)" "no rule line" "$(printf '%s\n' "$M31" | grep -v '^rule ')" --now "$NOW"
 err "a period after the rule line" "after the rule line" "$M31
 $(printf '%s\n' "$M31" | grep '^period 3 ')" --now "$NOW"
+err "bad --create-days" "--create-days must be" "$M31" --now "$NOW" --create-days 0
 err "--delete-passed without --replace" "only read with --replace" "$M31" --now "$NOW" --delete-passed A
 err "--delete-passed for a reminder that is not due-passed" "does not list that reminder as due-passed" "$M31
 reminder N open 2026-11-30 2026-11-30 - none list" --now "$NOW" --local-tz "$TPE" --replace --delete-passed N

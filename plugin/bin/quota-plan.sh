@@ -4,10 +4,15 @@
 # carrying `Period: <key>`, and a record is written down as `Record: <key>`, never inferred from a date.
 # Reads stdin, writes nothing anywhere else.
 #
-# Usage: quota-plan.sh --now WHEN [--local-tz ZONE] [--through KEY] [--replace [--delete-passed ID]...] < input
+# Usage: quota-plan.sh --now WHEN [--local-tz ZONE] [--through KEY] [--create-days N] [--replace [--delete-passed ID]...]
 #   --now       the reference time: the same value given to quota-dates.sh as --from (epoch or ISO with offset)
 #   --local-tz  the entry's local_tz: the zone of a date-only due's end of day, and of a due given without an offset
-#   --through   the entry's per_period_through: the highest period the skill created under the current schedule
+#   --through   the entry's per_period_through: the highest period the skill created under the current schedule.
+#               A value the current schedule does not produce (inside the listed periods, not one of them) was
+#               written under other dates: it is ignored, and `keys-changed` is printed.
+#   --create-days  create only the periods whose due is within N days of --now (period 1 always). The helper may
+#               list more (a wider --horizon-days): those periods are judged, never created, so a reminder on a
+#               period just past the creation window is not taken for an off-schedule one.
 #   --replace   a schedule change: keep the records and the reminders already on the new dates, delete the
 #               other open reminders, create the rest of the new schedule
 #   --delete-passed ID   with --replace, after the user's yes: delete this due-passed reminder and create its
@@ -21,7 +26,8 @@
 #     <period-key>, <record-key>  the `Period:` and `Record:` lines' keys, real days YYYY-MM-DD, or -
 #     <alarms>     the relative alarms read back, minutes before, digits joined by `,` (`330,0`), `none`, or `-`
 #     list|other   whether it is in the quota's list or in another list (found by the marker search)
-#   Each id appears once: a reminder ticked between the two searches appears twice, and the input is refused.
+#   Each id appears once: the open reminders are searched first, so one ticked between the two searches appears
+#   twice, and the input is refused.
 # Every class is judged by the CURRENT (new) schedule only. A record is a reminder whose period reset under it
 # (its key is period 0's or earlier) or one that carries `Record:`; nothing else is ever one.
 # Output lines:
@@ -31,27 +37,31 @@
 #   without --replace (list, sync): nothing is deleted or moved
 #     action keep <id> <n> due=<D> | rewrite <id> <n> due=<D> | create <n> due=<D> | missing <n> |
 #            hold <n> outside-list|record-on-open-period | list <id> <why> | repair-needed dates-changed |
-#            through <key> (only when it is above --through)
+#            keys-changed | through <key> (only when it is above --through, or --through was ignored)
 #   with --replace (a schedule change)
 #     action record <id> | mark-record <id> <key> | keep <id> <n> due=<D> | realarm <id> <n> due=<D> alarms=<A> |
-#            delete <id> | create <n> due=<D> | used <n> | list <id> <why> | replace-blocked <why> | through <key>
-#   <why> (closed list): two-open-reminders, period-used, outside-list, no-period, due-passed, record-on-open-period,
-#            same-due. A due-passed line also carries due=<the reminder's due> resets=<the reset that makes it a record>.
+#            delete <id> | create <n> due=<D> | missing <n> | used <n> | list <id> <why> | replace-blocked <why> |
+#            keys-changed | through <key>
+#   keys-changed: the period keys changed (an open reminder is off schedule, or --through is stale); --through is
+#            not read, and per_period_through is replaced, not raised. Without it, --through holds: a period not
+#            after it and without a reminder is `missing`, in a replacement as in sync.
+#   <why> (closed list): two-open-reminders, period-used, outside-list, no-period, due-passed, record-on-open-period.
+#            A due-passed line also carries due=<the reminder's due> resets=<the reset that makes it a record>.
 #   realarm: the reminder's due is its period's and only its alarms differ; <A> is the minutes to write (`none`: [])
 # Exit codes: 0 ok, 2 bad input (message on stderr).
 set -u
 set -f                       # fields come from user-editable notes: never glob-expand them
 die() { echo "quota-plan.sh: $*" >&2; exit 2; }
 
-now="" local_tz="" through="" replace=0
+now="" local_tz="" through="" replace=0 create_days=""
 DELP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --replace) replace=1; shift; continue ;;
-    --now|--local-tz|--through|--delete-passed) [ $# -ge 2 ] || die "missing value for $1" ;;
+    --now|--local-tz|--through|--create-days|--delete-passed) [ $# -ge 2 ] || die "missing value for $1" ;;
     *) die "unknown option $1" ;;
   esac
-  case "$1" in --now) now="$2" ;; --local-tz) local_tz="$2" ;; --through) through="$2" ;;
+  case "$1" in --now) now="$2" ;; --local-tz) local_tz="$2" ;; --through) through="$2" ;; --create-days) create_days="$2" ;;
     --delete-passed) case "$2" in ''|*[!A-Za-z0-9:/._=-]*) die "bad --delete-passed id: $2" ;; esac; DELP+=("$2") ;;
   esac
   shift 2
@@ -63,6 +73,8 @@ is_day() {  # YYYY-MM-DD and a real calendar day (2026-02-30, 0000-00-00 and 999
   [ "$(date -j -f "%Y-%m-%d" "$1" +%Y-%m-%d 2>/dev/null)" = "$1" ]
 }
 [ -z "$through" ] || is_day "$through" || die "--through must be YYYY-MM-DD"
+case "$create_days" in '') ;; *[!0-9]*|0*) die "--create-days must be a whole number from 1" ;; esac
+[ "${#create_days}" -le 4 ] || die "--create-days must be a whole number from 1"
 if [ -n "$local_tz" ]; then
   case "$local_tz" in *..*|/*) die "unknown --local-tz" ;; esac
   [ "$(head -c 4 "/usr/share/zoneinfo/$local_tz" 2>/dev/null)" = "TZif" ] || die "unknown --local-tz: $local_tz"
@@ -151,7 +163,9 @@ if [ "$nr" -gt 0 ]; then
   ORDER=($(for ((r = 0; r < nr; r++)); do printf '%s %s %s\n' "${R_DUE[$r]}" "${R_ID[$r]}" "$r"; done | sort -k1,1n -k2,2 | awk '{print $3}'))
 fi
 idx_of_key() { local i; for ((i = 0; i < np; i++)); do [ "${N_KEY[$i]}" = "$1" ] && { echo "$i"; return; }; done; }
-is_donly() { case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) return 0 ;; esac; return 1; }
+in_window() {  # period $1 is created only within --create-days (period 1 always)
+  [ -z "$create_days" ] || [ "$1" -le 1 ] || [ "${N_DUE[$1]}" -le $(( now_e + create_days * 86400 )) ]
+}
 # The open periods (n >= 1) a record holds: the period of its Record: key and of its Period: key, when still open.
 record_holds() {
   local r="$1" k t seen=" "
@@ -202,6 +216,12 @@ used_list=""
 for ((i = 0; i < np; i++)); do [ "${USED[$i]}" = 1 ] && used_list="$used_list $i"; done
 echo "used${used_list:- none}"
 
+# per_period_through is a key of the schedule that wrote it. One inside the listed periods that is not one of them
+# was written under other dates: the keys changed, even with no reminder left open (#499 r8).
+kc=0
+if [ -n "$through" ] && [[ ! "$through" < "${N_KEY[0]}" ]] && [[ ! "$through" > "${N_KEY[$((np - 1))]}" ]] \
+   && [ -z "$(idx_of_key "$through")" ]; then kc=1; fi
+
 # --- --replace: keep the records and what already matches, delete the rest, create the new schedule -----------
 # Every decision is by the NEW schedule. A record is never deleted or offered for deletion; a reminder whose
 # period has not reset under the new dates is never made a record (no mark-record on an open period).
@@ -227,12 +247,15 @@ if [ "$replace" -eq 1 ]; then
     elif [ -n "$t" ] && [ "${R_DUE[$r]}" -lt "${N_RESET[$t]}" ]; then W[$r]=1; fi
     [ -z "$t" ] || WRS[$r]="${N_RTXT[$t]}"
   done
-  ACT=() KEPT=" " DELP_USED=" " DELS=()
+  ACT=() KEPT=" " DELP_USED=" "
   for r in "${ORDER[@]+"${ORDER[@]}"}"; do
     [ "${R_ST[$r]}" = open ] || continue
     id="${R_ID[$r]}"
-    # A record stays wherever it is: never written but for its Record: line, so another list does not block.
+    # A record stays wherever it is: never written but for its Record: line, so another list does not block. A
+    # past-record in another list stays too, unwritten: the skill never writes there (#499 r8 #3).
     if [ "${R_CLASS[$r]}" = record ]; then ACT+=("action record $id"); continue; fi   # its open periods: below
+    if [ "${R_CLASS[$r]}" = past-record ] && [ "${R_OUT[$r]}" = other ]; then ACT+=("action record $id"); continue; fi
+    [ "${R_CLASS[$r]}" = off-schedule ] && kc=1
     if [ "${R_OUT[$r]}" = other ]; then block "$id" outside-list; continue; fi
     case "${R_CLASS[$r]}" in
       past-record) ACT+=("action mark-record $id ${R_KEY[$r]}"); continue ;;
@@ -250,9 +273,9 @@ if [ "$replace" -eq 1 ]; then
     esac
     # off-schedule, or matched with another due: its period has not reset under the new dates
     if [ "${W[$r]}" = 1 ] && [ "$anyp" -eq 1 ]; then
-      if in_delp "$id"; then ACT+=("action delete $id"); DELS+=("$r"); DELP_USED="$DELP_USED$id "
+      if in_delp "$id"; then ACT+=("action delete $id"); DELP_USED="$DELP_USED$id "
       else block "$id" due-passed "due=${R_DTXT[$r]} resets=${WRS[$r]}"; fi   # delete after a yes, or wait
-    else ACT+=("action delete $id"); DELS+=("$r"); fi
+    else ACT+=("action delete $id"); fi
   done
   for x in "${DELP[@]+"${DELP[@]}"}"; do
     [[ "$DELP_USED" == *" $x "* ]] || die "--delete-passed $x: the plan does not list that reminder as due-passed"
@@ -267,30 +290,23 @@ if [ "$replace" -eq 1 ]; then
       HELD="$HELD$t "; block "${R_ID[$r]}" record-on-open-period
     done
   done
-  last="" CRE=()
+  # When the keys did not change (only dues or alarms did), per_period_through still describes these periods: a
+  # period the user deleted stays missing (#499 r8 #2). When they changed, it is not read.
+  thr="$through"; [ "$kc" -eq 0 ] || thr=""
+  last=""
   for ((i = 1; i < np; i++)); do
     if [ "${USED[$i]}" = 1 ]; then ACT+=("action used $i"); last="${N_KEY[$i]}"; continue; fi
     [[ "$HELD" == *" $i "* ]] && continue
+    if [[ "$KEPT" == *" $i "* ]]; then last="${N_KEY[$i]}"; continue; fi
+    if [ -n "$thr" ] && [[ ! "${N_KEY[$i]}" > "$thr" ]]; then ACT+=("action missing $i"); continue; fi
+    in_window "$i" || continue
     last="${N_KEY[$i]}"
-    [[ "$KEPT" == *" $i "* ]] && continue
-    ACT+=("action create $i due=${N_TXT[$i]}"); CRE+=("$i")
-  done
-  # create_reminder skips a create whose title and due match an open reminder (due within 60 s; a date-only due is
-  # 00:00 of its day against a timed one) and answers with that reminder's id: a later delete of it would leave the
-  # period with nothing. Such a pair waits instead (#499 r7 #1, #10).
-  near() { local d=$(( $1 - $2 )); [ "${d#-}" -lt 60 ]; }
-  SAME=" "
-  for i in "${CRE[@]+"${CRE[@]}"}"; do
-    for r in "${DELS[@]+"${DELS[@]}"}"; do
-      a="${R_DUE[$r]}" b="${N_DUE[$i]}"
-      if near "$a" "$b" || { is_donly "${R_DTXT[$r]}" && near "$((a - 86399))" "$b"; } \
-         || { is_donly "${N_TXT[$i]}" && near "$a" "$((b - 86399))"; }; then
-        [[ "$SAME" == *" $r "* ]] || { SAME="$SAME$r "; block "${R_ID[$r]}" same-due; }
-      fi
-    done
+    ACT+=("action create $i due=${N_TXT[$i]}")
   done
   if [ -n "$blocked" ]; then echo "action replace-blocked $blocked"; exit 0; fi
   for a in "${ACT[@]+"${ACT[@]}"}"; do echo "$a"; done
+  [ "$kc" -eq 0 ] || echo "action keys-changed"
+  if [ -n "$thr" ] && { [ -z "$last" ] || [[ "$thr" > "$last" ]]; }; then last="$thr"; fi
   [ -z "$last" ] || echo "action through $last"
   exit 0
 fi
@@ -316,7 +332,10 @@ for r in "${ORDER[@]+"${ORDER[@]}"}"; do
   esac
 done
 if [ "$changed" -eq 1 ]; then echo "action repair-needed dates-changed"; exit 0; fi
+if [ "$kc" -eq 1 ]; then echo "action keys-changed"; through=""; fi
 
+# Holds first (records in any list, reminders in another list), then the quota's list, so the plan does not
+# depend on the order of the ids (#499 r8).
 TAKEN=" "
 for r in "${ORDER[@]+"${ORDER[@]}"}"; do
   [ "${R_ST[$r]}" = open ] || continue
@@ -327,11 +346,10 @@ for r in "${ORDER[@]+"${ORDER[@]}"}"; do
     [ "$h" -eq 0 ] || echo "action list ${R_ID[$r]} record-on-open-period"
     continue
   fi
-  if [ "${R_OUT[$r]}" = other ]; then
-    [ "${R_P[$r]}" != "-" ] && TAKEN="$TAKEN${R_P[$r]}:hold "
-    continue
-  fi
-  [ "${R_CLASS[$r]}" = matched ] || continue
+  [ "${R_OUT[$r]}" = other ] && [ "${R_P[$r]}" != "-" ] && TAKEN="$TAKEN${R_P[$r]}:hold "
+done
+for r in "${ORDER[@]+"${ORDER[@]}"}"; do
+  [ "${R_ST[$r]}" = open ] && [ "${R_OUT[$r]}" = list ] && [ "${R_CLASS[$r]}" = matched ] || continue
   own="${R_P[$r]}"
   if [ "${USED[$own]}" = 1 ]; then echo "action list ${R_ID[$r]} period-used"; continue; fi
   if [[ "$TAKEN" == *" $own:keep "* ]] || [[ "$TAKEN" == *" $own:hold "* ]]; then
@@ -347,6 +365,7 @@ for ((t = 1; t < np; t++)); do
   [[ "$TAKEN" == *" $t:keep "* ]] && { last="${N_KEY[$t]}"; continue; }
   if [[ "$TAKEN" == *" $t:rec "* ]]; then echo "action hold $t record-on-open-period"; continue; fi
   if [ -n "$through" ] && [[ ! "${N_KEY[$t]}" > "$through" ]]; then echo "action missing $t"; continue; fi
+  in_window "$t" || continue
   echo "action create $t due=${N_TXT[$t]}"; last="${N_KEY[$t]}"
 done
 if [ -n "$last" ] && { [ -z "$through" ] || [[ "$last" > "$through" ]]; }; then echo "action through $last"; fi
