@@ -88,17 +88,11 @@ enum DeletedOccurrenceCheck {
         if observedSlots.contains(where: { $0.timeIntervalSince(firstStart) > -1 && $0 <= scannedTo && !isExpected($0) }) {
             return .unknown
         }
-        // Round 3 (MEDIUM): an end date before a slot on the end's own day (a date-only end read as
-        // 00:00) is where a store counting the end by day keeps one occurrence the expander drops; a
-        // deletion of that occurrence would look like nothing. Unknown.
-        if let end = rules[0].endDate, let dayEnd = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end)) {
-            var byDay = rules[0]
-            byDay = Rule(frequency: byDay.frequency, interval: byDay.interval, daysOfWeek: byDay.daysOfWeek,
-                         daysOfMonth: byDay.daysOfMonth, endDate: dayEnd.addingTimeInterval(-1),
-                         occurrenceCount: byDay.occurrenceCount, hasOtherParts: byDay.hasOtherParts)
-            guard let wider = expectedSlots(of: byDay, firstStart: firstStart, until: scannedTo, calendar: calendar),
-                  wider.count == expected.count else { return .unknown }
-        }
+        // The rule's end is a point in time, inclusive: a slot at or before it is an occurrence, one
+        // after it is not (`expectedSlots`). Measured on iCloud (2026-11-09, PR #505 round 3): a date-only
+        // end (00:00) and 00:00 dropped a 10:00 occurrence on the end's day, an end at the slot or at 23:59
+        // kept it, a New York series read from a Taipei host and an all-day series followed the same rule,
+        // so no end shape is refused for its own sake.
         func held(_ slot: Date) -> Bool { observedSlots.contains { UndoPostState.sameInstant($0, slot) } }
         func heldUnedited(_ slot: Date) -> Bool { uneditedSlots.contains { UndoPostState.sameInstant($0, slot) } }
         let reached = reachedFrom.map { from in expected.filter { $0.timeIntervalSince(from) > -1 } } ?? expected
@@ -248,7 +242,7 @@ enum DeletedOccurrenceCheck {
         return "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach), and changing the start, end, all_day or time zone of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. A title, notes or location change keeps them. \(route) Nothing was written."
     }
 
-    static let unknownReason = "This write changes the start, end, all_day or time zone of more than one occurrence of a series, which brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: the series could not be listed; its first slot cannot be shown (it is read through its first remaining occurrence because its first occurrence was deleted, or through an occurrence edited on its own; no occurrence, or more than one, is listed where the series shows its first; its recorded first slot disagrees with that occurrence's original slot and with its shown start; or a listed occurrence's slot lies before it); a listed occurrence falls where the rule gives none, or the rule's end falls on a day it gives an occurrence after that end; an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time; its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year); or the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days). A title, notes or location change is not affected. Nothing was written."
+    static let unknownReason = "This write changes the start, end, all_day or time zone of more than one occurrence of a series, which brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: the series could not be listed; its first slot cannot be shown (it is read through its first remaining occurrence because its first occurrence was deleted, or through an occurrence edited on its own; no occurrence, or more than one, is listed where the series shows its first; its recorded first slot disagrees with that occurrence's original slot and with its shown start; or a listed occurrence's slot lies before it); a listed occurrence falls where the rule gives none; an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time; its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year); or the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days). A title, notes or location change is not affected. Nothing was written."
 }
 
 extension DeletedOccurrenceCheck.Rule {

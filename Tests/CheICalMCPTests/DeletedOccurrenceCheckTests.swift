@@ -161,7 +161,7 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
                      "days of the month on a daily, weekly or yearly rule", "an interval below 1", "a day of the month after the 28th",
                      "a count whose last occurrence", "an occurrence edited on its own without its original slot",
                      "more than one, is listed where the series shows its first", "its recorded first slot disagrees",
-                     "a listed occurrence falls where the rule gives none", "a day it gives an occurrence after that end"] {
+                     "a listed occurrence falls where the rule gives none"] {
             XCTAssertTrue(DeletedOccurrenceCheck.unknownReason.contains(part), part)
         }
     }
@@ -244,12 +244,29 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
         XCTAssertEqual(verdict(observed: ["2026-12-07", "2026-12-14", "2026-12-16", "2026-12-21", "2026-12-28", "2027-01-04"]), .unknown)
     }
 
-    /// Round 3 (MEDIUM): the rule ends at 00:00 on the 5th occurrence's day and the 5th was deleted;
-    /// a store counting the end by day keeps that occurrence, so it cannot be told from no occurrence.
-    func testAnEndOnAnOccurrenceDayIsUnknown() {
+    /// Round 3, measured on iCloud (2026-11-09): the rule's end is a point in time, inclusive. Weekly
+    /// 10:00 from 2026-12-07: an end at 00:00 on 2027-01-04 (a date-only end_date) gives 4 occurrences,
+    /// an end at 10:00 or 23:59 that day gives 5; a New York series ended at 00:00 New York gives 4;
+    /// an all-day series whose stored end is 2027-01-05 07:59:59 Taipei gives 5.
+    func testTheRuleEndIsAnInclusiveInstantAsMeasured() throws {
+        let first = at("2026-12-07T10:00:00"), until = at("2027-12-31T00:00:00")
+        func count(_ end: Date, from: Date? = nil, calendar cal: Calendar? = nil) throws -> Int {
+            try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: weekly(end: end), firstStart: from ?? first,
+                                                               until: until, calendar: cal ?? calendar)).count
+        }
+        XCTAssertEqual(try count(at("2027-01-04T00:00:00")), 4, "date-only end_date, and T00:00")
+        XCTAssertEqual(try count(at("2027-01-04T10:00:00")), 5, "an end at the occurrence's own time")
+        XCTAssertEqual(try count(at("2027-01-04T23:59:00")), 5, "an end at 23:59")
+        let ny = TimeZone(identifier: "America/New_York")!
+        let nyFirst = Calendar.gregorian(in: ny).date(from: DateComponents(year: 2026, month: 12, day: 7, hour: 10))!
+        let nyEnd = Calendar.gregorian(in: ny).date(from: DateComponents(year: 2027, month: 1, day: 4))!
+        XCTAssertEqual(try count(nyEnd, from: nyFirst, calendar: Calendar.gregorian(in: ny)), 4, "New York, read from a Taipei host")
+        XCTAssertEqual(try count(at("2027-01-05T07:59:59"), from: at("2026-12-07T00:00:00")), 5, "all-day, end of the last day")
+        // An end on an occurrence's day is checked like any other: none without a deletion, and the
+        // 5th deleted under an end at 23:59 is found.
         let four = ["2026-12-07", "2026-12-14", "2026-12-21", "2026-12-28"]
-        XCTAssertEqual(verdict(observed: four, rules: [weekly(end: at("2027-01-04T00:00:00"))]), .unknown)
-        XCTAssertEqual(verdict(observed: four, rules: [weekly(end: at("2027-01-01T00:00:00"))]), .none, "an end on a day without an occurrence")
+        XCTAssertEqual(verdict(observed: four, rules: [weekly(end: at("2027-01-04T00:00:00"))]), .none)
+        XCTAssertEqual(verdict(observed: four, rules: [weekly(end: at("2027-01-04T23:59:00"))]), .deleted(blocked: .nothingAfter))
     }
 
     /// Round 3 (LOW 6): only an occurrence not edited on its own after the last deletion is a starting point.
