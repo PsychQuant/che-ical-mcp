@@ -52,16 +52,25 @@ enum EventMovePolicy {
         hasRules || DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: isDetached)
     }
 
+    /// The argument contradictions `plan` refuses first. PR #505 round 5 (INFO 6): `moveEvent` also asks
+    /// for them before the #503 listing, so a malformed call answers with its argument error.
+    static func argumentRefusal(isRecurring: Bool, span: Span, hasOccurrenceDate: Bool) -> String? {
+        if isRecurring, span == .all, hasOccurrenceDate {
+            // A date with span 'all' is a contradiction; moving the series would silently
+            // ignore it (verify #9).
+            return "occurrence_date was given with span 'all'. Use span 'this' to move that occurrence, or omit the date to move the whole series."
+        }
+        if isRecurring, span == .this, !hasOccurrenceDate {
+            return "For a recurring event, occurrence_date is required to move one occurrence; use span 'all' to move the whole series."
+        }
+        return nil
+    }
+
     static func plan(_ input: Input) -> Plan {
         // Argument contradictions first, so the answer does not depend on where the event
         // currently is (verify round 2 #1).
-        if input.isRecurring, input.span == .all, input.hasOccurrenceDate {
-            // A date with span 'all' is a contradiction; moving the series would silently
-            // ignore it (verify #9).
-            return .refuse("occurrence_date was given with span 'all'. Use span 'this' to move that occurrence, or omit the date to move the whole series.")
-        }
-        if input.isRecurring, input.span == .this, !input.hasOccurrenceDate {
-            return .refuse("For a recurring event, occurrence_date is required to move one occurrence; use span 'all' to move the whole series.")
+        if let refusal = argumentRefusal(isRecurring: input.isRecurring, span: input.span, hasOccurrenceDate: input.hasOccurrenceDate) {
+            return .refuse(refusal)
         }
         if input.alreadyInTarget { return .unchanged }
         guard input.isRecurring, input.span == .this else { return .inPlace }

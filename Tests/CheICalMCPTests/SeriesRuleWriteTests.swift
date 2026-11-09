@@ -484,7 +484,7 @@ final class SeriesRuleWriteTests: XCTestCase {
                     "if let reason = SeriesRuleWrite.startedRuleRefusal( recurrenceRule, stored: seriesRules, happened: happened, countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn, firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),",
                     "storedRuleUnwritable: SeriesRuleWrite.writableRule(seriesRules) == nil,",
                     "recurrenceIsStored: recurrenceRule.map { SeriesRuleWrite.isStoredRule($0, stored: seriesRules) } ?? false) {",
-                    "map { SeriesRuleWrite.StoredRule($0, startWeekday: startWeekday) }"] {
+                    "map { SeriesRuleWrite.StoredRule($0, startWeekday: seriesFirstSlotDay?.weekday) }"] {
             let range = try XCTUnwrap(flat.range(of: pin), pin)
             XCTAssertLessThan(range.lowerBound, firstWrite.lowerBound, pin)
         }
