@@ -70,7 +70,8 @@ import EventKit
 ///   broken by a lost connection to the calendar daemon might also leave a new store without
 ///   sources). They still describe how rare the branch is; on the restore path they still hold.
 ///
-/// Checked on device, iCloud only, in the host's time zone (+08:00), 2026-10-07 and 08. The commit
+/// Checked on device, iCloud only, in the host's time zone (+08:00), 2026-10-07 and 08 (Google: in the
+/// list of what was not covered, below). The commit
 /// failures were induced: an event was staged with `save(_:span:commit: false)` into a calendar
 /// deleted through a second store, so the store's next commit failed. No failure arising in normal
 /// use made a reminder save fail at commit time: a reminder saved into a list deleted elsewhere
@@ -169,7 +170,17 @@ import EventKit
 ///   carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
-/// - stores other than iCloud.
+/// - stores other than iCloud, with one measured (#294, 2026-11-05, a standalone probe beside the
+///   server). On a Google-hosted calendar, with the calendar deleted through Google and the probe
+///   waiting 305 seconds for the deletion to reach EventKit, a new event and a new recurring event
+///   that failed at commit (EKCADErrorDomain 1010) were not written by a later save, one run each.
+///   Removing a failed recurring event with `remove(span: .thisEvent, commit: false)` made the next
+///   save fail with EKCADErrorDomain 1001 and lose what it wrote, as on iCloud (one run). A new store
+///   found a normally saved event in 10 of 10 runs; events do not go through this check. The source
+///   refuses a new event calendar (EKErrorDomain 17), and the refused one was not written later;
+///   that is not a NewObjectSave path. The reminder and reminder-list paths cannot run on that
+///   source: it refuses a new reminder list (EKErrorDomain 24). Every failure was local: a refusal by
+///   Google's server was not produced. Exchange and local calendars: not measured (#294).
 ///
 /// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
 /// through another store after the list was looked up. `save(_:commit: true)` returned without an
