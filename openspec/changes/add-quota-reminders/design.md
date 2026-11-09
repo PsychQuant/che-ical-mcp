@@ -71,6 +71,12 @@ per-period 一次建 90 天：週額度約 13 則、月額度 3 則；`list` 在
 
 `per_period_through` 是寫下它的排程的鍵。落在列出的期別之間、卻不是其中一期的值，表示鍵變了（`keys-changed`）：即使沒有開著的提醒，也能看出排程改過，不再把新期別報成 missing。鍵沒變的取代（只改到期或鬧鐘）照常讀 `--through`，使用者刪掉的那一期仍是 missing，不在取代時重建。為了讓剛超過 90 天的合法期不被當成 off-schedule，helper 列 125 天、planner 只建立 90 天內的（`--create-days 90`）。其他清單裡的 past-record 比照紀錄，不擋取代、不寫入；搜尋固定先 open 後 completed；sync 先處理保留（hold）再處理本清單，結果不隨 id 順序改變。
 
+### 被取代的期別一定重建、排程簽章（verify 第 9 輪）
+
+第 8 輪讓鍵沒變的取代讀 `--through`，卻沒有區分「使用者刪掉的期別」和「這次取代要刪掉並重建的期別」：只改 lead、時間或同一天的 `reset_tz` 時，每一則都被刪、對應的期別卻印 `missing`，一則都不建。改成：這次計畫刪掉的那一則所在的期別一律重建，不看 `per_period_through`，也不看 90 天的建立範圍；`missing` 只給沒有開著的提醒帶過該鍵的期別。測試加上不變式：每個 `--replace` 案例都另以最大的 `--through` 跑一次，每一則刪除都要在同一期有 create、keep 或 realarm。
+
+用 `per_period_through` 推斷排程是否改過，漏掉月底 clamp、超出列出範圍、換 cadence 剛好撞上新鍵這幾種；完成的提醒的鍵也只是日期，換 cadence 後會把新排程的第一期當成已用。改成在 entry 存 `per_period_schedule`（cadence、日、時刻、重置時區，不含 lead 與 `notify_at`），與目前的 entry 不同時 planner 收到 `--schedule-changed`：不讀 `per_period_through`、完成的提醒不佔用新期別。沒有這個欄位的舊 entry 仍以 stale-through 的推斷為後備。#333 之前的 server 讀回的鬧鐘一律是空的，planner 報 `alarms-missing`，不再當成日期改了，sync 照常建立。
+
 ## Risks
 
 - 重複規則改變而到期日不在新規則的日子上時，#354 只量過每週規則；其他規則是預期行為。

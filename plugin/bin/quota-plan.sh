@@ -4,12 +4,16 @@
 # carrying `Period: <key>`, and a record is written down as `Record: <key>`, never inferred from a date.
 # Reads stdin, writes nothing anywhere else.
 #
-# Usage: quota-plan.sh --now WHEN [--local-tz ZONE] [--through KEY] [--create-days N] [--replace [--delete-passed ID]...]
+# Usage: quota-plan.sh --now WHEN [--local-tz ZONE] [--through KEY] [--create-days N] [--schedule-changed]
+#                      [--replace [--delete-passed ID]...] < input
 #   --now       the reference time: the same value given to quota-dates.sh as --from (epoch or ISO with offset)
 #   --local-tz  the entry's local_tz: the zone of a date-only due's end of day, and of a due given without an offset
 #   --through   the entry's per_period_through: the highest period the skill created under the current schedule.
 #               A value the current schedule does not produce (inside the listed periods, not one of them) was
 #               written under other dates: it is ignored, and `keys-changed` is printed.
+#   --schedule-changed  the entry's per_period_schedule (cadence, day, time and zone of the reset, written with
+#               per_period_through) differs from the entry: the keys changed. --through is not read, and a completed
+#               reminder does not use a period (its key is a date of the old schedule, not of this one).
 #   --create-days  create only the periods whose due is within N days of --now (period 1 always). The helper may
 #               list more (a wider --horizon-days): those periods are judged, never created, so a reminder on a
 #               period just past the creation window is not taken for an off-schedule one.
@@ -42,9 +46,12 @@
 #     action record <id> | mark-record <id> <key> | keep <id> <n> due=<D> | realarm <id> <n> due=<D> alarms=<A> |
 #            delete <id> | create <n> due=<D> | missing <n> | used <n> | list <id> <why> | replace-blocked <why> |
 #            keys-changed | through <key>
-#   keys-changed: the period keys changed (an open reminder is off schedule, or --through is stale); --through is
-#            not read, and per_period_through is replaced, not raised. Without it, --through holds: a period not
-#            after it and without a reminder is `missing`, in a replacement as in sync.
+#   keys-changed: the period keys changed (--schedule-changed, an open reminder off schedule, or a stale --through);
+#            --through is not read, and per_period_through is replaced, not raised. Without it, --through holds: a
+#            period not after it that no open reminder carried is `missing`, in a replacement as in sync. A period
+#            whose reminder a replacement deletes is always created again, past --through or --create-days.
+#   alarms-missing (list <id>, sync): on its period with its due, but no relative alarm read back where one was
+#            expected: a server before #333 drops them. Kept, not a date change; the next periods are created.
 #   <why> (closed list): two-open-reminders, period-used, outside-list, no-period, due-passed, record-on-open-period.
 #            A due-passed line also carries due=<the reminder's due> resets=<the reset that makes it a record>.
 #   realarm: the reminder's due is its period's and only its alarms differ; <A> is the minutes to write (`none`: [])
@@ -53,11 +60,12 @@ set -u
 set -f                       # fields come from user-editable notes: never glob-expand them
 die() { echo "quota-plan.sh: $*" >&2; exit 2; }
 
-now="" local_tz="" through="" replace=0 create_days=""
+now="" local_tz="" through="" replace=0 create_days="" sc=0
 DELP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --replace) replace=1; shift; continue ;;
+    --schedule-changed) sc=1; shift; continue ;;
     --now|--local-tz|--through|--create-days|--delete-passed) [ $# -ge 2 ] || die "missing value for $1" ;;
     *) die "unknown option $1" ;;
   esac
@@ -183,7 +191,7 @@ for r in "${ORDER[@]+"${ORDER[@]}"}"; do
   cls="" p="" dates="-"
   if [ "${R_ST[$r]}" = completed ]; then
     if [ "${R_KEY[$r]}" = "-" ]; then cls=older
-    else cls=history; p="$(idx_of_key "${R_KEY[$r]}")"; fi
+    else cls=history; [ "$sc" -eq 1 ] || p="$(idx_of_key "${R_KEY[$r]}")"; fi   # old dates use no new period
   elif [ "${R_REC[$r]}" != "-" ]; then
     cls=record                               # written down by a replacement: a record whatever its date
   elif [ "${R_KEY[$r]}" = "-" ]; then
@@ -218,7 +226,7 @@ echo "used${used_list:- none}"
 
 # per_period_through is a key of the schedule that wrote it. One inside the listed periods that is not one of them
 # was written under other dates: the keys changed, even with no reminder left open (#499 r8).
-kc=0
+kc="$sc"
 if [ -n "$through" ] && [[ ! "$through" < "${N_KEY[0]}" ]] && [[ ! "$through" > "${N_KEY[$((np - 1))]}" ]] \
    && [ -z "$(idx_of_key "$through")" ]; then kc=1; fi
 
@@ -247,7 +255,7 @@ if [ "$replace" -eq 1 ]; then
     elif [ -n "$t" ] && [ "${R_DUE[$r]}" -lt "${N_RESET[$t]}" ]; then W[$r]=1; fi
     [ -z "$t" ] || WRS[$r]="${N_RTXT[$t]}"
   done
-  ACT=() KEPT=" " DELP_USED=" "
+  ACT=() KEPT=" " DELP_USED=" " REPL=" "
   for r in "${ORDER[@]+"${ORDER[@]}"}"; do
     [ "${R_ST[$r]}" = open ] || continue
     id="${R_ID[$r]}"
@@ -271,7 +279,9 @@ if [ "$replace" -eq 1 ]; then
           continue
         fi ;;
     esac
-    # off-schedule, or matched with another due: its period has not reset under the new dates
+    # off-schedule, or matched with another due: its period has not reset under the new dates. A matched one's
+    # period is created again in this plan whatever --through says (#499 r9 HIGH): it is replaced, not deleted.
+    [ "${R_CLASS[$r]}" = matched ] && REPL="$REPL${R_P[$r]} "
     if [ "${W[$r]}" = 1 ] && [ "$anyp" -eq 1 ]; then
       if in_delp "$id"; then ACT+=("action delete $id"); DELP_USED="$DELP_USED$id "
       else block "$id" due-passed "due=${R_DTXT[$r]} resets=${WRS[$r]}"; fi   # delete after a yes, or wait
@@ -298,8 +308,10 @@ if [ "$replace" -eq 1 ]; then
     if [ "${USED[$i]}" = 1 ]; then ACT+=("action used $i"); last="${N_KEY[$i]}"; continue; fi
     [[ "$HELD" == *" $i "* ]] && continue
     if [[ "$KEPT" == *" $i "* ]]; then last="${N_KEY[$i]}"; continue; fi
-    if [ -n "$thr" ] && [[ ! "${N_KEY[$i]}" > "$thr" ]]; then ACT+=("action missing $i"); continue; fi
-    in_window "$i" || continue
+    if [[ "$REPL" != *" $i "* ]]; then
+      if [ -n "$thr" ] && [[ ! "${N_KEY[$i]}" > "$thr" ]]; then ACT+=("action missing $i"); continue; fi
+      in_window "$i" || continue
+    fi
     last="${N_KEY[$i]}"
     ACT+=("action create $i due=${N_TXT[$i]}")
   done
@@ -327,7 +339,12 @@ for r in "${ORDER[@]+"${ORDER[@]}"}"; do
   fi
   case "${R_CLASS[$r]}" in
     off-schedule) changed=1 ;;
-    matched) if [ "${R_DATES[$r]}" = differ ]; then changed=1; echo "action rewrite ${R_ID[$r]} ${R_P[$r]} due=${N_TXT[${R_P[$r]}]}"; fi ;;
+    matched)
+      [ "${R_DATES[$r]}" = differ ] || continue
+      if [ "${R_ALONLY[$r]}" = 1 ] && [ "${R_AL[$r]}" = none ]; then   # no alarm at all read back: an old server
+        echo "action list ${R_ID[$r]} alarms-missing"; continue
+      fi
+      changed=1; echo "action rewrite ${R_ID[$r]} ${R_P[$r]} due=${N_TXT[${R_P[$r]}]}" ;;
     no-period) echo "action list ${R_ID[$r]} no-period" ;;
   esac
 done

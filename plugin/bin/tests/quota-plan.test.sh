@@ -9,11 +9,38 @@ PLAN="$HERE/../quota-plan.sh"
 pass=0 fail=0
 TPE=Asia/Taipei
 
+# Round 9 invariant for every --replace plan: a reminder deleted from a listed period is replaced in the same plan
+# (a create, keep or realarm for that period), unless the plan is blocked. A reminder whose key is not a listed
+# period (off schedule) has no period of its own to replace.
+replaced_ok() {  # <input> <output>
+  local input="$1" out="$2" id key n
+  printf '%s\n' "$out" | grep -q '^action replace-blocked' && return 0
+  while read -r _ _ id; do
+    key="$(printf '%s\n' "$input" | awk -v id="$id" '$1 == "reminder" && $2 == id { print $5 }')"
+    n="$(printf '%s\n' "$input" | awk -v k="key=$key" '$1 == "period" && $3 == k { print $2 }')"
+    [ -n "$n" ] || continue
+    printf '%s\n' "$out" | grep -qE "^action (create $n |keep [^ ]+ $n |realarm [^ ]+ $n )" || {
+      echo "deleted $id on period $n is not replaced"; return 1; }
+  done < <(printf '%s\n' "$out" | grep '^action delete ')
+}
 # check <name> <expected lines> <unwanted substrings, |-separated, or ""> -- <plan args> ; stdin = input
+# A --replace case is also run with --through at the last listed key (unless it gives one), and both plans must
+# keep the invariant above: --through must never turn a replaced period into `missing` (round 9 HIGH).
 check() {
   local name="$1" want="$2" unwanted="$3"; shift 4
-  local got; got="$(bash "$PLAN" "$@" 2>&1)"
-  local ok=1 line u
+  local input; input="$(cat)"
+  local got; got="$(printf '%s\n' "$input" | bash "$PLAN" "$@" 2>&1)"
+  local ok=1 line u a has_r=0 has_t=0 why="" got2 last
+  for a in "$@"; do case "$a" in --replace) has_r=1 ;; --through) has_t=1 ;; esac; done
+  if [ "$has_r" -eq 1 ]; then
+    why="$(replaced_ok "$input" "$got")" || ok=0
+    if [ "$has_t" -eq 0 ]; then
+      last="$(printf '%s\n' "$input" | awk '$1 == "period" { k = $3 } END { sub("key=", "", k); print k }')"
+      if got2="$(printf '%s\n' "$input" | bash "$PLAN" "$@" --through "$last" 2>/dev/null)"; then
+        u="$(replaced_ok "$input" "$got2")" || { ok=0; why="$why with --through $last: $u"; }
+      fi
+    fi
+  fi
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     printf '%s\n' "$got" | grep -qxF -- "$line" || ok=0
@@ -23,7 +50,7 @@ check() {
     for u in "${us[@]}"; do printf '%s\n' "$got" | grep -qF -- "$u" && ok=0; done
   fi
   if [ "$ok" -eq 1 ]; then pass=$((pass + 1)); else
-    fail=$((fail + 1)); printf 'FAIL %s\n--- want\n%s\n--- not\n%s\n--- got\n%s\n' "$name" "$want" "$unwanted" "$got"; fi
+    fail=$((fail + 1)); printf 'FAIL %s %s\n--- want\n%s\n--- not\n%s\n--- got\n%s\n' "$name" "$why" "$want" "$unwanted" "$got"; fi
 }
 NOW=2026-11-09T10:00:00+08:00
 p() { bash "$DATES" "$@" --previous --horizon-days 90 --local-tz "$TPE"; }
@@ -513,6 +540,88 @@ action hold 1 outside-list" "action keep B" -- "${A[@]}" <<EOF
 $M31
 reminder A open 2026-11-30 2026-11-30 - none other
 reminder B open 2026-11-30 2026-11-30 - none list
+EOF
+
+# --- round 9 -------------------------------------------------------------------------------------------
+# HIGH: a due-only change with --through. The keys stay, so --through is read, but a period whose reminder this
+# plan deletes is created again: `missing` is only for a period no open reminder carried.
+check "lead_days 1 to 2 with --through: every deleted period is created" "action delete A
+action create 1 due=2026-11-19
+action create 2 due=2026-12-19
+action create 3 due=2027-01-19" "action missing|keys-changed" -- "${A[@]}" --replace --through 2027-01-21 <<EOF
+$(ld 2)
+$(d21 2026-11-20 2026-12-20 2027-01-20)
+EOF
+check "time change with --through: deleted periods are created" "action delete N
+action create 1 due=2026-11-30T20:00:00+08:00
+action missing 2
+action missing 3" "action create 2 |action create 3 " -- "${A[@]}" --replace --through 2027-01-31 <<EOF
+$M31T12
+reminder N open 2026-11-30 2026-11-30 - none list
+EOF
+PAR="$(p --cadence weekly --weekday 2 --time 20:00 --reset-tz Europe/Paris --from "$NOW")"
+check "reset_tz with the same reset day, with --through: replaced" "action delete A
+action create 1 due=2026-11-10T03:00:00+08:00
+action delete B
+action create 2 due=2026-11-17T03:00:00+08:00" "action missing 1|action missing 2|keys-changed" -- "${A[@]}" --replace --through 2026-11-16 <<EOF
+$PAR
+reminder A open 2026-11-09T20:00:00Z 2026-11-09 - 0 list
+reminder B open 2026-11-16T20:00:00Z 2026-11-16 - 0 list
+EOF
+check "--delete-passed with --through: the period is created again" "action delete A
+action create 1 due=2026-11-09T23:00:00+00:00" "action missing 1" -- --now "$E" --local-tz UTC --replace --delete-passed A --through 2026-11-09 <<EOF
+$(U --cadence weekly --weekday 2 --time 23:00)
+reminder A open 2026-11-09T20:00:00Z 2026-11-09 - 0 list
+EOF
+# INFO: a reminder deleted in the 90-125 day band is created again even when its new due is past --create-days.
+T10=2026-11-10T00:00:00Z
+check "a deleted reminder past --create-days is still replaced" "action delete R13
+action create 13 due=2027-02-08T20:00:00+00:00" "action create 14 " -- --now "$T10" --local-tz UTC --create-days 90 --replace <<EOF
+$(bash "$DATES" --cadence weekly --weekday 2 --time 20:00 --previous --horizon-days 125 --local-tz UTC --from "$T10")
+reminder R13 open 2027-02-07T20:00:00Z 2027-02-08 - 0 list
+EOF
+# MEDIUM: weekly Monday changed to monthly day 16, this week's reminder (key 2026-11-16) ticked. The entry's
+# per_period_schedule no longer matches (--schedule-changed): a completed reminder of the old cadence does not
+# use the new month.
+TH=2026-11-12T10:00:00+08:00
+M16="$(bash "$DATES" --cadence monthly --day 16 --previous --horizon-days 125 --local-tz "$TPE" --from "$TH")"
+check "cadence change: the old week's tick does not use the new month" "reminder W class=history period=- dates=- place=list
+used none
+action keys-changed
+action create 1 due=2026-11-16" "action used 1" -- --now "$TH" --local-tz "$TPE" --create-days 90 --schedule-changed --replace <<EOF
+$M16
+reminder W completed 2026-11-17T03:30:00+08:00 2026-11-16 - 330,0 list
+reminder X open 2026-11-24T03:30:00+08:00 2026-11-23 - 330,0 list
+EOF
+check "same schedule: a tick still uses its period" "used 1" "action create 1 " -- --now "$TH" --local-tz "$TPE" --create-days 90 <<EOF
+$M16
+reminder W completed 2026-11-16 2026-11-16 - - list
+EOF
+# LOWs: the schedule signature replaces the through inference. A month-end clamp that is a key of the new schedule,
+# and a through above the listed periods, are caught by --schedule-changed.
+D15=2026-12-15T10:00:00+08:00
+check "schedule changed, through a clamp key of the new schedule: created" "action keys-changed
+action create 1 due=2026-12-28
+action create 2 due=2027-01-28
+action create 3 due=2027-02-28" "action missing" -- --now "$D15" --local-tz "$TPE" --create-days 90 --schedule-changed --through 2027-02-28 <<EOF
+$(bash "$DATES" --cadence monthly --day 28 --previous --horizon-days 125 --local-tz "$TPE" --from "$D15")
+EOF
+check "schedule changed, through above the listed periods: created" "action keys-changed
+action create 1 due=2026-11-15" "action missing" -- "${A[@]}" --create-days 90 --schedule-changed --through 2027-12-31 <<EOF
+$(bash "$DATES" --cadence monthly --day 15 --previous --horizon-days 125 --local-tz "$TPE" --from "$NOW")
+EOF
+# LOW: a server before #333 reads every relative alarm back as none. Sync reports that instead of a date change,
+# and keeps creating the next periods.
+check "alarms read back as none: alarms-missing, not dates changed" "action list A alarms-missing
+action keep A 1 due=2026-11-10T03:30:00+08:00
+action create 2 due=2026-11-17T03:30:00+08:00" "repair-needed|action rewrite" -- "${A[@]}" <<EOF
+$MON0
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - none list
+EOF
+check "alarms that differ otherwise are still a date change" "action rewrite A 1 due=2026-11-10T03:30:00+08:00
+action repair-needed dates-changed" "alarms-missing" -- "${A[@]}" <<EOF
+$MON0
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 330,0 list
 EOF
 
 # --- bad input -----------------------------------------------------------------------------------------

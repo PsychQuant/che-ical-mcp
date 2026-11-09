@@ -223,7 +223,7 @@ final class QuotaSkillDocsTests: XCTestCase {
         assertOnce(skill, Self.skill, [
             "**first with `completed: false`, then with `completed: true`**",
             "**The planner judges 125 days and creates 90.**",
-            "| `keys-changed` | `per_period_through` is not a key of the current schedule",
+            "| `keys-changed` | the period keys changed although no reminder is left open to show it",
             "**No create can collide with a delete.**",
             "`outside-list`: an open reminder in another list that is neither a `record` nor a `past-record`.",
         ])
@@ -237,6 +237,27 @@ final class QuotaSkillDocsTests: XCTestCase {
             XCTAssertFalse(doc.1.contains("same-due"), "\(doc.0) still has the same-due guard")
         }
         for pinned in ["action keys-changed", "--create-days"] {
+            XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
+        }
+    }
+
+    /// #499 verify round 9: a replacement never empties a period it deletes from; the schedule signature, not the
+    /// high-water date, says the keys changed; an old server's missing alarms are not a date change.
+    func testRoundNineRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**A period whose reminder this replacement deletes is always created again**",
+            "**When the entry has `per_period_schedule` and it differs from the signature of the entry as it is now, the planner gets `--schedule-changed`**",
+            "the five the skill writes: `local_tz`, `mode`, `per_period_through`, `per_period_schedule`, `retiring`.",
+            "`alarms-missing` (on its period with its due",
+        ])
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, [
+            "A period whose open reminder the replacement deletes SHALL be created again in the same replacement",
+            "When `per_period_schedule` differs from the entry's schedule, the keys SHALL be taken as changed",
+        ])
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for pinned in ["--schedule-changed", "alarms-missing", "REPL"] {
             XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
         }
     }
