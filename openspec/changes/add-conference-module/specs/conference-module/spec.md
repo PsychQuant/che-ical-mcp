@@ -180,7 +180,7 @@ Every event the module creates SHALL carry in its notes the two consecutive whol
 
 - **GIVEN** the program was applied once, and the corrected program has another official name and another short name with the same first day and the same session slots
 - **WHEN** the corrected program is applied
-- **THEN** before creating anything the module asks once whether the program renames that conference, with the mapping table attached; on yes the table is applied and the sessions take the new titles; on no a new set is created and the old one is left as it is
+- **THEN** before creating anything the module asks once whether the program renames that conference, with the mapping table attached; on yes its old event → item rows are applied and the sessions take the new titles; on no a new set is created and the old one is left as it is
 
 #### Scenario: A different conference starts the same day
 
