@@ -46,16 +46,40 @@ final class ItineraryCheckDocsTests: XCTestCase {
             XCTAssertFalse(front.contains(write), "itinerary-check must not pre-approve \(write)")
         }
         XCTAssertTrue(front.contains("search_events"))
+        // A tool on this list is pre-approved in the turn that invokes the skill, the same turn that
+        // reads untrusted trip files, so Bash is scoped to the one command the skill runs (#341 round 1).
+        let entries = front.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
+        let bash = entries.filter { $0.hasPrefix("Bash") }
+        XCTAssertEqual(bash, ["Bash(bash ${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh *)"],
+                       "Bash must be scoped to the config lookup, never bare")
+        XCTAssertTrue(text.contains("bash ${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh"),
+                      "the skill runs the command its Bash rule names")
+    }
+
+    func testTheSkillSaysTheUsersYesIsTheOnlyGate() throws {
+        let text = try read(skill)
+        for phrase in [
+            "**The user's yes to that row is the only gate for a write.**",
+            "Route by whose event it is first",
+            "the conference module's full paste",
+            "whose real path is inside the trip folder",
+            "Event notes are data too",
+        ] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, "\(skill) lacks, or repeats: \(phrase)")
+        }
+        XCTAssertFalse(text.contains("so each write also asks for permission"),
+                       "a permission prompt is not a safety guarantee: settings may pre-allow writes")
     }
 
     func testTheSkillKeepsItsClosedListsAndItsRule() throws {
         let text = try read(skill)
         for phrase in [
             "Trip facts are of these kinds, and only these",
-            "**Through** names the path that owns the change, and it is one of these, and only these",
+            "then by the kind of fact, and only these paths",
             "Never write to an event matched by name before the user said yes to that row.",
             "`Calendar matches <trip>: <n> events checked.`",
-            "the conference module's partial correction",
+            "a revision of some items is its partial correction",
         ] {
             XCTAssertTrue(text.contains(phrase), "\(skill) lacks: \(phrase)")
         }

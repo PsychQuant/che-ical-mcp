@@ -62,7 +62,7 @@ The plugin automatically detects your MCP installation from these locations:
 
 A **SessionStart hook** checks if the MCP is properly installed and shows setup instructions if needed.
 
-A **trip-folder reminder** (#341): in a folder with a project-level `.claude/.ical/config.yaml`, when files change during a session (a receipt archived, a program revised, a booking saved), a Stop hook asks Claude once per session to run `itinerary-check`, which compares the calendar with what changed and changes nothing until you agree. It is on by default: existing project-level configs start getting the reminder after upgrading. Put `itinerary_check: off` in that config to turn it off, or `itinerary_ignore: [drafts/]` to skip files. The user-level `~/.claude/.ical/config.yaml` does not turn it on.
+A **trip-folder reminder** (#341): in a folder with a project-level `.claude/.ical/config.yaml`, when files change during a session (a receipt archived, a program revised, a booking saved), a Stop hook asks Claude once per interactive session (never in `claude -p`, Agent SDK or scheduled runs) to run `itinerary-check`, which compares the calendar with what changed and changes nothing until you agree. Your yes to its table is the only gate for a write: if your settings already allow calendar writes, nothing else stops one. It is on by default: existing project-level configs start getting the reminder after upgrading. Put `itinerary_check: off` in that config to turn it off, or `itinerary_ignore: [drafts/]` to skip files (sync clients such as Dropbox also change files; `.DS_Store` is always skipped). The user-level `~/.claude/.ical/config.yaml` does not turn it on.
 
 ## Included Components
 
