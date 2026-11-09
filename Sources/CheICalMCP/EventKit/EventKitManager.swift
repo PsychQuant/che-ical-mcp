@@ -1534,11 +1534,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let seriesID = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
             let verdict: DeletedOccurrenceCheck.Verdict = {
                 guard let series, let seriesID else { return .unknown }
-                return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: reach.anchor)
+                // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
+                // first slot (the own-id path reads the series' own object, not a stand-in).
+                return deletedOccurrenceVerdict(
+                    of: series, id: seriesID,
+                    reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
+                    viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn)
             }()
             switch verdict {
             case .none: break
-            case .deleted: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason)
+            case .deleted(let routeWorks): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(routeWorks: routeWorks))
             case .unknown: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason)
             }
         }

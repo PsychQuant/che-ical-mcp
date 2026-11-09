@@ -255,11 +255,12 @@ extension EventKitManager {
         return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)
     }
 
-    /// #503: whether an occurrence the write reaches (from `reachedFrom`, a rule slot) was deleted
-    /// on its own, from one listing of `series` over the ranges #442 lists, compared with the rule's
-    /// expected slots (`DeletedOccurrenceCheck`). `unknown` when the series cannot be listed, the
-    /// listing is empty, or it does not cover the series (fail closed, as #442 does).
-    func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?) -> DeletedOccurrenceCheck.Verdict {
+    /// #503: whether an occurrence the write reaches (from `reachedFrom`, a rule slot; nil for a whole-
+    /// series write) was deleted on its own, from one listing of `series` over the ranges #442 lists,
+    /// compared with the rule's expected slots (`DeletedOccurrenceCheck`). `unknown` when the series
+    /// cannot be listed, the listing is empty or does not cover the series (fail closed, as #442
+    /// does), or the first slot cannot be proven (PR #505 round 1: `viaStandIn`, a detached object).
+    func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?, viaStandIn: Bool) -> DeletedOccurrenceCheck.Verdict {
         guard let (_, candidates) = seriesOccurrences(of: series, id: id), let window = seriesScanWindow(of: series),
               let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
             return .unknown
@@ -267,16 +268,21 @@ extension EventKitManager {
         guard !candidates.isEmpty else { return .unknown }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
         let calendar = Calendar.gregorian(in: zone)
-        // The first slot as the rule gives it, not where an edit of the first occurrence moved it.
-        let firstStart: Date = series.occurrenceDate ?? series.startDate
-        let covers = DetachedOccurrenceSpan.coversWholeSeries(
-            rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-            firstStart: firstStart, scannedTo: listedTo, calendar: calendar)
+        let ridSlots = candidates.filter(\.slotFromRID).map { UndoPostState.ruleSlot(of: $0, isAllDay: series.isAllDay, zone: zone) }
+        let occurrenceDate: Date? = series.occurrenceDate
+        let firstStart = DeletedOccurrenceCheck.firstSlot(occurrenceDate: occurrenceDate, startDate: series.startDate,
+                                                          ridSlots: ridSlots, viaStandIn: viaStandIn, isDetached: series.isDetached)
+        let covers = firstStart.map {
+            DetachedOccurrenceSpan.coversWholeSeries(
+                rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
+                firstStart: $0, scannedTo: listedTo, calendar: calendar)
+        } ?? false
         return DeletedOccurrenceCheck.verdict(
             rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
             firstStart: firstStart,
             observedSlots: candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: series.isAllDay, zone: zone) },
-            reachedFrom: reachedFrom ?? firstStart, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
+            slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
+            reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to

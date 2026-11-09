@@ -17,6 +17,9 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertLessThan(applies.lowerBound, verdict.lowerBound)
         XCTAssertLessThan(verdict.lowerBound, first.lowerBound)
         XCTAssertTrue(update.contains("reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence"))
+        // PR #505 round 1: a whole-series write filters no slot, and a stand-in is passed as such.
+        XCTAssertTrue(update.contains("reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor)"))
+        XCTAssertTrue(update.contains("viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.unknownReason"))
     }
@@ -28,6 +31,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlot("), "the first slot is proven, never taken from a stand-in")
+        XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown }"), "an empty listing is not 'none deleted'")
     }
 }
