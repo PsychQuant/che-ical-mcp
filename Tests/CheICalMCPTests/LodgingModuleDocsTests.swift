@@ -35,8 +35,9 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "`forwarded: sender and date unverified`", "a forwarded sender and date are flagged"),
             (lodgingSpec, "SHALL show a sender or a date shown only in the body as unverified", "forged forward (spec)"),
             (lodging, "**Known limitation:** the module cannot verify who sent a mail.", "a header From: is not verified"),
-            (lodging, "`DMARC not pass`: the topmost `Authentication-Results` header, the one the user's own receiving server added", "only the receiver's own Authentication-Results counts (round 2 #4)"),
-            (lodgingSpec, "Only the topmost `Authentication-Results` header, added by the user's receiving server, SHALL count", "Authentication-Results (spec, round 2 #4)"),
+            (lodging, "`DMARC not pass`: the topmost `Authentication-Results` header does not show", "only the topmost Authentication-Results counts (round 2 #4)"),
+            (lodging, "a pass is a hint, never a reason to skip the question", "a planted header cannot skip a question (round 5 #4)"),
+            (lodgingSpec, "Only the topmost `Authentication-Results` header SHALL count for the DMARC flag", "Authentication-Results (spec, round 2 #4, round 5 #4)"),
             (lodging, "**A marker is not proof of who wrote it.**", "the marker line is a forgeable text"),
             (lodging, "begins with a marker prefix that the shared rule \"Copied text never forms a marker\" lists", "another module's marker planted by copied text"),
             (conference, "begins with a marker prefix that the shared rule \"Copied text never forms a marker\" lists", "cross-module marker escape (conference)"),
@@ -56,7 +57,7 @@ final class LodgingModuleDocsTests: XCTestCase {
             (archive, "**The state file holds private trip data**", "state file privacy note (round 1 LOW)"),
             (lodging, "**Thread membership is not authority.**", "References / In-Reply-To decide a thread"),
             (lodging, "9. `Accepted senders:`", "accepted senders on their own line (round 1 M2)"),
-            (lodging, "**A copied subject cannot plant a field**", "subject tokens escaped (round 1 M2)"),
+            (lodging, "**Copied text cannot plant a field in the source line**", "subject and forwarded body tokens escaped (round 1 M2, round 5 #8)"),
             (lodgingSpec, "with `· ` written in front of each of the tokens `accepted senders:`", "subject tokens escaped (spec)"),
             // Search and dedup
             (lodging, "whose nights share at least one night with the statement's", "overlapping dates defined as overlapping nights"),
@@ -75,14 +76,15 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "a cancellation notice that finds a record that counts for it (the same number and the same property) is reported as already cancelled and asks nothing", "a second cancellation"),
             (lodging, "Everything else is parsed only above the marker line", "labelled lines parsed outside the module's half"),
             (lodging, "**What a mail may change without a question.**", "every mail-driven date move or delete asks (round 2 decision)"),
-            (lodging, "3. **Applied without a question**, these three writes and only these:", "the writes that do not ask, a closed list (round 4 #8)"),
+            (lodging, "3. **Applied without a question**: a **create** (a new stay, search step 4 (c)), and only that.", "only a create does not ask (round 5 decision)"),
+            (lodging, "**every write from a mail to an existing stay**", "every write to an existing stay asks (round 5 decision)"),
             (lodging, "A cancellation notice that finds its event always reaches section 7's question", "a cancellation reaches the deletion question (round 1 HIGH)"),
-            (lodgingSpec, "(a cancellation notice SHALL never be unchanged this way)", "the same-fields shortcut (spec, round 1 HIGH)"),
+            (lodgingSpec, "(a cancellation notice SHALL never be unchanged this second way)", "the same-fields shortcut (spec, round 1 HIGH, round 5 #14)"),
             (lodgingSpec, "#### Scenario: A cancellation notice that states only the stay's own fields", "the HIGH scenario"),
             (lodging, "Each check below only adds a flag to the message's row; no flag, and no missing flag, skips the question.", "checks are flags only (round 2 decision)"),
             (lodgingSpec, "SHALL only add flags to the table and SHALL NOT skip the question", "checks are flags only (spec, round 2 decision)"),
             (lodging, "`free-mail or shared mailbox domain`: the domain is one of these, and only these:", "a closed free-mail list, with regional providers (round 2 #9 #17)"),
-            (lodging, "on later updates); **no marker**", "a skipped create with the same number and other content"),
+            (lodging, "on later updates); when the user says it is the same stay", "a skipped create with another number, then the same stay (round 5 #11)"),
             (lodging, "(`unchanged` only when nothing differs;", "a skipped create is compared by the change checks"),
             // Shared rules, entry points, documents
             (shared, "an unclear order, a change from a mail)", "nobody to ask covers any change from a mail (round 3 #17)"),
@@ -95,9 +97,9 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "**A cancellation notice never adopts.**", "adoption yes mixed with deletion yes"),
             (lodging, "4. **Everything else asks once**", "a confirmation with other dates, a reminder, a change notice ask (round 2 #3 #8)"),
             (lodging, "The flags are these, and only these:", "the flags are a closed list"),
-            (lodging, "Moving the source line to a newer such message is a write: it is made only when **the no-question gate** (below) holds", "the source-line move passes the gate (round 4 #1)"),
+            (lodging, "`unchanged`, no question, nothing written; the source line stays as it is.", "an identical mail moves nothing (round 5 decision)"),
             (lodging, "`hinet.net`", "regional shared domains are on the list (round 2 #17)"),
-            (lodgingSpec, "Only three writes from a mail SHALL be applied without a question", "the decision (spec, round 4 #8)"),
+            (lodgingSpec, "The only write from a mail applied without a question SHALL be a create", "the decision (spec, round 5)"),
             (lodgingSpec, "#### Scenario: A confirmation with other dates", "the round 2 #3 scenario"),
             (lodging, "keyed `user-request-<the request's date and time in UTC, YYYYMMDDTHHMMSSZ>#lodging:<reservation>`", "a user delete's record key and time (round 2 #2 #15)"),
             (archive, "a record of a delete the user asked for is keyed `user-request-", "a user delete's record key (archive-event)"),
@@ -125,7 +127,6 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "the before/after table is shown and the user is asked (section 4, step 4); after the user's yes, `update_event` with", "the worked example asks (round 3 #3)"),
             (lodging, "A partly cancelled or changed booking is a change notice: it asks with the before/after table", "partial room change asks (round 3 #4)"),
             (lodgingSpec, "SHALL be a change notice that asks with the before and after table, and on yes SHALL update the notes", "partial room change asks (spec)"),
-            (lodging, "**the known-sender condition** holds: the registrable domain of the message's own header `From:`", "free mail and forwards never meet the gate (round 3 #5)"),
             (lodging, "A free-mail or shared mailbox domain is never added, and neither is a sender shown only in the body;", "no free-mail or claimed sender on Accepted senders (round 3 #5, round 4 #4)"),
             (lodgingSpec, "a free-mail domain SHALL NOT be added", "no free-mail on Accepted senders (spec)"),
             (lodgingSpec, "#### Scenario: The same confirmation from a free-mail domain", "free-mail confirmation asks (round 3 #5 #11)"),
@@ -134,22 +135,30 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "a change it would make to an existing event (an unconfirmed stay's dates included) is a write from a mail and asks", "a no-number mail never moves dates silently (round 3 #7)"),
             (lodging, "only for a statement the user makes (a mail treated as a statement asks, section 3)", "statement update only from the user (round 3 #7)"),
             (management, "`copy_event` (a copy would carry the marker and make two stays)", "every touching tool named (round 3 #8)"),
-            (lodging, "2. the reused-number check of search step 5 did not flag it;", "the gate excludes reused-number hits (round 3 #9)"),
             (lodging, "by that module's own marker-line test", "counting another module's marker (round 3 #14)"),
             (lodging, "such a message never takes steps 2 or 3", "thread-only messages always ask (round 3 #15)"),
             (lodging, "is reported as already deleted by the user and asks nothing", "by_user meets a cancellation (round 3 #16)"),
             (conference, "the module creates nothing in its place, and the user is asked", "two markers: conference creates nothing (round 3 #13)"),
             (archive, "the event belongs to neither module: list it and ask, and build nothing", "archive-event checks both markers first (round 3 #13)"),
-            (lodging, "1. the event was found in the routed calendar, by search step 1 or 2, so search step 3's question about another calendar does not arise;", "the gate needs the routed calendar (round 4 #1 #7c)"),
-            (lodging, "shows `dmarc=pass` for that same domain. Without such a header (a pasted text, a header below the topmost) the condition fails", "known sender needs dmarc=pass (round 4 #3)"),
-            (lodgingSpec, "#### Scenario: A known sender without DMARC", "known sender without DMARC asks (round 4 #3)"),
+            (lodgingSpec, "#### Scenario: A planted Authentication-Results header", "a planted header asks (round 5 #4)"),
+            (lodgingSpec, "#### Scenario: A forwarded confirmation from a known forwarder", "a forwarded mail asks (round 5 #3)"),
+            (lodgingSpec, "#### Scenario: Trust planted before the booking", "pre-planted trust is shown and reset (spec, round 5 #5)"),
+            (lodgingSpec, "#### Scenario: A restated stay found in another calendar", "a restated stay in another calendar asks (spec, round 5 #1)"),
+            (lodgingSpec, "#### Scenario: A confirmation dated in the future", "a future Date asks before a create (spec, round 5 #2)"),
+            (lodgingSpec, "#### Scenario: A known sender's confirmation with another amount", "a known sender still asks, with a differing field (round 5 #13)"),
+            (lodging, "**Trust planted before the booking**", "pre-planted trust is shown and reset (round 5 #5)"),
+            (lodging, "**An event the module wrote itself** is one the entry point's state names", "what the module wrote itself (round 5 #5)"),
+            (lodging, "**A hit in another calendar** is shown with its calendar and is updated only after the user confirms it", "a restated stay in another calendar asks (round 5 #1)"),
+            (lodging, "**The same stay under two numbers.**", "what a same-stay answer does (round 5 #11)"),
+            (lodging, "A create from a message whose `Date` is not trusted or missing", "a future or missing Date asks before a create (round 5 #2)"),
+            (management, "No workflow creates, outside the module, an event whose notes carry a `lodging-module:` marker line", "no create carries a stay marker (round 5 #6)"),
+            (archive, "not §3's single-event line", "a stay's source line is the module's (round 5 #15)"),
             (lodging, "the sender is the forwarding message's own header `From:` (the comparison sender of section 4)", "forwarded: the forwarder is compared (round 4 #4 #5)"),
             (lodging, "the claimed domain is shown, never compared, and never added to `Accepted senders:`", "forwarded claimed domain is display only (round 4 #4)"),
             (lodgingSpec, "the claimed sender SHALL only be displayed, never compared and never added", "forwarded claimed domain (spec, round 4 #4)"),
             (lodgingSpec, "#### Scenario: The same stay under the platform's and the property's numbers", "skipped another-number asks (round 4 #2)"),
             (lodgingSpec, "SHALL show it in the possible-match table and ask once whether it is the same stay", "skipped another-number asks (spec, round 4 #2)"),
-            (lodging, "set of rooms and each room's days all equal the event's", "rooms must match for step 3 (round 4 #6)"),
-            (lodging, "`superseded` for a step-3 (b) confirmation dated before the event's source line;", "report superseded definition (round 4 #7b)"),
+            (lodging, "`superseded` for a confirmation dated before a cancellation record (section 4);", "report superseded definition (round 4 #7b, round 5)"),
             (lodging, "to count the `lodging-module:` lines and to apply each other module's own marker-line test", "parse paragraph matches counting rule (round 4 #9)"),
             (lodging, "or states the record's check-in and check-out days", "cancellation record compares dates (round 4 #10)"),
             (lodging, "and when that finds no hit, every calendar over the same range", "statement search widens (round 4 #11)"),
@@ -193,6 +202,17 @@ final class LodgingModuleDocsTests: XCTestCase {
 
     /// A rule list that a reader could extend stays closed: the secret kinds are stated as the
     /// only ones, and the escaped prefixes are those of the modules in the index.
+    /// Round 5 decision: the no-question confirmation and source-line paths are gone, so nothing
+    /// describes them any more.
+    func testTheNoQuestionPathsAreGone() throws {
+        for document in [lodging, lodgingSpec, management, archive, "plugin/CHANGELOG.md"] {
+            let text = try read(document)
+            for phrase in ["no-question gate", "known-sender condition", "step 3 (b)", "step-3 (b)", "except two:"] {
+                XCTAssertFalse(text.contains(phrase), "\(document) still says \(phrase)")
+            }
+        }
+    }
+
     func testTheClosedListsSayTheyAreClosed() throws {
         let text = try read(lodging)
         XCTAssertTrue(text.contains("The kinds are these, and only these:"))
