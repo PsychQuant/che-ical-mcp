@@ -128,7 +128,7 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
             DeletedOccurrenceCheck.applies(reachesSeveral: reachesSeveral, clearingRecurrence: clearing,
                                            plannedDates: newStart.map { ($0, newEnd ?? end) } ?? newEnd.map { (start, $0) },
                                            storedStart: start, storedEnd: end, resultAllDay: allDay, storedAllDay: false,
-                                           changesZone: false)
+                                           changesZone: false, changesAccount: false)
         }
         XCTAssertTrue(applies(true, newStart: at("2026-12-07T11:00:00"), newEnd: at("2026-12-07T12:00:00")))
         XCTAssertTrue(applies(true, newEnd: at("2026-12-07T11:30:00")), "an end-only change brought it back")
@@ -185,9 +185,11 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
         let later = at("2026-12-07T14:00:00")
         XCTAssertEqual(first(original, start: later, rid: original), original, "moved later")
         XCTAssertEqual(first(later, start: later, rid: original), original, "moved later, occurrenceDate drifted (LOW 8)")
-        // Round 2 (MEDIUM, LOW 2): moved earlier, occurrenceDate drifted: the RID slot, never the earlier time.
+        // Round 2 (MEDIUM, LOW 2): moved earlier, occurrenceDate drifted: never the earlier time.
+        // Round 4 (LOW 5): nor the RID slot, since a later occurrence moved onto a deleted first
+        // occurrence's start reads the same: unknown.
         let earlier = at("2026-12-07T09:00:00")
-        XCTAssertEqual(first(earlier, start: earlier, rid: original), original)
+        XCTAssertNil(first(earlier, start: earlier, rid: original))
         XCTAssertEqual(first(original, start: earlier, rid: original), original, "moved earlier, not drifted")
         // occurrenceDate agrees with neither the RID slot nor the shown start: unknown.
         XCTAssertNil(first(at("2026-12-07T08:00:00"), start: earlier, rid: original))
@@ -221,10 +223,10 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
         let start = at("2026-12-07T10:00:00"), end = at("2026-12-07T11:00:00")
         XCTAssertTrue(DeletedOccurrenceCheck.applies(reachesSeveral: true, clearingRecurrence: false, plannedDates: nil,
                                                      storedStart: start, storedEnd: end, resultAllDay: false, storedAllDay: false,
-                                                     changesZone: true))
+                                                     changesZone: true, changesAccount: false))
         XCTAssertFalse(DeletedOccurrenceCheck.applies(reachesSeveral: false, clearingRecurrence: false, plannedDates: nil,
                                                       storedStart: start, storedEnd: end, resultAllDay: false, storedAllDay: false,
-                                                      changesZone: true))
+                                                      changesZone: true, changesAccount: false))
     }
 
     /// Round 3 (MEDIUM): a moved occurrence on the first one's start is not taken for the first.
@@ -323,6 +325,75 @@ final class DeletedOccurrenceCheckTests: XCTestCase {
                                                   occurrenceCount: 3, hasOtherParts: false)
         XCTAssertNil(DeletedOccurrenceCheck.expectedSlots(of: monthly, firstStart: at("2026-01-31T09:00:00"),
                                                           until: at("2027-12-31T00:00:00"), calendar: calendar))
+    }
+
+    // MARK: - PR #505 round 4
+
+    /// MEDIUM 1: a calendar of another account is a create plus a delete (not measured), so it goes
+    /// through the same verdict, with no date change.
+    func testAMoveToAnotherAccountApplies() {
+        let start = at("2026-12-07T10:00:00"), end = at("2026-12-07T11:00:00")
+        func applies(_ reachesSeveral: Bool, account: Bool, clearing: Bool = false) -> Bool {
+            DeletedOccurrenceCheck.applies(reachesSeveral: reachesSeveral, clearingRecurrence: clearing, plannedDates: nil,
+                                           storedStart: start, storedEnd: end, resultAllDay: false, storedAllDay: false,
+                                           changesZone: false, changesAccount: account)
+        }
+        XCTAssertTrue(applies(true, account: true))
+        XCTAssertFalse(applies(true, account: false))
+        XCTAssertFalse(applies(false, account: true))
+        XCTAssertFalse(applies(true, account: true, clearing: true))
+        let text = DeletedOccurrenceCheck.accountMoveReason(.deleted(blocked: nil))
+        XCTAssertTrue(text.contains("another account") && text.contains("not measured") && text.contains("Nothing was written"), text)
+        XCTAssertTrue(DeletedOccurrenceCheck.accountMoveReason(.unknown).contains("cannot rule one out"))
+        XCTAssertNotEqual(DeletedOccurrenceCheck.accountMoveReason(.unknown), DeletedOccurrenceCheck.accountMoveReason(.deleted(blocked: nil)))
+    }
+
+    /// LOW 3: an EventKit range does not return an event that starts exactly at its end, so a slot
+    /// at `until` is not expected. An open-ended daily series lands one there (1825 days on).
+    func testASlotAtTheListingEndIsNotExpected() throws {
+        let first = at("2026-12-07T10:00:00")
+        let until = try XCTUnwrap(calendar.date(byAdding: .day, value: 1825, to: first))
+        let daily = DeletedOccurrenceCheck.Rule(frequency: .daily, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil, occurrenceCount: 0, hasOtherParts: false)
+        let slots = try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: daily, firstStart: first, until: until, calendar: calendar))
+        XCTAssertEqual(slots.count, 1825)
+        XCTAssertLessThan(try XCTUnwrap(slots.last), until)
+        XCTAssertEqual(DeletedOccurrenceCheck.verdict(rules: [daily], firstStart: first, observedSlots: slots, uneditedSlots: slots, slotsTrusted: true,
+                                                      changesAllDay: false, reachedFrom: nil, scannedTo: until, coversWholeSeries: false,
+                                                      calendar: calendar), .unknown)
+    }
+
+    /// LOW 4 and 7: an all-day series stores its end as the end of its last day in UTC, so east of
+    /// UTC the next local midnight is still before it. Whether EventKit lists that day was not
+    /// measured, so an end less than a day after a slot is unknown.
+    func testAnAllDayEndLessThanADayAfterASlotIsUnknown() throws {
+        let first = at("2027-01-01T00:00:00")
+        let end = at("2027-01-05T07:59:59")   // a 2027-01-04 end, as stored (measured)
+        let daily = DeletedOccurrenceCheck.Rule(frequency: .daily, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: end, occurrenceCount: 0, hasOtherParts: false)
+        let held = ["2027-01-01", "2027-01-02", "2027-01-03", "2027-01-04"].map { at($0 + "T00:00:00") }
+        func verdict(allDay: Bool) -> DeletedOccurrenceCheck.Verdict {
+            DeletedOccurrenceCheck.verdict(rules: [daily], firstStart: first, observedSlots: held, uneditedSlots: held, slotsTrusted: true,
+                                           changesAllDay: false, reachedFrom: nil, scannedTo: at("2027-12-31T00:00:00"), coversWholeSeries: true,
+                                           calendar: calendar, isAllDay: allDay)
+        }
+        XCTAssertEqual(verdict(allDay: true), .unknown)
+        // A weekly all-day series, as measured: its last slot is more than a day before the end.
+        let weekly = weekly(end: end)
+        let mondays = ["2026-12-07", "2026-12-14", "2026-12-21", "2026-12-28", "2027-01-04"].map { at($0 + "T00:00:00") }
+        XCTAssertEqual(DeletedOccurrenceCheck.verdict(rules: [weekly], firstStart: mondays[0], observedSlots: mondays, uneditedSlots: mondays, slotsTrusted: true,
+                                                      changesAllDay: false, reachedFrom: nil, scannedTo: at("2027-12-31T00:00:00"), coversWholeSeries: true,
+                                                      calendar: calendar, isAllDay: true), .none)
+    }
+
+    /// LOW 5: S0 deleted, S1 edited and moved onto S0's start, on a store where the series object
+    /// still refreshes: its `/RID=` slot is after the shown start while the recorded first equals the
+    /// shown start, so the first slot cannot be shown.
+    func testAnEditedOccurrenceMovedOntoTheDeletedFirstStartIsNotTheFirst() {
+        let start = at("2026-12-07T10:00:00"), s1 = at("2026-12-14T10:00:00")
+        XCTAssertNil(DeletedOccurrenceCheck.firstSlot(occurrenceDate: start, startDate: start, startMatches: 1, startRIDSlot: s1,
+                                                      earliestListedSlot: s1, viaStandIn: false, isDetached: false))
+        // The first occurrence edited and moved later keeps its slot.
+        XCTAssertEqual(DeletedOccurrenceCheck.firstSlot(occurrenceDate: start, startDate: at("2026-12-07T12:00:00"), startMatches: 1,
+                                                        startRIDSlot: start, earliestListedSlot: start, viaStandIn: false, isDetached: false), start)
     }
 
 }

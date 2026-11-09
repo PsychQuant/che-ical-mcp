@@ -291,7 +291,8 @@ extension EventKitManager {
             firstStart: firstStart,
             observedSlots: candidates.map(ruleSlot), uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot),
             slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
-            changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
+            changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar,
+            isAllDay: series.isAllDay)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to

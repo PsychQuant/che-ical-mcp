@@ -1525,10 +1525,16 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // every occurrence deleted on its own among them (device, iCloud), answered updated, and undo
         // refuses recurring updates. Refused while one is found or cannot be ruled out; read only
         // when the write is that shape, and still before the first field is assigned (#373).
-        if DeletedOccurrenceCheck.applies(
-            reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
-            plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
-            resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone) {
+        // PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete (not
+        // measured), so it goes through the same verdict; its refusal says so when no date changes.
+        func deletedOccurrenceCheckApplies(changesAccount: Bool) -> Bool {
+            DeletedOccurrenceCheck.applies(
+                reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
+                plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
+                resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount)
+        }
+        if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {
+            let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false)
             let series = try addressesOwnOccurrence
                 ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
             // Round 2 (INFO 8): the own-id path reads the series object without a refresh; refresh it
@@ -1547,6 +1553,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }()
             switch verdict {
             case .none: break
+            case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
             case .deleted(let blocked): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: blocked))
             case .unknown: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason)
             }
@@ -2298,6 +2305,26 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 fromSourceID: master.calendar?.source?.sourceIdentifier,
                 toSourceID: targetCalendar.source?.sourceIdentifier)) {
             throw EventKitError.standInRefused(reason: Self.standInAccountReason)
+        }
+        // PR #505 round 4 (MEDIUM): a whole series to another account is a create plus a delete, and
+        // whether the new series keeps occurrences deleted on its own was not measured (#503): refused
+        // while one is found or cannot be ruled out, before anything is written.
+        if isRecurring, !(span == .this && occurrenceDate != nil),
+           master.calendar?.calendarIdentifier != targetCalendar.calendarIdentifier,
+           FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,
+                                                        toSourceID: targetCalendar.source?.sourceIdentifier) {
+            let ownID = DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: master.isDetached)
+            let seriesID = ownID ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+            let series = ownID ? try seriesObject(ofOccurrence: identifier) : master
+            if ownID { _ = series?.refresh() }
+            let verdict: DeletedOccurrenceCheck.Verdict = {
+                guard let series, let seriesID else { return .unknown }
+                return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,
+                                                viaStandIn: ownID ? false : resolved.viaStandIn, changesAllDay: false)
+            }()
+            if verdict != .none {
+                throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
+            }
         }
 
         var subject = master

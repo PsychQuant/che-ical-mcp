@@ -56,9 +56,9 @@ enum DeletedOccurrenceCheck {
     /// its end changed and a `calendar_name` in the same account kept them (measured).
     static func applies(reachesSeveral: Bool, clearingRecurrence: Bool, plannedDates: (Date, Date)?,
                         storedStart: Date, storedEnd: Date, resultAllDay: Bool, storedAllDay: Bool,
-                        changesZone: Bool) -> Bool {
+                        changesZone: Bool, changesAccount: Bool) -> Bool {
         guard reachesSeveral, !clearingRecurrence else { return false }
-        if resultAllDay != storedAllDay || changesZone { return true }
+        if resultAllDay != storedAllDay || changesZone || changesAccount { return true }
         guard let (start, end) = plannedDates else { return false }
         return !UndoPostState.sameInstant(start, storedStart) || !UndoPostState.sameInstant(end, storedEnd)
     }
@@ -76,16 +76,23 @@ enum DeletedOccurrenceCheck {
     /// occurrence is held after the last missing slot (there must be one to start from).
     static func verdict(rules: [Rule], firstStart: Date?, observedSlots: [Date], uneditedSlots: [Date], slotsTrusted: Bool,
                         changesAllDay: Bool, reachedFrom: Date?, scannedTo: Date, coversWholeSeries: Bool,
-                        calendar: Calendar) -> Verdict {
+                        calendar: Calendar, isAllDay: Bool = false) -> Verdict {
         guard rules.count == 1, let firstStart, slotsTrusted,
               let expected = expectedSlots(of: rules[0], firstStart: firstStart, until: scannedTo, calendar: calendar) else {
+            return .unknown
+        }
+        // Round 4 (LOW 4, 7): an all-day series stores its end as the end of its last day in UTC
+        // (measured), so east of UTC the next local midnight still falls before it. Whether EventKit
+        // lists that day was not measured, so an end less than a day after a slot is unknown.
+        if isAllDay, let end = rules[0].endDate,
+           expected.contains(where: { end.timeIntervalSince($0) >= 0 && end.timeIntervalSince($0) < 86_400 }) {
             return .unknown
         }
         func isExpected(_ slot: Date) -> Bool { expected.contains { UndoPostState.sameInstant($0, slot) } }
         // Round 3 (MEDIUM): the expander and the store must agree both ways. A listed slot the rule
         // does not give (inside what was expanded) means the expander is wrong here, so a slot it
         // missed could hide a deletion: unknown.
-        if observedSlots.contains(where: { $0.timeIntervalSince(firstStart) > -1 && $0 <= scannedTo && !isExpected($0) }) {
+        if observedSlots.contains(where: { $0.timeIntervalSince(firstStart) > -1 && $0 < scannedTo && !isExpected($0) }) {
             return .unknown
         }
         // The rule's end is a point in time, inclusive: a slot at or before it is an occurrence, one
@@ -135,6 +142,11 @@ enum DeletedOccurrenceCheck {
         let first: Date
         if let rid = startRIDSlot {
             guard UndoPostState.sameInstant(recorded, rid) || UndoPostState.sameInstant(recorded, startDate) else { return nil }
+            // Round 4 (LOW 5): a `/RID=` slot after the shown start, with the recorded first at the
+            // shown start, is a later occurrence moved onto it (the first deleted, on a store where
+            // the series object still refreshes), or the first moved earlier: either way not shown.
+            if rid.timeIntervalSince(startDate) >= 1, UndoPostState.sameInstant(recorded, startDate),
+               !UndoPostState.sameInstant(recorded, rid) { return nil }
             first = rid
         } else {
             guard UndoPostState.sameInstant(recorded, startDate) else { return nil }
@@ -154,15 +166,16 @@ enum DeletedOccurrenceCheck {
     static func expectedSlots(of rule: Rule, firstStart: Date, until: Date, calendar: Calendar) -> [Date]? {
         guard !rule.hasOtherParts, rule.interval >= 1 else { return nil }   // an interval below 1 is not followed
         var slots: [Date] = []
-        /// false once the rule ends here; a slot past `until` or the end date is not taken.
+        /// false once the rule ends here; a slot at or past `until` (round 4, LOW 3: an EventKit range
+        /// does not return an event that starts exactly at its end) or past the end date is not taken.
         func take(_ slot: Date) -> Bool {
-            if slot > until { return false }
+            if slot >= until { return false }
             if let end = rule.endDate, slot > end { return false }
             slots.append(slot)
             if rule.occurrenceCount > 0, slots.count >= rule.occurrenceCount { return false }
             return slots.count < maxSlots
         }
-        func past(_ date: Date) -> Bool { date > until || (rule.endDate.map { date > $0 } ?? false) }
+        func past(_ date: Date) -> Bool { date >= until || (rule.endDate.map { date > $0 } ?? false) }
         let firstWeekday = calendar.component(.weekday, from: firstStart)
         let firstDay = calendar.component(.day, from: firstStart)
         switch rule.frequency {
@@ -240,6 +253,16 @@ enum DeletedOccurrenceCheck {
             route = "No update route keeps the deletions here: no occurrence that was not edited on its own follows the last deleted one, so there is nowhere to start span 'future' from. Change the series in Calendar (not measured)."
         }
         return "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach), and changing the start, end, all_day or time zone of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. A title, notes or location change keeps them. \(route) Nothing was written."
+    }
+
+    /// PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete; whether the
+    /// new series keeps the occurrences deleted on its own was not measured (no second account), so it
+    /// is refused while one is found or cannot be ruled out.
+    static func accountMoveReason(_ verdict: Verdict) -> String {
+        let found = verdict == .unknown
+            ? "and this check cannot rule one out (the reasons are those of a time change: the series could not be listed, its first slot cannot be shown, its rule is one the check does not follow, or the listing cannot be shown to reach its end)"
+            : "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
+        return "Moving this series to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it to a calendar of the same account kept them (measured). Nothing was written."
     }
 
     static let unknownReason = "This write changes the start, end, all_day or time zone of more than one occurrence of a series, which brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: the series could not be listed; its first slot cannot be shown (it is read through its first remaining occurrence because its first occurrence was deleted, or through an occurrence edited on its own; no occurrence, or more than one, is listed where the series shows its first; its recorded first slot disagrees with that occurrence's original slot and with its shown start; or a listed occurrence's slot lies before it); a listed occurrence falls where the rule gives none; an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time; its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year); or the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days). A title, notes or location change is not affected. Nothing was written."

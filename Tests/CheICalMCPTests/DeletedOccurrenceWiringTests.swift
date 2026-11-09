@@ -26,6 +26,24 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(update.contains("if addressesOwnOccurrence { _ = series?.refresh() }"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.unknownReason"))
+        // PR #505 round 4 (MEDIUM): a calendar of another account goes through the same verdict.
+        XCTAssertTrue(update.contains("if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {"))
+        XCTAssertTrue(update.contains("let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false)"))
+        XCTAssertTrue(update.contains("case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
+    }
+
+    /// PR #505 round 4 (MEDIUM): `move_events_batch` of a whole series to another account checks the
+    /// series before anything is written.
+    func testAMoveToAnotherAccountChecksTheSeriesFirst() throws {
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        let move = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: manager))
+        let check = try XCTUnwrap(move.range(of: "deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,"))
+        let firstWrite = try XCTUnwrap(move.range(of: "EventMoveExecutor.run("))
+        XCTAssertLessThan(check.lowerBound, firstWrite.lowerBound)
+        XCTAssertTrue(move.contains("if isRecurring, !(span == .this && occurrenceDate != nil),"))
+        XCTAssertTrue(move.contains("FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,"))
+        XCTAssertTrue(move.contains("if verdict != .none {"))
+        XCTAssertTrue(move.contains("throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
     }
 
     func testTheVerdictListsTheSeriesAsTheAllDayCheckDoes() throws {
@@ -42,5 +60,7 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot)"))
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown }"), "an empty listing is not 'none deleted'")
+        // PR #505 round 4 (LOW 4, 7): an all-day series' end is read with its all-day flag.
+        XCTAssertTrue(body.contains("isAllDay: series.isAllDay)"))
     }
 }
