@@ -29,10 +29,13 @@ enum ReminderUpdateWrite {
         // a cached zone older than the stored one was written back, and a zone assigned to a zoned item
         // moves its instants.
         if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .absoluteAlarms]) }
-        // Round 4 INFO 9, a known limit: on a floating timed due, `realign` also rewrites the due and
-        // zones the item; `changed()` carries those, but they are not named, so against a cache older
-        // than the store the start and alarms align to the cached due. `date_sync.aligned` then reads
-        // false on the saved reminder.
+        // Round 4 INFO 9 / round 6, a known limit: `realign` computes the start and the absolute alarms
+        // from this server's cached due. When another app changed the stored due (cache D1, store D2)
+        // and the refresh before the call did not pick it up, the copy keeps D2 and gets a start and
+        // alarms aligned to D1, so the call can unalign a reminder it was meant to repair;
+        // `date_sync.aligned` then reads false on the saved reminder. On main the cached D1 was written
+        // with them, in the same window. On a floating timed due, `realign` also rewrites the due and
+        // zones the item; `changed()` carries those. Release gate step 9 of #459 records it.
         if request.realignToDue { fields.formUnion([.startDateComponents, .absoluteAlarms]) }
         if request.alarmOffsets != nil { fields.insert(.relativeAlarms) }
         if request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.locationAlarms) }

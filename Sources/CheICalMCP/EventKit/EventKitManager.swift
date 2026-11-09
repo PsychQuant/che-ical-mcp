@@ -3896,10 +3896,15 @@ enum EventKitError: LocalizedError {
             let moved = newIdentifier.map { " Its identifier is now \($0); the identifier you passed no longer reads it." } ?? ""
             return "The save through the separate store this server writes reminders through returned without an error, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it.\(moved) \(undoText)"
         case .completionOccurrenceMoved:
-            return "Nothing was written: this repeating reminder is no longer at the occurrence this server read (it was completed or its due date, rule or list changed elsewhere in between), so completing it now would complete an occurrence you have not seen. Read it again with list_reminders and complete the occurrence you mean."
+            return "Nothing was written: this reminder is no longer at the occurrence this server read (it was completed or its due date, rule or list changed elsewhere in between), so completing it now would complete an occurrence you have not seen. Read it again with list_reminders and complete the occurrence you mean."
         case .historyOccurrenceMoved(let verb):
+            // Round 6: the entry is kept, so the text gives #269's way to give it up; a check that misfired
+            // on every try would otherwise pin the undo stack.
             let kept = verb == .undo ? "This history entry was kept" : "This redo entry was kept"
-            return "Cannot \(verb.rawValue): this repeating reminder is no longer at the occurrence that was checked (it was completed or its due date, rule or list changed elsewhere in between), so nothing was written. \(kept); the next \(verb.rawValue) reads the reminder again."
+            let giveUp = verb == .undo
+                ? "ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+                : "ask the user whether to give up this redo; any new change clears the redo history."
+            return "Cannot \(verb.rawValue): this reminder is no longer at the occurrence that was checked (it was completed or its due date, rule or list changed elsewhere in between), so nothing was written. \(kept); the next \(verb.rawValue) reads the reminder again. To go on, \(giveUp)"
         case .writeStoreLookupFailed(let kind):
             return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again. An item this server created but whose save failed may not be committed yet; it becomes visible once a later save commits it."
         case .eventLookupFailed(let identifier):

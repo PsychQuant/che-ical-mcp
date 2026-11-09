@@ -69,6 +69,36 @@ final class ReminderHistoryOccurrenceTests: XCTestCase {
         XCTAssertTrue(save.contains("} catch { throw ExistingReminderSave.historyFailure(error, handler: handler) }"))
     }
 
+    // MARK: - Round 6
+
+    /// The refusal keeps the entry, so it says how to give it up (#269's path): a check that misfires
+    /// on every try would otherwise pin the undo stack.
+    func testTheRefusalSaysHowToGiveTheEntryUp() {
+        let undo = EventKitError.historyOccurrenceMoved(verb: .undo).errorDescription ?? ""
+        XCTAssertTrue(undo.contains("To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."), undo)
+        let redo = EventKitError.historyOccurrenceMoved(verb: .redo).errorDescription ?? ""
+        XCTAssertTrue(redo.contains("To go on, ask the user whether to give up this redo; any new change clears the redo history."), redo)
+        // Round 6 INFO: one side may repeat only (a rule added or removed elsewhere), so not "repeating".
+        XCTAssertFalse(undo.contains("this repeating reminder"), undo)
+        XCTAssertFalse((EventKitError.completionOccurrenceMoved.errorDescription ?? "").contains("this repeating reminder"))
+    }
+
+    /// The docs and both tool descriptions say an undo or redo is refused when the reminder moved on.
+    func testTheDocsNameTheHistoryRefusal() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        func read(_ name: String) throws -> String { try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8) }
+        let en = "An undo or redo of an update_reminder, a keep_later_edits merge or a completion is refused the same way, with the entry kept."
+        for name in ["CHANGELOG.md", "README.md"] {
+            XCTAssertEqual(try read(name).components(separatedBy: en).count - 1, 1, name)
+        }
+        XCTAssertEqual(try read("README_zh-TW.md").components(separatedBy: "update_reminder、keep_later_edits 合併或完成的 undo 與 redo 遇到同樣情況也會被拒絕，紀錄保留。").count - 1, 1)
+        let server = try SourcePins.source("Server.swift")
+        XCTAssertEqual(server.components(separatedBy: "is no longer at the occurrence it was checked at (completed or changed elsewhere in between) is refused with nothing written and the entry kept").count - 1, 2,
+                       "undo and redo")
+        let manifest = try read("mcpb/manifest.json")
+        XCTAssertEqual(manifest.components(separatedBy: "a reminder that moved to another occurrence in between is refused, nothing written, entry kept").count - 1, 2)
+    }
+
     // MARK: - LOWs
 
     func testTheChangelogDoesNotSayADueChangeWritesTheZone() throws {
