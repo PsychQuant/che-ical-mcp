@@ -115,6 +115,13 @@ final class ItineraryCheckDocsTests: XCTestCase {
         XCTAssertFalse(text.contains("the folder that holds the config's `.claude` directory"))
     }
 
+    /// #500 r5 #6: a failing helper means no changed file is read, and the user is asked.
+    func testAFailingHelperStopsTheRun() throws {
+        let text = try read(skill)
+        let phrase = "If the helper exits non-zero, read no changed file: report the message it printed on stderr and ask the user how to go on."
+        XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
+    }
+
     /// #500 r3 #7: the other documents name both Bash commands.
     func testTheOtherDocumentsNameBothCommands() throws {
         XCTAssertTrue(try read("plugin/CLAUDE.md").contains("two scoped Bash commands (the config lookup and the changed-paths helper)"))

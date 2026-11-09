@@ -359,7 +359,7 @@ got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii | python3 -c 'import json,sys; 
 check "and decodes to the exact name" "$got" "['日程.md']"
 # #500 r4 #4: the helper prints the names as UTF-8, not as \uXXXX escapes: compared literally.
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii)
-check "the helper prints UTF-8 names, compared literally" "$got" "{\"trip_folder\": \"$T\", \"files\": [\"日程.md\"], \"unreadable\": 0, \"total\": 1, \"complete\": true}"
+check "the helper prints UTF-8 names, compared literally" "$got" "{\"trip_folder\": \"$T\", \"complete\": true, \"total\": 1, \"unreadable\": 0, \"files\": [\"日程.md\"]}"
 has "the reminder shows the name as it is" "$(context "$OUT")" "日程.md"
 # #10: the stored list is capped, with the total.
 T="$TMP/trips/capped"; trip "$T"; run start "$(json capped "$T")"; mkdir -p "$T/c"; for n in $(seq 1 250); do : > "$T/c/f$n"; done
@@ -400,14 +400,14 @@ has "and the rest is listed" "$ctx" "keep.md"
 mkdir -p "$CLAUDE_PLUGIN_DATA/itinerary-sessions"
 printf '{"trip_folder": "/t", "files": ["ok.md", "bad\\udcff.md"], "total": 2, "complete": true}' > "$CLAUDE_PLUGIN_DATA/itinerary-sessions/sur.changed.json"
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" sur)
-check "a name that is not text is counted as unreadable" "$got" '{"trip_folder": "/t", "files": ["ok.md"], "unreadable": 1, "total": 2, "complete": true}'
+check "a name that is not text is counted as unreadable" "$got" '{"trip_folder": "/t", "complete": true, "total": 2, "unreadable": 1, "files": ["ok.md"]}'
 # Security review of r4: a name with a control or format character (a newline, a bidi override, a
 # zero-width space) is never printed by the helper, raw or escaped: it is counted as unreadable.
 T="$TMP/trips/ctrl"; trip "$T"; run start "$(json ctrl "$T")"
 printf x > "$T/$(printf 'line\nbreak.md')"; printf x > "$T/$(printf 'bidi\xe2\x80\xaeevil.md')"; printf x > "$T/$(printf 'zero\xe2\x80\x8bwidth.md')"; printf x > "$T/plain 日程.md"
 run stop "$(json ctrl "$T")"
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ctrl)
-check "the helper prints only clean names, literally, and counts the rest" "$got" "{\"trip_folder\": \"$T\", \"files\": [\"plain 日程.md\"], \"unreadable\": 3, \"total\": 4, \"complete\": true}"
+check "the helper prints only clean names, literally, and counts the rest" "$got" "{\"trip_folder\": \"$T\", \"complete\": true, \"total\": 4, \"unreadable\": 3, \"files\": [\"plain 日程.md\"]}"
 hasnt "no bidi override reaches the helper's output" "$got" "$(printf '\xe2\x80\xae')"
 hasnt "no zero-width space reaches the helper's output" "$got" "$(printf '\xe2\x80\x8b')"
 hasnt "no escaped newline reaches the helper's output" "$got" '\n'
@@ -420,6 +420,68 @@ T="$TMP/trips/qmark"; trip "$T" 'itinerary_ignore: ["mail/sub?"]'
 run start "$(json qmark "$T")"; mkdir -p "$T/mail/sub"; printf x > "$T/mail/sub/a.md"
 run stop "$(json qmark "$T")"
 has "a pattern not ending in / does not prune a directory" "$(context "$OUT")" "mail/sub/a.md"
+
+# --- round 5 (#500 report r5) ---------------------------------------------------------------
+ROOT="$HOME/.claude/plugins/data"
+# #1/#7: $data itself, or a directory between it and the root, may not be a symlink; nor the root itself.
+mkdir -p "$TMP/outside-data/itinerary-sessions" "$TMP/outside-mid/che/itinerary-sessions"
+printf '{"trip_folder": "/t", "files": [], "total": 0, "complete": true}' > "$TMP/outside-data/itinerary-sessions/x.changed.json"
+cp "$TMP/outside-data/itinerary-sessions/x.changed.json" "$TMP/outside-mid/che/itinerary-sessions/"
+ln -s "$TMP/outside-data" "$ROOT/link"; ln -s "$TMP/outside-mid" "$ROOT/mid"
+bash "$HELPER" "$ROOT/link" x >/dev/null 2>&1; check "the helper refuses a symlinked data directory" "$?" "2"
+bash "$HELPER" "$ROOT/mid/che" x >/dev/null 2>&1; check "the helper refuses a symlinked directory between the root and the data directory" "$?" "2"
+mkdir -p "$ROOT/itinerary-sessions"; cp "$TMP/outside-data/itinerary-sessions/x.changed.json" "$ROOT/itinerary-sessions/"
+bash "$HELPER" "$ROOT/" x >/dev/null 2>&1; check "the helper refuses the plugins data root itself" "$?" "2"
+bash "$HELPER" "$ROOT/." x >/dev/null 2>&1; check "the helper refuses a . component" "$?" "2"
+# #8: the root follows CLAUDE_CONFIG_DIR.
+CFG="$TMP/cfg"; mkdir -p "$CFG/plugins/data/che/itinerary-sessions"
+printf '{"trip_folder": "/t", "files": ["a.md"], "total": 1, "complete": true}' > "$CFG/plugins/data/che/itinerary-sessions/c.changed.json"
+got=$(CLAUDE_CONFIG_DIR="$CFG" bash "$HELPER" "$CFG/plugins/data/che" c)
+check "the helper reads under a CLAUDE_CONFIG_DIR root" "$got" '{"trip_folder": "/t", "complete": true, "total": 1, "unreadable": 0, "files": ["a.md"]}'
+CLAUDE_CONFIG_DIR="$CFG" bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii >/dev/null 2>&1; check "with CLAUDE_CONFIG_DIR set, ~/.claude/plugins/data is not the root" "$?" "2"
+# #2/#5: a quoted # is not a comment; a real end-of-line comment still is.
+T="$TMP/trips/hash"; trip "$T" "$(printf 'itinerary_ignore: ["receipts # paid/", "*.tmp"]  # skip these\nother: 1')"
+run start "$(json hash "$T")"; mkdir -p "$T/receipts # paid"; printf x > "$T/receipts # paid/r.md"; printf x > "$T/x.tmp"; printf x > "$T/keep.md"
+run stop "$(json hash "$T")"; ctx=$(context "$OUT")
+hasnt "an inline list keeps a quoted # in a pattern" "$ctx" "receipts # paid/r.md"
+hasnt "and the rest of that list still applies" "$ctx" "x.tmp"
+has "and other files are listed" "$ctx" "keep.md"
+T="$TMP/trips/hashblock"; trip "$T" "$(printf 'itinerary_ignore:\n  - "notes #1/"   # a comment\n  - "*.log"\nother: 1')"
+run start "$(json hashblock "$T")"; mkdir -p "$T/notes #1"; printf x > "$T/notes #1/n.md"; printf x > "$T/run.log"; printf x > "$T/keep.md"
+run stop "$(json hashblock "$T")"; ctx=$(context "$OUT")
+hasnt "a block list keeps a quoted # in a pattern" "$ctx" "notes #1/n.md"
+hasnt "and its other items apply" "$ctx" "run.log"
+# #3: only .changed.json is a symlink: its target is not written, and no reminder comes without the list.
+T="$TMP/trips/cj"; trip "$T"; run start "$(json cj "$T")"; printf x > "$T/c.md"
+printf keep > "$TMP/victim-cj"; ln -s "$TMP/victim-cj" "$CLAUDE_PLUGIN_DATA/itinerary-sessions/cj.changed.json"
+run stop "$(json cj "$T")"
+check "a symlinked .changed.json alone: its target is not written" "$(cat "$TMP/victim-cj")" "keep"
+check "a symlinked .changed.json alone: no reminder without the list" "$OUT" ""
+# #4: a FIFO at a record name never holds the hook.
+T="$TMP/trips/ff"; trip "$T"; run start "$(json ff "$T")"; printf x > "$T/f.md"
+mkfifo "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ff.slow"
+got=$(python3 -I -c 'import subprocess, sys
+try:
+    r = subprocess.run(["bash", sys.argv[1], "stop"], input=sys.argv[2], capture_output=True, text=True, timeout=5); print("rc=%d" % r.returncode)
+except subprocess.TimeoutExpired:
+    print("timeout")' "$HOOK" "$(json ff "$T")")
+check "a FIFO at the .slow record: the hook ends at once" "$got" "rc=0"
+T="$TMP/trips/ff2"; trip "$T"; run start "$(json ff2 "$T")"; printf x > "$T/f.md"
+mkfifo "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ff2.changed.json"
+got=$(python3 -I -c 'import subprocess, sys
+try:
+    r = subprocess.run(["bash", sys.argv[1], "stop"], input=sys.argv[2], capture_output=True, text=True, timeout=5); print("rc=%d" % r.returncode)
+except subprocess.TimeoutExpired:
+    print("timeout")' "$HOOK" "$(json ff2 "$T")")
+check "a FIFO at the .changed.json record: the hook ends at once" "$got" "rc=0"
+# #9: an NFC pattern matches a directory stored as NFD.
+T="$TMP/trips/nfc"; trip "$T" 'itinerary_ignore: ["プログラム草稿/"]'
+run start "$(json nfc "$T")"
+python3 -I -c 'import os, sys, unicodedata; d = os.path.join(sys.argv[1], unicodedata.normalize("NFD", "プログラム草稿")); os.makedirs(d); open(os.path.join(d, "a.md"), "w").write("x")' "$T"
+printf x > "$T/keep.md"
+run stop "$(json nfc "$T")"; ctx=$(context "$OUT")
+hasnt "an NFC pattern skips a directory stored as NFD" "$ctx" "a.md"
+has "and other files are listed" "$ctx" "keep.md"
 
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"

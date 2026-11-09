@@ -130,18 +130,27 @@ def record_stat(dfd, name):
     return st if (st.st_mode & 0o170000) == 0o100000 else None
 
 
+def open_regular(dfd, name, flags, mode=0o600):
+    """Open a record that must be a regular file. O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a
+    FIFO or device at that name from holding the hook in open() (#500 r5 #4), and the fstat refuses
+    anything that is not a regular file once it is open."""
+    fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dfd)
+    if (os.fstat(fd).st_mode & 0o170000) != 0o100000:
+        os.close(fd)
+        raise OSError(f"{name} is not a regular file")
+    return fd
+
+
 def read_record(dfd, name):
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
-    with os.fdopen(fd) as f:
+    with os.fdopen(open_regular(dfd, name, os.O_RDONLY)) as f:
         return f.read()
 
 
 def write_record(dfd, name, text, exclusive=False):
-    """Write a regular file in the sessions directory, never through a symlink (O_NOFOLLOW), and
+    """Write a regular file in the sessions directory, never through a symlink or into a FIFO, and
     never into an existing file when `exclusive`."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_EXCL if exclusive else os.O_TRUNC)
-    fd = os.open(name, flags, 0o600, dir_fd=dfd)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    with os.fdopen(open_regular(dfd, name, flags), "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -203,8 +212,30 @@ def trip_folder(cwd, config):
         d = parent
 
 
+def strip_comment(text):
+    """Cut a YAML comment: a # at the start or after whitespace, outside single or double quotes
+    (#500 r5 #2), so a quoted pattern such as "receipts # paid/" keeps its #."""
+    quote, prev, i = None, " ", 0
+    while i < len(text):
+        c = text[i]
+        if quote == '"' and c == "\\":
+            i += 2
+            prev = "x"
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+        elif c == "#" and prev.isspace():
+            return text[:i]
+        prev = c
+        i += 1
+    return text
+
+
 def scalar(text):
-    text = re.sub(r"\s+#.*$", "", text).strip()
+    text = strip_comment(text).strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
         text = text[1:-1]
     return text
@@ -266,7 +297,11 @@ def ignored(rel, ignores):
     """A pattern ending in / skips the files under a matching directory: without another / it is
     matched with every directory name on the path, at any depth; with one, with each directory path
     from the trip folder. A pattern without / is matched with the file name; any other pattern with
-    the whole path. Matching is fnmatch, case-sensitive."""
+    the whole path. Matching is fnmatch, case-sensitive, with the path and the patterns both in NFC
+    (#500 r5 #9): macOS keeps names as they were created, often NFD, and a pattern typed in an
+    editor is NFC. Only the matching is normalized; the listed paths keep their stored form."""
+    rel = unicodedata.normalize("NFC", rel)
+    ignores = [unicodedata.normalize("NFC", p) for p in ignores]
     parts = rel.split("/")
     dirs, name = parts[:-1], parts[-1]
     prefixes = ["/".join(dirs[: i + 1]) for i in range(len(dirs))]
