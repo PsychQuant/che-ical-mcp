@@ -87,7 +87,7 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "on later updates); when the user says it is the same stay", "a skipped create with another number, then the same stay (round 5 #11)"),
             (lodging, "(`unchanged` only when nothing differs;", "a skipped create is compared by the change checks"),
             // Shared rules, entry points, documents
-            (shared, "an unclear order, a change from a mail)", "nobody to ask covers any change from a mail (round 3 #17)"),
+            (shared, "an unclear order, a change from a mail, ", "nobody to ask covers any change from a mail (round 3 #17)"),
             (conferenceSpec, "### Requirement: The conference module follows the shared rules of the event modules", "shared rules change conference with no requirement"),
             (conferenceSpec, "the conference module SHALL NOT offer it for adoption or update it as a hand-built event", "the shared-rules requirement's body (round 1 LOW)"),
             (conference, "never counts as \"No marker\" when `create_event` answers `skipped`", "a stay is never a hand-built event to the conference module (round 1 M3)"),
@@ -101,7 +101,7 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "`hinet.net`", "regional shared domains are on the list (round 2 #17)"),
             (lodgingSpec, "The only write from a mail applied without a question SHALL be a create", "the decision (spec, round 5)"),
             (lodgingSpec, "#### Scenario: A confirmation with other dates", "the round 2 #3 scenario"),
-            (lodging, "keyed `user-request-<the request's date and time in UTC, YYYYMMDDTHHMMSSZ>#lodging:<reservation>`", "a user delete's record key and time (round 2 #2 #15)"),
+            (lodging, "keyed `user-request-<the request's date and time in UTC, YYYYMMDDTHHMMSSZ>-<the deleted event's identifier", "a user delete's record key and time (round 2 #2 #15)"),
             (archive, "a record of a delete the user asked for is keyed `user-request-", "a user delete's record key (archive-event)"),
             (archivingSpec, "SHALL key a record of a delete the user asked for", "a user delete's record key (archiving spec)"),
             (lodging, "Any other message that meets a `by_user` record is never superseded by it", "a user delete never silently blocks a rebuild (round 2 #22)"),
@@ -136,7 +136,6 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "only for a statement the user makes (a mail treated as a statement asks, section 3)", "statement update only from the user (round 3 #7)"),
             (management, "`copy_event` (a copy would carry the marker and make two stays)", "every touching tool named (round 3 #8)"),
             (lodging, "by that module's own marker-line test", "counting another module's marker (round 3 #14)"),
-            (lodging, "such a message never takes steps 2 or 3", "thread-only messages always ask (round 3 #15)"),
             (lodging, "is reported as already deleted by the user and asks nothing", "by_user meets a cancellation (round 3 #16)"),
             (conference, "the module creates nothing in its place, and the user is asked", "two markers: conference creates nothing (round 3 #13)"),
             (archive, "the event belongs to neither module: list it and ask, and build nothing", "archive-event checks both markers first (round 3 #13)"),
@@ -164,6 +163,29 @@ final class LodgingModuleDocsTests: XCTestCase {
             (lodging, "and when that finds no hit, every calendar over the same range", "statement search widens (round 4 #11)"),
             (management, "never by calling directly, outside the module's own steps", "calendar-management wording (round 4 #12)"),
             (lodging, "(its fields are listed there)", "section 7 no longer lists the old record fields (round 1 LOW)"),
+            (lodging, "A cancellation notice that meets a `by_user` record that counts for it (the same number and property, and the notice states no dates or the record's days, as for any record)", "a by_user record needs the dates too (round 6 #1)"),
+            (lodgingSpec, "#### Scenario: A user-deleted stay's number on other dates", "by_user, same number and property, other dates (spec, round 6 #1)"),
+            (lodging, "-<the deleted event's identifier, percent-encoded as the number is>#lodging:<reservation>`", "the user-deletion key is unique (round 6 #2)"),
+            (archive, "-<the deleted event's identifier, percent-encoded>#lodging:<reservation>`", "the user-deletion key is unique (archive-event, round 6 #2)"),
+            (archivingSpec, "-<the deleted event's identifier, percent-encoded>#lodging:<reservation>`", "the user-deletion key is unique (archiving spec, round 6 #2)"),
+            (lodgingSpec, "-<the deleted event's identifier, percent-encoded>#lodging:<reservation>`", "the user-deletion key is unique (spec, round 6 #2)"),
+            (lodgingSpec, "#### Scenario: One request deletes two stays under one number", "two stays, one number, one request (spec, round 6 #2)"),
+            (archivingSpec, "a before and after table is shown and, after the user's yes, it is updated in place", "a change notice in a different message asks (round 6 #3)"),
+            (archivingSpec, "a before and after table is shown and, after the user's yes, the stay is updated and its source line holds", "a later notice in the same thread asks (round 6 #3)"),
+            (lodging, "to an event that no longer exists (a stay deleted by hand leaves such an entry and no record)", "a deleted stay does not come back silently (round 6 #4)"),
+            (lodgingSpec, "#### Scenario: A stay deleted by hand, then its confirmation again", "a deleted stay does not come back silently (spec, round 6 #4)"),
+            (lodging, "one record is written for each number, so an old message under either number finds it", "a two-number stay records both (round 6 #4)"),
+            (lodgingSpec, "#### Scenario: A cancelled stay that had two numbers", "a two-number stay records both (spec, round 6 #4)"),
+            (lodging, "or the user asks to delete it (section 7's delete the user asked for, which leaves a record;", "the thread section points to section 7 (round 6 #4)"),
+            (lodging, "next to `created`, the flags of section 4 that the creating message would have had", "a create reports its flags (round 6 #5)"),
+            (lodging, "asks first. Nobody to ask: pending, nothing created.", "an untrusted-Date create with nobody to ask (round 6 #6)"),
+            (shared, "a create from a message whose date is not trusted)", "the shared parenthesis has the create case (round 6 #6)"),
+            (lodging, "such a message never creates (step 3 of", "stale step reference fixed (round 6 #7)"),
+            (lodging, "The steps below apply to **every** booking-party message", "stale check reference fixed (round 6 #7)"),
+            (lodgingSpec, "a message for that number SHALL create nothing in its place and SHALL ask which event is the stay", "a two-module event creates nothing and asks (spec, round 6 #8)"),
+            (lodgingSpec, "#### Scenario: An event carries both modules' markers", "two-module event scenario (round 6 #8)"),
+            (lodging, "**the source line stays on the newer message**", "an older mail's yes keeps the source line (round 6 #9)"),
+            (lodgingSpec, "#### Scenario: An older change notice answered yes", "an older mail's yes keeps the source line (spec, round 6 #9)"),
         ]
     }
 
@@ -207,7 +229,7 @@ final class LodgingModuleDocsTests: XCTestCase {
     func testTheNoQuestionPathsAreGone() throws {
         for document in [lodging, lodgingSpec, management, archive, "plugin/CHANGELOG.md"] {
             let text = try read(document)
-            for phrase in ["no-question gate", "known-sender condition", "step 3 (b)", "step-3 (b)", "except two:"] {
+            for phrase in ["no-question gate", "known-sender condition", "step 3 (b)", "step-3 (b)", "except two:", "never takes steps 2 or 3", "The check below applies", "or the user deletes it by hand"] {
                 XCTAssertFalse(text.contains(phrase), "\(document) still says \(phrase)")
             }
         }
