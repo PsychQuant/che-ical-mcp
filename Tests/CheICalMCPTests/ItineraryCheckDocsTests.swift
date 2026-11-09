@@ -186,6 +186,20 @@ final class ItineraryCheckDocsTests: XCTestCase {
         }
     }
 
+    /// #500 r8 #3: a Claude Code background job may read as unattended for the main agent too; until the
+    /// device step says, README and CHANGELOG name the limit and task 1.2 names the step.
+    func testBackgroundJobSessionsAreAKnownLimit() throws {
+        let pins = [
+            "plugin/README.md": "**Known limit:** a session run as a Claude Code background job may get no reminder",
+            "plugin/CHANGELOG.md": "**Known limit:** a session run as a Claude Code background job may get no reminder",
+            "openspec/changes/add-itinerary-calendar-check/tasks.md": "在背景 job 裡，用一個只把 `CLAUDE_CODE_ENTRYPOINT` 與 `CLAUDE_CODE_SESSION_ATTENDED` 寫進暫存檔的除錯 Stop hook",
+            "plugin/skills/itinerary-check/SKILL.md": "a `complete: false` list stopped early or could not open or list a folder",
+        ]
+        for (document, phrase) in pins {
+            XCTAssertEqual(try read(document).components(separatedBy: phrase).count - 1, 1, "\(document) lacks, or repeats: \(phrase)")
+        }
+    }
+
     /// #500 r5 #6: a failing helper means no changed file is read, and the user is asked.
     func testAFailingHelperStopsTheRun() throws {
         let text = try read(skill)

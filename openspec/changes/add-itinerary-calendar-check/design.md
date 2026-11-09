@@ -41,6 +41,8 @@ macOS 的 python3 預設沒有 YAML 模組，所以用逐行解析讀這兩個�
 
 PR #500 第 7 輪：skill 只有在完整檢查之後才給 all-clear（走訪完整、每個變更路徑都存下而且印得出、印出的路徑都讀過），否則說查了什麼、有幾個沒存或沒讀；真實路徑規則兩邊都 resolve，比對旅程資料夾自己的真實路徑，所以經 symlink 的 `~/Dropbox`（macOS 連到 `~/Library/CloudStorage/Dropbox`）底下的旅程資料夾讀得到檔案；hook 的旅程資料夾在邏輯祖先找不到時退回真實路徑的祖先；`itinerary_ignore` 的行內清單、區塊清單與註解共用一套引號規則（雙引號內 `\"`、`\\`，單引號內 `''`）；helper 把絕對路徑或含空、`.`、`..` 段的路徑算成 unreadable，旅程資料夾不是絕對路徑就 exit 1，`HOME` 空而沒有 `CLAUDE_CONFIG_DIR` 時 exit 2；30 天清理略過本 session 自己的開始紀錄；wrapper 用 `exec` 執行 python，hook timeout 殺掉的就是走訪本身。
 
+PR #500 第 8 輪：走訪時開不了或列不出的目錄、stat 不了的項目都讓清單 `complete: false`，提醒也說有資料夾沒列到，skill 因此不給 all-clear；30 天清理略過本 session 的所有紀錄（`.reminded` 也留著，resume 不會再提醒一次）；wrapper 用 `python3 -I -c` 以 runpy 在 catch-all 裡載入模組、一律 exit 0，模組讀不到時 python 不會 exit 2 而擋住 Stop；同一 session 走訪一再很慢時，暫停 5 分鐘、之後每次加倍，最長 1 小時。背景 job 的 session：devil's advocate 在有人回答的背景 job 裡讀到 `CLAUDE_CODE_SESSION_ATTENDED=0`，主 agent 的 Stop hook 是否也是 0 不知道；若是，這類 session 永遠不提醒。允許清單先不改，task 1.2 加一個只記錄這兩個變數的除錯 Stop hook，README 與 CHANGELOG 寫成已知限制。
+
 ## Risks / Trade-offs
 
 - 提醒可能是白提醒：檔案改了不代表旅程事實改了。skill 會一行回答。

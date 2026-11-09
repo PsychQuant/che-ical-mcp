@@ -218,7 +218,7 @@ since = 1577836801   # just after the 2020-01-01 stamp of the old README.md
 print(m.changed_files(sys.argv[2], since, [], order=dirs_first), m.changed_files(sys.argv[2], since, [], order=file_first))
 PY
 )
-check "the walk limit counts directories: 100 empty directories first stop the walk with nothing found, and a file first is found before it stops" "$got" "([], True) (['zz.md'], True)"
+check "the walk limit counts directories: 100 empty directories first stop the walk with nothing found, and a file first is found before it stops" "$got" "([], True, False) (['zz.md'], True, False)"
 got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.listing(["zz.md"], True))' "$PROJECT_DIR/plugin/hooks" 2>&1)
 check "changes found in a walk that stopped early: the reminder says so" "$got" '"zz.md" (the listing stopped early; the folder is large)'
 
@@ -699,6 +699,77 @@ check "the hook's own process is python, not a bash parent" "$got" "python"
 # With exec, python's exit status is the hook's: a missing module still ends in 0 (never a 2, which blocks).
 W="$TMP/wrap7"; mkdir -p "$W"; cp "$HOOK" "$W/"
 printf '%s' "$(json w7 "$T")" | bash "$W/itinerary-reminder.sh" stop >/dev/null 2>&1; check "the wrapper without its module exits 0" "$?" "0"
+
+# --- round 8 (#500 report r8) ---------------------------------------------------------------
+# #1/#5: a directory the walk cannot open or list makes the stored list incomplete, so the skill gives
+# no all-clear; the changed file next to it is still listed.
+T="$TMP/trips/unlist8"; trip "$T"; run start "$(json unlist8 "$T")"
+mkdir -p "$T/locked" "$T/open"; printf x > "$T/locked/hidden.md"; printf x > "$T/open/seen.md"; chmod 000 "$T/locked"
+run stop "$(json unlist8 "$T")"; ctx=$(context "$OUT"); chmod 700 "$T/locked"
+has "an unlistable directory: the changed file next to it is listed" "$ctx" "open/seen.md"
+has "an unlistable directory: the reminder says a folder could not be listed" "$ctx" "some folders could not be listed"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" unlist8 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["files"])')
+check "an unlistable directory: the stored list is not complete" "$got" "False ['open/seen.md']"
+T="$TMP/trips/full8"; trip "$T"; run start "$(json full8 "$T")"; printf x > "$T/a.md"; run stop "$(json full8 "$T")"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" full8 | python3 -c 'import json,sys; print(json.load(sys.stdin)["complete"])')
+check "a walk that listed everything: complete" "$got" "True"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$TMP/trips/full8" <<'PY2' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+real = os.scandir
+def failing(fd):   # every listing below the top one fails (EIO, a dataless folder offline)
+    if failing.calls:
+        raise PermissionError(13, "simulated")
+    failing.calls += 1
+    return real(fd)
+failing.calls = 0
+os.mkdir(os.path.join(sys.argv[2], "sub8"))
+m.os.scandir = failing
+print(m.changed_files(sys.argv[2], 1577836801, [])[2])
+PY2
+)
+check "a scandir that raises marks the walk as skipping" "$got" "True"
+
+# #2/#4: the prune skips every record of the current session, so a session resumed after 30 days keeps
+# its .reminded and is not reminded twice.
+T="$TMP/trips/twice8"; trip "$T"; run start "$(json twice8 "$T")"; printf x > "$T/a.md"
+run stop "$(json twice8 "$T")"; [ -n "$(context "$OUT")" ] && ok "resume after 30 days: first reminder" || bad "resume after 30 days: first reminder"
+touch -t 202001010000 "$SD/twice8.start" "$SD/twice8.reminded" "$SD/twice8.changed.json"
+run start "$(json twice8 "$T")"
+[ -f "$SD/twice8.reminded" ] && ok "resume after 30 days: the session's .reminded is kept" || bad "resume after 30 days: the session's .reminded is kept"
+[ -f "$SD/twice8.changed.json" ] && ok "resume after 30 days: the session's .changed.json is kept" || bad "resume after 30 days: the session's .changed.json is kept"
+run stop "$(json twice8 "$T")"
+check "resume after 30 days: no second reminder" "$OUT" ""
+printf 1 > "$SD/twice8x.reminded"; touch -t 202001010000 "$SD/twice8x.reminded"
+run start "$(json twice8 "$T")"
+[ -e "$SD/twice8x.reminded" ] && bad "a session whose id only starts the same is still pruned" || ok "a session whose id only starts the same is still pruned"
+
+# #3/#6/#9: the hook never exits 2. A module that exists but cannot be read still ends in 0.
+W8="$TMP/wrap8"; mkdir -p "$W8"; cp "$HOOK" "$PROJECT_DIR/plugin/hooks/itinerary_reminder.py" "$W8/"; chmod 000 "$W8/itinerary_reminder.py"
+printf '%s' "$(json w8 "$TMP/trips/full8")" | bash "$W8/itinerary-reminder.sh" stop >/dev/null 2>&1; rc=$?
+chmod 600 "$W8/itinerary_reminder.py"
+check "an unreadable module: the hook exits 0" "$rc" "0"
+printf 'raise SystemExit(2)\n' > "$W8/itinerary_reminder.py"
+printf '%s' "$(json w8 "$TMP/trips/full8")" | bash "$W8/itinerary-reminder.sh" stop >/dev/null 2>&1
+check "a module that exits 2: the hook exits 0" "$?" "0"
+printf 'import sys\nprint(sys.argv[1:])\n' > "$W8/itinerary_reminder.py"
+got=$(printf '' | bash "$W8/itinerary-reminder.sh" stop 2>/dev/null)
+check "the module sees its mode as sys.argv[1]" "$got" "['stop']"
+
+# #7: a walk that is slow again doubles the pause, up to an hour.
+T="$TMP/trips/backoff8"; trip "$T"; run start "$(json backoff8 "$T")"
+for n in $(seq 1 30); do mkdir -p "$T/d$(printf %02d $n)"; done
+OUT=$(printf '%s' "$(json backoff8 "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
+check "a first slow walk pauses 300 s" "$(cat "$SD/backoff8.slow")" "300"
+touch -t 202001010000 "$SD/backoff8.slow"
+OUT=$(printf '%s' "$(json backoff8 "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
+check "a second slow walk pauses 600 s" "$(cat "$SD/backoff8.slow")" "600"
+printf 3600 > "$SD/backoff8.slow"; touch -t 202001010000 "$SD/backoff8.slow"
+OUT=$(printf '%s' "$(json backoff8 "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=10 bash "$HOOK" stop 2>/dev/null)
+check "the pause stops at an hour" "$(cat "$SD/backoff8.slow")" "3600"
+touch -t 202001010000 "$SD/backoff8.slow"; printf x > "$T/found.md"
+run stop "$(json backoff8 "$T")"
+[ -e "$SD/backoff8.slow" ] && bad "a walk that finds a change clears the pause" || ok "a walk that finds a change clears the pause"
 
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"

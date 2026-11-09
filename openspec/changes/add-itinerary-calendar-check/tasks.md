@@ -1,7 +1,7 @@
 ## 1. Spike
 
 - [x] 1.1 讀 Claude Code hooks 參考文件：`Stop` hook 的 `additionalContext` 讓對話繼續，受 `stop_hook_active` 與連續 8 次上限保護；`CLAUDE_PLUGIN_DATA` 是 plugin 的持久資料目錄。驗證：design 引用讀過的章節。
-- [ ] 1.2 在實際的 Claude Code session 裡，於有專案層設定檔的虛構旅程資料夾改一個檔案、結束一個回合。驗證：提醒出現一次、Claude 回應它、session 沒有第二次被延續。另外在互動 session 裡啟動的 `claude -p`（從該 session 的 Bash 執行）結束時不提醒：記下它讀到的 `CLAUDE_CODE_ENTRYPOINT` 與 `CLAUDE_CODE_SESSION_ATTENDED`（背景 job 也是 `cli`，只靠 `ATTENDED=0` 排除）。需要有人在鍵盤前操作，尚未做。
+- [ ] 1.2 在實際的 Claude Code session 裡，於有專案層設定檔的虛構旅程資料夾改一個檔案、結束一個回合。驗證：提醒出現一次、Claude 回應它、session 沒有第二次被延續。另外在互動 session 裡啟動的 `claude -p`（從該 session 的 Bash 執行）結束時不提醒：記下它讀到的 `CLAUDE_CODE_ENTRYPOINT` 與 `CLAUDE_CODE_SESSION_ATTENDED`（背景 job 也是 `cli`，只靠 `ATTENDED=0` 排除）。再在背景 job 裡，用一個只把 `CLAUDE_CODE_ENTRYPOINT` 與 `CLAUDE_CODE_SESSION_ATTENDED` 寫進暫存檔的除錯 Stop hook，讀主 agent 自己的值（不寫其他變數）；若為 `ATTENDED=0`，背景 job 永遠不提醒，要決定 `CLAUDE_JOB_DIR` 有值、有人回答的背景 job 是否提醒，並更新 README 與 CHANGELOG 的 Known limit。需要有人在鍵盤前操作，尚未做。
 
 ## 2. Hook
 
@@ -14,4 +14,5 @@
 - [x] 3.3 第 1 輪驗證的修正（PR #500）：`allowed-tools` 的 Bash 限定為設定檔查詢；檔名是資料（JSON 字串、宣告為資料）；走訪計入目錄；旅程資料夾取邏輯祖先；目錄樣式用 glob；只在互動式 session 提醒；寫入依事件屬於誰分派。驗證：hook 測試與 `ItineraryCheckDocsTests` 先紅後綠。
 - [x] 3.4 第 6 輪驗證的修正（PR #500）：寫入端以根目錄逐層描述子開啟資料目錄、走訪以描述子逐層開啟並 scandir、紀錄檔拒絕其他硬連結、引號只在值的開頭開啟、開頭 `/` 的目錄樣式錨定在旅程資料夾、helper 的 `complete`／`total` 限定型別。驗證：hook 測試先紅後綠。
 - [x] 3.5 第 7 輪驗證的修正（PR #500）：只有完整檢查才給 all-clear、真實路徑規則兩邊都 resolve、經 symlink 進入的工作目錄退回真實路徑的祖先、引號與跳脫規則統一、helper 拒絕非相對的檔案路徑與非絕對的旅程資料夾與空的 `HOME`、清理略過本 session 的紀錄、wrapper `exec` python。驗證：hook 測試與 `ItineraryCheckDocsTests` 先紅後綠。
+- [x] 3.6 第 8 輪驗證的修正（PR #500）：列不出的目錄讓清單不完整、清理略過本 session 所有紀錄、wrapper 用 runpy 載入模組而永不 exit 2、慢走訪的暫停加倍到 1 小時、背景 job 列為已知限制。驗證：hook 測試與 `ItineraryCheckDocsTests` 先紅後綠。
 - [x] 3.2 `plugin/CLAUDE.md`、`plugin/README.md`、`plugin/CHANGELOG.md`，以及 `plugin/rules/event-modules.md` 的一行指引。驗證：`ItineraryCheckDocsTests` 通過。
