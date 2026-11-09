@@ -38,7 +38,8 @@ export HOME="$TMP/home"
 # An interactive session, as observed on Claude Code 2.1.319 (undocumented variables, #341 round 1).
 export CLAUDE_CODE_ENTRYPOINT=cli
 unset CLAUDE_CODE_SESSION_ATTENDED
-export CLAUDE_PLUGIN_DATA="$TMP/data"
+# #500 r4 #5: the helper accepts only a data directory under ~/.claude/plugins/data/.
+export CLAUDE_PLUGIN_DATA="$HOME/.claude/plugins/data/che-ical-mcp-test"
 mkdir -p "$HOME" "$CLAUDE_PLUGIN_DATA"
 OLD=202001010000   # touch -t stamp for files that predate every session
 
@@ -202,12 +203,24 @@ run stop "$(json cap "$T")"
 len=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]))' 2>/dev/null)
 [ -n "$len" ] && [ "$len" -le 5000 ] && ok "the reminder stays under 5000 characters ($len)" || bad "the reminder stays under 5000 characters (got $len)"
 
-# The walk limit counts directories too.
-T="$TMP/trips/dirs"; trip "$T"; run start "$(json dirs "$T")"
+# The walk limit counts directories too. #500 r4 #1: tested on changed_files() itself, in an
+# enumeration order the test controls (the filesystem's own order is not fixed).
+T="$TMP/trips/dirs"; trip "$T"
 for n in $(seq 1 150); do mkdir -p "$T/e$(printf %03d $n)"; done
 printf x > "$T/zz.md"
-OUT=$(printf '%s' "$(json dirs "$T")" | CHE_ICAL_ITINERARY_WALK_LIMIT=100 bash "$HOOK" stop 2>/dev/null)
-has "a walk through many empty directories stops at the limit and says so" "$(context "$OUT")" "the listing stopped early"
+got=$(python3 -I - "$PROJECT_DIR/plugin/hooks" "$T" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m
+os.environ["CHE_ICAL_ITINERARY_WALK_LIMIT"] = "100"
+dirs_first = lambda entries: sorted(entries, key=lambda e: (not e.is_dir(follow_symlinks=False), e.name))
+file_first = lambda entries: sorted(entries, key=lambda e: (e.is_dir(follow_symlinks=False), e.name))
+since = 1577836801   # just after the 2020-01-01 stamp of the old README.md
+print(m.changed_files(sys.argv[2], since, [], order=dirs_first), m.changed_files(sys.argv[2], since, [], order=file_first))
+PY
+)
+check "the walk limit counts directories: 100 empty directories first stop the walk with nothing found, and a file first is found before it stops" "$got" "([], True) (['zz.md'], True)"
+got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.listing(["zz.md"], True))' "$PROJECT_DIR/plugin/hooks" 2>&1)
+check "changes found in a walk that stopped early: the reminder says so" "$got" '"zz.md" (the listing stopped early; the folder is large)'
 
 # A symlinked .claude does not move the trip folder.
 T="$TMP/trips/linked"; mkdir -p "$T" "$TMP/elsewhere"; trip "$TMP/elsewhere"; mv "$TMP/elsewhere/README.md" "$TMP/elsewhere/other.md"
@@ -332,9 +345,9 @@ hasnt "and the walk did not stop early" "$ctx" "stopped early"
 # #5: a session id with a newline is refused by the helper.
 bash "$HELPER" "$CLAUDE_PLUGIN_DATA" "$(printf 'exact\n../x')" >/dev/null 2>&1; check "the helper refuses a session id with a newline" "$?" "2"
 # #6: a symlinked itinerary-sessions directory or list file is refused.
-L="$TMP/linkdata"; mkdir -p "$L" "$TMP/elsewhere-sessions"; ln -s "$TMP/elsewhere-sessions" "$L/itinerary-sessions"; printf '{}' > "$TMP/elsewhere-sessions/x.changed.json"
+L="$HOME/.claude/plugins/data/linkdata"; mkdir -p "$L" "$TMP/elsewhere-sessions"; ln -s "$TMP/elsewhere-sessions" "$L/itinerary-sessions"; printf '{}' > "$TMP/elsewhere-sessions/x.changed.json"
 bash "$HELPER" "$L" x >/dev/null 2>&1; check "the helper refuses a symlinked sessions directory" "$?" "2"
-L2="$TMP/linkdata2"; mkdir -p "$L2/itinerary-sessions"; ln -s "$TMP/elsewhere-sessions/x.changed.json" "$L2/itinerary-sessions/y.changed.json"
+L2="$HOME/.claude/plugins/data/linkdata2"; mkdir -p "$L2/itinerary-sessions"; ln -s "$TMP/elsewhere-sessions/x.changed.json" "$L2/itinerary-sessions/y.changed.json"
 bash "$HELPER" "$L2" y >/dev/null 2>&1; check "the helper refuses a symlinked list file" "$?" "2"
 # #8: lone surrogates and private-use characters are dropped from display names; the stored list is ASCII JSON.
 got=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import itinerary_reminder as m; print(m.render("a\udcffbc"))' "$PROJECT_DIR/plugin/hooks" 2>/dev/null)
@@ -344,6 +357,9 @@ run stop "$(json ascii "$T")"
 python3 -c 'import sys; d=open(sys.argv[1],"rb").read(); sys.exit(0 if all(b < 128 for b in d) else 1)' "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ascii.changed.json" && ok "the stored list is ASCII JSON" || bad "the stored list is ASCII JSON"
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"])')
 check "and decodes to the exact name" "$got" "['日程.md']"
+# #500 r4 #4: the helper prints the names as UTF-8, not as \uXXXX escapes: compared literally.
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ascii)
+check "the helper prints UTF-8 names, compared literally" "$got" "{\"trip_folder\": \"$T\", \"files\": [\"日程.md\"], \"unreadable\": 0, \"total\": 1, \"complete\": true}"
 has "the reminder shows the name as it is" "$(context "$OUT")" "日程.md"
 # #10: the stored list is capped, with the total.
 T="$TMP/trips/capped"; trip "$T"; run start "$(json capped "$T")"; mkdir -p "$T/c"; for n in $(seq 1 250); do : > "$T/c/f$n"; done
@@ -354,6 +370,46 @@ check "the stored list holds at most 200 paths and the total" "$got" "200 250"
 T="$TMP/trips/slowwalk"; trip "$T"; run start "$(json slowwalk "$T")"
 OUT=$(printf '%s' "$(json slowwalk "$T")" | CHE_ICAL_ITINERARY_SLOW_WALK_SECONDS=0 bash "$HOOK" stop 2>/dev/null)
 [ -f "$CLAUDE_PLUGIN_DATA/itinerary-sessions/slowwalk.slow" ] && ok "a slow walk with no change pauses the next ones" || bad "a slow walk with no change pauses the next ones"
+
+# --- round 4 (#500 report r4) ---------------------------------------------------------------
+# #2: the writer refuses a symlinked sessions directory and never follows a symlinked record file.
+WD="$HOME/.claude/plugins/data/writerlink"; mkdir -p "$WD" "$TMP/w-target"; ln -s "$TMP/w-target" "$WD/itinerary-sessions"
+printf old > "$TMP/w-target/stale.txt"; touch -t "$OLD" "$TMP/w-target/stale.txt"
+T="$TMP/trips/wl"; trip "$T"
+printf '%s' "$(json wl "$T")" | CLAUDE_PLUGIN_DATA="$WD" bash "$HOOK" start >/dev/null 2>&1
+check "a symlinked sessions directory: start writes nothing through it" "$(ls "$TMP/w-target" | tr '\n' ' ')" "stale.txt "
+printf '%s' "$(json wl "$T")" | CLAUDE_PLUGIN_DATA="$WD" bash "$HOOK" stop >/dev/null 2>&1
+check "a symlinked sessions directory: stop writes nothing through it" "$(ls "$TMP/w-target" | tr '\n' ' ')" "stale.txt "
+T="$TMP/trips/rl"; trip "$T"; run start "$(json rl "$T")"; printf x > "$T/r.md"
+printf keep > "$TMP/victim-slow"; printf keep > "$TMP/victim-json"
+touch -t "$OLD" "$TMP/victim-slow" "$TMP/victim-json"   # an old .slow would not pause the walk
+ln -s "$TMP/victim-slow" "$CLAUDE_PLUGIN_DATA/itinerary-sessions/rl.slow"
+ln -s "$TMP/victim-json" "$CLAUDE_PLUGIN_DATA/itinerary-sessions/rl.changed.json"
+run stop "$(json rl "$T")"
+check "a symlinked .slow record: its target is not written" "$(cat "$TMP/victim-slow")" "keep"
+check "a symlinked .changed.json record: its target is not written" "$(cat "$TMP/victim-json")" "keep"
+check "a symlinked record: exit 0" "$RC" 0
+# #3: the inline list honours quotes, so a comma inside a quoted pattern stays in it.
+T="$TMP/trips/comma"; trip "$T" 'itinerary_ignore: ["receipts, paid/", '"'"'a,b.md'"'"']'
+run start "$(json comma "$T")"; mkdir -p "$T/receipts, paid"; printf x > "$T/receipts, paid/r.md"; printf x > "$T/a,b.md"; printf x > "$T/keep.md"
+run stop "$(json comma "$T")"; ctx=$(context "$OUT")
+hasnt "a quoted directory pattern with a comma skips that directory" "$ctx" "receipts, paid/r.md"
+hasnt "a quoted name pattern with a comma skips that file" "$ctx" "a,b.md"
+has "and the rest is listed" "$ctx" "keep.md"
+# #4: a stored name that is not text (a lone surrogate) is counted as unreadable, not printed.
+mkdir -p "$CLAUDE_PLUGIN_DATA/itinerary-sessions"
+printf '{"trip_folder": "/t", "files": ["ok.md", "bad\\udcff.md"], "total": 2, "complete": true}' > "$CLAUDE_PLUGIN_DATA/itinerary-sessions/sur.changed.json"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" sur)
+check "a name that is not text is counted as unreadable" "$got" '{"trip_folder": "/t", "files": ["ok.md"], "unreadable": 1, "total": 2, "complete": true}'
+# #5: the helper refuses a data directory with a .. component or outside ~/.claude/plugins/data/.
+bash "$HELPER" "$CLAUDE_PLUGIN_DATA/../che-ical-mcp-test" ascii >/dev/null 2>&1; check "the helper refuses a data directory with .." "$?" "2"
+mkdir -p "$TMP/notdata/itinerary-sessions"; cp "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ascii.changed.json" "$TMP/notdata/itinerary-sessions/"
+bash "$HELPER" "$TMP/notdata" ascii >/dev/null 2>&1; check "the helper refuses a data directory outside ~/.claude/plugins/data/" "$?" "2"
+# #6: a directory is pruned only by a pattern ending in /; mail/sub? does not prune mail/sub/.
+T="$TMP/trips/qmark"; trip "$T" 'itinerary_ignore: ["mail/sub?"]'
+run start "$(json qmark "$T")"; mkdir -p "$T/mail/sub"; printf x > "$T/mail/sub/a.md"
+run stop "$(json qmark "$T")"
+has "a pattern not ending in / does not prune a directory" "$(context "$OUT")" "mail/sub/a.md"
 
 # --- speed ------------------------------------------------------------------------------
 T="$TMP/trips/big"; trip "$T"

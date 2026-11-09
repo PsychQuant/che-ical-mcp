@@ -35,7 +35,7 @@ LIST_CHARS = 4000      # the rendered list is cut to this many characters
 WALK_SECONDS = 2.0     # stop walking the folder after this long
 WALK_ENTRIES = 50000   # or after this many entries, files and directories counted alike
 KEEP_DAYS = 30         # session records older than this are removed on start
-SLOW_PAUSE = 300       # after a walk that stopped early and found nothing, wait this long before the next
+SLOW_PAUSE = 300       # after a walk that stopped early, was killed, or took SLOW_WALK_SECONDS and found nothing, wait this long
 SKIPPED_DIRS = (".git", ".claude")
 SKIPPED_FILES = (".DS_Store",)
 SESSION = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -102,22 +102,73 @@ def read_input():
     return data
 
 
+# #500 r4 #2: the sessions directory and its records are never reached through a symlink. The
+# directory is opened with O_NOFOLLOW and every record is read, written, listed and removed relative
+# to that descriptor without following a symlink, so a planted link cannot send a write outside it.
+
+def open_sessions(folder, create):
+    """A descriptor of the sessions directory, or None when it is missing (and not created) or a
+    symlink, or anything but a directory."""
+    if create:
+        try:
+            os.mkdir(folder, 0o700)
+        except FileExistsError:
+            pass
+    try:
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    return fd
+
+
+def record_stat(dfd, name):
+    """lstat of a record, or None. A symlink counts as no record."""
+    try:
+        st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+    except OSError:
+        return None
+    return st if (st.st_mode & 0o170000) == 0o100000 else None
+
+
+def read_record(dfd, name):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+    with os.fdopen(fd) as f:
+        return f.read()
+
+
+def write_record(dfd, name, text, exclusive=False):
+    """Write a regular file in the sessions directory, never through a symlink (O_NOFOLLOW), and
+    never into an existing file when `exclusive`."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_EXCL if exclusive else os.O_TRUNC)
+    fd = os.open(name, flags, 0o600, dir_fd=dfd)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def start(data, folder):
     if not interactive():
         return
-    os.makedirs(folder, mode=0o700, exist_ok=True)
-    record = os.path.join(folder, data["session_id"] + ".start")
-    if not os.path.exists(record):
-        with open(record, "x") as f:
-            f.write(repr(time.time()))
-    cutoff = time.time() - KEEP_DAYS * 86400
-    for name in os.listdir(folder):
-        path = os.path.join(folder, name)
+    dfd = open_sessions(folder, create=True)
+    if dfd is None:
+        return
+    try:
+        record = data["session_id"] + ".start"
         try:
-            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
-                os.remove(path)
+            write_record(dfd, record, repr(time.time()), exclusive=True)
+        except FileExistsError:
+            pass   # a resume, /clear or compaction keeps the first record
         except OSError:
-            pass
+            return
+        cutoff = time.time() - KEEP_DAYS * 86400
+        for name in os.listdir(dfd):
+            st = record_stat(dfd, name)
+            try:
+                if st is not None and st.st_mtime < cutoff:
+                    os.unlink(name, dir_fd=dfd)
+            except OSError:
+                pass
+    finally:
+        os.close(dfd)
 
 
 def project_config(cwd):
@@ -159,6 +210,27 @@ def scalar(text):
     return text
 
 
+def inline_list(text):
+    """The items of an inline [a, "b, c"] list: split on commas outside single or double quotes
+    (#500 r4 #3), each item read as a scalar."""
+    items, current, quote = [], "", None
+    for c in text:
+        if quote:
+            current += c
+            if c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+            current += c
+        elif c == ",":
+            items.append(current)
+            current = ""
+        else:
+            current += c
+    items.append(current)
+    return [scalar(i) for i in items if scalar(i)]
+
+
 def settings(config):
     """(enabled, ignore globs) from the config's two top-level keys."""
     try:
@@ -184,7 +256,7 @@ def settings(config):
             enabled = False
         elif key == "itinerary_ignore":
             if rest.startswith("[") and rest.endswith("]"):
-                ignores += [scalar(p) for p in rest[1:-1].split(",") if scalar(p)]
+                ignores += inline_list(rest[1:-1])
             elif not rest:
                 in_list = True
     return enabled, ignores
@@ -212,10 +284,21 @@ def ignored(rel, ignores):
     return False
 
 
-def changed_files(trip, since, ignores):
+def ignored_dir(rel_dir, ignores):
+    """Whether a directory is pruned: only a pattern ending in / prunes one (#500 r4 #6). Any other
+    pattern matches a file's path, and fnmatch's ? or [...] could otherwise match a / and prune a
+    directory whose files that pattern would not ignore."""
+    return ignored(rel_dir + "/x", [p for p in ignores if p.endswith("/")])
+
+
+def changed_files(trip, since, ignores, order=None):
     """(changed files relative to trip, whether the walk stopped early). Each directory is read one
     entry at a time, every directory and file counts toward the entry limit, and the deadline is
-    checked for each entry, so the limits bound the scan itself. The caller sorts the result."""
+    checked for each entry, so the limits bound the scan itself. The caller sorts the result.
+    `order` (tests only) reorders each directory's entries, so a test does not depend on the
+    filesystem's enumeration order (#500 r4 #1). A single call that hangs (a File Provider folder
+    listed for the first time, a network mount) is not bounded here: the hook's 10 s timeout ends it,
+    and the .slow record written before the walk pauses the next ones (#500 r4 #11)."""
     found, seen = [], 0
     limit, began, exit_at = walk_limit(), time.monotonic(), walk_exit_at()
     stack = [trip]
@@ -226,7 +309,7 @@ def changed_files(trip, since, ignores):
         except OSError:
             continue
         with entries:
-            for entry in entries:
+            for entry in (entries if order is None else order(list(entries))):
                 seen += 1
                 if exit_at and seen >= exit_at:
                     os._exit(1)
@@ -246,7 +329,7 @@ def visit(entry, trip, since, ignores, stack):
         if entry.is_dir(follow_symlinks=False):
             if entry.name not in SKIPPED_DIRS:
                 rel_dir = os.path.relpath(entry.path, trip).replace(os.sep, "/")
-                if not ignored(rel_dir + "/", ignores):   # an ignored directory is pruned, not walked
+                if not ignored_dir(rel_dir, ignores):   # an ignored directory is pruned, not walked
                     stack.append(entry.path)
             return None
         if not entry.is_file(follow_symlinks=False) or entry.name in SKIPPED_FILES:
@@ -288,10 +371,26 @@ def listing(files, cut_short):
 def stop(data, folder):
     if data.get("stop_hook_active") is True or not interactive():
         return
+    dfd = open_sessions(folder, create=False)
+    if dfd is None:
+        return
+    try:
+        stop_in(data, dfd)
+    finally:
+        os.close(dfd)
+
+
+def stop_in(data, dfd):
     sid = data["session_id"]
-    record = os.path.join(folder, sid + ".start")
-    reminded = os.path.join(folder, sid + ".reminded")
-    if not os.path.isfile(record) or os.path.exists(reminded):
+    record, reminded, slow = sid + ".start", sid + ".reminded", sid + ".slow"
+    if record_stat(dfd, record) is None:
+        return
+    try:
+        os.stat(reminded, dir_fd=dfd, follow_symlinks=False)
+        return   # already reminded (any entry under that name, a symlink included, counts)
+    except FileNotFoundError:
+        pass
+    except OSError:
         return
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR", "")
     if not isinstance(cwd, str) or not os.path.isdir(cwd):
@@ -306,19 +405,14 @@ def stop(data, folder):
     if not enabled:
         return
     try:
-        with open(record) as f:
-            since = float(f.read().strip())
+        since = float(read_record(dfd, record).strip())
     except (OSError, ValueError):
         return
-    slow = os.path.join(folder, sid + ".slow")
-    try:
-        if time.time() - os.path.getmtime(slow) < SLOW_PAUSE:
-            return  # a large folder: the last walk stopped early, or was killed, and found nothing
-    except OSError:
-        pass
+    paused = record_stat(dfd, slow)
+    if paused is not None and time.time() - paused.st_mtime < SLOW_PAUSE:
+        return  # a large folder: the last walk stopped early, was killed, or was slow, and found nothing
     try:  # written before the walk, so a walk the hook timeout kills also pauses the next ones
-        with open(slow, "w") as f:
-            f.write(repr(time.time()))
+        write_record(dfd, slow, repr(time.time()))
     except OSError:
         return
     began = time.monotonic()
@@ -326,16 +420,16 @@ def stop(data, folder):
     slow_walk = time.monotonic() - began >= slow_walk_seconds()
     if not ((cut_short or slow_walk) and not files):
         try:
-            os.remove(slow)
+            os.unlink(slow, dir_fd=dfd)
         except OSError:
             pass
     if not files:
         return
     stored = sorted(files)
     try:  # the exact paths, for the itinerary-check skill (bin/itinerary-changed.sh); ASCII JSON
-        with open(os.path.join(folder, sid + ".changed.json"), "w", encoding="ascii") as f:
-            json.dump({"trip_folder": trip, "files": stored[:STORED], "total": len(stored),
-                       "complete": not cut_short}, f, ensure_ascii=True)
+        write_record(dfd, sid + ".changed.json",
+                     json.dumps({"trip_folder": trip, "files": stored[:STORED], "total": len(stored),
+                                 "complete": not cut_short}, ensure_ascii=True))
     except (OSError, ValueError):
         return
     message = (
@@ -351,12 +445,12 @@ def stop(data, folder):
         "This reminder comes once per session; `itinerary_check: off` in the folder's .claude/.ical/config.yaml "
         "turns it off, and `itinerary_ignore:` skips files."
     )
+    # ensure_ascii: the printed object is ASCII; render() drops surrogates, so nothing here can fail
+    # to encode (#500 r4 #12: the former encode check could not fail and is gone).
     output = json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}})
     try:
-        output.encode("utf-8")   # a name that cannot be printed fails here, before anything is recorded
-        with open(reminded, "x") as f:
-            f.write(repr(time.time()))
-    except (OSError, UnicodeError):
+        write_record(dfd, reminded, repr(time.time()), exclusive=True)
+    except OSError:
         return  # without the record it would remind again on every turn: stay silent instead
     print(output)
 

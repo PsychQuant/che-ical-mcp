@@ -44,3 +44,5 @@ macOS 的 python3 預設沒有 YAML 模組，所以用逐行解析讀這兩個�
 - 提醒可能是白提醒：檔案改了不代表旅程事實改了。skill 會一行回答。
 - 既有的專案層設定檔使用者升級後會開始收到提醒。CHANGELOG 與 README 寫明，`itinerary_check: off` 可關閉。
 - 在旅程資料夾裡，每個 session 多花一個模型回合。
+
+PR #500 第 4 輪：寫入端也拒絕 symlink（sessions 目錄以 O_NOFOLLOW 開成目錄描述子，紀錄檔都相對於它讀寫、刪除，不跟隨 symlink）；inline `itinerary_ignore` 依引號切逗號；只有結尾是 `/` 的樣式會修剪目錄；helper 用 `python3 -I` 以 UTF-8 印出路徑，不是文字的名稱（lone surrogate）只計數為 unreadable，資料目錄只接受 `~/.claude/plugins/data/` 底下、不含 `..` 的路徑；走訪上限是兩秒或 50 000 個項目、在項目之間檢查，單一系統呼叫卡住時由 hook 的 10 秒 timeout 截斷；skill 讀旅程資料夾自己的 config 與 `state/archives.json` 時不套真實路徑規則（hook 也是這樣），讀不到 config 就停下來問。`allowed-tools` 裡的 `${CLAUDE_PLUGIN_ROOT}`：Claude Code 的 skills 文件（2026-11-09 讀）寫明 plugin skill 的 `${CLAUDE_PLUGIN_ROOT}` 與 `${CLAUDE_PLUGIN_DATA}` 會在 Markdown 內容與 `allowed-tools` 的 Bash 規則兩處代換，所以兩個 helper 照寫的樣子預先核准；live session 還沒看過（task 1.2）。
