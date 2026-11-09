@@ -77,8 +77,8 @@ final class ExistingReminderSaveTests: XCTestCase {
     /// The closures the tests above cannot reach: each wrapper logs its failure through the
     /// sanitizer's log and answers with it.
     func testEachWrapperReportsItsOwnFailureThroughTheLog() throws {
-        for declaration in ["func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {",
-                            "func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {",
+        for declaration in ["func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],",
+                            "func removeExistingReminder(_ reminder: EKReminder, handler: String) throws -> ReminderSnapshot {",
                             "func saveExistingCalendar(_ calendar: EKCalendar, requested: Set<ListFieldCopy.Field> = []) throws -> Bool {",
                             "func removeExistingCalendar(_ calendar: EKCalendar) throws {"] {
             let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/ExistingReminderSave.swift")), declaration))
@@ -88,8 +88,8 @@ final class ExistingReminderSaveTests: XCTestCase {
 
     /// Each wrapper performs its own write, on the write store: swapping a save and a remove goes red.
     func testEachWrapperPerformsItsOwnWrite() throws {
-        for (declaration, write) in [("func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {", "outcome = try commitReminderSave(reminder, requested: requested)"),
-                                     ("func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {", "try commitReminderRemoval(reminder)"),
+        for (declaration, write) in [("func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],", "outcome = try commitReminderSave(reminder, requested: requested, dates: dates, occurrence: occurrence)"),
+                                     ("func removeExistingReminder(_ reminder: EKReminder, handler: String) throws -> ReminderSnapshot {", "removed = try commitReminderRemoval(reminder)"),
                                      ("func saveExistingCalendar(_ calendar: EKCalendar, requested: Set<ListFieldCopy.Field> = []) throws -> Bool {", "readBack = try commitListSave(calendar, requested: requested)"),
                                      ("func removeExistingCalendar(_ calendar: EKCalendar) throws {", "try commitListRemoval(calendar)")] {
             let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/ExistingReminderSave.swift")), declaration))
@@ -141,10 +141,10 @@ final class ExistingReminderSaveTests: XCTestCase {
                         // #265: the merge arm of `undo` with keep_later_edits.
                         "EventKitManager+KeepLaterEdits.swift": 1])
         XCTAssertEqual(try count("try savedOrUnread(original, handler: \"completeReminder\""), ["EventKitManager+ReminderCompletion.swift": 1])
-        XCTAssertEqual(try count("switch try saveExistingReminder(saved, handler: \"updateReminder\", requested: requested)"), ["EventKitManager.swift": 1])
+        XCTAssertEqual(try count("switch try saveExistingReminder(saved, handler: \"updateReminder\", requested: requested, dates: dates)"), ["EventKitManager.swift": 1])
         XCTAssertEqual(try count("try saveExistingReminder("), ["EventKitManager.swift": 1, "ExistingReminderSave.swift": 2])
         XCTAssertEqual(try count("try removeExistingReminder(reminder, handler:"), ["EventKitManager.swift": 2])
-        XCTAssertEqual(try count("try commitReminderRemoval(reminder)"), ["EventKitManager.swift": 1, "ExistingReminderSave.swift": 1])
+        XCTAssertEqual(try count("try commitReminderRemoval(reminder"), ["EventKitManager.swift": 1, "ExistingReminderSave.swift": 1])
     }
 
     /// PR #507 round 2 (HIGH): a save that landed but could not be read back says what happened to

@@ -25,7 +25,14 @@ enum ReminderUpdateWrite {
         // each alarm argument names its own kind (`setDue`, `setDueDay`, `clear` and `realign` touch
         // the absolute alarms only), so a relative or location alarm changed elsewhere is not written
         // back by a due change, and the other way round.
-        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms]) }
+        // Round 4: not the zone. When the due write zones the item, `changed()` carries it; named here,
+        // a cached zone older than the stored one was written back, and a zone assigned to a zoned item
+        // moves its instants.
+        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .absoluteAlarms]) }
+        // Round 4 INFO 9, a known limit: on a floating timed due, `realign` also rewrites the due and
+        // zones the item; `changed()` carries those, but they are not named, so against a cache older
+        // than the store the start and alarms align to the cached due. `date_sync.aligned` then reads
+        // false on the saved reminder.
         if request.realignToDue { fields.formUnion([.startDateComponents, .absoluteAlarms]) }
         if request.alarmOffsets != nil { fields.insert(.relativeAlarms) }
         if request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.locationAlarms) }
@@ -77,7 +84,7 @@ enum ReminderUpdateWrite {
     /// `rollback` is `EKObject.rollback()`, which clears `hasChanges` and does not drop the change
     /// (#274, `ExistingReminderSave`); when `save` throws, it runs and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
-                      save: () throws -> Void, reload: () -> Bool,
+                      save: () throws -> Void, saveAgain: (() throws -> Void)? = nil, reload: () -> Bool,
                       rollback: () -> Void,
                       current: (() -> EKReminder)? = nil) throws -> ReminderDateSync.Report? {
         // The seam-level guard: the caller runs it before its own lookups too, but `apply` does not
@@ -142,7 +149,8 @@ enum ReminderUpdateWrite {
         guard let dateSync else { return nil }
         // PR #507 round 1: `current` is the reminder the save left behind (another object when the
         // save gave it another identifier); the date check reads and, on fallback, writes that one.
-        return ReminderDateSync.confirmSaved(current?() ?? reminder, report: dateSync, save: save, reload: reload, rollback: rollback)
+        return ReminderDateSync.confirmSaved(current?() ?? reminder, report: dateSync, save: save, saveAgain: saveAgain,
+                                             reload: reload, rollback: rollback)
     }
 
     /// What `update_reminder` may say about the alarms after the save (PR #438 verify).

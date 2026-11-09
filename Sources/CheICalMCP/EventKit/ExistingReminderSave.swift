@@ -40,13 +40,28 @@ enum ExistingReminderSave {
     /// baseline off it, write the fields, save. The baseline is what the store held before this
     /// call's fields were written, so an undo record built from it holds only this call's
     /// differences, not a field changed elsewhere that the write kept. A closure seam (#182).
+    /// Round 4: `check` sees the baseline before anything is written and may refuse the write.
     static func commit<Item, Before>(lookup: () throws -> Item, baseline: (Item) -> Before,
+                                     check: (Before) throws -> Void = { _ in },
                                      write: (Item) throws -> Void, save: (Item) throws -> Void) throws -> (item: Item, before: Before) {
         let item = try lookup()
         let before = baseline(item)
+        try check(before)
         try write(item)
         try save(item)
         return (item, before)
+    }
+
+    /// PR #507 round 4: one removal on the write store: look the item up, snapshot it for the undo,
+    /// and remove it unless `skip` says not to (a batch row asked for completed reminders only whose
+    /// copy is no longer completed). Nil when skipped: nothing was removed.
+    static func removal<Item, Snapshot>(lookup: () throws -> Item, snapshot: (Item) -> Snapshot,
+                                        skip: (Item) -> Bool, remove: (Item) throws -> Void) throws -> Snapshot? {
+        let item = try lookup()
+        let taken = snapshot(item)
+        if skip(item) { return nil }
+        try remove(item)
+        return taken
     }
 
     /// What a failed write answers: the failure itself (it did not land), after `code` logs it.
@@ -93,10 +108,14 @@ extension EventKitManager {
     /// read back: the caller then records its undo from `CommittedReminder` before it reports
     /// `writeStoreReadBackFailed`, so the undo history stays in step with the store (round 2 HIGH).
     /// `requested` are the fields the request names, written also when the cache already held them.
-    func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {
+    /// Round 4: `dates` is the order the copy's dates are written in (the #237 fallback's second save),
+    /// and `occurrence` the occurrence a completion was read at (`checkSameOccurrence`).
+    func saveExistingReminder(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],
+                              dates: ReminderFieldCopy.DateOrder = .restore,
+                              occurrence: ReminderCompletionSnapshot? = nil) throws -> ReminderSaveOutcome {
         var outcome: ReminderSaveOutcome?
         try ExistingReminderSave.run(
-            write: { outcome = try commitReminderSave(reminder, requested: requested) },
+            write: { outcome = try commitReminderSave(reminder, requested: requested, dates: dates, occurrence: occurrence) },
             rollback: { reminder.rollback() },
             report: { failure in
                 ExistingReminderSave.failure(failure) {
@@ -113,8 +132,9 @@ extension EventKitManager {
 
     /// The reminder after its save with its commit, or `UnreadSaveError` when it landed but cannot be
     /// read back, for a caller that records its undo in a catch at its end (`completeReminder`).
-    func savedOrUnread(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> (reminder: EKReminder, committed: CommittedReminder) {
-        switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
+    func savedOrUnread(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = [],
+                       occurrence: ReminderCompletionSnapshot? = nil) throws -> (reminder: EKReminder, committed: CommittedReminder) {
+        switch try saveExistingReminder(reminder, handler: handler, requested: requested, occurrence: occurrence) {
         case .readBack(let read, let committed): return (read, committed)
         case .unread(let committed): throw UnreadSaveError(committed: committed)
         }
@@ -129,15 +149,20 @@ extension EventKitManager {
         }
     }
 
-    func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {
+    /// Returns the undo snapshot, taken off the write store's copy before the removal (round 4).
+    @discardableResult
+    func removeExistingReminder(_ reminder: EKReminder, handler: String) throws -> ReminderSnapshot {
+        var removed: ReminderSnapshot?
         try ExistingReminderSave.run(
-            write: { try commitReminderRemoval(reminder) },
+            write: { removed = try commitReminderRemoval(reminder) },
             rollback: { reminder.rollback() },
             report: { failure in
                 ExistingReminderSave.failure(failure) {
                     EventKitErrorSanitizer.writeFailureLog(handler: handler, identifier: reminder.calendarItemIdentifier, error: $0)
                 }
             })
+        guard let removed else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
+        return removed
     }
 
     /// A rename or recolor of a reminder list goes through the write store; an event calendar goes
@@ -184,7 +209,9 @@ extension EventKitManager {
     /// still written). Returns the reminder as this server's store reads it after the save, or what
     /// the copy held after its commit when it cannot be read back. Round 3: either way with what the
     /// copy held before the fields were written, the baseline of the call's undo record.
-    func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {
+    func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = [],
+                            dates: ReminderFieldCopy.DateOrder = .restore,
+                            occurrence: ReminderCompletionSnapshot? = nil) throws -> ReminderSaveOutcome {
         let wanted = ReminderFieldCopy.Values(reminder)
         reminder.rollback()
         let fields = ReminderFieldCopy.changed(from: ReminderFieldCopy.Values(reminder), to: wanted).union(requested)
@@ -195,7 +222,8 @@ extension EventKitManager {
                     return copy
                 },
                 baseline: { (ReminderSnapshot(from: $0), ReminderCompletionSnapshot(from: $0)) },
-                write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0, calendar: { store.calendar(withIdentifier: $0) }) },
+                check: { before in if let occurrence { try ReminderCompletionWrite.checkSameOccurrence(read: occurrence, copy: before.1) } },
+                write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0, calendar: { store.calendar(withIdentifier: $0) }, dates: dates) },
                 save: { try store.save($0, commit: true) })
             return CommittedReminder(identifier: copy.calendarItemIdentifier, snapshot: ReminderSnapshot(from: copy),
                                      completion: ReminderCompletionSnapshot(from: copy),
@@ -215,14 +243,24 @@ extension EventKitManager {
     }
 
     /// Removes `reminder` on the write store. Also the batch removal's row (`deleteRemindersBatch`),
-    /// whose failure keeps its own sanitized code (spec R3).
-    func commitReminderRemoval(_ reminder: EKReminder) throws {
-        try onWriteStore { store in
-            guard let copy = store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
-            try store.remove(copy, commit: true)
+    /// whose failure keeps its own sanitized code (spec R3). Round 4: the undo snapshot and the
+    /// only-completed check are taken off the write store's copy, not the cached reminder; nil when
+    /// the copy is no longer completed and `onlyCompleted` holds, and then nothing was removed.
+    func commitReminderRemoval(_ reminder: EKReminder, onlyCompleted: Bool = false) throws -> ReminderSnapshot? {
+        let removed: ReminderSnapshot? = try onWriteStore { store in
+            try ExistingReminderSave.removal(
+                lookup: {
+                    guard let copy = store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
+                    return copy
+                },
+                snapshot: { ReminderSnapshot(from: $0) },
+                skip: { BatchDeleteFilter.shouldSkipUncompleted(isCompleted: $0.isCompleted, onlyCompleted: onlyCompleted) },
+                remove: { try store.remove($0, commit: true) })
         }
+        guard removed != nil else { return nil }
         reminder.rollback()
         _ = reminder.refresh()
+        return removed
     }
 
     /// Commits the caller's rename or recolor on the write store: only the field the call changed.

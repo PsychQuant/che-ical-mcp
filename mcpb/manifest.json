@@ -81,7 +81,7 @@
     },
     {
       "name": "complete_reminder",
-      "description": "Complete or reopen a reminder (a failed save should change nothing, #459; the rollover was not measured) with an explicit operation result and observed next occurrence with its relative alarms (alarms_minutes_offsets), plus a top-level alarms_note when one appeared on the read-back (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
+      "description": "Complete or reopen a reminder (a failed save should change nothing, #459; the rollover was not measured; a save that cannot be read back answers writeStoreReadBackFailed and keeps its undo record) with an explicit operation result and observed next occurrence with its relative alarms (alarms_minutes_offsets), plus a top-level alarms_note when one appeared on the read-back (annotated destructive: completing a recurring reminder consumes an occurrence irreversibly)"
     },
     {
       "name": "delete_reminder",

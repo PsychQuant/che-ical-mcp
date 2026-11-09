@@ -297,6 +297,7 @@ enum ReminderDateSync {
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
     /// only one of them, so a reminder in that state reads as aligned here as well.
     static func confirmSaved(_ reminder: EKReminder, report: Report, save: () throws -> Void,
+                             saveAgain: (() throws -> Void)? = nil,
                              reload: () -> Bool, rollback: () -> Void, tool: String = "update_reminder",
                              fallback: Bool = true,
                              log: (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) -> Report {
@@ -326,7 +327,8 @@ enum ReminderDateSync {
             log("\(tool): the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
             do {
-                try save()
+                // PR #507 round 4: an update's second save writes the copy in this order too.
+                if let saveAgain { try saveAgain() } else { try save() }
             } catch {
                 // This answers with `aligned: false`, not an error. For an update the save ran on a
                 // write store and did not land (#459); for a create it ran on the long-lived store,

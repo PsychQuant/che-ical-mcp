@@ -819,8 +819,8 @@ injected by a local probe. Undo and redo are stateful, and `--cli` cannot reach 
 **Before tagging the release that ships #459**, run these on the session MCP after a restart, once a
 behaviour probe has confirmed the new binary. Use only a disposable list whose name contains `#459`:
 
-1. Run `create_reminder` and then `update_reminder` on the title and notes. A `list_reminders` read shows the new values. Then `undo`: the old values come back. Then `redo`.
-2. Run `complete_reminder` on a weekly reminder: it rolls over. Then `undo`: the occurrence is restored.
+1. Run `create_reminder` and then `update_reminder` on the title and notes. A `list_reminders` read shows the new values. Then `undo`: the old values come back. Then `redo`: it is refused (`Cannot redo the update`, nothing written; redo does not apply updates again). Redo separately on a completion: `complete_reminder` on a one-off reminder, `undo` (it is open again), `redo` (it is completed again).
+2. Run `complete_reminder` on a weekly reminder: it succeeds and rolls over (a refusal saying the reminder is no longer at the occurrence this server read means the occurrence check of PR #507 round 4 misfires on this source). Then `undo`: refused by the occurrence identity guard (`its identifier no longer resolves to the recorded occurrence`), the record is discarded, and `list_reminders` (`filter: all`) shows nothing changed by it: the next occurrence is still open and the completed one still completed.
 3. Run `delete_reminders_batch` on three reminders, then `undo`: all three come back.
 4. Run `update_calendar` to rename the list: `list_calendars` shows the new name.
 5. After each step, `undo_history` shows the expected top record, and no step answers with `writeStoreBusy`.

@@ -280,8 +280,8 @@ final class ReminderFieldCopyTests: XCTestCase {
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", priority: 1)), [.priority])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", calendarName: "L")), [.calendar])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2027, month: 3, day: 1)))),
-                       [.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms])
-        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearDueDate: true)), [.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms])
+                       [.dueDateComponents, .startDateComponents, .absoluteAlarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearDueDate: true)), [.dueDateComponents, .startDateComponents, .absoluteAlarms])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", realignToDue: true)), [.startDateComponents, .absoluteAlarms])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", alarmOffsets: [15])), [.relativeAlarms])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearLocationTrigger: true)), [.locationAlarms])

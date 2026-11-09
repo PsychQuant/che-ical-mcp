@@ -22,7 +22,9 @@ extension EventKitManager {
         // undo from the write store's copy before it is reported; that catch is after the observation,
         // so the stretch from `beforeRelativeAlarms` to it still has no suspension point.
         do {
-            let (reminder, committed) = try savedOrUnread(original, handler: "completeReminder", requested: ReminderCompletionWrite.requestedFields)
+            // PR #507 round 4: `occurrence` refuses, before anything is written, a copy that rolled on
+            // to another occurrence since `before` was read (`checkSameOccurrence`).
+            let (reminder, committed) = try savedOrUnread(original, handler: "completeReminder", requested: ReminderCompletionWrite.requestedFields, occurrence: before)
             // Observe exactly once, synchronously, before any suspension point. On
             // iCloud (on-device probe, PR #195) save advances a recurring reminder in
             // place, so this read already reflects the successor; a store that surfaces

@@ -2766,21 +2766,24 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var saved = reminder
         var unread: CommittedReminder?
         let requested = ReminderUpdateWrite.requestedFields(request)
+        // PR #507 round 4: the #237 fallback's second save writes the copy's dates in its own order.
+        func save(dates: ReminderFieldCopy.DateOrder) throws {
+            switch try saveExistingReminder(saved, handler: "updateReminder", requested: requested, dates: dates) {
+            case .readBack(let read, let committed):
+                saved = read
+                baseline = baseline ?? committed.before
+            case .unread(let committed):
+                baseline = baseline ?? committed.before
+                unread = committed
+                throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
+            }
+        }
         let dateSync: ReminderDateSync.Report?
         do {
             dateSync = try ReminderUpdateWrite.apply(
                 request, to: reminder, calendar: calendar,
-                save: {
-                    switch try saveExistingReminder(saved, handler: "updateReminder", requested: requested) {
-                    case .readBack(let read, let committed):
-                        saved = read
-                        baseline = baseline ?? committed.before
-                    case .unread(let committed):
-                        baseline = baseline ?? committed.before
-                        unread = committed
-                        throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
-                    }
-                },
+                save: { try save(dates: .restore) },
+                saveAgain: { try save(dates: .dueAroundStart) },
                 reload: { saved.refresh() },
                 rollback: { saved.rollback() },
                 current: { saved })
@@ -2839,8 +2842,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
-        let snapshot = ReminderSnapshot(from: reminder)
-        try removeExistingReminder(reminder, handler: "deleteReminder")
+        // PR #507 round 4: the snapshot comes off the write store's copy, before the removal.
+        let snapshot = try removeExistingReminder(reminder, handler: "deleteReminder")
         markNeedsRefresh()
         await CalendarUndoManager.shared.record(.deleteReminder(snapshot: snapshot))
     }
@@ -2942,15 +2945,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     // #33: extracted to `BatchDeleteFilter.shouldSkipUncompleted`
                     // so the destructive contract has a unit-test-falsifiable
                     // surface (the inline form has no TCC-free testable seam).
-                    if BatchDeleteFilter.shouldSkipUncompleted(
-                        isCompleted: reminder.isCompleted,
-                        onlyCompleted: onlyCompleted
-                    ) {
+                    // PR #507 round 4: checked on the batch's write store, on the copy it is
+                    // about to remove, which also gives the undo snapshot (#459).
+                    guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {
                         failures.append((id, "Reminder is no longer completed"))
                         continue
                     }
-                    let snapshot = ReminderSnapshot(from: reminder)
-                    try commitReminderRemoval(reminder)   // #459: on the batch's write store
                     successCount += 1
                     undoSnapshots.append(snapshot)
                 } catch let error as EventKitError where WriteStoreRowFailure.code(for: error) != nil {
@@ -3617,6 +3617,9 @@ enum EventKitError: LocalizedError {
     /// #459 (PR #507 round 1): the save on the write store landed, but this server's store could not
     /// read the item back right after it, so the response cannot show it. Nothing is rolled back.
     /// Round 2: the undo history was kept in step before this is thrown (`ReadBackUndo`).
+    /// PR #507 round 4: the write store's copy of a repeating reminder is at another occurrence than
+    /// the one this server read; nothing was written (`ReminderCompletionWrite.checkSameOccurrence`).
+    case completionOccurrenceMoved
     /// Round 3: `newIdentifier` when the save gave the item another identifier than the one passed.
     case writeStoreReadBackFailed(kind: String, undo: ReadBackUndo, newIdentifier: String? = nil)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
@@ -3782,6 +3785,8 @@ enum EventKitError: LocalizedError {
             }
             let moved = newIdentifier.map { " Its identifier is now \($0); the identifier you passed no longer reads it." } ?? ""
             return "The save through the separate store this server writes reminders through returned without an error, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it.\(moved) \(undoText)"
+        case .completionOccurrenceMoved:
+            return "Nothing was written: this repeating reminder is no longer at the occurrence this server read (it was completed or its due date, rule or list changed elsewhere in between), so completing it now would complete an occurrence you have not seen. Read it again with list_reminders and complete the occurrence you mean."
         case .writeStoreLookupFailed(let kind):
             return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again. An item this server created but whose save failed may not be committed yet; it becomes visible once a later save commits it."
         case .eventLookupFailed(let identifier):

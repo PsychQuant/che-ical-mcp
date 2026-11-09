@@ -211,6 +211,15 @@ struct ReminderCompletionWrite: Equatable, Sendable {
     /// reminder already held the value.
     static var requestedFields: Set<ReminderFieldCopy.Field> { [.isCompleted, .completionDate] }
 
+    /// PR #507 round 4: a completion is refused before anything is written when the write store's
+    /// copy is not at the occurrence this server read (completed or edited elsewhere in between, so
+    /// the copy rolled on): it would consume an occurrence the caller has not seen. A one-off reminder
+    /// on both sides, or a read that carries no identity to compare (`isIdentifiable`), is not checked.
+    static func checkSameOccurrence(read: ReminderCompletionSnapshot, copy: ReminderCompletionSnapshot) throws {
+        guard read.hasRecurrence || copy.hasRecurrence, read.isIdentifiable else { return }
+        guard copy.matchesOccurrence(read) else { throw EventKitError.completionOccurrenceMoved }
+    }
+
     let isCompleted: Bool
     let completionDate: Date?
 

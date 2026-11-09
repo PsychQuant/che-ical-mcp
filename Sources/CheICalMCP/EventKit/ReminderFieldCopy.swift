@@ -16,9 +16,9 @@ import EventKit
 ///
 /// - Dates go through `ReminderDateSync.restore` (start and due in its order, #235/#237), with the
 ///   stored start or due for whichever the call did not change, and the zone after them. The #237
-///   fallback's second save (`writeDueAroundStart`: clear the start, write the due, put the start
-///   back) therefore reaches the write store as its final values in `restore`'s order, not in the
-///   fallback's own order (PR #507 round 2 INFO 10; not measured on a source that drops the zone).
+///   fallback's second save passes `DateOrder.dueAroundStart` (PR #507 round 4): the copy is then
+///   written by `writeDueAroundStart` itself (clear the start, write the due, put the start back),
+///   the order that kept a timed due zoned on device, and the zone is left to that sequence.
 /// - Alarms are three fields, one per kind (relative, absolute, location; `AlarmSnapshot.Kind`), and
 ///   each goes through `AlarmSnapshot.restore(_:to:kind:)` against the target's own alarms of that
 ///   kind (PR #507 round 3): `alarms_minutes_offsets` replaces the relative alarms only, so an
@@ -44,6 +44,9 @@ enum ReminderFieldCopy {
     }
 
     static let fields = Field.allCases.map(\.rawValue)
+
+    /// The order the dates are written in on the copy: `restore`'s, or the #237 fallback's.
+    enum DateOrder: Sendable { case restore, dueAroundStart }
 
     /// What a reminder holds, for the closed field list.
     struct Values {
@@ -103,7 +106,8 @@ enum ReminderFieldCopy {
     /// Writes `wanted`'s value of each field in `fields` onto `target`, and nothing else. Throws
     /// `EventKitError.writeStoreLookupFailed` before writing anything when the write store cannot
     /// see the list the reminder moves to.
-    static func apply(_ wanted: Values, fields: Set<Field>, to target: EKReminder, calendar lookup: (String) -> EKCalendar?) throws {
+    static func apply(_ wanted: Values, fields: Set<Field>, to target: EKReminder, calendar lookup: (String) -> EKCalendar?,
+                      dates: DateOrder = .restore) throws {
         var list: EKCalendar?
         if fields.contains(.calendar), let id = wanted.calendarID {
             guard let found = lookup(id) else { throw EventKitError.writeStoreLookupFailed(kind: "reminder list") }
@@ -114,7 +118,10 @@ enum ReminderFieldCopy {
         if fields.contains(.notes) { target.notes = wanted.notes }
         if fields.contains(.url) { target.url = wanted.url }
         if fields.contains(.priority) { target.priority = wanted.priority }
-        if !fields.isDisjoint(with: [.startDateComponents, .dueDateComponents, .timeZone]) {
+        if dates == .dueAroundStart, let due = wanted.due {
+            // The fallback writes the due around the copy's start, as it did on the caller's object.
+            ReminderDateSync.writeDueAroundStart(target, due: due)
+        } else if !fields.isDisjoint(with: [.startDateComponents, .dueDateComponents, .timeZone]) {
             ReminderDateSync.restore(target,
                                      start: fields.contains(.startDateComponents) ? wanted.start : target.startDateComponents,
                                      due: fields.contains(.dueDateComponents) ? wanted.due : target.dueDateComponents)
