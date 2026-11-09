@@ -170,15 +170,17 @@ import EventKit
 ///   carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
-/// - stores other than iCloud, with one measured. On a Google-hosted calendar (#294, 2026-11-05, a
-///   standalone probe beside the server, one run per row, the failure induced as on iCloud): a new
-///   event, a new recurring event and a new event calendar that failed at commit were not written by
-///   a later save; a new store found a committed event 10 of 10; and removing a failed recurring
-///   event with `remove(span: .thisEvent, commit: false)` made the next save fail with
-///   EKCADErrorDomain 1001 and lose what it wrote, as on iCloud. Of #261's paths,
-///   the reminder and reminder-list paths cannot run on that source: it has no reminder lists and
-///   refuses a new one (EKErrorDomain 24), so for them the question does not arise there.
-///   Exchange and local calendars: not measured (#294).
+/// - stores other than iCloud, with one measured (#294, 2026-11-05, a standalone probe beside the
+///   server). On a Google-hosted calendar, with the calendar deleted through Google and the probe
+///   waiting 305 seconds for the deletion to reach EventKit, a new event and a new recurring event
+///   that failed at commit (EKCADErrorDomain 1010) were not written by a later save, one run each.
+///   Removing a failed recurring event with `remove(span: .thisEvent, commit: false)` made the next
+///   save fail with EKCADErrorDomain 1001 and lose what it wrote, as on iCloud (one run). A new store
+///   found a normally saved event in 10 of 10 runs; events do not go through this check. The
+///   reminder, reminder-list and event-calendar paths cannot run on that source: it refuses a new
+///   event calendar (EKErrorDomain 17) and a new reminder list (EKErrorDomain 24). Every failure was
+///   local: a refusal by Google's server was not produced. Exchange and local calendars: not
+///   measured (#294).
 ///
 /// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
 /// through another store after the list was looked up. `save(_:commit: true)` returned without an
