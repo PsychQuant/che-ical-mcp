@@ -240,6 +240,22 @@ The module SHALL resolve the destination calendar once for the whole program, in
 - **WHEN** the module needs a calendar
 - **THEN** the calendar the user named, or else the entry point's own calendar choice, applies once for the whole program, not once per event
 
+### Requirement: The conference module follows the shared rules of the event modules
+
+The conference module SHALL follow the rules the index of event modules states for every module, and these change its behaviour as follows. An event whose notes hold a `lodging-module:` marker line SHALL belong to the lodging module, and the conference module SHALL NOT offer it for adoption or update it as a hand-built event. When the module needs the user's answer (an adoption, a mapping table, an unclear order) and nobody can answer, it SHALL write nothing on that point, SHALL list it as pending, and SHALL NOT create a new set because of the silence. When it copies text into notes, it SHALL also write `· ` in front of any copied line beginning with a marker prefix that the index of event modules lists, not only its own, so that copied text never forms another module's marker line. The conference module SHALL keep its rule of deleting nothing.
+
+#### Scenario: A stay event over the conference's days
+
+- **GIVEN** an all-day event with a `lodging-module:` marker line whose title contains the conference's name
+- **WHEN** the module looks for hand-built events of the conference
+- **THEN** the stay event is not offered for adoption and is not changed
+
+#### Scenario: Nobody answers the mapping table
+
+- **GIVEN** a candidate set with another first day and a run with nobody to answer
+- **WHEN** the program is given
+- **THEN** nothing is written, no new set is created, and the report lists the mapping as pending
+
 ### Requirement: All event-creating entry points share the module
 
 The `archive-event` skill, the `quick-event` command, and the create workflow of the `calendar-management` skill SHALL apply the module through the same documented rule when their input matches a module's trigger. No entry point SHALL restate the layout, the key, or the report format; each SHALL refer to the module index. Before creating, the module SHALL check each attended session for clashes with events already on the calendar, ignoring all-day events and the program's own events, and SHALL list them without blocking. `archive-event` SHALL still apply its choice of the authoritative version of the program and its source line.
