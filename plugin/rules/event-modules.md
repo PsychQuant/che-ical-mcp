@@ -18,6 +18,10 @@ A module never chooses a calendar. It resolves the calendar **once for the whole
 | Conference | one named occasion on consecutive days (at most seven) with at least two separately scheduled timed items set by its organizer; not a single meeting's agenda | [`modules/conference.md`](modules/conference.md) |
 | Lodging | a booking confirmation, change notice or cancellation notice for a stay at one property, or a stay the user states at a place (dates and place are asked for when missing), **or any message that carries the reservation number of a stay already on the calendar, or that sits in a thread which already produced a stay** (a guest's reply or an acknowledgement included: the module then decides it changes nothing); not a hotel named as a suggestion | [`modules/lodging.md`](modules/lodging.md) |
 
+## Keeping the calendar in step with a trip
+
+When work on a trip (a fee paid, a program revised, lodging booked) changes files in a folder with a project-level config, the plugin's Stop hook reminds once per session to run [`skills/itinerary-check/SKILL.md`](../skills/itinerary-check/SKILL.md). The check lists differences first and routes a change by whose event it is: an event with a module's marker goes to that module; it does not restate either module.
+
 ## Turning a module off
 
 A config found by the lookup of `calendar-routing.md` can set `conference_module: off` or `lodging_module: off` (one key per module, named `<module>_module`). The report then says the module is off and names the config file.
