@@ -105,6 +105,22 @@ struct AlarmSnapshot: Hashable {
         return alarm
     }
 
+    /// PR #507 round 3: the three kinds a reminder write replaces separately. A location wins over a
+    /// time, and an alarm with neither a location nor an absolute date is relative, the split
+    /// `ReminderRelativeAlarms.isRelative` makes.
+    enum Kind: CaseIterable, Hashable { case relative, absolute, location }
+
+    var kind: Kind {
+        if location != nil { return .location }
+        return absoluteDate != nil ? .absolute : .relative
+    }
+
+    /// `restore` over the alarms of one kind: `item`'s alarms of the other kinds are not touched.
+    @discardableResult
+    static func restore(_ snapshots: [AlarmSnapshot], to item: EKCalendarItem, kind: Kind) -> Bool {
+        restore(snapshots.filter { $0.kind == kind }, to: item, considering: { $0.kind == kind })
+    }
+
     /// Makes `item`'s alarms equal `snapshots` as a multiset (EventKit returns alarms in no
     /// fixed order), touching only the alarms that differ: an alarm with no wanted snapshot
     /// left is removed, a wanted snapshot with no alarm left is rebuilt and added. An alarm
@@ -113,10 +129,16 @@ struct AlarmSnapshot: Hashable {
     /// whether anything was written.
     @discardableResult
     static func restore(_ snapshots: [AlarmSnapshot], to item: EKCalendarItem) -> Bool {
+        restore(snapshots, to: item, considering: { _ in true })
+    }
+
+    private static func restore(_ snapshots: [AlarmSnapshot], to item: EKCalendarItem,
+                                considering: (AlarmSnapshot) -> Bool) -> Bool {
         var unmatched = counts(snapshots)
         var surplus: [EKAlarm] = []
         for alarm in item.alarms ?? [] {
             let snapshot = AlarmSnapshot(from: alarm)
+            guard considering(snapshot) else { continue }
             if unmatched[snapshot, default: 0] > 0 {
                 unmatched[snapshot, default: 0] -= 1
             } else {

@@ -36,6 +36,19 @@ enum ExistingReminderSave {
         }
     }
 
+    /// PR #507 round 3: one commit on the write store, in order: look the item up, take the undo
+    /// baseline off it, write the fields, save. The baseline is what the store held before this
+    /// call's fields were written, so an undo record built from it holds only this call's
+    /// differences, not a field changed elsewhere that the write kept. A closure seam (#182).
+    static func commit<Item, Before>(lookup: () throws -> Item, baseline: (Item) -> Before,
+                                     write: (Item) throws -> Void, save: (Item) throws -> Void) throws -> (item: Item, before: Before) {
+        let item = try lookup()
+        let before = baseline(item)
+        try write(item)
+        try save(item)
+        return (item, before)
+    }
+
     /// What a failed write answers: the failure itself (it did not land), after `code` logs it.
     static func failure(_ error: Error, code: (Error) -> String) -> Error {
         _ = code(error)
@@ -45,16 +58,27 @@ enum ExistingReminderSave {
 
 /// #459 (PR #507 round 2): what the write store's copy held right after its commit, taken before the
 /// copy is dropped, so a save that landed but cannot be read back still has the state its undo needs.
+/// Round 3: also what the copy held before the call's fields were written (`before`,
+/// `completionBefore`), the baseline of the call's undo record.
 struct CommittedReminder {
     let identifier: String
     let snapshot: ReminderSnapshot
     let completion: ReminderCompletionSnapshot
+    let before: ReminderSnapshot
+    let completionBefore: ReminderCompletionSnapshot
+
+    /// The identifier after the save when it is not the one the caller passed (a move to a list in
+    /// another account), for a response that cannot show the reminder.
+    func newIdentifier(passed: String) -> String? {
+        identifier == passed ? nil : identifier
+    }
 }
 
 /// The result of a save that committed: the reminder as this server's store reads it (another object
 /// after a move to a list in another account), or, when it cannot be read back, what was committed.
+/// Both carry the commit (round 3: its baseline is the undo record's old state).
 enum ReminderSaveOutcome {
-    case readBack(EKReminder)
+    case readBack(EKReminder, CommittedReminder)
     case unread(CommittedReminder)
 }
 
@@ -81,16 +105,17 @@ extension EventKitManager {
             })
         guard let outcome else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
         if case .unread(let committed) = outcome {
-            FileHandle.standardError.write(Data("\(handler): saved \(committed.identifier) on the write store but could not read it back\n".utf8))
+            // Round 3 LOW: the save returned without an error, which is not proof that it wrote (#281).
+            FileHandle.standardError.write(Data("\(handler): the save of \(committed.identifier) on the write store returned without an error, but it could not be read back\n".utf8))
         }
         return outcome
     }
 
-    /// The reminder after its save, or `UnreadSaveError` when it landed but cannot be read back, for a
-    /// caller that records its undo in a catch at its end (`completeReminder`).
-    func savedOrUnread(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> EKReminder {
+    /// The reminder after its save with its commit, or `UnreadSaveError` when it landed but cannot be
+    /// read back, for a caller that records its undo in a catch at its end (`completeReminder`).
+    func savedOrUnread(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> (reminder: EKReminder, committed: CommittedReminder) {
         switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
-        case .readBack(let read): return read
+        case .readBack(let read, let committed): return (read, committed)
         case .unread(let committed): throw UnreadSaveError(committed: committed)
         }
     }
@@ -100,7 +125,7 @@ extension EventKitManager {
     func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> String {
         switch try saveExistingReminder(reminder, handler: handler, requested: requested) {
         case .readBack: return ""
-        case .unread: return " The change was saved, but this server could not read the reminder back right after it; read it again before relying on it."
+        case .unread: return " The save returned without an error, but this server could not read the reminder back right after it; read it again before relying on it."
         }
     }
 
@@ -133,7 +158,7 @@ extension EventKitManager {
                 }
             })
         if !readBack {
-            FileHandle.standardError.write(Data("updateCalendar: saved \(calendar.calendarIdentifier) on the write store but could not read it back\n".utf8))
+            FileHandle.standardError.write(Data("updateCalendar: the save of \(calendar.calendarIdentifier) on the write store returned without an error, but it could not be read back\n".utf8))
         }
         return readBack
     }
@@ -157,20 +182,27 @@ extension EventKitManager {
     /// Commits the caller's changes to `reminder` on the write store: the fields the call changed and
     /// the fields the request names (`requested`, round 2: a named value equal to a stale cache is
     /// still written). Returns the reminder as this server's store reads it after the save, or what
-    /// the copy held after its commit when it cannot be read back.
+    /// the copy held after its commit when it cannot be read back. Round 3: either way with what the
+    /// copy held before the fields were written, the baseline of the call's undo record.
     func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {
         let wanted = ReminderFieldCopy.Values(reminder)
         reminder.rollback()
         let fields = ReminderFieldCopy.changed(from: ReminderFieldCopy.Values(reminder), to: wanted).union(requested)
         let committed: CommittedReminder = try onWriteStore { store in
-            guard let copy = store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
-            try ReminderFieldCopy.apply(wanted, fields: fields, to: copy, calendar: { store.calendar(withIdentifier: $0) })
-            try store.save(copy, commit: true)
+            let (copy, before) = try ExistingReminderSave.commit(
+                lookup: {
+                    guard let copy = store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: "reminder") }
+                    return copy
+                },
+                baseline: { (ReminderSnapshot(from: $0), ReminderCompletionSnapshot(from: $0)) },
+                write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0, calendar: { store.calendar(withIdentifier: $0) }) },
+                save: { try store.save($0, commit: true) })
             return CommittedReminder(identifier: copy.calendarItemIdentifier, snapshot: ReminderSnapshot(from: copy),
-                                     completion: ReminderCompletionSnapshot(from: copy))
+                                     completion: ReminderCompletionSnapshot(from: copy),
+                                     before: before.0, completionBefore: before.1)
         }
         guard let saved = resolvedAfterSave(reminder, savedID: committed.identifier) else { return .unread(committed) }
-        return .readBack(saved)
+        return .readBack(saved, committed)
     }
 
     /// The reminder after its save on the write store: the caller's object, refreshed, when the

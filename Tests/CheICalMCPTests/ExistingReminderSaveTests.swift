@@ -151,10 +151,100 @@ final class ExistingReminderSaveTests: XCTestCase {
     /// its undo: recorded (a reminder, from the write store's copy), or a refusing marker (a list).
     func testAFailedReadBackSaysWhereItsUndoIs() {
         let recorded = EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded).errorDescription ?? ""
-        XCTAssertTrue(recorded.hasPrefix("The change was saved"), recorded)
-        XCTAssertTrue(recorded.contains("Its undo record was kept, so undo reverts this change."), recorded)
+        // Round 3 LOW (devils-advocate 6): a save that returned without an error is not known to have
+        // written (#281), so the text does not say "saved".
+        XCTAssertTrue(recorded.hasPrefix("The save through the separate store this server writes reminders through returned without an error"), recorded)
+        XCTAssertFalse(recorded.contains("was saved"), recorded)
+        // Round 3 LOW 4: undo may refuse it (a completion whose identifier moved on, #204; the #236 guard).
+        XCTAssertTrue(recorded.contains("Its undo record was kept in step, so undo applies to this change, and refuses it where it would after a normal save."), recorded)
+        XCTAssertFalse(recorded.contains("undo reverts this change"), recorded)
         let marker = EventKitError.writeStoreReadBackFailed(kind: "reminder list", undo: .refusingMarker).errorDescription ?? ""
         XCTAssertTrue(marker.contains("undo refuses it instead of reverting an older operation"), marker)
+    }
+
+    /// Round 3 LOW (devils-advocate 5): a save that gave the reminder another identifier (a move to a
+    /// list in another account) and could not be read back names the new identifier, which the caller
+    /// does not hold; the one it passed no longer reads the reminder.
+    func testAFailedReadBackNamesTheNewIdentifier() {
+        let moved = EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded, newIdentifier: "NEW-ID").errorDescription ?? ""
+        XCTAssertTrue(moved.contains("Its identifier is now NEW-ID; the identifier you passed no longer reads it."), moved)
+        let same = EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded).errorDescription ?? ""
+        XCTAssertFalse(same.contains("identifier is now"), same)
+    }
+
+    func testTheNewIdentifierIsGivenOnlyWhenItChanged() {
+        func committed(_ id: String) -> CommittedReminder {
+            let r = EKReminder(eventStore: SharedTestStore.store)
+            return CommittedReminder(identifier: id, snapshot: ReminderSnapshot(from: r), completion: ReminderCompletionSnapshot(from: r),
+                                     before: ReminderSnapshot(from: r), completionBefore: ReminderCompletionSnapshot(from: r))
+        }
+        XCTAssertNil(committed("A").newIdentifier(passed: "A"))
+        XCTAssertEqual(committed("B").newIdentifier(passed: "A"), "B")
+    }
+
+    // MARK: - Round 3 MEDIUM 2: the undo baseline is the write store's copy before the write
+
+    /// The commit's order: look up, take the baseline, write the fields, save. The baseline is what
+    /// the copy held before this call's fields were applied.
+    func testTheBaselineIsTakenAfterTheLookupAndBeforeTheWrite() throws {
+        var log: [String] = []
+        let result = try ExistingReminderSave.commit(
+            lookup: { log.append("lookup"); return "copy" },
+            baseline: { item -> String in log.append("baseline"); return "before of \(item)" },
+            write: { _ in log.append("write") },
+            save: { _ in log.append("save") })
+        XCTAssertEqual(log, ["lookup", "baseline", "write", "save"])
+        XCTAssertEqual(result.item, "copy")
+        XCTAssertEqual(result.before, "before of copy")
+
+        log = []
+        XCTAssertThrowsError(try ExistingReminderSave.commit(
+            lookup: { log.append("lookup"); return "copy" },
+            baseline: { _ -> String in log.append("baseline"); return "" },
+            write: { _ in log.append("write"); throw Failure() },
+            save: { _ in log.append("save") }))
+        XCTAssertEqual(log, ["lookup", "baseline", "write"], "a write that throws is not saved")
+    }
+
+    /// The finding's scenario: the cache read title A and notes X, another app renamed it to B, and
+    /// the call changes the notes to Y. The write keeps B; the undo record's old state is the copy's
+    /// (B, X), so a later undo reverts the notes and keeps B. Taken from the cache (A, X), the undo
+    /// would have renamed it back to A.
+    func testUndoKeepsAnOutsideEditTheWriteKept() throws {
+        let store = SharedTestStore.store
+        let list = EKCalendar(for: .reminder, eventStore: store)
+        list.title = "A list"
+        func reminder(title: String, notes: String) -> EKReminder {
+            let r = EKReminder(eventStore: store)
+            r.calendar = list; r.title = title; r.notes = notes
+            return r
+        }
+        let cached = reminder(title: "A", notes: "X")
+        let before = ReminderFieldCopy.Values(cached)
+        cached.notes = "Y"
+        let wanted = ReminderFieldCopy.Values(cached)
+        let fields = ReminderFieldCopy.changed(from: before, to: wanted)
+        let stored = reminder(title: "B", notes: "X")
+
+        let (_, baseline) = try ExistingReminderSave.commit(
+            lookup: { stored }, baseline: { ReminderSnapshot(from: $0) },
+            write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0, calendar: { _ in list }) },
+            save: { _ in })
+        XCTAssertEqual(stored.title, "B", "the write keeps the rename made elsewhere")
+        XCTAssertEqual(stored.notes, "Y")
+        XCTAssertEqual(baseline.title, "B")
+        XCTAssertEqual(baseline.notes, "X")
+
+        // Undo: this server's store reads the committed reminder, the record's old state is applied
+        // to it, and the change is what reaches the write store's copy.
+        let current = reminder(title: "B", notes: "Y")
+        let undoBefore = ReminderFieldCopy.Values(current)
+        baseline.apply(to: current, now: Date())
+        let undoWanted = ReminderFieldCopy.Values(current)
+        try ReminderFieldCopy.apply(undoWanted, fields: ReminderFieldCopy.changed(from: undoBefore, to: undoWanted),
+                                    to: stored, calendar: { _ in list })
+        XCTAssertEqual(stored.title, "B", "undo keeps the rename made elsewhere")
+        XCTAssertEqual(stored.notes, "X", "undo reverts this call's change")
     }
 
     /// PR #507 round 2 (LOW 5, INFO 8): the busy text names the store that sees no data, and the

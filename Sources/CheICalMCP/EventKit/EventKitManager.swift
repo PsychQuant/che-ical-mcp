@@ -614,8 +614,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // PR #507 round 2: re-read before applying, as `freshReminder` does, so the title before the
-        // rename and the values the change is taken against are the stored ones.
-        _ = calendar.refresh()
+        // rename and the values the change is taken against are the stored ones. Round 3: a list
+        // deleted elsewhere is not found here, rather than a write-store lookup error after it.
+        guard calendar.refresh() else { throw EventKitError.calendarNotFound(identifier: identifier) }
         // #273: the title before the rename, for the marker's listing.
         let titleBefore = calendar.title
         if let t = title { calendar.title = t }
@@ -650,6 +651,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard let calendar = eventStore.calendar(withIdentifier: identifier) else {
             throw EventKitError.calendarNotFound(identifier: identifier)
         }
+        // PR #507 round 3: re-read first, as `updateCalendar` does; a list deleted elsewhere is not
+        // found, rather than a write-store lookup error at the removal.
+        guard calendar.refresh() else { throw EventKitError.calendarNotFound(identifier: identifier) }
         // #273: the title for the marker's listing, read before the removal.
         let title = calendar.title
 
@@ -2746,7 +2750,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                                           repeats: reminder.hasRecurrenceRules, isCompleted: reminder.isCompleted)
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
-        let oldSnapshot = ReminderSnapshot(from: reminder)
+        // PR #507 round 3: the undo record's old state is what the write store's copy held before this
+        // call's fields were written (`CommittedReminder.before`, from the first save; the #237
+        // fallback's second save starts from the first one's commit). Taken from this server's cached
+        // reminder, it would also hold a field another app changed since, which the write kept, and
+        // undo would revert that change too. `cachedBefore` is only the fallback for a record no commit
+        // came before, which does not happen.
+        let cachedBefore = ReminderSnapshot(from: reminder)
+        var baseline: ReminderSnapshot?
         // PR #507 round 1: the save may give the reminder another identifier (a move to a list in
         // another account); `reminder` then becomes the object that identifier resolves to, so the
         // read-backs, the response and the undo record below use it.
@@ -2761,8 +2772,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 request, to: reminder, calendar: calendar,
                 save: {
                     switch try saveExistingReminder(saved, handler: "updateReminder", requested: requested) {
-                    case .readBack(let read): saved = read
+                    case .readBack(let read, let committed):
+                        saved = read
+                        baseline = baseline ?? committed.before
                     case .unread(let committed):
+                        baseline = baseline ?? committed.before
                         unread = committed
                         throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
                     }
@@ -2772,10 +2786,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 current: { saved })
         } catch {
             guard let committed = unread else { throw error }
-            try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot)
+            try await recordUnreadUpdate(committed, oldSnapshot: baseline ?? cachedBefore, passed: identifier)
         }
         // The #237 fallback's second save may be the one that could not be read back.
-        if let committed = unread { try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot) }
+        if let committed = unread { try await recordUnreadUpdate(committed, oldSnapshot: baseline ?? cachedBefore, passed: identifier) }
         markNeedsRefresh()
         // PR #438 verify: judged on the re-read reminder, absolute alarms included; if it could not
         // be re-read, nothing is reported as stored.
@@ -2793,16 +2807,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Same reason as update_event (#246): the identifier the reminder has after the save (PR #507
         // round 1: off the object the save left behind, which a cross-account move replaces).
         let savedID = saved.calendarItemIdentifier
-        await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
+        await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: baseline ?? cachedBefore,
                                                                 saved: postWriteSnapshot(reminderID: savedID, saved: saved)))
         return result
     }
 
-    /// Records the undo of an update whose save landed but could not be read back, then reports it.
-    func recordUnreadUpdate(_ committed: CommittedReminder, oldSnapshot: ReminderSnapshot) async throws -> Never {
+    /// Records the undo of an update whose save landed but could not be read back, then reports it,
+    /// with the identifier the save gave it when that is not the one passed (round 3 LOW).
+    func recordUnreadUpdate(_ committed: CommittedReminder, oldSnapshot: ReminderSnapshot, passed: String) async throws -> Never {
         markNeedsRefresh()
         await CalendarUndoManager.shared.record(.updateReminder(id: committed.identifier, oldSnapshot: oldSnapshot, saved: committed.snapshot))
-        throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
+        throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded, newIdentifier: committed.newIdentifier(passed: passed))
     }
 
     func getReminder(identifier: String) async throws -> ReminderWriteSnapshot {
@@ -3602,7 +3617,8 @@ enum EventKitError: LocalizedError {
     /// #459 (PR #507 round 1): the save on the write store landed, but this server's store could not
     /// read the item back right after it, so the response cannot show it. Nothing is rolled back.
     /// Round 2: the undo history was kept in step before this is thrown (`ReadBackUndo`).
-    case writeStoreReadBackFailed(kind: String, undo: ReadBackUndo)
+    /// Round 3: `newIdentifier` when the save gave the item another identifier than the one passed.
+    case writeStoreReadBackFailed(kind: String, undo: ReadBackUndo, newIdentifier: String? = nil)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
     /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
@@ -3755,13 +3771,17 @@ enum EventKitError: LocalizedError {
             return reason
         case .writeStoreBusy:
             return "Nothing was written: the \(WriteStorePool<AnyObject>.capacity) separate stores this server writes reminders through are all in use by other calls, or a new one could not see any data (too many stores open in this process). Try again when other calls have finished; if it persists, restart the server."
-        case .writeStoreReadBackFailed(let kind, let undo):
+        case .writeStoreReadBackFailed(let kind, let undo, let newIdentifier):
+            // PR #507 round 3: a save that returned without an error is not proof that it wrote
+            // (#281), and undo may refuse the change (a completion whose identifier moved on, #204;
+            // the #236 guard), so the text promises neither.
             let undoText: String
             switch undo {
-            case .recorded: undoText = "Its undo record was kept, so undo reverts this change."
+            case .recorded: undoText = "Its undo record was kept in step, so undo applies to this change, and refuses it where it would after a normal save."
             case .refusingMarker: undoText = "A marker for it was put on the undo history, so undo refuses it instead of reverting an older operation."
             }
-            return "The change was saved through the separate store this server writes reminders through, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it. \(undoText)"
+            let moved = newIdentifier.map { " Its identifier is now \($0); the identifier you passed no longer reads it." } ?? ""
+            return "The save through the separate store this server writes reminders through returned without an error, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it.\(moved) \(undoText)"
         case .writeStoreLookupFailed(let kind):
             return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again. An item this server created but whose save failed may not be committed yet; it becomes visible once a later save commits it."
         case .eventLookupFailed(let identifier):

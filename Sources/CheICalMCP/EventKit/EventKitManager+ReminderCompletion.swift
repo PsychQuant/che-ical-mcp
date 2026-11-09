@@ -22,7 +22,7 @@ extension EventKitManager {
         // undo from the write store's copy before it is reported; that catch is after the observation,
         // so the stretch from `beforeRelativeAlarms` to it still has no suspension point.
         do {
-            let reminder = try savedOrUnread(original, handler: "completeReminder", requested: ReminderCompletionWrite.requestedFields)
+            let (reminder, committed) = try savedOrUnread(original, handler: "completeReminder", requested: ReminderCompletionWrite.requestedFields)
             // Observe exactly once, synchronously, before any suspension point. On
             // iCloud (on-device probe, PR #195) save advances a recurring reminder in
             // place, so this read already reflects the successor; a store that surfaces
@@ -43,14 +43,17 @@ extension EventKitManager {
             // Identity-guarded record for identifiable recurring items (undo refuses and
             // is discarded once the identifier resolves to a later occurrence — see
             // executeUndo); legacy identifier-keyed record for everything else.
-            await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: afterSave.title, savedCompletionDate: completed ? (afterSave.completionDate ?? writtenCompletionDate) : nil))
+            // PR #507 round 3: the record's old state is what the write store's copy held before the
+            // completion was written, as for update_reminder; `before` (this server's read) stays the
+            // anchor of the successor comparison above, which was measured on it.
+            await CalendarUndoManager.shared.record(.forCompletion(before: committed.completionBefore, requestedCompleted: completed, savedTitle: afterSave.title, savedCompletionDate: completed ? (afterSave.completionDate ?? writtenCompletionDate) : nil))
             return ReminderCompletionResult(before: before, afterSave: afterSave,
                                             requestedCompleted: completed, nextOccurrence: next, rolloverAlarms: rolloverAlarms)
         } catch let unread as UnreadSaveError {
             markNeedsRefresh()
-            await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: unread.committed.completion.title,
+            await CalendarUndoManager.shared.record(.forCompletion(before: unread.committed.completionBefore, requestedCompleted: completed, savedTitle: unread.committed.completion.title,
                                                                    savedCompletionDate: completed ? (unread.committed.completion.completionDate ?? writtenCompletionDate) : nil))
-            throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded)
+            throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded, newIdentifier: unread.committed.newIdentifier(passed: identifier))
         }
     }
 

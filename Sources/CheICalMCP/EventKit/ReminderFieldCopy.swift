@@ -19,16 +19,28 @@ import EventKit
 ///   fallback's second save (`writeDueAroundStart`: clear the start, write the due, put the start
 ///   back) therefore reaches the write store as its final values in `restore`'s order, not in the
 ///   fallback's own order (PR #507 round 2 INFO 10; not measured on a source that drops the zone).
-/// - Alarms go through `AlarmSnapshot.restore` against the target's own alarms: an alarm equal to a
-///   wanted one stays the same object, so what no snapshot rebuilds (a procedure alarm's URL)
-///   survives, and no alarm object of the long-lived store is put on the target (doing so ended
-///   the process, measured 2026-11-09).
+/// - Alarms are three fields, one per kind (relative, absolute, location; `AlarmSnapshot.Kind`), and
+///   each goes through `AlarmSnapshot.restore(_:to:kind:)` against the target's own alarms of that
+///   kind (PR #507 round 3): `alarms_minutes_offsets` replaces the relative alarms only, so an
+///   absolute or location alarm another store added since the cache read stays, and the other way
+///   round. An alarm equal to a wanted one stays the same object, so what no snapshot rebuilds (a
+///   procedure alarm's URL) survives, and no alarm object of the long-lived store is put on the
+///   target (doing so ended the process, measured 2026-11-09).
 /// - Recurrence rules are built anew with the same values (a rule passed through `copy()` also
 ///   ended the process).
 enum ReminderFieldCopy {
     enum Field: String, CaseIterable, Hashable {
         case title, location, notes, url, timeZone, startDateComponents, dueDateComponents, priority,
-             isCompleted, completionDate, alarms, recurrenceRules, calendar
+             isCompleted, completionDate, relativeAlarms, absoluteAlarms, locationAlarms, recurrenceRules, calendar
+
+        /// The alarm field of each kind.
+        static func alarms(_ kind: AlarmSnapshot.Kind) -> Field {
+            switch kind {
+            case .relative: return .relativeAlarms
+            case .absolute: return .absoluteAlarms
+            case .location: return .locationAlarms
+            }
+        }
     }
 
     static let fields = Field.allCases.map(\.rawValue)
@@ -79,7 +91,10 @@ enum ReminderFieldCopy {
         if before.priority != after.priority { fields.insert(.priority) }
         if before.isCompleted != after.isCompleted { fields.insert(.isCompleted) }
         if before.completionDate != after.completionDate { fields.insert(.completionDate) }
-        if counts(before.alarms) != counts(after.alarms) { fields.insert(.alarms) }
+        for kind in AlarmSnapshot.Kind.allCases
+        where counts(before.alarms.filter { $0.kind == kind }) != counts(after.alarms.filter { $0.kind == kind }) {
+            fields.insert(.alarms(kind))
+        }
         if before.rules.map(ruleSignature).sorted() != after.rules.map(ruleSignature).sorted() { fields.insert(.recurrenceRules) }
         if before.calendarID != after.calendarID { fields.insert(.calendar) }
         return fields
@@ -107,7 +122,9 @@ enum ReminderFieldCopy {
         }
         if fields.contains(.isCompleted) { target.isCompleted = wanted.isCompleted }
         if fields.contains(.completionDate) { target.completionDate = wanted.completionDate }
-        if fields.contains(.alarms) { AlarmSnapshot.restore(wanted.alarms, to: target) }
+        for kind in AlarmSnapshot.Kind.allCases where fields.contains(.alarms(kind)) {
+            AlarmSnapshot.restore(wanted.alarms, to: target, kind: kind)
+        }
         if fields.contains(.recurrenceRules) {
             target.recurrenceRules = wanted.rules.isEmpty ? nil : wanted.rules.map(copyRule)
         }

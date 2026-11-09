@@ -33,7 +33,7 @@ final class ReminderFieldCopyTests: XCTestCase {
     func testTheFieldListIsClosed() {
         XCTAssertEqual(ReminderFieldCopy.fields, ["title", "location", "notes", "url", "timeZone", "startDateComponents",
                                                   "dueDateComponents", "priority", "isCompleted", "completionDate",
-                                                  "alarms", "recurrenceRules", "calendar"])
+                                                  "relativeAlarms", "absoluteAlarms", "locationAlarms", "recurrenceRules", "calendar"])
         XCTAssertEqual(ListFieldCopy.fields, ["title", "cgColor"])
     }
 
@@ -148,12 +148,12 @@ final class ReminderFieldCopyTests: XCTestCase {
         let geo = EKAlarm(); geo.structuredLocation = place; geo.proximity = .leave
         cached.addAlarm(geo)
         let wanted = Values(cached)
-        XCTAssertEqual(ReminderFieldCopy.changed(from: before, to: wanted), [.alarms])
+        XCTAssertEqual(ReminderFieldCopy.changed(from: before, to: wanted), [.relativeAlarms, .locationAlarms])
 
         let target = reminder(in: a)
         let kept = EKAlarm(relativeOffset: -900)   // stands in for a procedure alarm with a URL
         target.addAlarm(kept); target.addAlarm(EKAlarm(relativeOffset: -60))
-        try ReminderFieldCopy.apply(wanted, fields: [.alarms], to: target, calendar: { _ in a })
+        try ReminderFieldCopy.apply(wanted, fields: [.relativeAlarms, .locationAlarms], to: target, calendar: { _ in a })
         let alarms = try XCTUnwrap(target.alarms)
         XCTAssertEqual(alarms.count, 2)
         XCTAssertTrue(alarms.contains { $0 === kept }, "the unchanged alarm stays the same object")
@@ -280,12 +280,113 @@ final class ReminderFieldCopyTests: XCTestCase {
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", priority: 1)), [.priority])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", calendarName: "L")), [.calendar])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", due: .day(DateComponents(year: 2027, month: 3, day: 1)))),
-                       [.dueDateComponents, .startDateComponents, .timeZone, .alarms])
-        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearDueDate: true)), [.dueDateComponents, .startDateComponents, .timeZone, .alarms])
-        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", realignToDue: true)), [.startDateComponents, .alarms])
-        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", alarmOffsets: [15])), [.alarms])
-        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearLocationTrigger: true)), [.alarms])
+                       [.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearDueDate: true)), [.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", realignToDue: true)), [.startDateComponents, .absoluteAlarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", alarmOffsets: [15])), [.relativeAlarms])
+        XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearLocationTrigger: true)), [.locationAlarms])
         XCTAssertEqual(named(ReminderUpdateRequest(identifier: "r", clearRecurrence: true)), [.recurrenceRules])
+    }
+
+    // MARK: - PR #507 round 3: alarms are written per kind
+
+    private func absoluteAlarm() -> EKAlarm { EKAlarm(absoluteDate: Date(timeIntervalSince1970: 1_804_000_000)) }
+
+    private func locationAlarm(_ title: String) -> EKAlarm {
+        let place = EKStructuredLocation(title: title)
+        place.geoLocation = CLLocation(latitude: 25.04, longitude: 121.56)
+        place.radius = 150
+        let alarm = EKAlarm(); alarm.structuredLocation = place; alarm.proximity = .enter
+        return alarm
+    }
+
+    /// The request's fields and the change, as `commitReminderSave` takes them, applied to `stored`.
+    private func write(_ request: ReminderUpdateRequest, cached: EKReminder, change: (EKReminder) -> Void,
+                       to stored: EKReminder, list: EKCalendar) throws {
+        let before = Values(cached)
+        change(cached)
+        let wanted = Values(cached)
+        let fields = ReminderFieldCopy.changed(from: before, to: wanted).union(ReminderUpdateWrite.requestedFields(request))
+        try ReminderFieldCopy.apply(wanted, fields: fields, to: stored, calendar: { _ in list })
+    }
+
+    /// Round 3 MEDIUM 1: `alarms_minutes_offsets` replaces the relative alarms only. An absolute or
+    /// location alarm another store added after the cache read stays, as the same object.
+    func testAnOffsetsUpdateKeepsAnAbsoluteOrLocationAlarmTheCacheDoesNotHold() throws {
+        let a = list("A")
+        let cached = reminder(in: a)
+        cached.dueDateComponents = due(10)
+        cached.addAlarm(EKAlarm(relativeOffset: -900))
+        let stored = reminder(in: a)
+        stored.dueDateComponents = due(10)
+        stored.addAlarm(EKAlarm(relativeOffset: -900))
+        let absolute = absoluteAlarm(), place = locationAlarm("Added elsewhere")
+        stored.addAlarm(absolute); stored.addAlarm(place)
+
+        try write(ReminderUpdateRequest(identifier: "r", alarmOffsets: [60]), cached: cached,
+                  change: { ReminderRelativeAlarms.replace(on: $0, with: [60]) }, to: stored, list: a)
+
+        let alarms = try XCTUnwrap(stored.alarms)
+        XCTAssertTrue(alarms.contains { $0 === absolute }, "the absolute alarm added elsewhere is kept")
+        XCTAssertTrue(alarms.contains { $0 === place }, "the location alarm added elsewhere is kept")
+        XCTAssertEqual(ReminderRelativeAlarms.storedMinutesBefore(stored), [60])
+        XCTAssertEqual(alarms.count, 3)
+    }
+
+    /// The other direction: a location trigger replaces the location alarms only.
+    func testALocationTriggerUpdateKeepsARelativeOrAbsoluteAlarmTheCacheDoesNotHold() throws {
+        let a = list("A")
+        let cached = reminder(in: a)
+        cached.dueDateComponents = due(10)
+        cached.addAlarm(locationAlarm("Old place"))
+        let stored = reminder(in: a)
+        stored.dueDateComponents = due(10)
+        stored.addAlarm(locationAlarm("Old place"))
+        let relative = EKAlarm(relativeOffset: -600), absolute = absoluteAlarm()
+        stored.addAlarm(relative); stored.addAlarm(absolute)
+
+        try write(ReminderUpdateRequest(identifier: "r", locationTrigger: LocationTriggerInput(title: "New place", latitude: 25.03, longitude: 121.5, radius: 100, proximity: .leave)),
+                  cached: cached, change: { r in
+                      for alarm in r.alarms ?? [] where alarm.structuredLocation != nil { r.removeAlarm(alarm) }
+                      r.addAlarm(self.locationAlarm("New place"))
+                  }, to: stored, list: a)
+
+        let alarms = try XCTUnwrap(stored.alarms)
+        XCTAssertTrue(alarms.contains { $0 === relative }, "the relative alarm added elsewhere is kept")
+        XCTAssertTrue(alarms.contains { $0 === absolute }, "the absolute alarm added elsewhere is kept")
+        XCTAssertEqual(alarms.compactMap { $0.structuredLocation?.title }, ["New place"])
+        XCTAssertEqual(alarms.count, 3)
+    }
+
+    /// INFO 8: a due change derives the absolute alarms only, so a relative or location alarm another
+    /// store added stays.
+    func testADueChangeKeepsARelativeOrLocationAlarmTheCacheDoesNotHold() throws {
+        let a = list("A")
+        let cached = reminder(in: a)
+        cached.dueDateComponents = due(10)
+        let stored = reminder(in: a)
+        stored.dueDateComponents = due(10)
+        let relative = EKAlarm(relativeOffset: -600), place = locationAlarm("Added elsewhere")
+        stored.addAlarm(relative); stored.addAlarm(place)
+
+        try write(ReminderUpdateRequest(identifier: "r", due: .timed(Date(timeIntervalSince1970: 1_804_000_000))), cached: cached,
+                  change: { $0.dueDateComponents = self.due(11) }, to: stored, list: a)
+
+        let alarms = try XCTUnwrap(stored.alarms)
+        XCTAssertTrue(alarms.contains { $0 === relative })
+        XCTAssertTrue(alarms.contains { $0 === place })
+        XCTAssertEqual(stored.dueDateComponents?.day, 11)
+    }
+
+    /// The kind split agrees with what `alarms_minutes_offsets` replaces (`ReminderRelativeAlarms.isRelative`).
+    func testTheAlarmKindAgreesWithWhatTheOffsetsReplace() {
+        let relative = EKAlarm(relativeOffset: -900), absolute = absoluteAlarm(), place = locationAlarm("P")
+        let email = EKAlarm(relativeOffset: -60); email.emailAddress = "x@example.invalid"
+        for alarm in [relative, absolute, place, email] {
+            XCTAssertEqual(AlarmSnapshot(from: alarm).kind == .relative, ReminderRelativeAlarms.isRelative(alarm))
+        }
+        XCTAssertEqual(AlarmSnapshot(from: absolute).kind, .absolute)
+        XCTAssertEqual(AlarmSnapshot(from: place).kind, .location)
     }
 
     func testACompletionNamesItsTwoFields() {

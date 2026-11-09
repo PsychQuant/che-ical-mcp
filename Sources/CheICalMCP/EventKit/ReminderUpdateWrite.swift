@@ -21,10 +21,14 @@ enum ReminderUpdateWrite {
         if request.notes != nil { fields.insert(.notes) }
         if request.priority != nil { fields.insert(.priority) }
         if request.calendarName != nil { fields.insert(.calendar) }
-        // A due date moves or clears the start and the absolute alarms, and may zone the item.
-        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .timeZone, .alarms]) }
-        if request.realignToDue { fields.formUnion([.startDateComponents, .alarms]) }
-        if request.alarmOffsets != nil || request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.alarms) }
+        // A due date moves or clears the start and the absolute alarms, and may zone the item. Round 3:
+        // each alarm argument names its own kind (`setDue`, `setDueDay`, `clear` and `realign` touch
+        // the absolute alarms only), so a relative or location alarm changed elsewhere is not written
+        // back by a due change, and the other way round.
+        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .timeZone, .absoluteAlarms]) }
+        if request.realignToDue { fields.formUnion([.startDateComponents, .absoluteAlarms]) }
+        if request.alarmOffsets != nil { fields.insert(.relativeAlarms) }
+        if request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.locationAlarms) }
         if request.recurrenceRule != nil || request.clearRecurrence { fields.insert(.recurrenceRules) }
         return fields
     }

@@ -15,8 +15,10 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
         let save = try body("func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {", in: file)
         XCTAssertTrue(save.contains("try onWriteStore { store in"), save)
         XCTAssertTrue(save.contains("store.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder else { throw EventKitError.writeStoreLookupFailed(kind: ) }"), save)
-        XCTAssertTrue(save.contains("try ReminderFieldCopy.apply(wanted, fields: fields, to: copy, calendar: { store.calendar(withIdentifier: $0) })"), save)
-        XCTAssertTrue(save.contains("try store.save(copy, commit: true)"), save)
+        // Round 3: through the `ExistingReminderSave.commit` seam (lookup, baseline, write, save).
+        XCTAssertTrue(save.contains("let (copy, before) = try ExistingReminderSave.commit( lookup: {"), save)
+        XCTAssertTrue(save.contains("write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0, calendar: { store.calendar(withIdentifier: $0) }) }"), save)
+        XCTAssertTrue(save.contains("save: { try store.save($0, commit: true) })"), save)
 
         let removal = try body("func commitReminderRemoval(_ reminder: EKReminder) throws {", in: file)
         XCTAssertTrue(removal.contains("try onWriteStore { store in"), removal)
@@ -106,8 +108,8 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
     func testTheSavedIdentifierComesOffTheCopyAndIsResolvedAgain() throws {
         let source = try SourcePins.source("EventKit/ExistingReminderSave.swift")
         let commit = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {", in: source)))
-        XCTAssertTrue(commit.contains("try store.save(copy, commit: true) return CommittedReminder(identifier: copy.calendarItemIdentifier, snapshot: ReminderSnapshot(from: copy), completion: ReminderCompletionSnapshot(from: copy)) }"), commit)
-        XCTAssertTrue(commit.hasSuffix("return .readBack(saved) }"), commit)
+        XCTAssertTrue(commit.contains("save: { try store.save($0, commit: true) }) return CommittedReminder(identifier: copy.calendarItemIdentifier, snapshot: ReminderSnapshot(from: copy), completion: ReminderCompletionSnapshot(from: copy), before: before.0, completionBefore: before.1) }"), commit)
+        XCTAssertTrue(commit.hasSuffix("return .readBack(saved, committed) }"), commit)
         let resolve = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func resolvedAfterSave(_ reminder: EKReminder, savedID: String) -> EKReminder? {", in: source)))
         XCTAssertTrue(resolve.contains("if savedID == reminder.calendarItemIdentifier { return reminder.refresh() ? reminder : nil }"), resolve)
         XCTAssertTrue(resolve.contains("eventStore.calendarItem(withIdentifier: savedID) as? EKReminder, moved.refresh()"), resolve)
@@ -119,7 +121,7 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
         let source = try SourcePins.source("EventKit/ExistingReminderSave.swift")
         let commit = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func commitReminderSave(_ reminder: EKReminder, requested: Set<ReminderFieldCopy.Field> = []) throws -> ReminderSaveOutcome {", in: source)))
         XCTAssertTrue(commit.contains("let wanted = ReminderFieldCopy.Values(reminder) reminder.rollback() let fields = ReminderFieldCopy.changed(from: ReminderFieldCopy.Values(reminder), to: wanted).union(requested)"), commit)
-        XCTAssertTrue(commit.contains("try ReminderFieldCopy.apply(wanted, fields: fields, to: copy,"), commit)
+        XCTAssertTrue(commit.contains("write: { try ReminderFieldCopy.apply(wanted, fields: fields, to: $0,"), commit)
         let list = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func commitListSave(_ calendar: EKCalendar, requested: Set<ListFieldCopy.Field> = []) throws -> Bool {", in: source)))
         XCTAssertTrue(list.contains("let wanted = ListFieldCopy.Values(calendar) calendar.rollback() let fields = ListFieldCopy.changed(from: ListFieldCopy.Values(calendar), to: wanted).union(requested)"), list)
         XCTAssertTrue(list.contains("ListFieldCopy.apply(wanted, fields: fields, to: copy)"), list)
@@ -132,7 +134,7 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
         XCTAssertTrue(manager.contains("var saved = reminder var unread: CommittedReminder? let requested = ReminderUpdateWrite.requestedFields(request)"), "update_reminder")
         XCTAssertTrue(manager.contains("reload: { saved.refresh() }, rollback: { saved.rollback() }, current: { saved })"))
         XCTAssertTrue(manager.contains("reminder: ReminderWriteSnapshot(from: saved), dateSync: dateSync"))
-        XCTAssertTrue(manager.contains("let savedID = saved.calendarItemIdentifier await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot, saved: postWriteSnapshot(reminderID: savedID, saved: saved)))"))
+        XCTAssertTrue(manager.contains("let savedID = saved.calendarItemIdentifier await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: baseline ?? cachedBefore, saved: postWriteSnapshot(reminderID: savedID, saved: saved)))"))
         let write = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/ReminderUpdateWrite.swift")))
         XCTAssertTrue(write.contains("return ReminderDateSync.confirmSaved(current?() ?? reminder, report: dateSync,"))
     }
@@ -142,16 +144,31 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
     /// redo whose save landed moves the stacks as a success and says so in its message.
     func testAnUnreadSaveRecordsItsUndoBeforeItIsReported() throws {
         let manager = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
-        XCTAssertTrue(manager.contains("case .unread(let committed): unread = committed throw EventKitError.writeStoreReadBackFailed(kind: "))
-        XCTAssertTrue(manager.contains("} catch { guard let committed = unread else { throw error } try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot) }"))
-        XCTAssertTrue(manager.contains("if let committed = unread { try await recordUnreadUpdate(committed, oldSnapshot: oldSnapshot) }"))
-        let record = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func recordUnreadUpdate(_ committed: CommittedReminder, oldSnapshot: ReminderSnapshot) async throws -> Never {", in: try SourcePins.source("EventKit/EventKitManager.swift"))))
-        XCTAssertTrue(record.contains("await CalendarUndoManager.shared.record(.updateReminder(id: committed.identifier, oldSnapshot: oldSnapshot, saved: committed.snapshot)) throw EventKitError.writeStoreReadBackFailed(kind: "), record)
+        XCTAssertTrue(manager.contains("case .unread(let committed): baseline = baseline ?? committed.before unread = committed throw EventKitError.writeStoreReadBackFailed(kind: "))
+        XCTAssertTrue(manager.contains("} catch { guard let committed = unread else { throw error } try await recordUnreadUpdate(committed, oldSnapshot: baseline ?? cachedBefore, passed: identifier) }"))
+        XCTAssertTrue(manager.contains("if let committed = unread { try await recordUnreadUpdate(committed, oldSnapshot: baseline ?? cachedBefore, passed: identifier) }"))
+        let record = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func recordUnreadUpdate(_ committed: CommittedReminder, oldSnapshot: ReminderSnapshot, passed: String) async throws -> Never {", in: try SourcePins.source("EventKit/EventKitManager.swift"))))
+        XCTAssertTrue(record.contains("await CalendarUndoManager.shared.record(.updateReminder(id: committed.identifier, oldSnapshot: oldSnapshot, saved: committed.snapshot)) throw EventKitError.writeStoreReadBackFailed(kind: , undo: .recorded, newIdentifier: committed.newIdentifier(passed: passed))"), record)
         let completion = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager+ReminderCompletion.swift")))
-        XCTAssertTrue(completion.contains("} catch let unread as UnreadSaveError { markNeedsRefresh() await CalendarUndoManager.shared.record(.forCompletion(before: before, requestedCompleted: completed, savedTitle: unread.committed.completion.title,"))
+        XCTAssertTrue(completion.contains("} catch let unread as UnreadSaveError { markNeedsRefresh() await CalendarUndoManager.shared.record(.forCompletion(before: unread.committed.completionBefore, requestedCompleted: completed, savedTitle: unread.committed.completion.title,"))
+        XCTAssertTrue(completion.contains("throw EventKitError.writeStoreReadBackFailed(kind: \"reminder\", undo: .recorded, newIdentifier: unread.committed.newIdentifier(passed: identifier))"))
         let history = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func saveForHistory(_ reminder: EKReminder, handler: String, requested: Set<ReminderFieldCopy.Field> = []) throws -> String {", in: try SourcePins.source("EventKit/ExistingReminderSave.swift"))))
         // String literals are stripped by the pin reader: both cases return, neither throws.
         XCTAssertTrue(history.contains("{ case .readBack: return case .unread: return } }"), history)
+    }
+
+    /// PR #507 round 3 MEDIUM 2: the undo record's old state is the write store's copy before the
+    /// write, from the first save (the #237 fallback's second save starts from the first commit), in
+    /// update_reminder and in complete_reminder's record; the successor comparison keeps `before`.
+    func testTheUndoBaselineIsTheWriteStoresCopyBeforeTheWrite() throws {
+        let manager = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
+        XCTAssertEqual(manager.components(separatedBy: "baseline = baseline ?? committed.before").count - 1, 2)
+        XCTAssertEqual(manager.components(separatedBy: "let oldSnapshot = ReminderSnapshot(from: reminder)").count - 1, 0)
+        XCTAssertTrue(manager.contains("case .readBack(let read, let committed): saved = read baseline = baseline ?? committed.before"))
+        let completion = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager+ReminderCompletion.swift")))
+        XCTAssertTrue(completion.contains("let (reminder, committed) = try savedOrUnread(original, handler: "))
+        XCTAssertTrue(completion.contains("await CalendarUndoManager.shared.record(.forCompletion(before: committed.completionBefore, requestedCompleted: completed, savedTitle: afterSave.title,"))
+        XCTAssertTrue(completion.contains("let next = ReminderNextOccurrence.evaluate(before: before, observed: afterSave,"))
     }
 
     /// PR #507 round 2: the fields the request names reach the copy (update_reminder, completion,

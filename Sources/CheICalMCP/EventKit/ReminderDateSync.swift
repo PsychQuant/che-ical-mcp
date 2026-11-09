@@ -332,8 +332,14 @@ enum ReminderDateSync {
                 // write store and did not land (#459); for a create it ran on the long-lived store,
                 // where `rollback` does not drop it, so it may still land with the next save (#274).
                 rollback()
-                let code = EventKitErrorSanitizer.sanitize(error).code
-                log("\(tool): saving the due date again failed (\(code)); for a create it may still be written by the next save\n")
+                if case EventKitError.writeStoreReadBackFailed = error {
+                    // PR #507 round 3 INFO 7: an update's second save returned without an error and
+                    // only its read-back failed; the caller records its undo and reports it.
+                    log("\(tool): the second save returned without an error, but the reminder could not be read back after it\n")
+                } else {
+                    let code = EventKitErrorSanitizer.sanitize(error).code
+                    log("\(tool): saving the due date again failed (\(code)); for a create it may still be written by the next save\n")
+                }
             }
             confirmed.reread = reload()
             guard confirmed.reread == true, reminder.dueDateComponents != nil else {

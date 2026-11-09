@@ -15,7 +15,9 @@
 
 ### 複製的欄位是封閉列舉
 
-提醒事項：`title`、`location`、`notes`、`url`、`timeZone`、`startDateComponents`、`dueDateComponents`、`priority`、`isCompleted`、`completionDate`、`alarms`、`recurrenceRules`、`calendar`。清單：`title`、`cgColor`。只有值不同的欄位才寫，鬧鐘與規則以值比較，避免每次都重建它們。`calendar` 用識別碼在寫入 store 上找；找不到是 store 錯誤。
+提醒事項：`title`、`location`、`notes`、`url`、`timeZone`、`startDateComponents`、`dueDateComponents`、`priority`、`isCompleted`、`completionDate`、`relativeAlarms`、`absoluteAlarms`、`locationAlarms`、`recurrenceRules`、`calendar`。清單：`title`、`cgColor`。只有值不同的欄位才寫，鬧鐘與規則以值比較，避免每次都重建它們。鬧鐘依種類分成三個欄位（PR #507 第 3 輪；位置優先於時間，其餘依有無絕對時間分），各自只動寫入 store 上同種類的鬧鐘：只帶 `alarms_minutes_offsets` 的呼叫不會拿快取裡的整組鬧鐘蓋掉別處加的絕對或位置鬧鐘。
+
+undo 紀錄的舊狀態取自寫入 store 副本在寫入欄位之前的狀態（第 3 輪），不取長駐 store 的快取：快取可能比資料庫舊，用它當舊狀態，undo 會連別處改過、寫入時保留的欄位一起改回去。`calendar` 用識別碼在寫入 store 上找；找不到是 store 錯誤。
 
 ### 寫入池
 
