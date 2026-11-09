@@ -48,6 +48,7 @@ final class WriteStorePoolTests: XCTestCase {
         let lease = WriteStoreLease(pool: pool)
         let before = try lease.use { $0.serial }
         XCTAssertThrowsError(try lease.use { _ in throw Boom() })
+        XCTAssertEqual(made(), 1, "PR #507 round 1: no replacement is built until a write needs one")
         let after = try lease.use { $0.serial }
         XCTAssertNotEqual(before, after, "the store a failed write used is not used again")
         XCTAssertEqual(made(), 2)
@@ -106,5 +107,19 @@ final class WriteStorePoolTests: XCTestCase {
         }
         XCTAssertNil(WriteStoreContext.current)
         lease.close()
+    }
+
+    /// PR #507 round 1, LOW 9/14: a store that sees no data (the 11th store of the process) is a busy
+    /// pool, not an empty one, so nothing is looked up in it.
+    func testAStoreThatSeesNothingIsRefusedAsBusy() throws {
+        var made = 0
+        let pool = WriteStorePool<FakeStore>(make: { made += 1; return FakeStore(serial: made) }, isUsable: { $0.serial > 1 })
+        let lease = WriteStoreLease(pool: pool)
+        XCTAssertThrowsError(try lease.use { $0.serial }) { error in
+            guard case .writeStoreBusy = error as? EventKitError else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(try lease.use { $0.serial }, 2, "the unusable store is not kept")
+        lease.close()
+        XCTAssertEqual(pool.openCount, 0)
     }
 }

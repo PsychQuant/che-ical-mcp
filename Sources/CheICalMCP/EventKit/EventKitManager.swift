@@ -36,7 +36,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     // (`CountingEventStore`, #328).
     let eventStore: CountingEventStore
     /// #459: the separate stores existing reminder and list writes commit on (`ExistingReminderSave`).
-    let writeStores = WriteStorePool<EKEventStore>(make: { EKEventStore() })
+    let writeStores = WriteStorePool<EKEventStore>(make: { EKEventStore() }, isUsable: { !$0.sources.isEmpty })
     /// #459 / #328: every write attempted on a write store, so `writeGeneration` moves with those
     /// commits too (`onWriteStore` counts each in the same synchronous step as the commit).
     var writeStoreCommits = 0
@@ -2738,29 +2738,35 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .reminder) }
 
         let oldSnapshot = ReminderSnapshot(from: reminder)
+        // PR #507 round 1: the save may give the reminder another identifier (a move to a list in
+        // another account); `reminder` then becomes the object that identifier resolves to, so the
+        // read-backs, the response and the undo record below use it.
+        var saved = reminder
         let dateSync = try ReminderUpdateWrite.apply(
             request, to: reminder, calendar: calendar,
-            save: { try saveExistingReminder(reminder, handler: "updateReminder") },
-            reload: { reminder.refresh() },
-            rollback: { reminder.rollback() })
+            save: { saved = try saveExistingReminder(saved, handler: "updateReminder") },
+            reload: { saved.refresh() },
+            rollback: { saved.rollback() },
+            current: { saved })
         markNeedsRefresh()
         // PR #438 verify: judged on the re-read reminder, absolute alarms included; if it could not
         // be re-read, nothing is reported as stored.
-        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: dateSync, reload: { reminder.refresh() })
+        let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: saved, dateSync: dateSync, reload: { saved.refresh() })
         let result = ReminderUpdateResult(
-            reminder: ReminderWriteSnapshot(from: reminder), dateSync: dateSync,
+            reminder: ReminderWriteSnapshot(from: saved), dateSync: dateSync,
             storedRelativeAlarms: alarms.stored,
             // PR #415 verify round 1: relative alarms left on a reminder that lost its timed due.
-            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: dateSync),
+            leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: saved, request: request, dateSync: dateSync),
             listShowsAlarmTime: alarms.listShowsAlarmTime,
             // #354 (PR #420 verify round 1): read off the saved reminder after a reload, when the
             // call touched the rule.
             recurrence: (recurrenceRule != nil || clearRecurrence)
-                ? ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() }) : nil)
-        // Same reason as update_event (#246): the identifier the reminder has after the save.
-        let savedID = reminder.calendarItemIdentifier
+                ? ReminderRecurrenceWrite.readBackAfterSave(saved, request: request, reload: { saved.refresh() }) : nil)
+        // Same reason as update_event (#246): the identifier the reminder has after the save (PR #507
+        // round 1: off the object the save left behind, which a cross-account move replaces).
+        let savedID = saved.calendarItemIdentifier
         await CalendarUndoManager.shared.record(.updateReminder(id: savedID, oldSnapshot: oldSnapshot,
-                                                                saved: postWriteSnapshot(reminderID: savedID, saved: reminder)))
+                                                                saved: postWriteSnapshot(reminderID: savedID, saved: saved)))
         return result
     }
 
@@ -2897,6 +2903,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     try commitReminderRemoval(reminder)   // #459: on the batch's write store
                     successCount += 1
                     undoSnapshots.append(snapshot)
+                } catch let error as EventKitError where WriteStoreRowFailure.code(for: error) != nil {
+                    // PR #507 round 1: the write store's own errors keep their own codes and a stderr line.
+                    if WriteStoreRowFailure.endsTheBatch(error, removedSoFar: successCount) { throw error }
+                    let code = WriteStoreRowFailure.code(for: error) ?? "error_unknown"
+                    FileHandle.standardError.write(Data("deleteRemindersBatch(\(EventKitErrorSanitizer.escapeForStderr(id))) failed: \(code)\n".utf8))
+                    failures.append((id, code))
                 } catch {
                     // #32: never forward Apple-produced `localizedDescription` to
                     // the MCP client — it could in a future macOS interpolate
@@ -3544,6 +3556,9 @@ enum EventKitError: LocalizedError {
     /// #459: the write store returned nothing for an identifier the caller holds. A store error, not
     /// a missing reminder or list: nothing was written.
     case writeStoreLookupFailed(kind: String)
+    /// #459 (PR #507 round 1): the save on the write store landed, but this server's store could not
+    /// read the item back right after it, so the response cannot show it. Nothing is rolled back.
+    case writeStoreReadBackFailed(kind: String)
     /// #288: the event lookup raised, so it is not known whether the event exists. Not an
     /// `UnrecoverableUndoError`: an undo that meets it keeps its record.
     case eventLookupFailed(identifier: String)
@@ -3696,6 +3711,8 @@ enum EventKitError: LocalizedError {
             return reason
         case .writeStoreBusy:
             return "Nothing was written: the \(WriteStorePool<AnyObject>.capacity) separate stores this server writes reminders through are all in use by other calls. Try again when they have finished."
+        case .writeStoreReadBackFailed(let kind):
+            return "The change was saved through the separate store this server writes reminders through, but this server could not read the \(kind) back right after it, so this response does not show it. Read it again before relying on it."
         case .writeStoreLookupFailed(let kind):
             return "Nothing was written: the separate store this server writes reminders through could not read the \(kind) by its identifier. This is a store error, not a missing \(kind): try again."
         case .eventLookupFailed(let identifier):

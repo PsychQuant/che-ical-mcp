@@ -11,7 +11,10 @@ import Foundation
 /// At most `capacity` stores are open at once. EventKit allows 10 live stores per process (measured
 /// the same day: the 11th sees no calendars at all, with no error), and the server already holds up
 /// to three others. A call that would open a fifth is refused (`EventKitError.writeStoreBusy`), so
-/// the pool never reaches that limit.
+/// the pool stays under that limit as long as a dropped store is freed. Each use runs in an
+/// autorelease pool and a failed store is dropped at once, not kept until a replacement is built
+/// (PR #507 round 1); that the dropped store is then freed was not measured. A store that sees no
+/// data (`isUsable` false, the 11th-store symptom) is refused as busy, so it is never written through.
 ///
 /// Generic over the store type so the counting is tested without building an `EKEventStore` (#283).
 final class WriteStorePool<Store: AnyObject>: @unchecked Sendable {
@@ -20,9 +23,11 @@ final class WriteStorePool<Store: AnyObject>: @unchecked Sendable {
     private let lock = NSLock()
     private var open = 0
     let make: () -> Store
+    let isUsable: (Store) -> Bool
 
-    init(make: @escaping () -> Store) {
+    init(make: @escaping () -> Store, isUsable: @escaping (Store) -> Bool = { _ in true }) {
         self.make = make
+        self.isUsable = isUsable
     }
 
     var openCount: Int {
@@ -44,8 +49,9 @@ final class WriteStorePool<Store: AnyObject>: @unchecked Sendable {
 }
 
 /// One call's write store. It takes a place in the pool only when a write first needs it, keeps one
-/// store for every write of the call (a batch shares it), replaces that store after any write that
-/// throws (so a failed change is not carried into the next row's commit), and releases its place
+/// store for every write of the call (a batch shares it), drops that store after any write that
+/// throws (so a failed change is not carried into the next row's commit; the next write builds a
+/// new one), and releases its place
 /// when closed or dropped.
 final class WriteStoreLease<Store: AnyObject>: @unchecked Sendable {
     private let pool: WriteStorePool<Store>
@@ -58,14 +64,16 @@ final class WriteStoreLease<Store: AnyObject>: @unchecked Sendable {
     }
 
     func use<T>(_ body: (Store) throws -> T) throws -> T {
-        let current = try currentStore()
-        do {
-            return try body(current)
-        } catch {
-            lock.lock()
-            store = pool.make()   // the failed store is dropped; the place stays taken
-            lock.unlock()
-            throw error
+        try autoreleasepool {
+            let current = try currentStore()
+            do {
+                return try body(current)
+            } catch {
+                lock.lock()
+                store = nil   // the failed store is dropped; the place stays taken
+                lock.unlock()
+                throw error
+            }
         }
     }
 
@@ -88,8 +96,30 @@ final class WriteStoreLease<Store: AnyObject>: @unchecked Sendable {
             holdsPlace = true
         }
         let made = pool.make()
+        guard pool.isUsable(made) else { throw EventKitError.writeStoreBusy }
         store = made
         return made
+    }
+}
+
+/// PR #507 round 1, LOW 7: what a batch row answers when the write store could not do it. These are
+/// this server's own errors, so the row keeps their own code rather than the sanitizer's
+/// `error_unknown`; every other error goes through the sanitizer as before (spec R3).
+enum WriteStoreRowFailure {
+    static func code(for error: Error) -> String? {
+        switch error as? EventKitError {
+        case .writeStoreBusy: return "write_store_busy"
+        case .writeStoreLookupFailed: return "write_store_lookup_failed"
+        case .writeStoreReadBackFailed: return "write_store_read_back_failed"
+        default: return nil
+        }
+    }
+
+    /// A busy pool is met at the first write (the lease takes its place then), so with nothing removed
+    /// yet it refuses the whole call instead of failing every row.
+    static func endsTheBatch(_ error: Error, removedSoFar: Int) -> Bool {
+        guard case .writeStoreBusy = error as? EventKitError else { return false }
+        return removedSoFar == 0
     }
 }
 

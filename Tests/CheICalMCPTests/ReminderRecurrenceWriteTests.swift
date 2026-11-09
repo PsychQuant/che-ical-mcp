@@ -304,7 +304,8 @@ final class ReminderRecurrenceWriteTests: XCTestCase {
     func testUpdateReminderReadsTheRuleBackAfterAReload() throws {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        XCTAssertEqual(code.components(separatedBy: "ReminderRecurrenceWrite.readBackAfterSave(reminder, request: request, reload: { reminder.refresh() })").count - 1, 1)
+        XCTAssertEqual(code.components(separatedBy: "ReminderRecurrenceWrite.readBackAfterSave(saved, request: request, reload: { saved.refresh() })").count - 1, 1)
         XCTAssertFalse(code.filter { !$0.isWhitespace }.contains("ReminderRecurrenceWrite.readBack(reminder"))
+        XCTAssertFalse(code.filter { !$0.isWhitespace }.contains("ReminderRecurrenceWrite.readBack(saved"))
     }
 }

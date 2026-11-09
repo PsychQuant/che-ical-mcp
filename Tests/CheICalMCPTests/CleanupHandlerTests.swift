@@ -404,7 +404,7 @@ final class CleanupHandlerTests: XCTestCase {
             ]
         )
 
-        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|Reminder not found|Reminder is no longer completed)$"#
+        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|write_store_busy|write_store_lookup_failed|write_store_read_back_failed|Reminder not found|Reminder is no longer completed)$"#
         let regex = try NSRegularExpression(pattern: allowed)
         let failures = response["failures"] as? [[String: Any]] ?? []
         XCTAssertEqual(failures.count, 3)

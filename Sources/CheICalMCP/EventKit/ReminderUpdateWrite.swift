@@ -57,7 +57,8 @@ enum ReminderUpdateWrite {
     /// (#274, `ExistingReminderSave`); when `save` throws, it runs and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
                       save: () throws -> Void, reload: () -> Bool,
-                      rollback: () -> Void) throws -> ReminderDateSync.Report? {
+                      rollback: () -> Void,
+                      current: (() -> EKReminder)? = nil) throws -> ReminderDateSync.Report? {
         // The seam-level guard: the caller runs it before its own lookups too, but `apply` does not
         // rely on that.
         try checkRealign(request, existingDue: reminder.dueDateComponents)
@@ -118,7 +119,9 @@ enum ReminderUpdateWrite {
             throw error
         }
         guard let dateSync else { return nil }
-        return ReminderDateSync.confirmSaved(reminder, report: dateSync, save: save, reload: reload, rollback: rollback)
+        // PR #507 round 1: `current` is the reminder the save left behind (another object when the
+        // save gave it another identifier); the date check reads and, on fallback, writes that one.
+        return ReminderDateSync.confirmSaved(current?() ?? reminder, report: dateSync, save: save, reload: reload, rollback: rollback)
     }
 
     /// What `update_reminder` may say about the alarms after the save (PR #438 verify).

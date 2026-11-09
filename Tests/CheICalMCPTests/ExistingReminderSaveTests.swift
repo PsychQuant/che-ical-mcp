@@ -77,7 +77,7 @@ final class ExistingReminderSaveTests: XCTestCase {
     /// The closures the tests above cannot reach: each wrapper logs its failure through the
     /// sanitizer's log and answers with it.
     func testEachWrapperReportsItsOwnFailureThroughTheLog() throws {
-        for declaration in ["func saveExistingReminder(_ reminder: EKReminder, handler: String) throws {",
+        for declaration in ["func saveExistingReminder(_ reminder: EKReminder, handler: String) throws -> EKReminder {",
                             "func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {",
                             "func saveExistingCalendar(_ calendar: EKCalendar) throws {",
                             "func removeExistingCalendar(_ calendar: EKCalendar) throws {"] {
@@ -88,9 +88,9 @@ final class ExistingReminderSaveTests: XCTestCase {
 
     /// Each wrapper performs its own write, on the write store: swapping a save and a remove goes red.
     func testEachWrapperPerformsItsOwnWrite() throws {
-        for (declaration, write) in [("func saveExistingReminder(_ reminder: EKReminder, handler: String) throws {", "try commitReminderSave(reminder)"),
+        for (declaration, write) in [("func saveExistingReminder(_ reminder: EKReminder, handler: String) throws -> EKReminder {", "saved = try commitReminderSave(reminder)"),
                                      ("func removeExistingReminder(_ reminder: EKReminder, handler: String) throws {", "try commitReminderRemoval(reminder)"),
-                                     ("func saveExistingCalendar(_ calendar: EKCalendar) throws {", "try commitListSave(calendar)"),
+                                     ("func saveExistingCalendar(_ calendar: EKCalendar) throws {", "readBack = try commitListSave(calendar)"),
                                      ("func removeExistingCalendar(_ calendar: EKCalendar) throws {", "try commitListRemoval(calendar)")] {
             let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/ExistingReminderSave.swift")), declaration))
             XCTAssertTrue(body.contains("write: { \(write) }"), body)
@@ -135,9 +135,14 @@ final class ExistingReminderSaveTests: XCTestCase {
         XCTAssertEqual(try count("eventStore.remove(reminder, commit: true)"), [:])
         XCTAssertEqual(try count("ore.remove(reminder, commit: false)"), ["EventKitManager.swift": 1])
         XCTAssertEqual(try count("try saveExistingReminder(reminder, handler:"),
-                       ["EventKitManager.swift": 4, "EventKitManager+ReminderCompletion.swift": 3])
-        XCTAssertEqual(try count("save: { try saveExistingReminder(reminder, handler: \"updateReminder\") }"), ["EventKitManager.swift": 1])
+                       ["EventKitManager.swift": 3, "EventKitManager+ReminderCompletion.swift": 3])
+        XCTAssertEqual(try count("save: { saved = try saveExistingReminder(saved, handler: \"updateReminder\") }"), ["EventKitManager.swift": 1])
         XCTAssertEqual(try count("try removeExistingReminder(reminder, handler:"), ["EventKitManager.swift": 2])
         XCTAssertEqual(try count("try commitReminderRemoval(reminder)"), ["EventKitManager.swift": 1, "ExistingReminderSave.swift": 1])
+    }
+
+    /// PR #507 round 1: a save that landed but could not be read back keeps the undo record.
+    func testAFailedReadBackKeepsTheUndoRecord() {
+        XCTAssertEqual(UndoFailureDisposition.of(EventKitError.writeStoreReadBackFailed(kind: "reminder")), .restore)
     }
 }

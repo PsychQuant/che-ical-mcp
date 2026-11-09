@@ -1,78 +1,118 @@
 import CoreLocation
 import EventKit
 
-/// #459: the fields a write of an existing reminder copies from the object the caller changed (on
-/// the long-lived store) onto the same reminder looked up on the write store.
+/// #459: what a write of an existing reminder copies from the object the caller changed (on the
+/// long-lived store) onto the same reminder looked up on the write store.
 ///
-/// The list is closed: these are the writable properties of `EKReminder` and `EKCalendarItem` a
-/// reminder carries. A property added to EventKit, or to what this server writes, has to be added
-/// here, or the write silently leaves it out. Only a value that differs is written, so an unchanged
-/// alarm or rule is not rebuilt. Alarms and rules compare as sets of values: EventKit keeps alarms
-/// in its own order.
+/// **Only the fields this call changed are written** (PR #507 round 1). The change is the
+/// difference between the caller's object as it is now and as it was before the call
+/// (`Values` taken after `rollback()`), not the difference from the write store's copy: that copy
+/// reads the stored state, and a field the call did not touch may be newer there (changed on
+/// another device). Writing it from the caller's cached value would undo that change.
 ///
-/// Alarms and recurrence rules are built anew with the same values: putting the long-lived store's
-/// `EKAlarm` on the write store's reminder ended the process, and so did a rule passed through
-/// `copy()` (measured 2026-11-09, one process).
+/// The field list is closed: these are the writable properties of `EKReminder` and
+/// `EKCalendarItem` a reminder carries. A property added to EventKit, or to what this server
+/// writes, has to be added here, or the write silently leaves it out.
+///
+/// - Dates go through `ReminderDateSync.restore` (start and due in its order, #235/#237), with the
+///   stored start or due for whichever the call did not change, and the zone after them.
+/// - Alarms go through `AlarmSnapshot.restore` against the target's own alarms: an alarm equal to a
+///   wanted one stays the same object, so what no snapshot rebuilds (a procedure alarm's URL)
+///   survives, and no alarm object of the long-lived store is put on the target (doing so ended
+///   the process, measured 2026-11-09).
+/// - Recurrence rules are built anew with the same values (a rule passed through `copy()` also
+///   ended the process).
 enum ReminderFieldCopy {
-    static let fields = ["title", "location", "notes", "url", "timeZone", "startDateComponents",
-                         "dueDateComponents", "priority", "isCompleted", "completionDate",
-                         "alarms", "recurrenceRules", "calendar"]
+    enum Field: String, CaseIterable, Hashable {
+        case title, location, notes, url, timeZone, startDateComponents, dueDateComponents, priority,
+             isCompleted, completionDate, alarms, recurrenceRules, calendar
+    }
 
-    /// Throws `EventKitError.writeStoreLookupFailed` before writing anything when the write store
-    /// cannot see the reminder's list.
-    static func apply(from source: EKReminder, to target: EKReminder, calendar lookup: (String) -> EKCalendar?) throws {
+    static let fields = Field.allCases.map(\.rawValue)
+
+    /// What a reminder holds, for the closed field list.
+    struct Values {
+        let title: String?
+        let location: String?
+        let notes: String?
+        let url: URL?
+        let timeZone: TimeZone?
+        let start: DateComponents?
+        let due: DateComponents?
+        let priority: Int
+        let isCompleted: Bool
+        let completionDate: Date?
+        let alarms: [AlarmSnapshot]
+        let rules: [EKRecurrenceRule]
+        let calendarID: String?
+
+        init(_ reminder: EKReminder) {
+            title = reminder.title
+            location = reminder.location
+            notes = reminder.notes
+            url = reminder.url
+            timeZone = reminder.timeZone
+            start = reminder.startDateComponents
+            due = reminder.dueDateComponents
+            priority = reminder.priority
+            isCompleted = reminder.isCompleted
+            completionDate = reminder.completionDate
+            alarms = (reminder.alarms ?? []).map(AlarmSnapshot.init(from:))
+            rules = (reminder.recurrenceRules ?? []).map(ReminderFieldCopy.copyRule)
+            calendarID = reminder.calendar?.calendarIdentifier
+        }
+    }
+
+    /// The fields whose value differs between `before` and `after`.
+    static func changed(from before: Values, to after: Values) -> Set<Field> {
+        var fields: Set<Field> = []
+        if before.title != after.title { fields.insert(.title) }
+        if before.location != after.location { fields.insert(.location) }
+        if before.notes != after.notes { fields.insert(.notes) }
+        if before.url != after.url { fields.insert(.url) }
+        if before.timeZone != after.timeZone { fields.insert(.timeZone) }
+        if before.start != after.start { fields.insert(.startDateComponents) }
+        if before.due != after.due { fields.insert(.dueDateComponents) }
+        if before.priority != after.priority { fields.insert(.priority) }
+        if before.isCompleted != after.isCompleted { fields.insert(.isCompleted) }
+        if before.completionDate != after.completionDate { fields.insert(.completionDate) }
+        if counts(before.alarms) != counts(after.alarms) { fields.insert(.alarms) }
+        if before.rules.map(ruleSignature).sorted() != after.rules.map(ruleSignature).sorted() { fields.insert(.recurrenceRules) }
+        if before.calendarID != after.calendarID { fields.insert(.calendar) }
+        return fields
+    }
+
+    /// Writes `wanted`'s value of each field in `fields` onto `target`, and nothing else. Throws
+    /// `EventKitError.writeStoreLookupFailed` before writing anything when the write store cannot
+    /// see the list the reminder moves to.
+    static func apply(_ wanted: Values, fields: Set<Field>, to target: EKReminder, calendar lookup: (String) -> EKCalendar?) throws {
         var list: EKCalendar?
-        if let sourceList = source.calendar {
-            guard let found = lookup(sourceList.calendarIdentifier) else {
-                throw EventKitError.writeStoreLookupFailed(kind: "reminder list")
-            }
+        if fields.contains(.calendar), let id = wanted.calendarID {
+            guard let found = lookup(id) else { throw EventKitError.writeStoreLookupFailed(kind: "reminder list") }
             list = found
         }
-        if target.title != source.title { target.title = source.title }
-        if target.location != source.location { target.location = source.location }
-        if target.notes != source.notes { target.notes = source.notes }
-        if target.url != source.url { target.url = source.url }
-        if target.timeZone != source.timeZone { target.timeZone = source.timeZone }
-        if target.startDateComponents != source.startDateComponents { target.startDateComponents = source.startDateComponents }
-        if target.dueDateComponents != source.dueDateComponents { target.dueDateComponents = source.dueDateComponents }
-        if target.priority != source.priority { target.priority = source.priority }
-        if target.isCompleted != source.isCompleted { target.isCompleted = source.isCompleted }
-        if target.completionDate != source.completionDate { target.completionDate = source.completionDate }
-        let sourceAlarms = source.alarms ?? []
-        if (target.alarms ?? []).map(alarmSignature).sorted() != sourceAlarms.map(alarmSignature).sorted() {
-            target.alarms = sourceAlarms.isEmpty ? nil : sourceAlarms.map(copyAlarm)
+        if fields.contains(.title) { target.title = wanted.title }
+        if fields.contains(.location) { target.location = wanted.location }
+        if fields.contains(.notes) { target.notes = wanted.notes }
+        if fields.contains(.url) { target.url = wanted.url }
+        if fields.contains(.priority) { target.priority = wanted.priority }
+        if !fields.isDisjoint(with: [.startDateComponents, .dueDateComponents, .timeZone]) {
+            ReminderDateSync.restore(target,
+                                     start: fields.contains(.startDateComponents) ? wanted.start : target.startDateComponents,
+                                     due: fields.contains(.dueDateComponents) ? wanted.due : target.dueDateComponents)
+            if fields.contains(.timeZone) { target.timeZone = wanted.timeZone }
         }
-        let sourceRules = source.recurrenceRules ?? []
-        if (target.recurrenceRules ?? []).map(ruleSignature).sorted() != sourceRules.map(ruleSignature).sorted() {
-            target.recurrenceRules = sourceRules.isEmpty ? nil : sourceRules.map(copyRule)
+        if fields.contains(.isCompleted) { target.isCompleted = wanted.isCompleted }
+        if fields.contains(.completionDate) { target.completionDate = wanted.completionDate }
+        if fields.contains(.alarms) { AlarmSnapshot.restore(wanted.alarms, to: target) }
+        if fields.contains(.recurrenceRules) {
+            target.recurrenceRules = wanted.rules.isEmpty ? nil : wanted.rules.map(copyRule)
         }
-        if let list, target.calendar?.calendarIdentifier != list.calendarIdentifier { target.calendar = list }
+        if let list { target.calendar = list }
     }
 
-    static func alarmSignature(_ alarm: EKAlarm) -> String {
-        var parts = ["rel:\(alarm.relativeOffset)", "abs:\(alarm.absoluteDate?.timeIntervalSince1970.description ?? "-")",
-                     "prox:\(alarm.proximity.rawValue)"]
-        if let place = alarm.structuredLocation {
-            let geo = place.geoLocation.map { "\($0.coordinate.latitude),\($0.coordinate.longitude)" } ?? "-"
-            parts.append("loc:\(place.title ?? "")|\(geo)|\(place.radius)")
-        }
-        if let email = alarm.emailAddress { parts.append("email:\(email)") }
-        if let sound = alarm.soundName { parts.append("sound:\(sound)") }
-        return parts.joined(separator: ";")
-    }
-
-    static func copyAlarm(_ alarm: EKAlarm) -> EKAlarm {
-        let copy = alarm.absoluteDate.map { EKAlarm(absoluteDate: $0) } ?? EKAlarm(relativeOffset: alarm.relativeOffset)
-        if let place = alarm.structuredLocation {
-            let newPlace = EKStructuredLocation(title: place.title ?? "")
-            newPlace.geoLocation = place.geoLocation
-            newPlace.radius = place.radius
-            copy.structuredLocation = newPlace
-        }
-        copy.proximity = alarm.proximity
-        if let email = alarm.emailAddress { copy.emailAddress = email }
-        if let sound = alarm.soundName { copy.soundName = sound }
-        return copy
+    private static func counts(_ snapshots: [AlarmSnapshot]) -> [AlarmSnapshot: Int] {
+        snapshots.reduce(into: [:]) { $0[$1, default: 0] += 1 }
     }
 
     static func ruleSignature(_ rule: EKRecurrenceRule) -> String {
@@ -95,12 +135,31 @@ enum ReminderFieldCopy {
     }
 }
 
-/// #459: the fields a rename or recolor of a reminder list copies onto the write store's list.
+/// #459: a rename or recolor of a reminder list writes only the field this call changed (PR #507
+/// round 1: a rename no longer writes back a color changed elsewhere, and the other way round).
 enum ListFieldCopy {
-    static let fields = ["title", "cgColor"]
+    enum Field: String, CaseIterable, Hashable { case title, cgColor }
 
-    static func apply(from source: EKCalendar, to target: EKCalendar) {
-        if target.title != source.title { target.title = source.title }
-        if target.cgColor != source.cgColor { target.cgColor = source.cgColor }
+    static let fields = Field.allCases.map(\.rawValue)
+
+    struct Values {
+        let title: String
+        let cgColor: CGColor?
+        init(_ calendar: EKCalendar) {
+            title = calendar.title
+            cgColor = calendar.cgColor
+        }
+    }
+
+    static func changed(from before: Values, to after: Values) -> Set<Field> {
+        var fields: Set<Field> = []
+        if before.title != after.title { fields.insert(.title) }
+        if before.cgColor != after.cgColor { fields.insert(.cgColor) }
+        return fields
+    }
+
+    static func apply(_ wanted: Values, fields: Set<Field>, to target: EKCalendar) {
+        if fields.contains(.title) { target.title = wanted.title }
+        if fields.contains(.cgColor) { target.cgColor = wanted.cgColor }
     }
 }
