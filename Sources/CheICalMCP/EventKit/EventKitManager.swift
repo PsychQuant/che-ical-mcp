@@ -1527,35 +1527,67 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // when the write is that shape, and still before the first field is assigned (#373).
         // PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete (not
         // measured), so it goes through the same verdict; its refusal says so when no date changes.
-        func deletedOccurrenceCheckApplies(changesAccount: Bool) -> Bool {
+        // PR #505 round 5 (LOW): a rule written over several occurrences with another pattern (not
+        // measured) goes through the verdict too, which reads the stored rule.
+        // A weekly rule without days runs on its start's weekday, so the measured end-date-only call is
+        // not a pattern change whether the store reads that day back or none.
+        let storedStartWeekday = WeekdayCheck.weekday(of: event.startDate, resultIsAllDay: event.isAllDay, requested: nil,
+                                                      clearTimezone: false, stored: event.timeZone, host: Calendar.current)
+        let changesPattern = effectiveRule.map {
+            DeletedOccurrenceCheck.changesPattern(DeletedOccurrenceCheck.Rule($0), stored: storedRule.map(DeletedOccurrenceCheck.Rule.init),
+                                                  startWeekday: storedStartWeekday)
+        } ?? false
+        func deletedOccurrenceCheckApplies(changesAccount: Bool, baseline: DeletedOccurrenceCheck.StoredBaseline = .stored) -> Bool {
             DeletedOccurrenceCheck.applies(
                 reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
                 plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
-                resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount)
+                resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount,
+                changesPattern: changesPattern, baseline: baseline)
         }
-        if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {
-            let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false)
+        // The series the check lists, read once and only when the check needs it.
+        var checkSeries: (EKEvent, String)??
+        func seriesForCheck() throws -> (EKEvent, String)? {
+            if let cached = checkSeries { return cached }
             let series = try addressesOwnOccurrence
                 ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
             // Round 2 (INFO 8): the own-id path reads the series object without a refresh; refresh it
             // before its rule is read (a failure is fine: #326's objects cannot refresh).
             if addressesOwnOccurrence { _ = series?.refresh() }
             let seriesID = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
-            let verdict: DeletedOccurrenceCheck.Verdict = {
-                guard let series, let seriesID else { return .unknown }
-                // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
-                // first slot (the own-id path reads the series' own object, not a stand-in).
-                return deletedOccurrenceVerdict(
-                    of: series, id: seriesID,
+            let found = series.flatMap { object in seriesID.map { (object, $0) } }
+            checkSeries = .some(found)
+            return found
+        }
+        let viaStandInForCheck = addressesOwnOccurrence ? false : resolved.viaStandIn
+        // PR #505 round 5 (MEDIUM): a whole-series write of the stored start and end compares them with
+        // the first occurrence's shown times, which are its slot only when it was not edited on its own
+        // and its slot is shown; otherwise any date in the call is checked (fail closed).
+        var baseline = DeletedOccurrenceCheck.StoredBaseline.stored
+        if reach.isWholeSeries, datePlan.datesToWrite != nil, !deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {
+            baseline = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) } ?? .unproven
+        }
+        if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {
+            let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)
+            // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
+            // first slot (the own-id path reads the series' own object, not a stand-in).
+            let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {
+                deletedOccurrenceVerdict(
+                    of: $0.0, id: $0.1,
                     reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
-                    viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn,
+                    viaStandIn: viaStandInForCheck,
                     changesAllDay: datePlan.isAllDay != event.isAllDay)
-            }()
+            } ?? .unknown(.notListed)
+            let planned = datePlan.datesToWrite
+            let change = DeletedOccurrenceCheck.changeKind(
+                allDayChanges: datePlan.isAllDay != event.isAllDay,
+                startChanges: planned.map { !UndoPostState.sameInstant($0.start, event.startDate) || baseline == .unproven } ?? false,
+                endChanges: planned.map { !UndoPostState.sameInstant($0.end, event.endDate) } ?? false,
+                changesZone: changesZone, changesPattern: changesPattern)
             switch verdict {
             case .none: break
             case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
-            case .deleted(let blocked): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: blocked))
-            case .unknown: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason)
+            case .deleted(let blocked): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: blocked, change: change))
+            case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
             }
         }
 
@@ -2306,6 +2338,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 toSourceID: targetCalendar.source?.sourceIdentifier)) {
             throw EventKitError.standInRefused(reason: Self.standInAccountReason)
         }
+        // PR #505 round 5 (INFO 6): the argument contradictions are answered before the #503 listing.
+        if let refusal = EventMovePolicy.argumentRefusal(isRecurring: isRecurring, span: span, hasOccurrenceDate: occurrenceDate != nil) {
+            throw EventKitError.moveRefused(reason: refusal)
+        }
         // PR #505 round 4 (MEDIUM): a whole series to another account is a create plus a delete, and
         // whether the new series keeps occurrences deleted on its own was not measured (#503): refused
         // while one is found or cannot be ruled out, before anything is written.
@@ -2318,7 +2354,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             let series = ownID ? try seriesObject(ofOccurrence: identifier) : master
             if ownID { _ = series?.refresh() }
             let verdict: DeletedOccurrenceCheck.Verdict = {
-                guard let series, let seriesID else { return .unknown }
+                guard let series, let seriesID else { return .unknown(.notListed) }
                 return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,
                                                 viaStandIn: ownID ? false : resolved.viaStandIn, changesAllDay: false)
             }()

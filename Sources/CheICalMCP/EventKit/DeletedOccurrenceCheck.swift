@@ -37,6 +37,41 @@ enum DeletedOccurrenceCheck {
         case nothingAfter
     }
 
+    /// PR #505 round 5 (LOW): why the first slot cannot be shown, one cause each (`firstSlotResult`).
+    enum FirstSlotCause: Equatable {
+        /// Read through a stand-in: the series' first occurrence was deleted (#326).
+        case standIn
+        /// The object read is an occurrence edited on its own.
+        case detached
+        /// No occurrence, or more than one, is listed where the series shows its first.
+        case notOneAtStart
+        /// The recorded first slot agrees with neither the occurrence's original slot nor its shown start.
+        case recordedDisagrees
+        /// The `/RID=` slot is after the shown start while the recorded first is the shown start (round 4).
+        case ridAfterStart
+        /// A listed occurrence's slot lies before the chosen first slot.
+        case slotBeforeFirst
+        /// Not shown, for a reason the caller did not give.
+        case notShown
+    }
+
+    /// PR #505 round 5 (LOW): why the check cannot tell, so a refusal names only the condition that fired.
+    enum UnknownCause: Equatable {
+        /// The series could not be listed, or the listing was empty.
+        case notListed
+        case firstSlot(FirstSlotCause)
+        /// An occurrence edited on its own was listed without its original slot in its identifier.
+        case editedWithoutSlot
+        /// More than one rule, or a rule the expander does not follow.
+        case ruleNotFollowed
+        /// A listed occurrence falls where the rule gives none.
+        case listedOffRule
+        /// An all-day series whose rule end is less than a day after an occurrence's start (round 4).
+        case allDayEnd
+        /// The listing cannot be shown to reach the series' end.
+        case notCovered
+    }
+
     enum Verdict: Equatable {
         /// Every slot the write reaches is listed, and the listing covers the series.
         case none
@@ -44,9 +79,59 @@ enum DeletedOccurrenceCheck {
         /// listing does not reach). `blocked`: why span future from an occurrence after the last
         /// deletion cannot pass this same check, nil when it can (PR #505 rounds 1-3).
         case deleted(blocked: RouteBlock?)
-        /// The check cannot tell: the rule cannot be followed, or the listing does not cover it.
-        case unknown
+        /// The check cannot tell, and why.
+        case unknown(UnknownCause)
     }
+
+    /// PR #505 round 5 (MEDIUM): what a whole-series write's planned dates are compared with. The
+    /// stored start and end are the first occurrence's shown times; they are its slot only when the
+    /// first occurrence was not edited on its own and its slot was shown (then `firstSlot` equals the
+    /// stored start). Otherwise writing the shown time back is not known to keep the deletions.
+    enum StoredBaseline: Equatable {
+        /// Not a whole-series write, or the stored start is the proven first slot.
+        case stored
+        /// The first occurrence was edited on its own, or its slot cannot be shown: any date in the
+        /// call is checked (fail closed).
+        case unproven
+    }
+
+    /// Round 5 (LOW): a rule written over several occurrences whose pattern differs from the stored
+    /// one (frequency, interval, days or count; only a new end date was measured, and kept them).
+    /// A weekly rule without days runs on its start's weekday (`startWeekday`, an `EKWeekday` raw
+    /// value), as the expander reads it, so a store that reads that day back, or none, is the same
+    /// pattern. Without `startWeekday` the days are compared as given (a difference is checked).
+    static func changesPattern(_ rule: Rule, stored: Rule?, startWeekday: Int? = nil) -> Bool {
+        guard let stored else { return true }
+        func days(_ rule: Rule) -> Set<Int> {
+            if rule.frequency == .weekly, rule.daysOfWeek.isEmpty, let startWeekday { return [startWeekday] }
+            return Set(rule.daysOfWeek)
+        }
+        return rule.frequency != stored.frequency || rule.interval != stored.interval
+            || days(rule) != days(stored) || Set(rule.daysOfMonth) != Set(stored.daysOfMonth)
+            || rule.occurrenceCount != stored.occurrenceCount || rule.hasOtherParts != stored.hasOtherParts
+    }
+
+    /// Round 5 (LOW): the kind of change, in this order: all_day, a new start, an end alone, a zone,
+    /// a rule, an account.
+    static func changeKind(allDayChanges: Bool, startChanges: Bool, endChanges: Bool, changesZone: Bool, changesPattern: Bool) -> ChangeKind {
+        if allDayChanges { return .allDay }
+        if startChanges { return .start }
+        if endChanges { return .endOnly }
+        if changesZone { return .zone }
+        if changesPattern { return .pattern }
+        return .account
+    }
+
+    /// `.stored` only when the proven first slot is the shown start (`startDate`) and the first
+    /// occurrence was not edited on its own: then comparing with the stored start compares with the slot.
+    static func baseline(firstSlot: Date?, firstIsEdited: Bool, startDate: Date) -> StoredBaseline {
+        guard let firstSlot, !firstIsEdited, UndoPostState.sameInstant(firstSlot, startDate) else { return .unproven }
+        return .stored
+    }
+
+    /// PR #505 round 5 (LOW): which kind of change the write is, so the span-future route says
+    /// "measured" only for the kinds measured (a new start: a time of day or a date).
+    enum ChangeKind: Equatable { case start, endOnly, zone, allDay, pattern, account }
 
     /// Whether the write is the measured shape: it reaches more than one occurrence, keeps the rule,
     /// and changes the start, the end or the all-day flag (the stored values written again kept them).
@@ -54,12 +139,17 @@ enum DeletedOccurrenceCheck {
     /// back across a daylight-saving divergence (span all on a series not started; span future from an
     /// occurrence still to come on a started one), so `changesZone` counts too. A `recurrence` with only
     /// its end changed and a `calendar_name` in the same account kept them (measured).
+    /// Round 5 (MEDIUM): with `baseline` `.unproven` (a whole-series write whose first occurrence was
+    /// edited on its own, or whose first slot cannot be shown), any planned date applies. Round 5 (LOW):
+    /// a whole-series rule change other than its end (`changesPattern`) applies too; it was not measured.
     static func applies(reachesSeveral: Bool, clearingRecurrence: Bool, plannedDates: (Date, Date)?,
                         storedStart: Date, storedEnd: Date, resultAllDay: Bool, storedAllDay: Bool,
-                        changesZone: Bool, changesAccount: Bool) -> Bool {
+                        changesZone: Bool, changesAccount: Bool, changesPattern: Bool = false,
+                        baseline: StoredBaseline = .stored) -> Bool {
         guard reachesSeveral, !clearingRecurrence else { return false }
-        if resultAllDay != storedAllDay || changesZone || changesAccount { return true }
+        if resultAllDay != storedAllDay || changesZone || changesAccount || changesPattern { return true }
         guard let (start, end) = plannedDates else { return false }
+        if baseline == .unproven { return true }
         return !UndoPostState.sameInstant(start, storedStart) || !UndoPostState.sameInstant(end, storedEnd)
     }
 
@@ -76,24 +166,26 @@ enum DeletedOccurrenceCheck {
     /// occurrence is held after the last missing slot (there must be one to start from).
     static func verdict(rules: [Rule], firstStart: Date?, observedSlots: [Date], uneditedSlots: [Date], slotsTrusted: Bool,
                         changesAllDay: Bool, reachedFrom: Date?, scannedTo: Date, coversWholeSeries: Bool,
-                        calendar: Calendar, isAllDay: Bool = false) -> Verdict {
-        guard rules.count == 1, let firstStart, slotsTrusted,
-              let expected = expectedSlots(of: rules[0], firstStart: firstStart, until: scannedTo, calendar: calendar) else {
-            return .unknown
+                        calendar: Calendar, isAllDay: Bool = false, firstSlotCause: FirstSlotCause = .notShown) -> Verdict {
+        guard rules.count == 1 else { return .unknown(.ruleNotFollowed) }
+        guard let firstStart else { return .unknown(.firstSlot(firstSlotCause)) }
+        guard slotsTrusted else { return .unknown(.editedWithoutSlot) }
+        guard let expected = expectedSlots(of: rules[0], firstStart: firstStart, until: scannedTo, calendar: calendar) else {
+            return .unknown(.ruleNotFollowed)
         }
         // Round 4 (LOW 4, 7): an all-day series stores its end as the end of its last day in UTC
         // (measured), so east of UTC the next local midnight still falls before it. Whether EventKit
         // lists that day was not measured, so an end less than a day after a slot is unknown.
         if isAllDay, let end = rules[0].endDate,
            expected.contains(where: { end.timeIntervalSince($0) >= 0 && end.timeIntervalSince($0) < 86_400 }) {
-            return .unknown
+            return .unknown(.allDayEnd)
         }
         func isExpected(_ slot: Date) -> Bool { expected.contains { UndoPostState.sameInstant($0, slot) } }
         // Round 3 (MEDIUM): the expander and the store must agree both ways. A listed slot the rule
         // does not give (inside what was expanded) means the expander is wrong here, so a slot it
         // missed could hide a deletion: unknown.
         if observedSlots.contains(where: { $0.timeIntervalSince(firstStart) > -1 && $0 < scannedTo && !isExpected($0) }) {
-            return .unknown
+            return .unknown(.listedOffRule)
         }
         // The rule's end is a point in time, inclusive: a slot at or before it is an occurrence, one
         // after it is not (`expectedSlots`). Measured on iCloud (2026-11-09, PR #505 round 3): a date-only
@@ -112,7 +204,7 @@ enum DeletedOccurrenceCheck {
                 : nil
             return .deleted(blocked: blocked)
         }
-        return coversWholeSeries ? .none : .unknown
+        return coversWholeSeries ? .none : .unknown(.notCovered)
     }
 
     /// PR #505 round 1 (MEDIUM, LOW 4): a whole-series write (span all, or span future from the first
@@ -137,24 +229,37 @@ enum DeletedOccurrenceCheck {
     /// lie before the chosen first slot.
     static func firstSlot(occurrenceDate: Date?, startDate: Date, startMatches: Int, startRIDSlot: Date?,
                           earliestListedSlot: Date?, viaStandIn: Bool, isDetached: Bool) -> Date? {
-        guard !viaStandIn, !isDetached, startMatches == 1 else { return nil }
+        try? firstSlotResult(occurrenceDate: occurrenceDate, startDate: startDate, startMatches: startMatches, startRIDSlot: startRIDSlot,
+                             earliestListedSlot: earliestListedSlot, viaStandIn: viaStandIn, isDetached: isDetached).get()
+    }
+
+    /// `firstSlot` with the cause when the slot cannot be shown (round 5, LOW).
+    static func firstSlotResult(occurrenceDate: Date?, startDate: Date, startMatches: Int, startRIDSlot: Date?,
+                                earliestListedSlot: Date?, viaStandIn: Bool, isDetached: Bool) -> Result<Date, FirstSlotFailure> {
+        if viaStandIn { return .failure(.init(cause: .standIn)) }
+        if isDetached { return .failure(.init(cause: .detached)) }
+        guard startMatches == 1 else { return .failure(.init(cause: .notOneAtStart)) }
         let recorded = occurrenceDate ?? startDate
         let first: Date
         if let rid = startRIDSlot {
-            guard UndoPostState.sameInstant(recorded, rid) || UndoPostState.sameInstant(recorded, startDate) else { return nil }
+            guard UndoPostState.sameInstant(recorded, rid) || UndoPostState.sameInstant(recorded, startDate) else {
+                return .failure(.init(cause: .recordedDisagrees))
+            }
             // Round 4 (LOW 5): a `/RID=` slot after the shown start, with the recorded first at the
             // shown start, is a later occurrence moved onto it (the first deleted, on a store where
             // the series object still refreshes), or the first moved earlier: either way not shown.
             if rid.timeIntervalSince(startDate) >= 1, UndoPostState.sameInstant(recorded, startDate),
-               !UndoPostState.sameInstant(recorded, rid) { return nil }
+               !UndoPostState.sameInstant(recorded, rid) { return .failure(.init(cause: .ridAfterStart)) }
             first = rid
         } else {
-            guard UndoPostState.sameInstant(recorded, startDate) else { return nil }
+            guard UndoPostState.sameInstant(recorded, startDate) else { return .failure(.init(cause: .recordedDisagrees)) }
             first = recorded
         }
-        if let earliest = earliestListedSlot, earliest.timeIntervalSince(first) <= -1 { return nil }
-        return first
+        if let earliest = earliestListedSlot, earliest.timeIntervalSince(first) <= -1 { return .failure(.init(cause: .slotBeforeFirst)) }
+        return .success(first)
     }
+
+    struct FirstSlotFailure: Error, Equatable { let cause: FirstSlotCause }
 
     /// The rule's slots from `firstStart` (counted as the first) up to `until`, its end date or its
     /// count, in `calendar`'s zone, so a wall-clock time keeps across a daylight-saving change. nil
@@ -237,12 +342,14 @@ enum DeletedOccurrenceCheck {
     private static let maxSlots = 20_000
 
     /// PR #505 round 1 (LOW 6): the partial route is offered only where it can pass this check, on a
-    /// series the listing covers whole.
-    static func deletedReason(blocked: RouteBlock?) -> String {
+    /// series the listing covers whole. Round 5 (LOW): "measured" only for a new start (a time of day or
+    /// a date), the kind measured; for an end alone, a zone, a rule or an account it is not measured.
+    static func deletedReason(blocked: RouteBlock?, change: ChangeKind = .start) -> String {
         let route: String
         switch blocked {
         case nil:
-            route = "To change the time, start from an occurrence after the last one deleted: span 'future' with the occurrence_date of an occurrence after it, not edited on its own, changes the occurrences from there on, and the ones deleted before it stay deleted (measured). Otherwise change the series in Calendar (not measured)."
+            let measured = change == .start ? "measured" : "measured for a new start only, not for this kind of change"
+            route = "To change the time, start from an occurrence after the last one deleted: span 'future' with the occurrence_date of an occurrence after it, not edited on its own, changes the occurrences from there on, and the ones deleted before it stay deleted (\(measured)). Otherwise change the series in Calendar (not measured)."
         case .notCovered?:
             route = "No update route keeps the deletions here: the series goes on past what this check can list, so a write from a later occurrence is refused the same way. Change the series in Calendar (not measured)."
         case .allDay?:
@@ -257,18 +364,64 @@ enum DeletedOccurrenceCheck {
 
     /// PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete; whether the
     /// new series keeps the occurrences deleted on its own was not measured (no second account), so it
-    /// is refused while one is found or cannot be ruled out.
+    /// is refused while one is found or cannot be ruled out. Round 5: the unknown text names its cause,
+    /// and the same-account measurement is named as update_event's.
     static func accountMoveReason(_ verdict: Verdict) -> String {
-        let found = verdict == .unknown
-            ? "and this check cannot rule one out (the reasons are those of a time change: the series could not be listed, its first slot cannot be shown, its rule is one the check does not follow, or the listing cannot be shown to reach its end)"
-            : "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
-        return "Moving this series to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it to a calendar of the same account kept them (measured). Nothing was written."
+        let found: String
+        if case .unknown(let cause) = verdict {
+            found = "and this check cannot rule one out: \(unknownCause(cause))"
+        } else {
+            found = "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
+        }
+        return "Moving this series to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it with update_event to a calendar of the same account kept them (measured). Nothing was written."
     }
 
-    static let unknownReason = "This write changes the start, end, all_day or time zone of more than one occurrence of a series, which brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: the series could not be listed; its first slot cannot be shown (it is read through its first remaining occurrence because its first occurrence was deleted, or through an occurrence edited on its own; no occurrence, or more than one, is listed where the series shows its first; its recorded first slot disagrees with that occurrence's original slot and with its shown start; or a listed occurrence's slot lies before it); a listed occurrence falls where the rule gives none; an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time; its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year); or the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days). A title, notes or location change is not affected. Nothing was written."
+    /// The condition that made the check unable to tell, one text each.
+    static func unknownCause(_ cause: UnknownCause) -> String {
+        switch cause {
+        case .notListed: return "the series could not be listed"
+        case .firstSlot(let slot):
+            let why: String
+            switch slot {
+            case .standIn: why = "it is read through its first remaining occurrence, because its first occurrence was deleted"
+            case .detached: why = "it is read through an occurrence edited on its own"
+            case .notOneAtStart: why = "no occurrence, or more than one, is listed where the series shows its first"
+            case .recordedDisagrees: why = "its recorded first slot disagrees with that occurrence's original slot and with its shown start"
+            case .ridAfterStart: why = "the occurrence at its shown start has an original slot after that start, so another occurrence may have been moved onto a deleted first one"
+            case .slotBeforeFirst: why = "a listed occurrence's slot lies before it"
+            case .notShown: why = "it could not be shown"
+            }
+            return "its first slot cannot be shown (\(why))"
+        case .editedWithoutSlot: return "an occurrence edited on its own without its original slot in its identifier was listed, so its slot may be its moved time"
+        case .ruleNotFollowed: return "its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th, or February 29 every year)"
+        case .listedOffRule: return "a listed occurrence falls where the rule gives none"
+        case .allDayEnd: return "it is an all-day series whose rule ends less than a day after an occurrence's start, and whether that day is listed east of UTC was not measured"
+        case .notCovered: return "the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days)"
+        }
+    }
+
+    static func unknownReason(_ cause: UnknownCause) -> String {
+        "This write changes the start, end, all_day, time zone or rule of more than one occurrence of a series; a change of the start, end, all_day or time zone brought back every occurrence deleted on its own among them (#503, measured on iCloud), and this check cannot rule one out: \(unknownCause(cause)). A title, notes or location change is not affected. Nothing was written."
+    }
 }
 
 extension DeletedOccurrenceCheck.Rule {
+    /// The rule a call writes, as the expander reads it (PR #505 round 5).
+    init(_ rule: RecurrenceRuleInput) {
+        switch rule.frequency {
+        case .daily: frequency = .daily
+        case .weekly: frequency = .weekly
+        case .monthly: frequency = .monthly
+        case .yearly: frequency = .yearly
+        }
+        interval = rule.interval
+        daysOfWeek = rule.daysOfWeek ?? []
+        daysOfMonth = rule.daysOfMonth ?? []
+        endDate = rule.endDate
+        occurrenceCount = rule.occurrenceCount ?? 0
+        hasOtherParts = false
+    }
+
     init(_ rule: EKRecurrenceRule) {
         frequency = rule.frequency
         interval = rule.interval

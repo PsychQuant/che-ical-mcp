@@ -264,9 +264,9 @@ extension EventKitManager {
                                   changesAllDay: Bool) -> DeletedOccurrenceCheck.Verdict {
         guard let (_, candidates) = seriesOccurrences(of: series, id: id), let window = seriesScanWindow(of: series),
               let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
-            return .unknown
+            return .unknown(.notListed)
         }
-        guard !candidates.isEmpty else { return .unknown }
+        guard !candidates.isEmpty else { return .unknown(.notListed) }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
         let calendar = Calendar.gregorian(in: zone)
         func ruleSlot(_ candidate: FirstRemainingOccurrence.Candidate) -> Date {
@@ -276,11 +276,16 @@ extension EventKitManager {
         // Round 3: exactly one may be listed there, and no listed slot may lie before it.
         let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }
         let occurrenceDate: Date? = series.occurrenceDate
-        let firstStart = DeletedOccurrenceCheck.firstSlot(
+        let firstSlot = DeletedOccurrenceCheck.firstSlotResult(
             occurrenceDate: occurrenceDate, startDate: series.startDate, startMatches: atStart.count,
             startRIDSlot: atStart.first.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
             earliestListedSlot: candidates.map(ruleSlot).min(),
             viaStandIn: viaStandIn, isDetached: series.isDetached)
+        let firstStart = try? firstSlot.get()
+        let firstSlotCause: DeletedOccurrenceCheck.FirstSlotCause = {
+            if case .failure(let failure) = firstSlot { return failure.cause }
+            return .notShown
+        }()
         let covers = firstStart.map {
             DetachedOccurrenceSpan.coversWholeSeries(
                 rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
@@ -292,7 +297,24 @@ extension EventKitManager {
             observedSlots: candidates.map(ruleSlot), uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot),
             slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
             changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar,
-            isAllDay: series.isAllDay)
+            isAllDay: series.isAllDay, firstSlotCause: firstSlotCause)
+    }
+
+    /// PR #505 round 5 (MEDIUM): whether a whole-series write's planned dates can be compared with the
+    /// stored ones. They are the first occurrence's shown times, which are its slot only when it was not
+    /// edited on its own and its slot is shown; otherwise `.unproven`, and any date in the call is checked.
+    func wholeSeriesBaseline(of series: EKEvent, id: String, viaStandIn: Bool) -> DeletedOccurrenceCheck.StoredBaseline {
+        guard let (_, candidates) = seriesOccurrences(of: series, id: id), !candidates.isEmpty else { return .unproven }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        func ruleSlot(_ candidate: FirstRemainingOccurrence.Candidate) -> Date {
+            UndoPostState.ruleSlot(of: candidate, isAllDay: series.isAllDay, zone: zone)
+        }
+        let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }
+        let slot = DeletedOccurrenceCheck.firstSlot(
+            occurrenceDate: series.occurrenceDate, startDate: series.startDate, startMatches: atStart.count,
+            startRIDSlot: atStart.first.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
+            earliestListedSlot: candidates.map(ruleSlot).min(), viaStandIn: viaStandIn, isDetached: series.isDetached)
+        return DeletedOccurrenceCheck.baseline(firstSlot: slot, firstIsEdited: atStart.first?.isDetached ?? true, startDate: series.startDate)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to

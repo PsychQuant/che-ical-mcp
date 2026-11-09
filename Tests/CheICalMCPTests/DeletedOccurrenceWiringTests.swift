@@ -19,16 +19,27 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(update.contains("reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence"))
         // PR #505 round 1: a whole-series write filters no slot, and a stand-in is passed as such.
         XCTAssertTrue(update.contains("reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor)"))
-        XCTAssertTrue(update.contains("viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn"))
+        XCTAssertTrue(update.contains("let viaStandInForCheck = addressesOwnOccurrence ? false : resolved.viaStandIn"))
+        XCTAssertTrue(update.contains("viaStandIn: viaStandInForCheck,"))
         // PR #505 round 2: a zone change is checked (measured), and the route facts are passed.
-        XCTAssertTrue(update.contains("resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone"))
+        XCTAssertTrue(update.contains("resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount,"))
+        XCTAssertTrue(update.contains("changesPattern: changesPattern, baseline: baseline)"))
         XCTAssertTrue(update.contains("changesAllDay: datePlan.isAllDay != event.isAllDay"))
         XCTAssertTrue(update.contains("if addressesOwnOccurrence { _ = series?.refresh() }"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.unknownReason"))
         // PR #505 round 4 (MEDIUM): a calendar of another account goes through the same verdict.
-        XCTAssertTrue(update.contains("if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {"))
-        XCTAssertTrue(update.contains("let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false)"))
+        XCTAssertTrue(update.contains("if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {"))
+        XCTAssertTrue(update.contains("let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)"))
+        // PR #505 round 5 (MEDIUM): a whole-series write of the stored dates takes its baseline from the
+        // listing, so a first occurrence edited on its own makes any date in the call checked.
+        XCTAssertTrue(update.contains("if reach.isWholeSeries, datePlan.datesToWrite != nil, !deletedOccurrenceCheckApplies(changesAccount: crossesAccounts) {"))
+        XCTAssertTrue(update.contains("baseline = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) } ?? .unproven"))
+        // Round 5 (LOW): a rule with another pattern is checked; each refusal names its cause and kind.
+        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.changesPattern(DeletedOccurrenceCheck.Rule($0), stored: storedRule.map(DeletedOccurrenceCheck.Rule.init),"))
+        XCTAssertTrue(update.contains("startWeekday: storedStartWeekday)"))
+        XCTAssertTrue(update.contains("case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))"))
+        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason(blocked: blocked, change: change)"))
         XCTAssertTrue(update.contains("case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
     }
 
@@ -44,6 +55,20 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(move.contains("FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,"))
         XCTAssertTrue(move.contains("if verdict != .none {"))
         XCTAssertTrue(move.contains("throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
+        // PR #505 round 5 (INFO 6): a malformed call answers with its argument error, before the
+        // series is listed.
+        let arguments = try XCTUnwrap(move.range(of: "EventMovePolicy.argumentRefusal(isRecurring: isRecurring, span: span, hasOccurrenceDate: occurrenceDate != nil)"))
+        XCTAssertLessThan(arguments.lowerBound, check.lowerBound)
+    }
+
+    /// PR #505 round 5 (MEDIUM): the baseline reads the first occurrence at the series' start the way
+    /// the verdict does, and an edited one, or a slot not shown, is unproven.
+    func testTheBaselineReadsTheFirstOccurrence() throws {
+        let file = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
+        let body = try XCTUnwrap(SourcePins.body(of: "func wholeSeriesBaseline(", in: file))
+        XCTAssertTrue(body.contains("guard let (_, candidates) = seriesOccurrences(of: series, id: id), !candidates.isEmpty else { return .unproven }"))
+        XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"))
+        XCTAssertTrue(body.contains("return DeletedOccurrenceCheck.baseline(firstSlot: slot, firstIsEdited: atStart.first?.isDetached ?? true, startDate: series.startDate)"))
     }
 
     func testTheVerdictListsTheSeriesAsTheAllDayCheckDoes() throws {
@@ -53,14 +78,15 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
-        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlot("), "the first slot is proven, never taken from a stand-in")
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlotResult("), "the first slot is proven, never taken from a stand-in")
+        XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause)"), "the cause reaches the verdict (round 5)")
         XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"),
                       "every occurrence at the object's own start is counted (round 3: it must be one)")
         XCTAssertTrue(body.contains("earliestListedSlot: candidates.map(ruleSlot).min()"))
         XCTAssertTrue(body.contains("uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot)"))
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
-        XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown }"), "an empty listing is not 'none deleted'")
+        XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown(.notListed) }"), "an empty listing is not 'none deleted'")
         // PR #505 round 4 (LOW 4, 7): an all-day series' end is read with its all-day flag.
-        XCTAssertTrue(body.contains("isAllDay: series.isAllDay)"))
+        XCTAssertTrue(body.contains("isAllDay: series.isAllDay, firstSlotCause: firstSlotCause)"))
     }
 }
