@@ -31,7 +31,22 @@ final class ConferenceModuleDocsTests: XCTestCase {
             (contract, "**When the chosen set turns out not to be this program's**", "step 2 then builds in the routed calendar (r5 #6)"),
             (contract, "is another conference` when the chosen set turned out not to be this program's, step 2)", "report line 1 says so (r5 #6)"),
             (contract, "**Use** can be chosen for one set only", "step 2 uses one set (r5 LOW 11)"),
-            (contract, "When the question names only one set, a yes names that set.", "rename yes with one set (r5 LOW 8)"),
+            (contract, "When the question names only one set, it is answered by naming that set or by a yes to the rename question itself", "rename yes with one set (r5 LOW 8, r7 #4)"),
+            (contract, "**a plain yes to the table never answers it**", "a plain yes never answers a one-set rename (r7 #4)"),
+            (spec, "and a plain yes to the table SHALL NOT answer it", "a plain yes never answers a one-set rename (spec, r7 #4)"),
+            (spec, "#### Scenario: A one-set rename question and a plain yes", "r7 #4 scenario"),
+            (contract, "and for an umbrella that would be updated to other dates or another title", "an updated umbrella's target is searched (r7 #2 #7)"),
+            (contract, "**An umbrella that would be updated onto days a listed all-day event covers**", "umbrella update-anyway row (r7 #2 #7)"),
+            (contract, "unless step 3 listed an all-day event on the new days", "an exact set's umbrella update asks first (r7 #2)"),
+            (spec, "SHALL have the same update-anyway row with its own answer", "umbrella update-anyway row (spec, r7 #2)"),
+            (spec, "#### Scenario: An exact set's umbrella moves onto a hand-built all-day event", "r7 #2 scenario"),
+            (spec, "ignoring all-day events, the program's own events and the old events the table maps (a clash with a hand-built event the table lists SHALL be reported as the routing requirement states)", "entry-points clash rule (spec, r7 #1 #3)"),
+            (contract, "**It needs its own answer whenever it names a hand-built event**", "merged old-event row needs its own answer (r7 LOW 5)"),
+            (contract, "the row reads \"no creates the item beside <event>\"", "merged row says what no does (r7 LOW 5)"),
+            (contract, "are void and are asked again, as in the step 2 fallback", "same-calendar rerun voids the first table (r7 LOW 6)"),
+            (contract, "a **module event of another set** (one step 1's search found, which step 3 skips)", "another set's event holds the slot (r7 LOW 9)"),
+            (spec, "a module event of another set with the item's title covering its start", "another set's event holds the slot (spec, r7 LOW 9)"),
+            (design, "（已被下方 PR #498 第 6 輪的 (2) 取代：", "design r5 bullet marked replaced (r7 LOW 8)"),
             (contract, "`Umbrella: declined (row answered no)`", "a declined umbrella is reported (r5 LOW 10, r6 LOW 10)"),
             (contract, "*declined* means a hand-built or \"not in the set\" row answered no", "declined covers a not-in-the-set no (r6 LOW 10)"),
             (contract, "An event whose notes hold the pair more than once is not a module event either", "a double-pair event is listed (r5 LOW 16)"),
@@ -79,10 +94,14 @@ final class ConferenceModuleDocsTests: XCTestCase {
         for gone in ["**Adoption** writes", "**Name-only row**", "**Row naming several events**", "create the item as new",
                      "adopted N", "an adopt answer",
                      // r6 #2: the fallback reruns the whole flow, not step 3 alone; r6 #3: listed hand-built events are not ignored.
-                     "step 3 runs again in the routed calendar, its rows are asked", "and the hand-built events the table lists for an item; listed"] {
+                     "step 3 runs again in the routed calendar, its rows are asked", "and the hand-built events the table lists for an item; listed",
+                     "When the question names only one set, a yes names that set."] {
             XCTAssertFalse(contractText.contains(gone), "\(contract): \(gone)")
         }
         let specText = try read(spec)
+        // r7 #1: the entry-points requirement no longer ignores the events the table lists.
+        XCTAssertFalse(specText.contains("maps or lists"), "\(spec): maps or lists")
+        XCTAssertFalse(try read("plugin/CHANGELOG.md").contains("A correction that would move an old event onto"), "CHANGELOG: move or rename")
         for gone in ["adoption SHALL write the marker lines", "until the user agrees to adopt it", "Declining an adoption SHALL NOT create",
                      "#### Scenario: A hand-built umbrella with an inclusive end is adopted"] {
             XCTAssertFalse(specText.contains(gone), "\(spec): \(gone)")
