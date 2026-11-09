@@ -273,12 +273,13 @@ extension EventKitManager {
             UndoPostState.ruleSlot(of: candidate, isAllDay: series.isAllDay, zone: zone)
         }
         // Round 2: the occurrence listed at the object's own start is the first occurrence.
-        let atStart = candidates.first { UndoPostState.sameInstant($0.start, series.startDate) }
+        // Round 3: exactly one may be listed there, and no listed slot may lie before it.
+        let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }
         let occurrenceDate: Date? = series.occurrenceDate
         let firstStart = DeletedOccurrenceCheck.firstSlot(
-            occurrenceDate: occurrenceDate, startDate: series.startDate, startListed: atStart != nil,
-            startRIDSlot: atStart.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
-            earliestRIDSlot: candidates.filter(\.slotFromRID).map(ruleSlot).min(),
+            occurrenceDate: occurrenceDate, startDate: series.startDate, startMatches: atStart.count,
+            startRIDSlot: atStart.first.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
+            earliestListedSlot: candidates.map(ruleSlot).min(),
             viaStandIn: viaStandIn, isDetached: series.isDetached)
         let covers = firstStart.map {
             DetachedOccurrenceSpan.coversWholeSeries(
@@ -288,7 +289,7 @@ extension EventKitManager {
         return DeletedOccurrenceCheck.verdict(
             rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
             firstStart: firstStart,
-            observedSlots: candidates.map(ruleSlot),
+            observedSlots: candidates.map(ruleSlot), uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot),
             slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
             changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
     }

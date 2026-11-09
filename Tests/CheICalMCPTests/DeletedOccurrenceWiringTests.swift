@@ -36,8 +36,10 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
         XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlot("), "the first slot is proven, never taken from a stand-in")
-        XCTAssertTrue(body.contains("let atStart = candidates.first { UndoPostState.sameInstant($0.start, series.startDate) }"),
-                      "the occurrence at the object's own start is the first occurrence")
+        XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"),
+                      "every occurrence at the object's own start is counted (round 3: it must be one)")
+        XCTAssertTrue(body.contains("earliestListedSlot: candidates.map(ruleSlot).min()"))
+        XCTAssertTrue(body.contains("uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot)"))
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown }"), "an empty listing is not 'none deleted'")
     }

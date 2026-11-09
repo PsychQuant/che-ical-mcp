@@ -1547,7 +1547,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }()
             switch verdict {
             case .none: break
-            case .deleted(let routeWorks): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(routeWorks: routeWorks))
+            case .deleted(let blocked): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: blocked))
             case .unknown: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason)
             }
         }
