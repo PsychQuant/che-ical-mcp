@@ -255,6 +255,30 @@ extension EventKitManager {
         return (false, DetachedOccurrenceSpan.editedOccurrenceUnknown(coversWholeSeries: covers), true)
     }
 
+    /// #503: whether an occurrence the write reaches (from `reachedFrom`, a rule slot) was deleted
+    /// on its own, from one listing of `series` over the ranges #442 lists, compared with the rule's
+    /// expected slots (`DeletedOccurrenceCheck`). `unknown` when the series cannot be listed, the
+    /// listing is empty, or it does not cover the series (fail closed, as #442 does).
+    func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?) -> DeletedOccurrenceCheck.Verdict {
+        guard let (_, candidates) = seriesOccurrences(of: series, id: id), let window = seriesScanWindow(of: series),
+              let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
+            return .unknown
+        }
+        guard !candidates.isEmpty else { return .unknown }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        let calendar = Calendar.gregorian(in: zone)
+        // The first slot as the rule gives it, not where an edit of the first occurrence moved it.
+        let firstStart: Date = series.occurrenceDate ?? series.startDate
+        let covers = DetachedOccurrenceSpan.coversWholeSeries(
+            rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
+            firstStart: firstStart, scannedTo: listedTo, calendar: calendar)
+        return DeletedOccurrenceCheck.verdict(
+            rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+            firstStart: firstStart,
+            observedSlots: candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: series.isAllDay, zone: zone) },
+            reachedFrom: reachedFrom ?? firstStart, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
+    }
+
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to
     /// refresh (#326). nil without a `/RID=` part: nothing says what the series' identifier is.
     func seriesObject(ofOccurrence id: String) throws -> EKEvent? {

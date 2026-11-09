@@ -1521,6 +1521,28 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
 
+        // #503: a change of the start, end or all-day flag over more than one occurrence brought back
+        // every occurrence deleted on its own among them (device, iCloud), answered updated, and undo
+        // refuses recurring updates. Refused while one is found or cannot be ruled out; read only
+        // when the write is that shape, and still before the first field is assigned (#373).
+        if DeletedOccurrenceCheck.applies(
+            reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
+            plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
+            resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay) {
+            let series = try addressesOwnOccurrence
+                ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
+            let seriesID = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+            let verdict: DeletedOccurrenceCheck.Verdict = {
+                guard let series, let seriesID else { return .unknown }
+                return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: reach.anchor)
+            }()
+            switch verdict {
+            case .none: break
+            case .deleted: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason)
+            case .unknown: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason)
+            }
+        }
+
         if let t = title { event.title = t }
 
         if let dates = datePlan.datesToWrite {
