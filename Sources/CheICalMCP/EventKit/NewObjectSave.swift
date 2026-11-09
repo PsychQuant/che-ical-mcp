@@ -70,7 +70,8 @@ import EventKit
 ///   broken by a lost connection to the calendar daemon might also leave a new store without
 ///   sources). They still describe how rare the branch is; on the restore path they still hold.
 ///
-/// Checked on device, iCloud only, in the host's time zone (+08:00), 2026-10-07 and 08. The commit
+/// Checked on device, iCloud only, in the host's time zone (+08:00), 2026-10-07 and 08 (Google: in the
+/// list of what was not covered, below). The commit
 /// failures were induced: an event was staged with `save(_:span:commit: false)` into a calendar
 /// deleted through a second store, so the store's next commit failed. No failure arising in normal
 /// use made a reminder save fail at commit time: a reminder saved into a list deleted elsewhere
@@ -169,7 +170,15 @@ import EventKit
 ///   carry a note.
 /// - a reminder saved into a read-only list: not tried. Any removal error after a save error other
 ///   than the reminder-with-no-list refusal is reported as a failed discard.
-/// - stores other than iCloud.
+/// - stores other than iCloud, with one measured. On a Google-hosted calendar (#294, 2026-11-05, a
+///   standalone probe beside the server, one run per row, the failure induced as on iCloud): a new
+///   event, a new recurring event and a new event calendar that failed at commit were not written by
+///   a later save; a new store found a committed event 10 of 10; and removing a failed recurring
+///   event with `remove(span: .thisEvent, commit: false)` made the next save fail with
+///   EKCADErrorDomain 1001 and lose what it wrote, as on iCloud. Of #261's paths,
+///   the reminder and reminder-list paths cannot run on that source: it has no reminder lists and
+///   refuses a new one (EKErrorDomain 24), so for them the question does not arise there.
+///   Exchange and local calendars: not measured (#294).
 ///
 /// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
 /// through another store after the list was looked up. `save(_:commit: true)` returned without an
