@@ -14,6 +14,11 @@
 - [x] 2b.1（Each period has a stable identity）每一期有固定的識別：helper 輸出 `key`（重置日）與 `state`、`--previous` 列出上一期；per-period 的提醒帶 `Period:` 行，rule mode 由 due 讀出期別；以期別比對、不按順序；完成或已過重置的那一則不再被移動、配對或提議刪除；rule mode 不把已往前滾的提醒移回；沒用完時 rule mode 會停住：停住的系列以「保留未勾的紀錄、提議重啟」處理；`list` 每一種情況的回報寫成封閉列舉。驗證：`QuotaSkillDocsTests` 的 period-model、list、marker、引數、Schedule 行釘選；實機檢查 3.1b。
 - [x] 2b.2 helper：十進位（`08`、`09`、`010`）、命令替換裡的失敗會停下、時區檔要是 TZif、提前量上限；`--quotas` 檢查要寫入的目錄與 symlink 的目標。驗證：兩個 shell 測試檔全過。
 
+## 2c. Verify 第 2 輪的修正
+
+- [x] 2c.1（Each period has a stable identity；An update edits the reminder in place；List and sync）歷史邊界只由已用的期別決定（已完成的提醒；rule mode 中未完成提醒滾過的期別），未完成提醒自己的期別不算；要重新配對的是尚未重置的未完成提醒。規劃由新的 `quota-plan.sh` 算，skill 不再手動推。驗證：`quota-plan.test.sh`（重置提前、延後、per-period 多則未來提醒、清掉後不重建、停兩期以上的重啟、手改日期不建立、模稜兩可）。
+- [x] 2c.2 update 先比新舊模式（`notify_at` 也會翻轉）；`local_tz` 在 declare 時釘住並一律傳入；主機在別的時區時不寫入；`mode`、`per_period_through`、`retiring` 由 skill 寫入；互為前綴的 id 無效；第一次 declare 沒有 `~/.claude` 時看最近存在的上層；symlink 的 `.ical` 看實體路徑的上層；helper 的數字最多六位、計算失敗一律停下。驗證：三個 shell 測試檔、`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

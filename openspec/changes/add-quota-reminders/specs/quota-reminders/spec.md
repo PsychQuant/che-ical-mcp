@@ -6,7 +6,7 @@ Defines how the che-ical-mcp plugin keeps a use-it-or-lose-it quota (an allowanc
 
 ### Requirement: Quotas are declared in one global file
 
-The plugin SHALL read quota declarations only from `~/.claude/.ical/quotas.yaml`, located with `find-ical-config.sh --quotas`, and SHALL NOT look for it from the working directory. The helper SHALL exit 0 and print the path when the file exists and passes the same ownership and permission check as `config.yaml` (for a symlink, the path of its target, judged with the target's directory and that directory's parent, and never a link to a link); 1 when it does not exist and the directory a new file would be written into is trusted; and 3 otherwise. On exit 3 the skill SHALL report the warning and SHALL neither read the file nor write one there. The file SHALL hold labels only and SHALL NOT be used for a credential. The keys SHALL be the closed list: top level `reminder_list`, `reminder_list_source`, `quotas`; per entry `id`, `name`, `account`, `amount`, `cadence`, `weekday`, `day`, `time`, `reset_tz`, `lead_minutes`, `lead_days`, `notify_at`, `check_note`, `verify_next_period`, `retired`. An unknown key SHALL be reported and ignored. An entry with a missing required key, a repeated or malformed `id`, a cadence without its day field or with the other cadence's, `lead_minutes` or `notify_at` without `time`, `lead_days` with `time`, a lead of one whole period or more (weekly 7 days, monthly 28 days), or an unknown zone SHALL be reported and skipped. Values from the file SHALL be validated before use and passed to the helper as separate quoted arguments, never interpolated into a command string.
+The plugin SHALL read quota declarations only from `~/.claude/.ical/quotas.yaml`, located with `find-ical-config.sh --quotas`, and SHALL NOT look for it from the working directory. The helper SHALL exit 0 and print the path when the file exists and passes the same ownership and permission check as `config.yaml` (for a symlink, the path of its target, judged with the target's directory and that directory's parent, and never a link to a link); 1 when it does not exist and the nearest existing directory a new file would be written into (`.ical` at its physical path and that path's parent, else `.claude`, else the home directory) is trusted; and 3 otherwise. On exit 3 the skill SHALL report the warning and SHALL neither read the file nor write one there. The file SHALL hold labels only and SHALL NOT be used for a credential. The keys SHALL be the closed list: top level `reminder_list`, `reminder_list_source`, `quotas`; per entry `id`, `name`, `account`, `amount`, `cadence`, `weekday`, `day`, `time`, `reset_tz`, `lead_minutes`, `lead_days`, `notify_at`, `check_note`, `verify_next_period`, `retired`, and four keys the skill writes: `local_tz` (the zone pinned at declare), `mode` (`rule` or `per-period`), `per_period_through` (the last period the skill created a reminder for) and `retiring`. An unknown key SHALL be reported and ignored. An entry with a missing required key, a repeated or malformed `id`, an `id` that is another entry's id followed by `-` and more, a cadence without its day field or with the other cadence's, `lead_minutes` or `notify_at` without `time`, `lead_days` with `time`, a lead of one whole period or more (weekly 7 days, monthly 28 days), or an unknown zone SHALL be reported and skipped. Values from the file SHALL be validated before use and passed to the helper as separate quoted arguments, never interpolated into a command string.
 
 #### Scenario: No file yet
 
@@ -26,6 +26,12 @@ The plugin SHALL read quota declarations only from `~/.claude/.ical/quotas.yaml`
 - **WHEN** the user declares a quota
 - **THEN** the helper exits 3 and no file is written
 
+#### Scenario: A first declare with no ~/.claude yet
+
+- **GIVEN** the home directory is the user's own and not writable by others, and `~/.claude` does not exist
+- **WHEN** the user declares a quota
+- **THEN** the helper exits 1 and the skill creates `~/.claude/.ical/quotas.yaml`
+
 #### Scenario: A folder config does not hide the quotas
 
 - **GIVEN** the working directory has its own `.claude/.ical/config.yaml` and `.claude/.ical/quotas.yaml`
@@ -35,7 +41,7 @@ The plugin SHALL read quota declarations only from `~/.claude/.ical/quotas.yaml`
 ---
 ### Requirement: The dates come from the helper
 
-The skill SHALL compute every reset, due and alarm offset with `quota-dates.sh` and SHALL NOT compute them otherwise. The due SHALL be the reset minus `lead_minutes` for a timed reset, and the reset day minus `lead_days` for a date-only reset; a date-only reset SHALL be a day with no zone conversion. A monthly `day` from 29 to 31 SHALL fall on the month's last day in a shorter month and SHALL return to the declared day in the next month that has it. A period SHALL be listed while its reset is after the reference time, even when its due has passed. Each period SHALL carry a key, its reset day in the reset zone, and a state (`past` for the latest period whose reset has passed, listed on request; `current` for the first period whose reset is ahead; `future`). Numbers SHALL be read as decimal. A failure inside the computation SHALL stop the helper with exit 2. The helper SHALL report one recurrence rule only when every local due (weekday or day of the month, and time) and every alarm offset over the next 104 weeks or 24 months is the same.
+The skill SHALL compute every reset, due and alarm offset with `quota-dates.sh` and SHALL NOT compute them otherwise. The due SHALL be the reset minus `lead_minutes` for a timed reset, and the reset day minus `lead_days` for a date-only reset; a date-only reset SHALL be a day with no zone conversion. A monthly `day` from 29 to 31 SHALL fall on the month's last day in a shorter month and SHALL return to the declared day in the next month that has it. A period SHALL be listed while its reset is after the reference time, even when its due has passed. Each period SHALL carry a key, its reset day in the reset zone, and a state (`past` for the latest period whose reset has passed, listed on request; `current` for the first period whose reset is ahead; `future`). Numbers SHALL be read as decimal and SHALL have at most six digits. A failure inside the computation SHALL stop the helper with exit 2. Every call SHALL pass the entry's `local_tz` as `--local-tz`, and while the host's zone is not `local_tz` the skill SHALL write nothing. The helper SHALL report one recurrence rule only when every local due (weekday or day of the month, and time) and every alarm offset over the next 104 weeks or 24 months is the same.
 
 #### Scenario: A reset at night in another zone
 
@@ -86,7 +92,7 @@ The reminder SHALL be created in `reminder_list` (default `Quotas`), with `remin
 ---
 ### Requirement: Each period has a stable identity
 
-A reminder's period SHALL be the period whose key equals its `Period:` line in per-period mode, and the period whose due equals its due in rule mode (a recurring reminder's notes move with it to the next period, so a line there would name a past period). Reminders SHALL be matched to periods by key, never by order, except in an `update` that changes the dates, where open reminders of periods not yet reset are paired with the new periods in order. A period SHALL be covered when a reminder with that period exists, open or completed; in rule mode every period before the open reminder's period SHALL count as covered, and the open reminder SHALL NOT be moved to an earlier period. A reminder whose period's reset has passed is a past-period record and SHALL NOT be moved, matched to another period, or offered for deletion; the only write allowed on it is clearing the recurrence of a stopped series after the user's yes (restart or retire).
+The skill SHALL plan every write with `quota-plan.sh`, from the helper's periods and the quota's reminders, and SHALL NOT plan by reading the list by hand. A reminder's period SHALL be the period whose key equals its `Period:` line when it has one, and otherwise the period whose due equals its due (a recurring reminder's notes move with it to the next period, so rule mode writes no `Period:` line). A completed reminder that matches no period SHALL count as history of the period whose due is nearest, and SHALL NOT be listed as off schedule. The used periods SHALL be the periods with a completed reminder and, in rule mode, the periods from the current one up to, but not including, the open reminder's period; the skill SHALL NOT count an open reminder's own period as used. The history boundary SHALL be the latest used period, and the targets the periods after it whose reset is ahead. Matching SHALL be by key or due, never by order, except that a re-pairing (an update, or a yes in sync) pairs the open reminders that are not on a target with the free targets in due order. A reminder whose period's reset has passed is a past-period record and SHALL NOT be moved, matched to another period, or offered for deletion, whether it is period 0 or older; the only write allowed on it is clearing the recurrence of a stopped series after the user's yes (restart or retire). In per-period mode, a period that is not after `per_period_through` and has no reminder SHALL be offered and SHALL NOT be created unasked.
 
 #### Scenario: Used before the reset
 
@@ -94,17 +100,29 @@ A reminder's period SHALL be the period whose key equals its `Period:` line in p
 - **WHEN** `list` or `sync` runs
 - **THEN** the current period is reported as used, the open reminder stays on the next period, and nothing is written
 
-#### Scenario: An overdue record does not shift the periods
+#### Scenario: The reset moves earlier in the same week
 
-- **GIVEN** a per-period quota whose period of 2026-11-30 was not ticked and has reset, and open reminders for 2026-12-31 and 2027-01-31
-- **WHEN** `sync` runs on 2026-12-01
-- **THEN** the 2026-11-30 reminder is left as the record, the other two keep their periods, and only the period of 2027-02-28, now within 90 days, is created
+- **GIVEN** a weekly quota resetting Monday 20:00 UTC whose open reminder is on this week and not ticked
+- **WHEN** the reset moves to 19:00 UTC and this week's new reset is still ahead
+- **THEN** the open reminder moves to this week's new due, not to next week
+
+#### Scenario: Several future reminders in per-period mode
+
+- **GIVEN** a per-period quota with open reminders for its next three periods
+- **WHEN** an update changes the dates
+- **THEN** each open reminder is kept on its period when the key is the same, or paired in due order with a free period, and no period is skipped or given two reminders
+
+#### Scenario: A period used and then cleaned up
+
+- **GIVEN** a per-period quota whose December reminder was ticked early and then removed by a cleanup, with `per_period_through` in January
+- **WHEN** `sync` runs
+- **THEN** December is listed as missing and offered, and is not created
 
 #### Scenario: A stopped series
 
-- **GIVEN** a rule-mode quota whose only open reminder is a period that reset unticked
+- **GIVEN** a rule-mode quota whose only open reminder is a period that reset unticked, one or more periods ago
 - **WHEN** `list` runs
-- **THEN** it reports the last period as not used, the current period as having no reminder and the series as stopped, and offers a restart that makes the old reminder one-off and starts a new series; it does not tick the old reminder
+- **THEN** it reports the series as stopped and offers a restart that makes the old reminder one-off and starts a new series at the first period whose reset is ahead; it does not tick the old reminder
 
 ---
 ### Requirement: Writes are read back
@@ -120,24 +138,24 @@ After every `create_reminder` and `update_reminder` the skill SHALL read the rem
 ---
 ### Requirement: An update edits the reminder in place
 
-A change to an entry SHALL update the open reminder in place (title, notes above the marker, due, rule, alarms), keeping its identifier, and SHALL create a missing reminder instead of a duplicate. A change of dates SHALL target the new periods whose reset is after both the current time and the reset of the latest period covered under the old entry. A past-period record and a completed reminder SHALL NOT be written by an update. A change from rule mode to per-period mode SHALL turn the open recurring reminder into the first period with `clear_recurrence` and create the others; a change the other way SHALL update the earliest open reminder to the rule and SHALL delete the others only as a retirement does.
+An update SHALL first compare the old and new helper rule lines (and the entry's `mode`), and SHALL take the transition between rule and per-period mode whenever they differ, whichever field changed, `notify_at` included. It SHALL then re-pair the quota's reminders with the new entry's targets through the planner, keeping identifiers, and SHALL create a missing reminder instead of a duplicate. A past-period record and a completed reminder SHALL NOT be written by an update. The update SHALL record `mode` and, in per-period mode, `per_period_through`.
 
-#### Scenario: The reset time moves
+#### Scenario: The reset time moves later
 
-- **GIVEN** a declared weekly quota resetting Monday 20:00 UTC
+- **GIVEN** a declared weekly quota resetting Monday 20:00 UTC, not ticked this week
 - **WHEN** the user moves the reset to 21:00 UTC
-- **THEN** one `update_reminder` changes the title, the notes above the marker, the due to 04:30 local and the alarms; the identifier and the text below the marker stay
+- **THEN** one `update_reminder` moves the open reminder to this week's 04:30 local, with the new title, notes above the marker and alarms; the identifier and the text below the marker stay
 
-#### Scenario: The update after a used period
+#### Scenario: notify_at changes the mode
 
-- **GIVEN** a rule-mode quota whose current period was ticked, so the open reminder is on the next period
-- **WHEN** the reset time moves
-- **THEN** the open reminder moves to the first new period after the ticked one, never back to the ticked period
+- **GIVEN** a rule-mode quota in a zone with daylight saving time, without `notify_at`
+- **WHEN** the user adds an evening `notify_at` whose offset changes in the week the clocks change
+- **THEN** the helper reports no single rule, and the update takes the rule to per-period transition instead of keeping the series
 
 ---
 ### Requirement: A retirement asks first
 
-A retirement SHALL show the entry and its open reminders of periods not yet reset and SHALL delete those only after the user said yes to that question about that quota in this run; a yes given earlier or for another quota SHALL NOT count. Past-period records and completed reminders SHALL NOT be deleted or offered for deletion; a past-period record that still repeats SHALL be made one-off on the same yes. On yes it SHALL set `retired` on the entry and keep the entry. On no it SHALL delete nothing and keep the entry active. When nobody can answer it SHALL delete nothing and list the retirement as pending. `delete_reminder` SHALL NOT be pre-approved by the skill.
+A retirement SHALL show the entry and its open reminders of periods not yet reset and SHALL delete those only after the user said yes to that question about that quota in this run; a yes given earlier or for another quota SHALL NOT count. Past-period records and completed reminders SHALL NOT be deleted or offered for deletion; a past-period record that still repeats SHALL be made one-off on the same yes. On yes it SHALL set `retiring` before the first delete and replace it with `retired` when every delete succeeded, keeping the entry; while `retiring` is set, `list`, `sync` and `update` SHALL write nothing for the entry and SHALL offer to finish the retirement. On no it SHALL delete nothing and keep the entry active. When nobody can answer it SHALL delete nothing and list the retirement as pending. `delete_reminder` SHALL NOT be pre-approved by the skill.
 
 #### Scenario: Nobody to ask
 
@@ -147,10 +165,16 @@ A retirement SHALL show the entry and its open reminders of periods not yet rese
 ---
 ### Requirement: List and sync
 
-`list` SHALL write nothing and SHALL report, per active entry, the last period as exactly one of `used`, `not used` or `no record`; the current period as exactly one of `used`, `open`, `open, deadline passed` or `no reminder`; the schedule as rule mode running, stopped or missing, or the covered periods in per-period mode with a prompt to sync when the last covered one is due within 30 days; and the fields that differ from the file. `sync` SHALL create the reminders of periods not covered and update differing open reminders of periods not yet reset in place without asking, SHALL ask before a delete, a move of an off-schedule reminder or a restart, SHALL never move a reminder to an earlier period, and SHALL list without writing a reminder whose marker names an id that is not in the file.
+`list` SHALL write nothing and SHALL report, per active entry, the last period as exactly one of `used`, `not used`, `rolled past` or `no record`; the current period as exactly one of `used`, `open`, `open, deadline passed` or `no reminder`; the schedule as exactly one of mode mismatch, dates changed, rule mode running, stopped or missing, or the per-period periods (with reminder, missing, to create); and the fields that differ from the file. `sync` SHALL apply `keep` updates and `create` without asking, SHALL create nothing for a quota whose stored mode differs from the computed one or whose open reminders are off schedule until the user agrees to the re-pairing, SHALL ask before a move, a delete, a restart or a `missing` creation, SHALL never move a reminder to an earlier period, and SHALL list without writing a reminder whose marker names an id that is not in the file.
 
-#### Scenario: The user edited the file by hand
+#### Scenario: The user edited the dates in the file by hand
 
-- **GIVEN** the user changed an entry's `amount` in the file
+- **GIVEN** the user changed an entry's `weekday` in the file
 - **WHEN** `sync` runs
-- **THEN** that quota's reminder notes are rewritten above the marker and nothing is asked
+- **THEN** it reports that the dates changed, creates nothing, and offers the re-pairing of an update
+
+#### Scenario: The host moves into a zone with daylight saving time
+
+- **GIVEN** a rule-mode quota with `local_tz: Asia/Taipei` and a host now in America/Los_Angeles
+- **WHEN** `sync` runs
+- **THEN** it writes nothing and says the host is in another zone than `local_tz`

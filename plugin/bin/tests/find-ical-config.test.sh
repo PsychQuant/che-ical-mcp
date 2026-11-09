@@ -152,6 +152,19 @@ rm "$QH/.claude/.ical/quotas.yaml"
 ln -s "$ROOT/qtarget/ok/quotas.yaml" "$QH/.claude/.ical/quotas.yaml"
 qcheck "--quotas: a symlink into a trusted directory prints the target" "$ROOT/qtarget/ok/quotas.yaml" 0 "$QH"
 chmod 755 "$ROOT/qtarget/wide"
+# Round 2: a first declare where HOME has no .claude yet is judged by the nearest existing parent (HOME).
+NEWH="$ROOT/newhome"; mkdir -p "$NEWH"
+qcheck "--quotas: no .claude at all, trusted HOME exits 1" "" 1 "$NEWH"
+chmod 777 "$NEWH"
+qcheck "--quotas: no .claude at all, world-writable HOME exits 3" "" 3 "$NEWH"
+chmod 755 "$NEWH"
+# Round 2: a symlinked .ical with no file yet is judged at its physical path and that path's parent.
+SH="$ROOT/symhome"; mkdir -p "$SH/.claude" "$ROOT/wideparent/ical"
+chmod 777 "$ROOT/wideparent"; chmod 755 "$ROOT/wideparent/ical"
+ln -s "$ROOT/wideparent/ical" "$SH/.claude/.ical"
+qcheck "--quotas: .ical links into a world-writable parent exits 3" "" 3 "$SH"
+chmod 755 "$ROOT/wideparent"
+qcheck "--quotas: .ical links into a trusted parent exits 1" "" 1 "$SH"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

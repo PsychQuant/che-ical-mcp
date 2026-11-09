@@ -57,7 +57,10 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
-is_int() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+is_int() {  # digits only, at most 6 (a longer number would wrap in 64-bit arithmetic)
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#1}" -le 6 ]
+}
 is_hhmm() {
   case "$1" in [0-2][0-9]:[0-5][0-9]) [ "${1%%:*}" -le 23 ] ;; *) return 1 ;; esac
 }
@@ -105,13 +108,17 @@ epoch_in() {  # zone "YYYY-MM-DD HH:MM:SS" -> epoch
 add_days() {  # YYYY-MM-DD N -> YYYY-MM-DD (calendar arithmetic, zone-free)
   TZ=UTC date -j -v"${2}"d -f "%Y-%m-%d %H:%M:%S" "$1 12:00:00" +%Y-%m-%d
 }
-weekday_of() { echo $(( $(TZ=UTC date -j -f "%Y-%m-%d %H:%M:%S" "$1 12:00:00" +%w) + 1 )); }
+weekday_of() {  # 1=Sunday ... 7=Saturday; fails (no output) when the day cannot be read
+  local w; w="$(TZ=UTC date -j -f "%Y-%m-%d %H:%M:%S" "$1 12:00:00" +%w 2>/dev/null)" || return 1
+  [ -n "$w" ] || return 1
+  echo $(( w + 1 ))
+}
 month_len() { TZ=UTC date -j -v1d -v+1m -v-1d -f "%Y-%m-%d %H:%M:%S" "$1-01 12:00:00" +%d; }
 add_months() { TZ=UTC date -j -v"${2}"m -f "%Y-%m-%d %H:%M:%S" "$1-01 12:00:00" +%Y-%m; }
 
 if [ -z "$from" ]; then
   from_epoch="$(date +%s)"
-elif is_int "$from"; then
+elif case "$from" in ''|*[!0-9]*) false ;; *) [ "${#from}" -le 12 ] ;; esac; then
   from_epoch=$((10#$from))
 else
   f="$(printf '%s' "$from" | sed -E 's/([+-][0-9]{2}):([0-9]{2})$/\1\2/; s/Z$/+0000/')"
@@ -132,15 +139,20 @@ first_weekly=""
 nth_reset_day() {
   if [ "$cadence" = weekly ]; then
     if [ -z "$first_weekly" ]; then
-      local d="$start_day"
-      while [ "$(weekday_of "$d")" -ne "$weekday" ]; do d="$(add_days "$d" +1)"; done
+      local d="$start_day" w i=0
+      while :; do
+        w="$(weekday_of "$d")" || die "cannot read the weekday of $d"
+        [ "$w" -ne "$weekday" ] || break
+        d="$(add_days "$d" +1)" || die "cannot step from $d"
+        i=$((i + 1)); [ "$i" -lt 8 ] || die "no weekday $weekday found"
+      done
       first_weekly="$d"
     fi
     RD="$(add_days "$first_weekly" "+$(( $1 * 7 ))")" || die "cannot step the week"
   else
     local ym len dd
     ym="$(add_months "${start_day%-*}" "+$1")" || die "cannot step the month"
-    len="$(month_len "$ym")"
+    len="$(month_len "$ym")" || die "cannot read the length of $ym"
     dd="$day"; [ "$dd" -le "$((10#$len))" ] || dd="$((10#$len))"
     RD="$(printf '%s-%02d' "$ym" "$dd")"
   fi
@@ -155,11 +167,13 @@ compute() {
     re="$(epoch_in "$reset_tz" "$rd $time:00")" || exit 2
     RESET_EPOCH="$re"
     RESET_TXT="$(TZ="$reset_tz" date -r "$re" +%Y-%m-%dT%H:%M:%S%z | iso_offset)"
+    [ -n "$RESET_TXT" ] || die "cannot format the reset of $rd"
     due=$(( re - lead_minutes * 60 ))
     DUE_EPOCH="$due"
     DUE_TXT="$(in_local date -r "$due" +%Y-%m-%dT%H:%M:%S%z | iso_offset)"
+    [ -n "$DUE_TXT" ] || die "cannot format the due of $rd"
     if [ -n "$notify_at" ]; then
-      ld="$(in_local date -r "$due" +%Y-%m-%d)"
+      ld="$(in_local date -r "$due" +%Y-%m-%d)" || die "cannot read the due day of $rd"
       cand="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$ld $notify_at:00" +%s)" || die "cannot read $notify_at on $ld"
       if [ "$cand" -ge "$due" ]; then
         cand="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$(add_days "$ld" -1) $notify_at:00" +%s)" || die "cannot read $notify_at before $ld"
@@ -167,19 +181,20 @@ compute() {
       ALARM=$(( (due - cand) / 60 ))
     fi
     if [ "$cadence" = weekly ]; then
-      DUE_KEY="$(in_local date -r "$due" +"%w %H:%M")"
+      DUE_KEY="$(in_local date -r "$due" +"%w %H:%M")" || die "cannot read the due of $rd"
     else
-      DUE_KEY="$(in_local date -r "$due" +"%d %H:%M")"
+      DUE_KEY="$(in_local date -r "$due" +"%d %H:%M")" || die "cannot read the due of $rd"
     fi
   else
-    RESET_EPOCH="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$rd 23:59:59" +%s)"
+    RESET_EPOCH="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$rd 23:59:59" +%s)" || die "cannot read the reset day $rd"
     RESET_TXT="$rd"
     local dd
-    dd="$(add_days "$rd" "-$lead_days")"
+    dd="$(add_days "$rd" "-$lead_days")" || die "cannot step back from $rd"
     DUE_TXT="$dd"
-    DUE_EPOCH="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$dd 23:59:59" +%s)"
+    DUE_EPOCH="$(in_local date -j -f "%Y-%m-%d %H:%M:%S" "$dd 23:59:59" +%s)" || die "cannot read the due day $dd"
     if [ "$cadence" = weekly ]; then
-      DUE_KEY="$(( $(weekday_of "$dd") - 1 )) date-only"
+      wd="$(weekday_of "$dd")" || die "cannot read the weekday of $dd"
+      DUE_KEY="$(( wd - 1 )) date-only"
     else
       DUE_KEY="${dd##*-} date-only"
     fi

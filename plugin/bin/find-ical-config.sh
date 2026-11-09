@@ -95,10 +95,15 @@ if [ "$quotas" = 1 ]; then
   fi
   if [ ! -e "$q" ]; then
     # Absent: exit 1 only when the directory a new file would be written into is trusted.
+    # The directories a first declare would create are judged by the nearest one that exists, at its
+    # physical path (a symlinked .ical by its target and the target's parent, as accept() does).
     if [ -e "$home/.claude/.ical" ]; then
-      dir_ok "$home/.claude/.ical" && dir_ok "$home/.claude" && exit 1
-    else
+      ical="$(cd "$home/.claude/.ical" 2>/dev/null && pwd -P)" || ical=""
+      [ -n "$ical" ] && dir_ok "$ical" && dir_ok "$(dirname "$ical")" && exit 1
+    elif [ -e "$home/.claude" ]; then
       dir_ok "$home/.claude" && exit 1
+    else
+      dir_ok "$home" && exit 1
     fi
     echo "find-ical-config.sh: not writing $q (its directory is not trusted)" >&2
     exit 3

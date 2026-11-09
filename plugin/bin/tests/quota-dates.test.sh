@@ -141,6 +141,20 @@ expect_error "a lead of 28 days on a monthly reset" "one whole period or more" -
 expect_error "a non-zone file is not a zone" "unknown --reset-tz" -- --cadence weekly --weekday 2 --time 00:00 --reset-tz zone.tab "${FROM[@]}"
 expect_error "a directory is not a zone" "unknown --local-tz" -- --cadence weekly --weekday 2 --time 00:00 --local-tz America "${FROM[@]}"
 
+# notify_at alone can change the mode (round 2 MEDIUM 3/9): one DST zone for reset and host, due fixed at
+# Sunday 04:00 local; without notify_at one weekly rule fits, with 22:00 the evening before the offset changes
+# in the week DST starts, so no rule fits. The skill compares the two rule lines before an update.
+NY=(--cadence weekly --weekday 1 --time 04:00 --reset-tz America/New_York --count 1 --from 2026-11-09T10:00:00-05:00 --local-tz America/New_York)
+expect "no notify_at: one rule fits" "period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00
+rule weekly days_of_week=1 due_time=04:00" -- "${NY[@]}"
+expect "notify_at 22:00: no rule fits" "period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00 alarm_minutes=360
+rule none reason=the local due or alarm changes (period 18 of the next 104: 2027-03-14T04:00:00-04:00)" -- "${NY[@]}" --notify-at 22:00
+
+# A number too long to be a lead wraps in 64-bit arithmetic; it is refused before any arithmetic (LOW 13).
+expect_error "lead-minutes too long" "--lead-minutes must be a whole number" -- --cadence weekly --weekday 2 --time 20:00 --lead-minutes 18446744073709551646 "${FROM[@]}"
+expect_error "lead-days too long" "--lead-days must be a whole number" -- --cadence monthly --day 18 --lead-days 9223372036854775808 "${FROM[@]}"
+expect_error "count too long" "--count must be 1 or more" -- --cadence monthly --day 18 --count 99999999999999999999 "${FROM[@]}"
+
 expect_error "notify-at needs a time" "--notify-at needs --time" -- --cadence monthly --day 18 --notify-at 22:00 "${FROM[@]}"
 expect_error "lead-minutes needs a time" "--lead-minutes needs --time" -- --cadence monthly --day 18 --lead-minutes 30 "${FROM[@]}"
 expect_error "lead-days is date-only" "--lead-days is for a date-only reset" -- --cadence monthly --day 18 --time 00:00 --lead-days 1 "${FROM[@]}"
