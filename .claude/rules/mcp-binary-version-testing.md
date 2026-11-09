@@ -761,3 +761,74 @@ session MCP 上只做批次刪除（一律帶 `dry_run: false`）、`undo`、`re
    calendar or list in place`，不叫人帶 `restore_available`），紀錄整筆保留；之後用 `discard_id` 放棄它。
 
 結果記在 #287。結束後用 `--cli` 刪掉拋棄式日曆與清單（G 由使用者刪），隔一段時間再用 `list_calendars` 確認兩次。
+
+## Release gate：update-undo 的 keep_later_edits（#265）
+
+#265 的合併只有純函式、記憶體內物件與原始碼結構測試（`UndoKeepLaterEditsTests`、`UndoKeepLaterEditsWiringTests`、
+`UndoKeepLaterEditsHandlerTests`）；遮罩寫入在 EventKit 存檔後的實際結果沒有在裝置上看過，而 undo 有狀態，`--cli`
+走不到。**出 #265 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary 之後：被拒絕的
+update-undo 訊息裡有 `The update changed:`），只用名稱含 `#265` 的拋棄式日曆與清單。「之後的編輯」一律用另一個
+`--cli` process 做（它不進 session 的 undo stack，對 session 的紀錄來說就是別的 process），不用 AppleScript。
+**每一步合併之後，都用 `--cli` 讀回「沒有還原的欄位」並確認跟合併前一樣**（PR #504 第 1 輪 M1：EventKit 存檔可能連帶改到
+沒寫的欄位）：事件看 `start`/`end`、`location`、`structured_location`（含座標）、`alarms`、`availability`；提醒事項看
+`due`、`start`、`alarms`、`reminder_recurrence_rules`、`is_completed`。
+
+1. session：`create_event` 一次性事件（標題 A、地點 L0、`alarms_minutes_offsets: [15]`）→ session：`update_event` 改標題 B →
+   `--cli`：`update_event` 把地點改成 L1 → session：`undo`：拒絕，訊息有 `The update changed: title. Changed after it:
+   location.` 與 `keep_later_edits set to true`，紀錄還在 → session：`undo` 帶 `keep_later_edits: true`：回應寫還原了
+   title、保留了 location → `--cli` 讀回：標題 A、地點 L1，起訖、鬧鐘 [15] 不變。
+2. 重疊：同上，但 session 改 `start_time`/`end_time`，`--cli` 改 `timezone` → `undo` 帶 `keep_later_edits: true`：拒絕、
+   什麼都沒寫、紀錄保留 → `discard_id` 移除。
+3. 一次性提醒事項：session：`create_reminder`（標題 A、帶時間的 `due_date`、`alarms_minutes_offsets: [15]`）→ session：
+   `update_reminder` 改標題 B → `--cli`：`update_reminder` 改 `priority` → session：`undo` 帶 `keep_later_edits: true` →
+   `--cli` 讀回：標題 A、priority 是新值，到期、鬧鐘不變。
+4. 重複提醒事項：session：`create_reminder`（每週、帶時間的到期與 [15]）→ session：`update_reminder` 改標題 → `--cli`：
+   改 `notes` → session：`undo` 帶 `keep_later_edits: true` → 讀回：標題還原、notes 是新值，`reminder_recurrence_rules`、
+   到期、鬧鐘不變。
+5. 提醒事項的連動組：session：`update_reminder` 改 `due_date` → `--cli`：`update_reminder` 加 `recurrence` → session：
+   `undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+6. 完成狀態跟日期同組（M2）：重複提醒事項 → session：`update_reminder` 帶 `clear_recurrence: true` → `--cli`：
+   `complete_reminder` → session：`undo` 帶 `keep_later_edits: true`：拒絕（completed 在這次修改改過的範圍內）、
+   什麼都沒寫、提醒事項仍是已完成且沒有規則。
+7. 全天與鬧鐘同組（PR #504 第 2 輪）：
+   (a) 一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改 `alarms_minutes_offsets` →
+       session：`undo` 帶 `keep_later_edits: true`：拒絕（alarms 在這次修改改過的範圍內）、什麼都沒寫、紀錄保留；
+   (b) 反方向：全天事件 → session：`update_event` 改成有時間（`all_day: false`、起訖）→ `--cli` 改 `alarms_minutes_offsets`
+       → session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫、紀錄保留；
+   (c) 一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改標題 → session：`undo` 帶
+       `keep_later_edits: true` → 讀回：回到有時間、起訖是原值、標題是新值，鬧鐘是 [15]（多出或少了鬧鐘就回報）。
+8. 日曆與時間同組：拋棄式日曆 C、D → 在 C 建一次性事件 → session：`update_event` 帶 `calendar_name` D → `--cli`：
+   把 availability 改成 free（另做一次改鬧鐘）→ session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+   第 2 輪 LOW 3：另一個一次性事件 → session 改標題 → `--cli` 用 `update_event` 帶 `calendar_name` D 搬走 → 刪掉 C
+   → session：`undo` 帶 `keep_later_edits: true`：還原標題、事件留在 D（沒有因為 C 不在而拒絕），回應用的是現在的標題。
+9. 座標（M3）：一次性事件，地點 "Room"、沒有座標 → session：`update_event` 帶 `structured_location`（同標題、加座標）
+   → `--cli` 改標題 → session：`undo`：拒絕訊息寫 `The update changed: structured_location` → `undo` 帶
+   `keep_later_edits: true` → 讀回：地點 "Room" 沒有座標、標題是新值。
+10. 原本沒有地點（第 1 輪 LOW 4）：一次性事件、沒有地點 → session：`update_event` 帶 `structured_location` → `--cli` 改
+    `notes` → session：`undo` 帶 `keep_later_edits: true` → 讀回：`location` 與 `structured_location` 都沒有、notes 是新值。
+11. 不帶參數：第 1 步的形狀再做一次，`undo` 不帶 `keep_later_edits`：照舊拒絕、紀錄保留，`--cli` 讀回標題 B、地點 L1。
+12. 第 1 步合併之後 `redo`：回 `Cannot redo the update`、訊息寫 `it stays as the undo left it`、什麼都沒寫。
+
+結果記在 #265。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#265` 的殘留。
+
+## Release gate：刪除過場次的系列改時間（#503）
+
+#503 的檢查（`DeletedOccurrenceCheck` 與 `deletedOccurrenceVerdict`）的純邏輯有單元測試，接線只有原始碼釘選；EventKit 的系列
+物件、`occurrenceDate`、`/RID=` id 與列出範圍合在一起之後判定對不對、拒絕之後物件有沒有被動到，只能在裝置上看（PR #505
+round 6 的 MEDIUM 1）。拒絕不寫入、也不進 undo，是 stateless 的，所以**出 #503 的那個版本打 tag 之前**，用剛 build 的
+binary 的 `--cli`，只在名稱含 `#503` 的拋棄式日曆上做。每個系列都是每週 10:00、有 `end_date` 的 timed 系列，標題各不相同；
+每次被拒絕之後，用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回整個系列，逐場比對 title、start、end、notes、
+location、alarms，與拒絕前相同：
+
+1. **第一場被刪**：`delete_event` span `this` 刪第一場 → 用系列 id、span `future`、`occurrence_date` 為第三場（第一個剩下的場次之後）、
+   帶新的 `start_time` 與 `end_time` → 以 unknown 拒絕，訊息寫「its first slot cannot be shown (it is read through its first
+   remaining occurrence, because its first occurrence was deleted)」，什麼都沒寫。改用 span `all` 時，#326 會在 #503 之前以
+   「This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new
+   series…」拒絕，這也算過（同樣什麼都沒寫）。
+2. **第一場單獨移動、較後一場被刪**：`update_event` span `this` 把第一場從 10:00 移到 12:00 → 刪第三場 → 用系列 id、span `all`
+   寫 `start_time` 12:00（與對應的 `end_time`）→ 拒絕（deleted 或 unknown 都算過），什麼都沒寫，第三場沒有回來。
+3. **從最後一個刪除場次之後的場次起改時間**：刪第二場 → 用系列 id、span `future`、`occurrence_date` 為第四場、新的 time of day →
+   成功；讀回時第二場仍不在，第四場起是新的時間，第一、三場不變。
+
+任何一步拒絕後讀回的欄位有變、或第 3 步第二場回來，就是 bug，回報到 #503。結果記在 #503。結束後刪掉拋棄式日曆，隔一分鐘以上
+`list_calendars` 兩次，名稱含 `#503` 的都是 0。

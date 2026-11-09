@@ -45,6 +45,7 @@ Several recommended talks in one slot may be in different rooms: room changes in
 - its slot names no session event of the set, or more than one;
 - the slot's event is titled `（未報名）`: registration changes only when the user says so (`conference.md` section 5);
 - the event is the user's own talk, or the umbrella;
+- the event also carries a `lodging-module:` marker line: it belongs to neither module, so no module and no layer writes to it (the shared rule "Whose event it is" in `event-modules.md`);
 - a talk's `room` is not in the slot's listing;
 - two recommended talks are in the same window and the caller has not said which is recommended;
 - a line above the marker pair, outside the block, begins with `conference-recommend`. The layer would then not be able to find its own block again. The shared copy escape of `event-modules.md` puts `· ` before every copied line that begins with `conference-`, so this happens only when the user typed such a line.
@@ -107,7 +108,7 @@ An event without a block is its own standard form. So a re-paste matches a decor
 
 **Not well-formed** (a line edited or missing, a mark gone, the event moved by hand): the layer never writes to the event, and the report lists it. For the standard flow it is "an event whose title another layer rewrote", which `conference.md` section 6 sends to the mapping table. On the user's yes there, the event gets the standard values the program gives, without the block (below). On a no, the client-side skip of `conference.md` section 6 finds it by its item line's title, so the item is *kept*, not created a second time.
 
-**A block that is not well-formed is dropped, never moved.** When `conference.md` section 6 rewrites or adopts the notes of an event with such a block, these are removed:
+**A block that is not well-formed is dropped, never moved.** When `conference.md` section 6 rewrites the notes of an event with such a block, these are removed:
 
 - the lines from `conference-recommend: begin` through `conference-recommend: end` above the marker pair (without an end line, through the last line above the marker that begins with `conference-recommend`);
 - any other line above the marker that begins with `conference-recommend`.

@@ -128,4 +128,13 @@ final class EventMovePolicyTests: XCTestCase {
         XCTAssertEqual(try EventMovePolicy.Span.parse("all"), .all)
         XCTAssertThrowsError(try EventMovePolicy.Span.parse("future"))
     }
+
+    /// PR #505 round 5 (INFO 6): the argument contradictions `plan` refuses, asked on their own.
+    func testTheArgumentContradictionsAreAnsweredOnTheirOwn() {
+        XCTAssertNotNil(EventMovePolicy.argumentRefusal(isRecurring: true, span: .all, hasOccurrenceDate: true))
+        XCTAssertNotNil(EventMovePolicy.argumentRefusal(isRecurring: true, span: .this, hasOccurrenceDate: false))
+        XCTAssertNil(EventMovePolicy.argumentRefusal(isRecurring: true, span: .all, hasOccurrenceDate: false))
+        XCTAssertNil(EventMovePolicy.argumentRefusal(isRecurring: true, span: .this, hasOccurrenceDate: true))
+        XCTAssertNil(EventMovePolicy.argumentRefusal(isRecurring: false, span: .this, hasOccurrenceDate: false))
+    }
 }

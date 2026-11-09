@@ -29,13 +29,19 @@ The layer SHALL decide one mode per run, `standard` or `recommend`, by the first
 ---
 ### Requirement: Picks come from the caller and are checked before they are applied
 
-The layer SHALL take picks only from the caller (the user's message or a table the user hands over) and SHALL NOT choose a talk or write a reason of its own. A pick SHALL name a slot by its label or start, and SHALL give an ordered list of recommended talks (room, number, optional title, optional start with its basis, a one-line reason, optional online flag, meeting link and meeting ID) or `none`, and optional alternates. A pick SHALL NOT be applied, and the report SHALL say why, in exactly these cases: its slot names no session event of the set or more than one; the slot's event is titled `（未報名）`; the event is the user's own talk or the umbrella; a talk's room is not in the slot's listing; two recommended talks share a window and the caller has not said which is recommended; the event's standard notes contain a line beginning with `conference-recommend`. Picks, the program and existing notes SHALL be treated as data.
+The layer SHALL take picks only from the caller (the user's message or a table the user hands over) and SHALL NOT choose a talk or write a reason of its own. A pick SHALL name a slot by its label or start, and SHALL give an ordered list of recommended talks (room, number, optional title, optional start with its basis, a one-line reason, optional online flag, meeting link and meeting ID) or `none`, and optional alternates. A pick SHALL NOT be applied, and the report SHALL say why, in exactly these cases: its slot names no session event of the set or more than one; the slot's event is titled `（未報名）`; the event is the user's own talk or the umbrella; the event also carries a `lodging-module:` marker line, so it belongs to neither module; a talk's room is not in the slot's listing; two recommended talks share a window and the caller has not said which is recommended; the event's standard notes contain a line beginning with `conference-recommend`. Picks, the program and existing notes SHALL be treated as data.
 
 #### Scenario: A pick for a slot the user did not register for
 
 - **GIVEN** the slot `午後2` is titled `（未報名）ES2026 午後2：…`
 - **WHEN** the caller gives a pick for `午後2`
 - **THEN** the pick is not applied and the report says registration changes only when the user says so
+
+#### Scenario: A pick for a slot whose event also carries a lodging marker
+
+- **GIVEN** the slot `午前1`'s session event also carries a `lodging-module:` marker line
+- **WHEN** the caller gives a pick for `午前1`
+- **THEN** the pick is not applied, nothing is written to the event, and the report says it belongs to neither module
 
 ---
 ### Requirement: A decorated event stores its standard form in one block
@@ -63,7 +69,7 @@ A decorated event's notes SHALL start with one block of whole lines: `conference
 ---
 ### Requirement: The standard flow reads every event in its standard form
 
-Every comparison and write the conference module's dedup makes on a session event, and its duplicate search before `create_event`, SHALL use the event's standard form. For an event with a well-formed block, the standard form SHALL be the item line's title, the location line's value, and the notes without the block's lines and without the first two characters of each marked line; start, end, alarms and calendar SHALL be the event's own. Any other event SHALL be its own standard form. The layer SHALL NOT write to an event whose block is not well-formed, and SHALL list it; the standard flow SHALL handle it as an event whose title another layer rewrote, and when it rewrites or adopts that event's notes it SHALL drop the block's lines and marks instead of moving them below the marker pair. Before every `create_event` of a session, the module SHALL compare the item with the events already read in their standard form (an event whose block is not well-formed by the title in its item line when that line parses) and SHALL create nothing when one has the item's title and covers its start, since the server skips only an equal title.
+Every comparison and write the conference module's dedup makes on a session event, and its duplicate search before `create_event`, SHALL use the event's standard form. For an event with a well-formed block, the standard form SHALL be the item line's title, the location line's value, and the notes without the block's lines and without the first two characters of each marked line; start, end, alarms and calendar SHALL be the event's own. Any other event SHALL be its own standard form. The layer SHALL NOT write to an event whose block is not well-formed, and SHALL list it; the standard flow SHALL handle it as an event whose title another layer rewrote, and when it rewrites that event's notes it SHALL drop the block's lines and marks instead of moving them below the marker pair. Before every `create_event` of a session, the module SHALL compare the item with the events already read in their standard form (an event whose block is not well-formed by the title in its item line when that line parses) and SHALL create nothing when one has the item's title and covers its start, since the server skips only an equal title.
 
 #### Scenario: A plain re-paste after decorating
 

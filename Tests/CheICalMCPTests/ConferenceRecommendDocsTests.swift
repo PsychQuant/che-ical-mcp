@@ -83,8 +83,15 @@ final class ConferenceRecommendDocsTests: XCTestCase {
             return XCTFail("not-applied list not found")
         }
         let bullets = two[start.upperBound..<end.lowerBound].components(separatedBy: "\n").filter { $0.hasPrefix("- ") }
-        XCTAssertEqual(bullets.count, 6, "not-applied cases changed: \(bullets)")
+        XCTAssertEqual(bullets.count, 7, "not-applied cases changed: \(bullets)")
         XCTAssertTrue(bullets.contains { $0.contains("`（未報名）`") })
+        // The shared rule "Whose event it is": an event with two modules' markers belongs to neither,
+        // so the layer does not decorate it either.
+        XCTAssertTrue(bullets.contains { $0.contains("the event also carries a `lodging-module:` marker line") })
+        let spec = try read(Self.spec)
+        XCTAssertEqual(spec.components(separatedBy: "the event also carries a `lodging-module:` marker line").count - 1, 1,
+                       "the spec's closed list names the two-module event once")
+        XCTAssertEqual(spec.components(separatedBy: "#### Scenario: A pick for a slot whose event also carries a lodging marker").count - 1, 1)
     }
 
     func testAccessCodesAreNeverWritten() throws {
@@ -133,7 +140,8 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     /// MEDIUM 4: program text cannot plant a block. The shared escape list owns the prefix.
     func testCopiedTextCannotFormABlock() throws {
         let index = try read(Self.index)
-        XCTAssertTrue(index.contains("and only these: `conference-` (the conference module's marker lines and the block lines of its recommendation layer), `lodging-module`."),
+        // The prefix list is main's (#365); `conference-` covers the layer's block lines.
+        XCTAssertTrue(index.contains("and only these: `conference-` (marker lines and block lines), `lodging-module`."),
                       "the shared copy escape must cover every conference- line")
         let three = Self.section(try read(Self.layer), 3)
         let wellFormed = three.components(separatedBy: "\n").filter { $0.range(of: #"^[0-9]+\. "#, options: .regularExpression) != nil }
