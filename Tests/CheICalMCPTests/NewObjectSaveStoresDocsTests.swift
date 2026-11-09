@@ -21,18 +21,21 @@ final class NewObjectSaveStoresDocsTests: XCTestCase {
     }
 
     static let headerSentences = [
+        "stores other than iCloud, with one measured (#294, 2026-11-05, a standalone probe beside the server).",
         "On a Google-hosted calendar, with the calendar deleted through Google and the probe waiting 305 seconds for the deletion to reach EventKit, a new event and a new recurring event that failed at commit (EKCADErrorDomain 1010) were not written by a later save, one run each.",
         "Removing a failed recurring event with `remove(span: .thisEvent, commit: false)` made the next save fail with EKCADErrorDomain 1001 and lose what it wrote, as on iCloud (one run).",
         "A new store found a normally saved event in 10 of 10 runs; events do not go through this check.",
-        "The reminder, reminder-list and event-calendar paths cannot run on that source: it refuses a new event calendar (EKErrorDomain 17) and a new reminder list (EKErrorDomain 24).",
+        "The source refuses a new event calendar (EKErrorDomain 17), and the refused one was not written later; that is not a NewObjectSave path.",
+        "The reminder and reminder-list paths cannot run on that source: it refuses a new reminder list (EKErrorDomain 24).",
         "Every failure was local: a refusal by Google's server was not produced.",
         "Exchange and local calendars: not measured (#294).",
         "(Google: in the list of what was not covered, below)",
     ]
 
     static let changelogSentences = [
-        "Other stores (#294, 2026-11-05): on a Google-hosted calendar, with the calendar deleted through Google and a 305-second wait for the deletion to reach EventKit, a new event and a new recurring event that failed at commit (EKCADErrorDomain 1010) were not written by a later save (one run each), and a new store found a normally saved event in 10 of 10 runs (events do not go through this check).",
-        "The reminder, reminder-list and event-calendar paths cannot run there: the source refuses a new event calendar (EKErrorDomain 17) and a new reminder list (EKErrorDomain 24).",
+        "Other stores (#294, 2026-11-05, a standalone EventKit probe; the server itself was not exercised): on a Google-hosted calendar, with the calendar deleted through Google and a 305-second wait for the deletion to reach EventKit, a new event and a new recurring event that failed at commit (EKCADErrorDomain 1010) were not written by a later save (one run each), and a new store found a normally saved event in 10 of 10 runs (events do not go through this check).",
+        "The source refuses a new event calendar (EKErrorDomain 17), and the refused one was not written later; that is not a NewObjectSave path.",
+        "The reminder and reminder-list paths cannot run there: the source refuses a new reminder list (EKErrorDomain 24).",
         "Every failure was local; a refusal by Google's server was not produced.",
         "Exchange and local calendars were not measured (#294).",
         "The same happened on a Google-hosted calendar (EKCADErrorDomain 1001, one run, #294).",

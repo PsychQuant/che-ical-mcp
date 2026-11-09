@@ -176,11 +176,11 @@ import EventKit
 ///   that failed at commit (EKCADErrorDomain 1010) were not written by a later save, one run each.
 ///   Removing a failed recurring event with `remove(span: .thisEvent, commit: false)` made the next
 ///   save fail with EKCADErrorDomain 1001 and lose what it wrote, as on iCloud (one run). A new store
-///   found a normally saved event in 10 of 10 runs; events do not go through this check. The
-///   reminder, reminder-list and event-calendar paths cannot run on that source: it refuses a new
-///   event calendar (EKErrorDomain 17) and a new reminder list (EKErrorDomain 24). Every failure was
-///   local: a refusal by Google's server was not produced. Exchange and local calendars: not
-///   measured (#294).
+///   found a normally saved event in 10 of 10 runs; events do not go through this check. The source
+///   refuses a new event calendar (EKErrorDomain 17), and the refused one was not written later;
+///   that is not a NewObjectSave path. The reminder and reminder-list paths cannot run on that
+///   source: it refuses a new reminder list (EKErrorDomain 24). Every failure was local: a refusal by
+///   Google's server was not produced. Exchange and local calendars: not measured (#294).
 ///
 /// A save that returned but wrote nothing (#281): a reminder saved into a list that was deleted
 /// through another store after the list was looked up. `save(_:commit: true)` returned without an
