@@ -761,3 +761,26 @@ session MCP 上只做批次刪除（一律帶 `dry_run: false`）、`undo`、`re
    calendar or list in place`，不叫人帶 `restore_available`），紀錄整筆保留；之後用 `discard_id` 放棄它。
 
 結果記在 #287。結束後用 `--cli` 刪掉拋棄式日曆與清單（G 由使用者刪），隔一段時間再用 `list_calendars` 確認兩次。
+
+## Release gate：update-undo 的 keep_later_edits（#265）
+
+#265 的合併只有純函式、記憶體內物件與原始碼結構測試（`UndoKeepLaterEditsTests`、`UndoKeepLaterEditsWiringTests`、
+`UndoKeepLaterEditsHandlerTests`）；遮罩寫入在 EventKit 存檔後的實際結果沒有在裝置上看過，而 undo 有狀態，`--cli`
+走不到。**出 #265 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary 之後：被拒絕的
+update-undo 訊息裡有 `The update changed:`），只用名稱含 `#265` 的拋棄式日曆與清單。「之後的編輯」一律用另一個
+`--cli` process 做（它不進 session 的 undo stack，對 session 的紀錄來說就是別的 process），不用 AppleScript：
+
+1. session：`create_event` 一次性事件（標題 A、地點 L0）→ session：`update_event` 改標題 B → `--cli`：`update_event`
+   把地點改成 L1 → session：`undo`：拒絕，訊息有 `The update changed: title. Changed after it: location.` 與
+   `keep_later_edits set to true`，紀錄還在 → session：`undo` 帶 `keep_later_edits: true`：回應寫還原了 title、保留了
+   location → `--cli` 讀回：標題 A、地點 L1。
+2. 重疊：同上，但 session 改 `start_time`/`end_time`，`--cli` 改 `timezone` → `undo` 帶 `keep_later_edits: true`：拒絕、
+   什麼都沒寫、紀錄保留（訊息說 timezone 在這次修改改過的範圍內）→ `discard_id` 移除。
+3. 提醒事項：session：`create_reminder`（標題 A）→ session：`update_reminder` 改標題 B → `--cli`：`complete_reminder` →
+   session：`undo` 帶 `keep_later_edits: true` → `--cli` 讀回：標題 A、仍是已完成。
+4. 提醒事項的連動組：session：`update_reminder` 改 `due_date` → `--cli`：`update_reminder` 加 `recurrence` → session：
+   `undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+5. 不帶參數：第 1 步的形狀再做一次，`undo` 不帶 `keep_later_edits`：照舊拒絕、紀錄保留，`--cli` 讀回標題 B、地點 L1。
+6. 第 1 步合併之後 `redo`：回 `Cannot redo the update`、什麼都沒寫。
+
+結果記在 #265。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#265` 的殘留。

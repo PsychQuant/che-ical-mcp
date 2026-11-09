@@ -187,7 +187,9 @@ final class ExistingReminderSaveTests: XCTestCase {
         XCTAssertEqual(try count("ore.save(reminder, commit: true)"), ["EventKitManager.swift": 2, "ExistingReminderSave.swift": 1])
         XCTAssertEqual(try count("ore.remove(reminder, commit: true)"), ["EventKitManager.swift": 1, "ExistingReminderSave.swift": 1])
         XCTAssertEqual(try count("try saveExistingReminder(reminder, handler:"),
-                       ["EventKitManager.swift": 4, "EventKitManager+ReminderCompletion.swift": 3])
+                       ["EventKitManager.swift": 4, "EventKitManager+ReminderCompletion.swift": 3,
+                        // #265: the merge arm of `undo` with keep_later_edits.
+                        "EventKitManager+KeepLaterEdits.swift": 1])
         XCTAssertEqual(try count("save: { try saveExistingReminder(reminder, handler: \"updateReminder\") }"), ["EventKitManager.swift": 1])
         XCTAssertEqual(try count("try removeExistingReminder(reminder, handler:"), ["EventKitManager.swift": 2])
     }
