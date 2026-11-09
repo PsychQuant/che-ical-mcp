@@ -1528,9 +1528,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if DeletedOccurrenceCheck.applies(
             reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
             plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
-            resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay) {
+            resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone) {
             let series = try addressesOwnOccurrence
                 ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier).flatMap { try storedEvent(id: $0) } : masterEvent
+            // Round 2 (INFO 8): the own-id path reads the series object without a refresh; refresh it
+            // before its rule is read (a failure is fine: #326's objects cannot refresh).
+            if addressesOwnOccurrence { _ = series?.refresh() }
             let seriesID = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
             let verdict: DeletedOccurrenceCheck.Verdict = {
                 guard let series, let seriesID else { return .unknown }
@@ -1539,7 +1542,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 return deletedOccurrenceVerdict(
                     of: series, id: seriesID,
                     reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
-                    viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn)
+                    viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn,
+                    changesAllDay: datePlan.isAllDay != event.isAllDay)
             }()
             switch verdict {
             case .none: break

@@ -260,7 +260,8 @@ extension EventKitManager {
     /// compared with the rule's expected slots (`DeletedOccurrenceCheck`). `unknown` when the series
     /// cannot be listed, the listing is empty or does not cover the series (fail closed, as #442
     /// does), or the first slot cannot be proven (PR #505 round 1: `viaStandIn`, a detached object).
-    func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?, viaStandIn: Bool) -> DeletedOccurrenceCheck.Verdict {
+    func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?, viaStandIn: Bool,
+                                  changesAllDay: Bool) -> DeletedOccurrenceCheck.Verdict {
         guard let (_, candidates) = seriesOccurrences(of: series, id: id), let window = seriesScanWindow(of: series),
               let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
             return .unknown
@@ -268,10 +269,17 @@ extension EventKitManager {
         guard !candidates.isEmpty else { return .unknown }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
         let calendar = Calendar.gregorian(in: zone)
-        let ridSlots = candidates.filter(\.slotFromRID).map { UndoPostState.ruleSlot(of: $0, isAllDay: series.isAllDay, zone: zone) }
+        func ruleSlot(_ candidate: FirstRemainingOccurrence.Candidate) -> Date {
+            UndoPostState.ruleSlot(of: candidate, isAllDay: series.isAllDay, zone: zone)
+        }
+        // Round 2: the occurrence listed at the object's own start is the first occurrence.
+        let atStart = candidates.first { UndoPostState.sameInstant($0.start, series.startDate) }
         let occurrenceDate: Date? = series.occurrenceDate
-        let firstStart = DeletedOccurrenceCheck.firstSlot(occurrenceDate: occurrenceDate, startDate: series.startDate,
-                                                          ridSlots: ridSlots, viaStandIn: viaStandIn, isDetached: series.isDetached)
+        let firstStart = DeletedOccurrenceCheck.firstSlot(
+            occurrenceDate: occurrenceDate, startDate: series.startDate, startListed: atStart != nil,
+            startRIDSlot: atStart.flatMap { $0.slotFromRID ? ruleSlot($0) : nil },
+            earliestRIDSlot: candidates.filter(\.slotFromRID).map(ruleSlot).min(),
+            viaStandIn: viaStandIn, isDetached: series.isDetached)
         let covers = firstStart.map {
             DetachedOccurrenceSpan.coversWholeSeries(
                 rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
@@ -280,9 +288,9 @@ extension EventKitManager {
         return DeletedOccurrenceCheck.verdict(
             rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
             firstStart: firstStart,
-            observedSlots: candidates.map { UndoPostState.ruleSlot(of: $0, isAllDay: series.isAllDay, zone: zone) },
+            observedSlots: candidates.map(ruleSlot),
             slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
-            reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
+            changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar)
     }
 
     /// #416: the series object of the occurrence with this `/RID=` identifier, which may fail to

@@ -20,6 +20,10 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         // PR #505 round 1: a whole-series write filters no slot, and a stand-in is passed as such.
         XCTAssertTrue(update.contains("reachedFrom: DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor)"))
         XCTAssertTrue(update.contains("viaStandIn: addressesOwnOccurrence ? false : resolved.viaStandIn"))
+        // PR #505 round 2: a zone change is checked (measured), and the route facts are passed.
+        XCTAssertTrue(update.contains("resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone"))
+        XCTAssertTrue(update.contains("changesAllDay: datePlan.isAllDay != event.isAllDay"))
+        XCTAssertTrue(update.contains("if addressesOwnOccurrence { _ = series?.refresh() }"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason"))
         XCTAssertTrue(update.contains("DeletedOccurrenceCheck.unknownReason"))
     }
@@ -32,6 +36,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
         XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlot("), "the first slot is proven, never taken from a stand-in")
+        XCTAssertTrue(body.contains("let atStart = candidates.first { UndoPostState.sameInstant($0.start, series.startDate) }"),
+                      "the occurrence at the object's own start is the first occurrence")
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown }"), "an empty listing is not 'none deleted'")
     }
