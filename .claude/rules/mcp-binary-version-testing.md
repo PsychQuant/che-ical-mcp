@@ -790,11 +790,17 @@ update-undo 訊息裡有 `The update changed:`），只用名稱含 `#265` 的�
 6. 完成狀態跟日期同組（M2）：重複提醒事項 → session：`update_reminder` 帶 `clear_recurrence: true` → `--cli`：
    `complete_reminder` → session：`undo` 帶 `keep_later_edits: true`：拒絕（completed 在這次修改改過的範圍內）、
    什麼都沒寫、提醒事項仍是已完成且沒有規則。
-7. 全天與鬧鐘：一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改標題 → session：`undo`
-   帶 `keep_later_edits: true` → 讀回：回到有時間、起訖是原值、標題是新值，鬧鐘仍是 [15]（EventKit 對全天事件會自己加
-   預設鬧鐘；多出或少了鬧鐘就回報）。
-8. 日曆與忙碌狀態同組：拋棄式日曆 C、D → 在 C 建一次性事件 → session：`update_event` 帶 `calendar_name` D → `--cli`：
-   把 availability 改成 free → session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+7. 全天與鬧鐘同組（PR #504 第 2 輪）：
+   (a) 一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改 `alarms_minutes_offsets` →
+       session：`undo` 帶 `keep_later_edits: true`：拒絕（alarms 在這次修改改過的範圍內）、什麼都沒寫、紀錄保留；
+   (b) 反方向：全天事件 → session：`update_event` 改成有時間（`all_day: false`、起訖）→ `--cli` 改 `alarms_minutes_offsets`
+       → session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫、紀錄保留；
+   (c) 一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改標題 → session：`undo` 帶
+       `keep_later_edits: true` → 讀回：回到有時間、起訖是原值、標題是新值，鬧鐘是 [15]（多出或少了鬧鐘就回報）。
+8. 日曆與時間同組：拋棄式日曆 C、D → 在 C 建一次性事件 → session：`update_event` 帶 `calendar_name` D → `--cli`：
+   把 availability 改成 free（另做一次改鬧鐘）→ session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+   第 2 輪 LOW 3：另一個一次性事件 → session 改標題 → `--cli` 用 `update_event` 帶 `calendar_name` D 搬走 → 刪掉 C
+   → session：`undo` 帶 `keep_later_edits: true`：還原標題、事件留在 D（沒有因為 C 不在而拒絕），回應用的是現在的標題。
 9. 座標（M3）：一次性事件，地點 "Room"、沒有座標 → session：`update_event` 帶 `structured_location`（同標題、加座標）
    → `--cli` 改標題 → session：`undo`：拒絕訊息寫 `The update changed: structured_location` → `undo` 帶
    `keep_later_edits: true` → 讀回：地點 "Room" 沒有座標、標題是新值。

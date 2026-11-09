@@ -35,7 +35,7 @@ final class UndoKeepLaterEditsTests: XCTestCase {
         // A restored group is written whole, in table order.
         let whole = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["end_time"], changedElsewhere: ["notes"],
                                                           groups: UndoKeepLaterEdits.eventGroups))
-        XCTAssertEqual(whole.restored, ["start_time", "end_time", "all_day", "timezone"])
+        XCTAssertEqual(whole.restored, ["start_time", "end_time", "all_day", "timezone", "alarms", "calendar", "availability"])
     }
 
     func testAReminderRepetitionMovesWithItsDueDate() throws {
@@ -83,6 +83,25 @@ final class UndoKeepLaterEditsTests: XCTestCase {
         let list = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["list"], changedElsewhere: ["alarms"],
                                                          groups: UndoKeepLaterEdits.reminderGroups))
         XCTAssertEqual(list.overlapping, ["alarms"])
+    }
+
+    /// PR #504 round 2 (HIGH, MEDIUM): an event's relative alarm means another time once the event
+    /// turns all-day or timed, so the all-day flag and the alarms move together, both ways.
+    func testTheAllDayFlagAndTheAlarmsOverlapBothWays() throws {
+        let toggled = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["all_day", "start_time", "end_time"], changedElsewhere: ["alarms"],
+                                                            groups: UndoKeepLaterEdits.eventGroups))
+        XCTAssertEqual(toggled.overlapping, ["alarms"])
+        let alarmed = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["alarms"], changedElsewhere: ["all_day"],
+                                                            groups: UndoKeepLaterEdits.eventGroups))
+        XCTAssertEqual(alarmed.overlapping, ["all_day"])
+    }
+
+    /// Round 2 (LOW 4): the success message names the item by the title it has after the merge.
+    func testTheAnswerNamesTheItemByItsCurrentTitle() {
+        let plan = UndoKeepLaterEdits.Plan(restored: ["notes"], kept: ["title"], overlapping: [])
+        let text = UndoKeepLaterEdits.undoneMessage(kind: .event, title: "Later title", plan: plan)
+        XCTAssertTrue(text.contains("'Later title'"), text)
+        XCTAssertTrue(text.contains("kept the later edits to title"), text)
     }
 
     /// Round 1, M3: the guard's geocode exemption is not applied to what the update itself wrote.

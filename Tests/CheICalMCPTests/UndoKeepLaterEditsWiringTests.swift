@@ -29,18 +29,22 @@ final class UndoKeepLaterEditsWiringTests: XCTestCase {
 
     func testTheEventMergeKeepsTheUpdateArmsOrder() throws {
         let arm = try Self.body("private func undoUpdatedEventKeepingLaterEdits(", in: Self.file)
-        try assertOrder(["let calendar = try await restoreCalendar(for: old, kind: .revertUpdate)",
+        // Round 2 (LOW 3): the calendar is read before the guard (it suspends), and its error counts
+        // only when the calendar's group is restored.
+        try assertOrder(["let calendarRead: Result<EKCalendar, Error>",
                          "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:",
+                         "? try calendarRead.get() : event.calendar",
                          "old.applyRestoring(Set(plan.restored), to: event, calendar: calendar)",
                          "try eventStore.save(event, span: .thisEvent)",
                          "event.rollback()",
                          "markNeedsRefresh()"], in: arm)
-        // Round 1: between the merge's check and its write the only await is the fallback, which
-        // returns (the default undo runs its own check), so nothing suspends before the write.
+        // Rounds 1-2: between the merge's check and its write every await is a fallback that returns
+        // (the default undo runs its own check), so nothing suspends before the write.
         let check = try XCTUnwrap(arm.range(of: "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:"))
         let save = try XCTUnwrap(arm.range(of: "try eventStore.save(event, span: .thisEvent)"))
         let between = String(arm[check.upperBound..<save.lowerBound])
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: between).count, 1, between)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: between).count,
+                       SourcePins.ranges(of: "else { return try await executeUndo(operation) }", in: between).count, between)
         XCTAssertTrue(between.contains("let plan = merge else { return try await executeUndo(operation) }"), between)
     }
 
@@ -57,7 +61,7 @@ final class UndoKeepLaterEditsWiringTests: XCTestCase {
         let arm = try Self.body("private func undoUpdatedReminderKeepingLaterEdits(", in: Self.file)
         try assertOrder(["let lists = try await reminderListsForRestore()",
                          "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:",
-                         "try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate)",
+                         "? try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate) : nil",
                          "old.applyRestoring(Set(plan.restored), to: reminder, list: list, now: Date())",
                          "try saveExistingReminder(reminder, handler:",
                          "markNeedsRefresh()"], in: arm)

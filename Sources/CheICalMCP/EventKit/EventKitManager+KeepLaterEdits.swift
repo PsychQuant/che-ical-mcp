@@ -24,7 +24,11 @@ extension EventKitManager {
         // Round 1, M3: an update that changed nothing undo restores takes the default undo.
         let changedByUpdate = UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved)
         guard !changedByUpdate.isEmpty else { return try await executeUndo(operation) }
-        let calendar = try await restoreCalendar(for: old, kind: .revertUpdate)
+        // Round 2 (LOW 3): read before the guard (it suspends); its error counts only when the
+        // calendar's group is restored, so a later move to another calendar is kept even when the
+        // recorded calendar is gone.
+        let calendarRead: Result<EKCalendar, Error>
+        do { calendarRead = .success(try await restoreCalendar(for: old, kind: .revertUpdate)) } catch { calendarRead = .failure(error) }
         var merge: UndoKeepLaterEdits.Plan?
         let target = try await verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits: { _, elsewhere in
             guard let plan = UndoKeepLaterEdits.plan(changedByUpdate: changedByUpdate, changedElsewhere: elsewhere,
@@ -37,6 +41,8 @@ extension EventKitManager {
         // nothing changed later; no tool writes such a record) takes the default undo, which keeps
         // the record if it refuses. Never a discard.
         guard let event = target as? EKEvent, let plan = merge else { return try await executeUndo(operation) }
+        let calendar = plan.restored.contains("calendar") ? try calendarRead.get() : event.calendar
+        guard let calendar else { return try await executeUndo(operation) }
         old.applyRestoring(Set(plan.restored), to: event, calendar: calendar)
         do {
             try eventStore.save(event, span: .thisEvent)
@@ -45,7 +51,7 @@ extension EventKitManager {
             throw error
         }
         markNeedsRefresh()
-        return UndoKeepLaterEdits.undoneMessage(kind: .event, title: old.title, plan: plan)
+        return UndoKeepLaterEdits.undoneMessage(kind: .event, title: event.title ?? old.title, plan: plan)
     }
 
     private func undoUpdatedReminderKeepingLaterEdits(_ operation: UndoOperation, old: ReminderSnapshot,
@@ -64,10 +70,11 @@ extension EventKitManager {
         guard let reminder = target as? EKReminder, let plan = merge else { return try await executeUndo(operation) }
         // The recorded list is resolved before any write, as `ReminderSnapshot.apply(to:lists:for:now:)`
         // does (#242), so a missing list refuses with the reminder unchanged.
-        let list = try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate)
+        // Round 2 (LOW 3): only when the list's group is restored.
+        let list = plan.restored.contains("list") ? try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate) : nil
         old.applyRestoring(Set(plan.restored), to: reminder, list: list, now: Date())
         try saveExistingReminder(reminder, handler: "undo")
         markNeedsRefresh()
-        return UndoKeepLaterEdits.undoneMessage(kind: .reminder, title: old.title, plan: plan)
+        return UndoKeepLaterEdits.undoneMessage(kind: .reminder, title: reminder.title ?? old.title, plan: plan)
     }
 }

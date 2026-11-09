@@ -9,18 +9,19 @@ import Foundation
 ///
 /// A **group** is fields that move together, so that a restore never writes half of one: an
 /// event's start, end, all-day flag and time zone; its location and place (`apply` writes the
-/// location, and EventKit couples the place to it); its calendar, availability and alarms; a reminder's
+/// location, and EventKit couples the place to it); a reminder's
 /// due date, start date, alarms, repetition, completion and list (written together by `ReminderDateSync.restore`, alarms ride on the due date, and
 /// EventKit refuses a repeating reminder without a due date, EKErrorDomain 18). Every other field is a
 /// group of its own. The comparison and the masked restore use the same table. A field outside it
 /// (`item_type`, an event's `recurrence`) is never merged: the undo refuses as before.
 enum UndoKeepLaterEdits {
-    /// PR #504 round 1 (LOW): the calendar decides which availability (#245) and alarms the event can
-    /// keep, so the three move together.
+    /// PR #504 round 2 (HIGH, MEDIUM): a relative alarm means another time once the event turns
+    /// all-day or timed, so the alarms move with the dates; round 1 (LOW): the calendar decides which
+    /// availability (#245) and alarms the event can keep, so they move with the calendar. A field is
+    /// in one group only, so both couplings make one group.
     static let eventGroups: [[String]] = [
-        ["start_time", "end_time", "all_day", "timezone"],
+        ["start_time", "end_time", "all_day", "timezone", "alarms", "calendar", "availability"],
         ["location", "structured_location"],
-        ["calendar", "availability", "alarms"],
         ["title"], ["notes"], ["url"],
     ]
 
@@ -89,7 +90,7 @@ enum UndoKeepLaterEdits {
         }
         let together = groups == reminderGroups
             ? "a reminder's due date, start date, alarms, repetition, completion and list count as one"
-            : "an event's start, end, all-day flag and time zone count as one, so do its location and place, and so do its calendar, availability and alarms"
+            : "an event's start, end, all-day flag, time zone, alarms, calendar and availability count as one, and so do its location and place"
         if plan.overlapping.isEmpty {
             note += " The later edits are not in what the update changed (\(together)), so undo can restore only what the update changed and keep them: ask the user first, then call undo with keep_later_edits set to true."
         } else {
@@ -98,7 +99,8 @@ enum UndoKeepLaterEdits {
         return note
     }
 
-    /// What `undo` with `keep_later_edits` answers after the masked restore. Titles through
+    /// What `undo` with `keep_later_edits` answers after the masked restore. `title` is the item's title
+    /// after the merge (PR #504 round 2, LOW 4: a later title edit may have been kept). Titles through
     /// `undoVisibleTitle`, field names from the table.
     static func undoneMessage(kind: UndoPostState.Kind, title: String, plan: Plan) -> String {
         let restored = plan.restored.isEmpty ? "nothing (the update changed none of the fields undo restores)" : plan.restored.joined(separator: ", ")
