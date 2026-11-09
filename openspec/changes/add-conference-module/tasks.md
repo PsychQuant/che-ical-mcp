@@ -7,7 +7,7 @@
 - [x] 1.5 加入預設提醒（Session events carry reminders；提醒：建立時設定、只在報名狀態改變時更新）。驗證：契約第 3、4 節、報告第 4 行、實例、spec 的 reminders requirement 與三個情境一致。
 - [x] 1.6 第 3 輪驗證的修正（總覽用純日期；場次一律用 `create_event` 逐一建立；找既有集合的三步；archive-event 的例外用 ADDED，不用 MODIFIED；自己的發表；會議名稱的三個位置）。驗證：`spectra validate` 與 `spectra analyze` 無 Critical 與 Warning；`grep` 契約、spec、design、proposal 沒有真實會議名稱；`create_events_batch` 只出現在「不要用」的語境；spec 的每個新情境在契約裡有對應文字。
 
-- [x] 1.7 第 4 輪驗證的修正（讀回比對 `*_local`、不符就警告並先問；時間寫法；邊界輸入先問；只更正部分項目的訊息；複製的文字不能形成標記；採納寫入標題、拒絕採納時記為 kept；同一天開始的另一場會議不算候選；別的日曆找到時的三個答案；`quick-event` 不再預先核准 `update_event`）。驗證：`spectra validate` 與 `spectra analyze` 無 Critical 與 Warning；契約、spec、design、proposal 對同一件事的說法一致。
+- [x] 1.7 第 4 輪驗證的修正（讀回比對 `*_local`、不符就警告並先問；時間寫法；邊界輸入先問；只更正部分項目的訊息；複製的文字不能形成標記；採納寫入標題、拒絕採納時記為 kept（採納後來在 PR #498 第 5 輪從 v1 拿掉，見 design.md〈採納從 v1 拿掉〉）；同一天開始的另一場會議不算候選；別的日曆找到時的三個答案；`quick-event` 不再預先核准 `update_event`）。驗證：`spectra validate` 與 `spectra analyze` 無 Critical 與 Warning；契約、spec、design、proposal 對同一件事的說法一致。
 
 - [x] 1.8 第 5 輪驗證的修正（時間寫法擴及 `update_event`、`check_conflicts` 與讀回；`create_event` 的略過條件；標記名稱與「未變」；只有一天的輸入先問；平行時段的起訖與地點；只更正部分項目而尚無任何一組；別的日曆那一組的日曆例外；維護者答覆與實作者設計分開寫）。驗證：`spectra validate` 與 `spectra analyze` 無 Critical 與 Warning；本輪修正未再經 ensemble 驗證（第 5 輪已無 CRITICAL 與 HIGH），只經實測與文字核對。
 
@@ -17,6 +17,6 @@
 
 ## 3. 驗證與發布準備
 
-- [x] 3.1（Re-pasting or correcting a program does not duplicate events）整份議程端到端驗收。2026-10-25 已做：三天總覽讀回正確、純日期與帶 offset 的對照、平行場次合併與前綴、提醒讀回、重貼以前綴關鍵字加 ±60 天範圍找到全部事件、同日兩個「休憩」各自比對（建立 0、更新 0、未變 8）、時間更正保留 event id 與提醒、手動改過的提醒保留、`conference_module: off` 由子目錄找到最近設定檔、行事曆的全天預設提醒、`timezone` 讀寫行為。2026-10-26 補做（拋棄式日曆，已刪）：報名狀態改變（去掉前綴、提醒設為 [15]、標題與時間不變）後 marker 以下的使用者文字保留；`create_event` 對同名且涵蓋新起始時間的事件回 `skipped`（起始時間差 15 分鐘也是）。邊界輸入的盲測分類（單日兩項會先問、兩項以上的單日議程、系列演講、週期例會、單場會議通知、單一演講、超過七天）八個輸入皆符合規則，其發現的三處文字缺口已補。未在日曆上跑：手建事件的採納與拒絕採納、改名與改起日的對照表、跨日曆找到集合、與既有事件的衝突列表、主機時區與會議時區不同時的完整重貼；這幾項由文字核對與先前幾輪驗證涵蓋，沒有實機證據。
-- [x] 3.2 更新 `plugin/CHANGELOG.md` 的 `[Unreleased]`，`plugin.json` 版號不動。驗證：條目說明兩層形狀、去重標記與採納、提醒、關閉方式、`quick-event` 的權限變化、純 plugin 變更。
+- [x] 3.1（Re-pasting or correcting a program does not duplicate events）整份議程端到端驗收。2026-10-25 已做：三天總覽讀回正確、純日期與帶 offset 的對照、平行場次合併與前綴、提醒讀回、重貼以前綴關鍵字加 ±60 天範圍找到全部事件、同日兩個「休憩」各自比對（建立 0、更新 0、未變 8）、時間更正保留 event id 與提醒、手動改過的提醒保留、`conference_module: off` 由子目錄找到最近設定檔、行事曆的全天預設提醒、`timezone` 讀寫行為。2026-10-26 補做（拋棄式日曆，已刪）：報名狀態改變（去掉前綴、提醒設為 [15]、標題與時間不變）後 marker 以下的使用者文字保留；`create_event` 對同名且涵蓋新起始時間的事件回 `skipped`（起始時間差 15 分鐘也是）。邊界輸入的盲測分類（單日兩項會先問、兩項以上的單日議程、系列演講、週期例會、單場會議通知、單一演講、超過七天）八個輸入皆符合規則，其發現的三處文字缺口已補。未在日曆上跑：手建事件的採納與拒絕採納、改名與改起日的對照表、跨日曆找到集合、與既有事件的衝突列表、主機時區與會議時區不同時的完整重貼；這幾項由文字核對與先前幾輪驗證涵蓋，沒有實機證據。2026-11-09 由 #351 在拋棄式日曆上以 repo build 的 binary 經 `--cli` 跑過這五項（結果記在 #351），並依結果修正契約四處（見 design〈找既有集合的三步〉）。修正後的規則（重新提出手建事件、改名提問、手建事件的提案與拒絕、沒人能回答時的待決、跨日曆集合作為這次的日曆）沒有在日曆上跑，只有總覽日期的寫入跑過。
+- [x] 3.2 更新 `plugin/CHANGELOG.md` 的 `[Unreleased]`，`plugin.json` 版號不動。驗證：條目說明兩層形狀、去重標記與採納（後來從 v1 拿掉，條目已改寫）、提醒、關閉方式、`quick-event` 的權限變化、純 plugin 變更。
 - [x] 3.3 `spectra validate add-conference-module` 與 `spectra analyze add-conference-module`。驗證：無 Critical 與 Warning。
