@@ -319,8 +319,8 @@ lng=$(python3 -c 'print("Q"*200)'); printf x > "$T/$lng.md"
 run stop "$(json exact "$T")"; ctx=$(context "$OUT")
 has "the reminder gives the count" "$ctx" "2 changed files"
 has "the reminder names the session for the helper" "$ctx" 'session "exact"'
-got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" exact 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sorted(d["files"]) == sorted(["b\nc.md", "Q"*200 + ".md"]) and d["trip_folder"].endswith("/trips/exact"))' 2>/dev/null)
-check "the helper prints the exact names, newline and full length kept" "$got" "True"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" exact 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["files"] == ["Q"*200 + ".md"] and d["unreadable"] == 1 and d["trip_folder"].endswith("/trips/exact"))' 2>/dev/null)
+check "the helper prints the exact name at full length, and counts the name with a newline as unreadable" "$got" "True"
 bash "$HELPER" "$CLAUDE_PLUGIN_DATA" '../x' >/dev/null 2>&1; check "the helper refuses a session id with a path" "$?" "2"
 bash "$HELPER" relative/dir exact >/dev/null 2>&1; check "the helper refuses a relative data directory" "$?" "2"
 bash "$HELPER" "$CLAUDE_PLUGIN_DATA" nosuch >/dev/null 2>&1; check "the helper answers 1 when there is no list" "$?" "1"
@@ -401,6 +401,16 @@ mkdir -p "$CLAUDE_PLUGIN_DATA/itinerary-sessions"
 printf '{"trip_folder": "/t", "files": ["ok.md", "bad\\udcff.md"], "total": 2, "complete": true}' > "$CLAUDE_PLUGIN_DATA/itinerary-sessions/sur.changed.json"
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" sur)
 check "a name that is not text is counted as unreadable" "$got" '{"trip_folder": "/t", "files": ["ok.md"], "unreadable": 1, "total": 2, "complete": true}'
+# Security review of r4: a name with a control or format character (a newline, a bidi override, a
+# zero-width space) is never printed by the helper, raw or escaped: it is counted as unreadable.
+T="$TMP/trips/ctrl"; trip "$T"; run start "$(json ctrl "$T")"
+printf x > "$T/$(printf 'line\nbreak.md')"; printf x > "$T/$(printf 'bidi\xe2\x80\xaeevil.md')"; printf x > "$T/$(printf 'zero\xe2\x80\x8bwidth.md')"; printf x > "$T/plain 日程.md"
+run stop "$(json ctrl "$T")"
+got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" ctrl)
+check "the helper prints only clean names, literally, and counts the rest" "$got" "{\"trip_folder\": \"$T\", \"files\": [\"plain 日程.md\"], \"unreadable\": 3, \"total\": 4, \"complete\": true}"
+hasnt "no bidi override reaches the helper's output" "$got" "$(printf '\xe2\x80\xae')"
+hasnt "no zero-width space reaches the helper's output" "$got" "$(printf '\xe2\x80\x8b')"
+hasnt "no escaped newline reaches the helper's output" "$got" '\n'
 # #5: the helper refuses a data directory with a .. component or outside ~/.claude/plugins/data/.
 bash "$HELPER" "$CLAUDE_PLUGIN_DATA/../che-ical-mcp-test" ascii >/dev/null 2>&1; check "the helper refuses a data directory with .." "$?" "2"
 mkdir -p "$TMP/notdata/itinerary-sessions"; cp "$CLAUDE_PLUGIN_DATA/itinerary-sessions/ascii.changed.json" "$TMP/notdata/itinerary-sessions/"

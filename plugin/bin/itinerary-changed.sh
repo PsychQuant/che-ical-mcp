@@ -4,9 +4,11 @@
 #
 # Usage: itinerary-changed.sh <plugin data directory> <session id>
 # stdout: UTF-8 JSON {"trip_folder": ..., "files": [...at most 200], "unreadable": n, "total": n,
-#         "complete": bool}. A stored name that is not text (an undecodable byte, kept by Python as a
-#         lone surrogate) is not printed: it is counted in "unreadable" (#500 r4 #4).
-# Exit: 0 printed, 1 no list for that session (or a trip folder whose name is not text), 2 bad
+#         "complete": bool}. A stored name holding a character of the categories the reminder's
+#         display names drop (Cc, Cf, Zl, Zp, Cs, Co: a newline, a bidi override, a zero-width space,
+#         a lone surrogate from an undecodable byte, a private-use character) is never printed, raw
+#         or escaped: it is counted in "unreadable" (#500 r4 #4 and its security review).
+# Exit: 0 printed, 1 no list for that session (or a trip folder whose name holds such a character), 2 bad
 #       arguments or a symlink on the way, 3 no usable python3.
 # Reads one file and writes nothing. The data directory must be absolute, have no `..` component,
 # and lie under ~/.claude/plugins/data/ (#500 r4 #5); neither the itinerary-sessions directory nor
@@ -48,13 +50,14 @@ if [ "$py" = /usr/bin/python3 ] && ! /usr/bin/xcode-select -p >/dev/null 2>&1; t
   exit 3
 fi
 "$py" -I - "$file" <<'PY'
-import json, sys
+import json, sys, unicodedata
+DROPPED = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co")   # the same categories as the hook's DROPPED_CATEGORIES
 def text(s):
-    return isinstance(s, str) and not any(0xD800 <= ord(c) <= 0xDFFF for c in s)
+    return isinstance(s, str) and not any(unicodedata.category(c) in DROPPED for c in s)
 with open(sys.argv[1], encoding="ascii") as f:
     d = json.load(f)
 if not text(d.get("trip_folder")):
-    sys.stderr.write("itinerary-changed.sh: the trip folder's name is not text\n")
+    sys.stderr.write("itinerary-changed.sh: the trip folder's name holds a control or format character\n")
     sys.exit(1)
 files = d.get("files", [])
 readable = [p for p in files if text(p)]
