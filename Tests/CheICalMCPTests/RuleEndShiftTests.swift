@@ -268,6 +268,7 @@ final class RuleEndShiftTests: XCTestCase {
         // A passed end before the stored end: the offered end takes in the occurrences it then reaches.
         let early = refusal(days, stored: [days[4]], passed: .end(days[2]), plan: twoLater)
         XCTAssertTrue(early!.contains("at or after 2026-12-13T10:00:00+08:00"), early!)
+        XCTAssertNil(refusal(days, stored: [days[4]], passed: .end(days[4].addingTimeInterval(2 * 86_400)), plan: twoLater))
         // Span future counts only the occurrences from its own slot.
         let future = plan(planned: days[3].addingTimeInterval(2 * 86_400), stored: days[3])
         XCTAssertEqual(RuleEndShift.keepEnd(slots: days, ruleEnd: days[4], plan: future, from: days[3]), days[4].addingTimeInterval(2 * 86_400))
