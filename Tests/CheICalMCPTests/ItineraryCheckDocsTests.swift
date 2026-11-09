@@ -143,6 +143,12 @@ final class ItineraryCheckDocsTests: XCTestCase {
             XCTAssertEqual(spec.components(separatedBy: phrase).count - 1, 1, "spec lacks, or repeats: \(phrase)")
         }
         XCTAssertFalse(spec.contains("When every fact matches, it SHALL answer in one line."))
+        // The reminder itself invites no dismissal from the display names (#500 r7, follow-up).
+        let phrase = "SHALL leave the report that there are no trip facts to the skill's full check, and SHALL NOT invite a dismissal from the display names"
+        XCTAssertEqual(spec.components(separatedBy: phrase).count - 1, 1, "spec lacks, or repeats: \(phrase)")
+        XCTAssertFalse(spec.contains("says to answer in one line when none of the files records a trip fact"))
+        XCTAssertFalse(try read("plugin/hooks/itinerary_reminder.py").contains("If none of them does, say so in one line"),
+                       "the reminder must not invite a one-line dismissal from names")
     }
 
     /// #500 r7 #3 and #5: the real-path rule resolves both sides, so a trip folder reached through a

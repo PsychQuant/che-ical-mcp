@@ -597,6 +597,16 @@ run stop "$(json fiftyone "$T")"
 got=$(bash "$HELPER" "$CLAUDE_PLUGIN_DATA" fiftyone | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["complete"], d["total"], d["unreadable"], len(d["files"]), d["files"][50])')
 check "51 changed files: the helper gives all 51 paths, the 51st last" "$got" "True 51 0 51 n/f51.md"
 
+# #1 (reminder): the reminder never invites a dismissal from the display names; only the skill's full
+# check may report that there are no trip facts.
+ctx=$(context "$OUT")
+has "the reminder asks to run itinerary-check for the files" "$ctx" "Run the itinerary-check skill for these files"
+has "the reminder says the names cannot show a trip fact" "$ctx" "the names alone cannot show whether a trip fact changed"
+has "the reminder leaves 'no trip facts' to the skill's full check" "$ctx" "Only the skill may report that there are no trip facts, and only after a full check"
+has "the reminder offers telling the user instead" "$ctx" "tell the user in one line that the itinerary-check skill can check them"
+hasnt "the reminder no longer invites a one-line dismissal" "$ctx" "If none of them does, say so in one line"
+hasnt "the reminder does not ask Claude to judge from names" "$ctx" "If any of them records a change"
+
 # #2: inline and block lists follow strip_comment's quote and escape rules: \" and \\ inside double
 # quotes, '' inside single quotes.
 T="$TMP/trips/esc7"; trip "$T" 'itinerary_ignore: ["a\"b,c.md", "back\\slash.md", '"'it''s.md'"']'
