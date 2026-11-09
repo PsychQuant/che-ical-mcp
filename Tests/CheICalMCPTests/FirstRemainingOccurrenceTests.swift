@@ -184,8 +184,8 @@ final class FirstRemainingOccurrenceTests: XCTestCase {
         let refusal = try XCTUnwrap(body.range(of: "FirstRemainingOccurrence.refusesUpdateThroughStandIn("))
         let firstField = try XCTUnwrap(body.range(of: "if let t = title { event.title = t }"))
         XCTAssertLessThan(refusal.lowerBound, firstField.lowerBound, "before the first field of the event is assigned")
-        let move = try XCTUnwrap(source.range(of: "func moveEvent("))
-        let moveBody = String(source[move.upperBound...].prefix(2800))
+        // PR #505 round 4: moveEvent's own body, not a fixed prefix the #503 account check pushed past.
+        let moveBody = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: source))
         XCTAssertTrue(moveBody.contains("FirstRemainingOccurrence.refusesMoveThroughStandIn("))
         let moveRefusal = try XCTUnwrap(moveBody.range(of: "FirstRemainingOccurrence.refusesMoveThroughStandIn("))
         let firstWrite = try XCTUnwrap(moveBody.range(of: "defer { markNeedsRefresh() }"))

@@ -830,3 +830,24 @@ behaviour probe has confirmed the new binary. Use only a disposable list whose n
 
 Steps 6, 7 and 8 cover the copy order of round 1, the list removal and the history occurrence check of round 5, which the device run of 2026-11-09 did not exercise. Record the results on #459. Delete the list afterwards and confirm with `list_calendars`.
 
+## Release gate：刪除過場次的系列改時間（#503）
+
+#503 的檢查（`DeletedOccurrenceCheck` 與 `deletedOccurrenceVerdict`）的純邏輯有單元測試，接線只有原始碼釘選；EventKit 的系列
+物件、`occurrenceDate`、`/RID=` id 與列出範圍合在一起之後判定對不對、拒絕之後物件有沒有被動到，只能在裝置上看（PR #505
+round 6 的 MEDIUM 1）。拒絕不寫入、也不進 undo，是 stateless 的，所以**出 #503 的那個版本打 tag 之前**，用剛 build 的
+binary 的 `--cli`，只在名稱含 `#503` 的拋棄式日曆上做。每個系列都是每週 10:00、有 `end_date` 的 timed 系列，標題各不相同；
+每次被拒絕之後，用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回整個系列，逐場比對 title、start、end、notes、
+location、alarms，與拒絕前相同：
+
+1. **第一場被刪**：`delete_event` span `this` 刪第一場 → 用系列 id、span `future`、`occurrence_date` 為第三場（第一個剩下的場次之後）、
+   帶新的 `start_time` 與 `end_time` → 以 unknown 拒絕，訊息寫「its first slot cannot be shown (it is read through its first
+   remaining occurrence, because its first occurrence was deleted)」，什麼都沒寫。改用 span `all` 時，#326 會在 #503 之前以
+   「This series' first occurrence was deleted, so updating it from its first remaining occurrence would split it into a new
+   series…」拒絕，這也算過（同樣什麼都沒寫）。
+2. **第一場單獨移動、較後一場被刪**：`update_event` span `this` 把第一場從 10:00 移到 12:00 → 刪第三場 → 用系列 id、span `all`
+   寫 `start_time` 12:00（與對應的 `end_time`）→ 拒絕（deleted 或 unknown 都算過），什麼都沒寫，第三場沒有回來。
+3. **從最後一個刪除場次之後的場次起改時間**：刪第二場 → 用系列 id、span `future`、`occurrence_date` 為第四場、新的 time of day →
+   成功；讀回時第二場仍不在，第四場起是新的時間，第一、三場不變。
+
+任何一步拒絕後讀回的欄位有變、或第 3 步第二場回來，就是 bug，回報到 #503。結果記在 #503。結束後刪掉拋棄式日曆，隔一分鐘以上
+`list_calendars` 兩次，名稱含 `#503` 的都是 0。
