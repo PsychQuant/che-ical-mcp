@@ -79,7 +79,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             let label = line[line.startIndex..<colon]
             return label.allSatisfy({ $0.isLetter }) && !label.isEmpty ? "`\(label):`" : nil
         }
-        XCTAssertEqual(labels.count, 10, "template labels changed: \(labels)")
+        XCTAssertEqual(labels.count, 11, "template labels changed: \(labels)")
         guard let open = skill.range(of: "one of the labels above ("),
               let close = skill.range(of: ")", range: open.upperBound..<skill.endIndex) else {
             return XCTFail("escape list not found")
@@ -88,6 +88,54 @@ final class QuotaSkillDocsTests: XCTestCase {
         for label in labels {
             XCTAssertTrue(escapeList.contains(label), "escape list misses \(label)")
         }
+    }
+
+    /// #327 verify round 1: periods have a stable identity and past or completed reminders are never
+    /// rewritten. Each phrase is the rule a sync or update depends on; losing one reopens the HIGH findings.
+    func testPeriodModelRules() throws {
+        let skill = try read(Self.skill)
+        for pinned in [
+            "**`key` is the period's identity**: the reset day in the reset zone",
+            "Periods are matched by key, never by order.",
+            "**A period is covered** when a reminder of the quota with that period exists, open or completed.",
+            "**A rolled-forward reminder is never moved back.**",
+            "It is never moved, never matched to another period, and never offered for deletion.",
+            "**This pairing is the only order-based step, and it happens only here**",
+            "Period: <key>",
+        ] {
+            XCTAssertTrue(skill.contains(pinned), "\(Self.skill) lost: \(pinned)")
+        }
+        let spec = try read(Self.spec)
+        XCTAssertTrue(spec.contains("Period: <key>"), "spec lost the Period line")
+        XCTAssertTrue(spec.contains("SHALL NOT be moved, matched to another period, or offered for deletion"))
+    }
+
+    func testListReportsEachCaseOnce() throws {
+        let skill = try read(Self.skill)
+        for state in ["- `used`: a completed reminder has its period;", "- `not used`: an open reminder has its period (the overdue record);",
+                      "- `no record`: neither.", "- `open, due <due>`:", "- `open, deadline passed, resets <reset>`:", "- `no reminder`: not covered.",
+                      "**rule mode, running**", "**rule mode, stopped**", "**rule mode, missing**"] {
+            XCTAssertTrue(skill.contains(state), "list lost the case: \(state)")
+        }
+        XCTAssertTrue(skill.contains("It is not ticked with a \"not used\" note, because a ticked reminder reads as used."),
+                      "the stopped-series trade-off must say why the record is not ticked")
+    }
+
+    func testMarkerMustBeTheOnlyQuotaModuleLine() throws {
+        let skill = try read(Self.skill)
+        XCTAssertTrue(skill.contains("only when its notes have exactly one line that starts with `quota-module:`, and that line is exactly `quota-module: <id>`"))
+        XCTAssertTrue(skill.contains("Any other count is **listed and never written**."))
+    }
+
+    func testHelperArgumentsAreNeverInterpolated() throws {
+        XCTAssertTrue(try read(Self.skill).contains("It is then passed as its own quoted argument (`--reset-tz \"$zone\"`), and never pasted into a command string."))
+    }
+
+    func testScheduleLineCarriesNoPerPeriodReason() throws {
+        let skill = try read(Self.skill)
+        XCTAssertTrue(skill.contains("Schedule: one recurring reminder | one reminder per period\n"),
+                      "the Schedule line must be constant so notes compare equal from period to period")
+        XCTAssertTrue(skill.contains("The reason goes in the report, never in the notes."))
     }
 
     func testReadmeListsTheSkill() throws {

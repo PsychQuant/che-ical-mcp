@@ -9,7 +9,13 @@
 - [x] 2.1 `plugin/skills/quota/SKILL.md`：五個操作、設定檔的封閉鍵表、提醒的欄位與 notes 範本與標記（The reminder has one shape）、讀回（Writes are read back）、更新與逾期的那一則不移動（An update edits the reminder in place）、退役（A retirement asks first）、清單與同步（List and sync）、報告、虛構實例。驗證：對照 spec 逐條；`QuotaSkillDocsTests` 釘住範本、標記、設定檔路徑與 helper 名稱。
 - [x] 2.2 `plugin/README.md`、`plugin/CLAUDE.md`、`plugin/CHANGELOG.md` 的 `[Unreleased]`。驗證：skill 列在 README 的 Skills 表與 CLAUDE.md 的 Skills 段；changelog 寫明需要 #333 與 #354 的 binary。
 
+## 2b. Verify 第 1 輪的修正
+
+- [x] 2b.1（Each period has a stable identity）每一期有固定的識別：helper 輸出 `key`（重置日）與 `state`、`--previous` 列出上一期；per-period 的提醒帶 `Period:` 行，rule mode 由 due 讀出期別；以期別比對、不按順序；完成或已過重置的那一則不再被移動、配對或提議刪除；rule mode 不把已往前滾的提醒移回；沒用完時 rule mode 會停住：停住的系列以「保留未勾的紀錄、提議重啟」處理；`list` 每一種情況的回報寫成封閉列舉。驗證：`QuotaSkillDocsTests` 的 period-model、list、marker、引數、Schedule 行釘選；實機檢查 3.1b。
+- [x] 2b.2 helper：十進位（`08`、`09`、`010`）、命令替換裡的失敗會停下、時區檔要是 TZif、提前量上限；`--quotas` 檢查要寫入的目錄與 symlink 的目標。驗證：兩個 shell 測試檔全過。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。
+- [x] 3.1b Verify 第 1 輪之後重做（拋棄式 `#327` 清單，讀取都限定該清單）：rule mode 在重置前打勾後的狀態、per-period 的 `Period:` 行、停住的系列以 `clear_recurrence` 改成一次性且到期日不變。
 - [ ] 3.2 下一個 binary release 之後，在重啟後的 session MCP 上走一次 `declare`、`update`、`list`、`retire`（拋棄式清單）。
