@@ -9,22 +9,45 @@ import Foundation
 ///
 /// A **group** is fields that move together, so that a restore never writes half of one: an
 /// event's start, end, all-day flag and time zone; its location and place (`apply` writes the
-/// location, and EventKit couples the place to it); a reminder's due date, start date, alarms and
-/// repetition (written together by `ReminderDateSync.restore`, alarms ride on the due date, and
+/// location, and EventKit couples the place to it); its calendar, availability and alarms; a reminder's
+/// due date, start date, alarms, repetition, completion and list (written together by `ReminderDateSync.restore`, alarms ride on the due date, and
 /// EventKit refuses a repeating reminder without a due date, EKErrorDomain 18). Every other field is a
 /// group of its own. The comparison and the masked restore use the same table. A field outside it
 /// (`item_type`, an event's `recurrence`) is never merged: the undo refuses as before.
 enum UndoKeepLaterEdits {
+    /// PR #504 round 1 (LOW): the calendar decides which availability (#245) and alarms the event can
+    /// keep, so the three move together.
     static let eventGroups: [[String]] = [
         ["start_time", "end_time", "all_day", "timezone"],
         ["location", "structured_location"],
-        ["title"], ["calendar"], ["notes"], ["url"], ["alarms"], ["availability"],
+        ["calendar", "availability", "alarms"],
+        ["title"], ["notes"], ["url"],
     ]
 
+    /// PR #504 round 1: completion joins the dates (M2: a rule restored onto a reminder completed
+    /// later is a write `update_reminder` refuses as unmeasured), and so does the list, whose source
+    /// decides which dates and alarms it keeps (LOW).
     static let reminderGroups: [[String]] = [
-        ["due_date", "start_date", "alarms", "recurrence"],
-        ["title"], ["list"], ["notes"], ["priority"], ["url"], ["completed", "completion_date"],
+        ["due_date", "start_date", "alarms", "recurrence", "completed", "completion_date", "list"],
+        ["title"], ["notes"], ["priority"], ["url"],
     ]
+
+    /// PR #504 round 1, M3: what the update changed, compared exactly. The guard's comparison
+    /// (`changedFields`) treats coordinates added to a place as the server's geocode; applied to the
+    /// update's own write, that hid an update that gave the place coordinates.
+    static func changedByUpdate(old: EventSnapshot, saved: EventSnapshot) -> [String] {
+        var changed = old.changedFields(in: saved, restoring: nil)
+        let samePlace = old.structuredLocationTitle == saved.structuredLocationTitle
+            && old.structuredLocationLat == saved.structuredLocationLat
+            && old.structuredLocationLon == saved.structuredLocationLon
+            && old.structuredLocationRadius == saved.structuredLocationRadius
+        if !samePlace, !changed.contains("structured_location") { changed.append("structured_location") }
+        return changed
+    }
+
+    static func changedByUpdate(old: ReminderSnapshot, saved: ReminderSnapshot) -> [String] {
+        old.changedFields(in: saved, restoring: nil)
+    }
 
     /// `restored`: every field of the groups the update changed, in table order (what the masked
     /// restore writes). `kept`: the fields changed later in other groups. `overlapping`: the fields
@@ -59,12 +82,14 @@ enum UndoKeepLaterEdits {
     static func refusalNote(changedByUpdate: [String], changedElsewhere: [String], groups: [[String]]) -> String? {
         let updated = changedByUpdate.isEmpty ? "none of the fields undo restores" : changedByUpdate.joined(separator: ", ")
         var note = "The update changed: \(updated). Changed after it: \(changedElsewhere.joined(separator: ", "))."
+        // Round 1, M3: nothing to restore by itself; the default undo is the only one.
+        guard !changedByUpdate.isEmpty else { return note + " keep_later_edits does not apply here." }
         guard let plan = plan(changedByUpdate: changedByUpdate, changedElsewhere: changedElsewhere, groups: groups) else {
             return note + " keep_later_edits cannot keep this change."
         }
         let together = groups == reminderGroups
-            ? "a reminder's due date, start date, alarms and repetition count as one"
-            : "an event's start, end, all-day flag and time zone count as one, and so do its location and place"
+            ? "a reminder's due date, start date, alarms, repetition, completion and list count as one"
+            : "an event's start, end, all-day flag and time zone count as one, so do its location and place, and so do its calendar, availability and alarms"
         if plan.overlapping.isEmpty {
             note += " The later edits are not in what the update changed (\(together)), so undo can restore only what the update changed and keep them: ask the user first, then call undo with keep_later_edits set to true."
         } else {
@@ -123,7 +148,7 @@ extension ReminderSnapshot {
         if fields.contains("list"), let list { reminder.calendar = list }
         if fields.contains("title") { reminder.title = title }
         if fields.contains("notes") { reminder.notes = notes }
-        if fields.contains("completed") || fields.contains("completion_date") {
+        if fields.contains("completed") {
             ReminderCompletionWrite.plan(isCompleted: isCompleted, recorded: completionDate, now: now).apply(to: reminder)
         }
         if fields.contains("priority") { reminder.priority = priority }

@@ -35,8 +35,22 @@ final class UndoKeepLaterEditsWiringTests: XCTestCase {
                          "try eventStore.save(event, span: .thisEvent)",
                          "event.rollback()",
                          "markNeedsRefresh()"], in: arm)
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: arm).count, 2,
-                       "nothing suspends between the check and the write")
+        // Round 1: between the merge's check and its write the only await is the fallback, which
+        // returns (the default undo runs its own check), so nothing suspends before the write.
+        let check = try XCTUnwrap(arm.range(of: "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:"))
+        let save = try XCTUnwrap(arm.range(of: "try eventStore.save(event, span: .thisEvent)"))
+        let between = String(arm[check.upperBound..<save.lowerBound])
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: between).count, 1, between)
+        XCTAssertTrue(between.contains("let plan = merge else { return try await executeUndo(operation) }"), between)
+    }
+
+    /// Round 1: an update that changed nothing undo restores takes the default undo, and no path of
+    /// the merge discards the record.
+    func testTheMergeFallsBackToTheDefaultUndoAndNeverDiscards() throws {
+        let file = SourcePins.code(try SourcePins.source(Self.file))
+        XCTAssertFalse(file.contains("UnrecoverableUndoError"))
+        XCTAssertEqual(SourcePins.ranges(of: "guard !changedByUpdate.isEmpty else { return try await executeUndo(operation) }", in: file).count, 2)
+        XCTAssertEqual(SourcePins.ranges(of: "UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved)", in: file).count, 2)
     }
 
     func testTheReminderMergeKeepsTheUpdateArmsOrder() throws {

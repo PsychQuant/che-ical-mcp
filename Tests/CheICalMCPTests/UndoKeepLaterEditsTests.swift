@@ -61,6 +61,64 @@ final class UndoKeepLaterEditsTests: XCTestCase {
                                              groups: UndoKeepLaterEdits.eventGroups))
     }
 
+    /// PR #504 round 1, M2: clear_recurrence, then a completion elsewhere: restoring the rule onto a
+    /// completed reminder is a write update_reminder refuses, so completion moves with the dates.
+    func testACompletionOverlapsTheRestoredRepetition() throws {
+        let plan = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["recurrence"], changedElsewhere: ["completed"],
+                                                         groups: UndoKeepLaterEdits.reminderGroups))
+        XCTAssertEqual(plan.overlapping, ["completed"])
+        let date = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["due_date"], changedElsewhere: ["completion_date"],
+                                                         groups: UndoKeepLaterEdits.reminderGroups))
+        XCTAssertEqual(date.overlapping, ["completion_date"])
+    }
+
+    /// Round 1, LOW: a calendar decides which availability and alarms it takes; a list which dates
+    /// and alarms its source supports.
+    func testACalendarMovesWithItsAvailabilityAndAlarms() throws {
+        for later in ["availability", "alarms"] {
+            let plan = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["calendar"], changedElsewhere: [later],
+                                                             groups: UndoKeepLaterEdits.eventGroups))
+            XCTAssertEqual(plan.overlapping, [later])
+        }
+        let list = try XCTUnwrap(UndoKeepLaterEdits.plan(changedByUpdate: ["list"], changedElsewhere: ["alarms"],
+                                                         groups: UndoKeepLaterEdits.reminderGroups))
+        XCTAssertEqual(list.overlapping, ["alarms"])
+    }
+
+    /// Round 1, M3: the guard's geocode exemption is not applied to what the update itself wrote.
+    func testCoordinatesTheUpdateAddedCountAsChangedByIt() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let calendar = EKCalendar(for: .event, eventStore: store)
+        let before = event(title: "A", location: "Room", notes: nil, start: start, calendar: calendar)
+        before.structuredLocation = EKStructuredLocation(title: "Room")
+        let after = event(title: "A", location: "Room", notes: nil, start: start, calendar: calendar)
+        let place = EKStructuredLocation(title: "Room")
+        place.geoLocation = CLLocation(latitude: 25.0, longitude: 121.5)
+        after.structuredLocation = place
+        let changed = UndoKeepLaterEdits.changedByUpdate(old: EventSnapshot(from: before), saved: EventSnapshot(from: after))
+        XCTAssertEqual(changed, ["structured_location"])
+    }
+
+    /// Round 1, M3: an update that changed nothing undo restores is never offered the merge.
+    func testNoOfferWhenTheUpdateChangedNothingUndoRestores() throws {
+        let note = try XCTUnwrap(UndoKeepLaterEdits.refusalNote(changedByUpdate: [], changedElsewhere: ["title"],
+                                                                groups: UndoKeepLaterEdits.eventGroups))
+        XCTAssertFalse(note.contains("keep_later_edits set to true"), note)
+        XCTAssertTrue(note.contains("keep_later_edits does not apply"), note)
+    }
+
+    /// Round 1, LOW: after a masked undo the item does not hold every recorded value.
+    func testTheRedoInstructionOfAnUpdateSaysOnlyWhatIsTrue() throws {
+        let event = UndoOperation.updateEvent(id: "x", oldSnapshot: UndoSnapshotFixtures.event(title: "A"),
+                                              saved: UndoSnapshotFixtures.event(title: "B"))
+        let reminder = UndoOperation.updateReminder(id: "x", oldSnapshot: UndoSnapshotFixtures.reminder(title: "A"),
+                                                    saved: UndoSnapshotFixtures.reminder(title: "B"))
+        for text in [try XCTUnwrap(event.redoInstruction), try XCTUnwrap(reminder.redoInstruction)] {
+            XCTAssertFalse(text.contains("restored to its previous state"), text)
+            XCTAssertTrue(text.contains("as the undo left it"), text)
+        }
+    }
+
     // MARK: - Masked restore
 
     private func event(title: String, location: String?, notes: String?, start: Date, calendar: EKCalendar? = nil) -> EKEvent {
@@ -92,6 +150,20 @@ final class UndoKeepLaterEditsTests: XCTestCase {
 
         old.applyRestoring(["location", "structured_location"], to: current, calendar: current.calendar)
         XCTAssertEqual(current.location, "L0")
+        XCTAssertEqual(current.notes, "n1")
+    }
+
+    /// Round 1, LOW (Codex): an event that had no place before; restoring the place group clears
+    /// the one the update added and keeps a later edit to notes. In memory; the store side is the
+    /// release gate.
+    func testRestoringThePlaceOfAnEventThatHadNoneClearsIt() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let old = EventSnapshot(from: event(title: "A", location: nil, notes: "n0", start: start))
+        let current = event(title: "A", location: "Room", notes: "n1", start: start)
+        current.structuredLocation = EKStructuredLocation(title: "Room")
+        old.applyRestoring(["location", "structured_location"], to: current, calendar: current.calendar)
+        XCTAssertNil(current.location)
+        XCTAssertNil(current.structuredLocation, "the place goes with the location")
         XCTAssertEqual(current.notes, "n1")
     }
 

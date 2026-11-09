@@ -21,8 +21,10 @@ extension EventKitManager {
 
     private func undoUpdatedEventKeepingLaterEdits(_ operation: UndoOperation, old: EventSnapshot,
                                                    saved: EventSnapshot) async throws -> String {
+        // Round 1, M3: an update that changed nothing undo restores takes the default undo.
+        let changedByUpdate = UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved)
+        guard !changedByUpdate.isEmpty else { return try await executeUndo(operation) }
         let calendar = try await restoreCalendar(for: old, kind: .revertUpdate)
-        let changedByUpdate = old.changedFields(in: saved, restoring: nil)
         var merge: UndoKeepLaterEdits.Plan?
         let target = try await verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits: { _, elsewhere in
             guard let plan = UndoKeepLaterEdits.plan(changedByUpdate: changedByUpdate, changedElsewhere: elsewhere,
@@ -31,9 +33,10 @@ extension EventKitManager {
             merge = plan
             return []
         })
-        guard let event = target as? EKEvent, let plan = merge else {
-            throw UnrecoverableUndoError(message: "Undo record has no event post-state.")
-        }
+        // Round 1, LOW: a guard that passed without a plan (a changed field outside the table, with
+        // nothing changed later; no tool writes such a record) takes the default undo, which keeps
+        // the record if it refuses. Never a discard.
+        guard let event = target as? EKEvent, let plan = merge else { return try await executeUndo(operation) }
         old.applyRestoring(Set(plan.restored), to: event, calendar: calendar)
         do {
             try eventStore.save(event, span: .thisEvent)
@@ -47,8 +50,9 @@ extension EventKitManager {
 
     private func undoUpdatedReminderKeepingLaterEdits(_ operation: UndoOperation, old: ReminderSnapshot,
                                                       saved: ReminderSnapshot) async throws -> String {
+        let changedByUpdate = UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved)
+        guard !changedByUpdate.isEmpty else { return try await executeUndo(operation) }
         let lists = try await reminderListsForRestore()
-        let changedByUpdate = old.changedFields(in: saved, restoring: nil)
         var merge: UndoKeepLaterEdits.Plan?
         let target = try await verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits: { _, elsewhere in
             guard let plan = UndoKeepLaterEdits.plan(changedByUpdate: changedByUpdate, changedElsewhere: elsewhere,
@@ -57,9 +61,7 @@ extension EventKitManager {
             merge = plan
             return []
         })
-        guard let reminder = target as? EKReminder, let plan = merge else {
-            throw UnrecoverableUndoError(message: "Undo record has no reminder post-state.")
-        }
+        guard let reminder = target as? EKReminder, let plan = merge else { return try await executeUndo(operation) }
         // The recorded list is resolved before any write, as `ReminderSnapshot.apply(to:lists:for:now:)`
         // does (#242), so a missing list refuses with the reminder unchanged.
         let list = try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate)

@@ -243,10 +243,10 @@ extension UndoOperation {
     func updateRefusalNote(changedElsewhere: [String]) -> String? {
         switch self {
         case .updateEvent(_, let old, let saved):
-            return UndoKeepLaterEdits.refusalNote(changedByUpdate: old.changedFields(in: saved, restoring: nil),
+            return UndoKeepLaterEdits.refusalNote(changedByUpdate: UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved),
                                                   changedElsewhere: changedElsewhere, groups: UndoKeepLaterEdits.eventGroups)
         case .updateReminder(_, let old, let saved):
-            return UndoKeepLaterEdits.refusalNote(changedByUpdate: old.changedFields(in: saved, restoring: nil),
+            return UndoKeepLaterEdits.refusalNote(changedByUpdate: UndoKeepLaterEdits.changedByUpdate(old: old, saved: saved),
                                                   changedElsewhere: changedElsewhere, groups: UndoKeepLaterEdits.reminderGroups)
         default:
             return nil

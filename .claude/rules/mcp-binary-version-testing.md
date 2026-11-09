@@ -768,19 +768,39 @@ session MCP 上只做批次刪除（一律帶 `dry_run: false`）、`undo`、`re
 `UndoKeepLaterEditsHandlerTests`）；遮罩寫入在 EventKit 存檔後的實際結果沒有在裝置上看過，而 undo 有狀態，`--cli`
 走不到。**出 #265 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary 之後：被拒絕的
 update-undo 訊息裡有 `The update changed:`），只用名稱含 `#265` 的拋棄式日曆與清單。「之後的編輯」一律用另一個
-`--cli` process 做（它不進 session 的 undo stack，對 session 的紀錄來說就是別的 process），不用 AppleScript：
+`--cli` process 做（它不進 session 的 undo stack，對 session 的紀錄來說就是別的 process），不用 AppleScript。
+**每一步合併之後，都用 `--cli` 讀回「沒有還原的欄位」並確認跟合併前一樣**（PR #504 第 1 輪 M1：EventKit 存檔可能連帶改到
+沒寫的欄位）：事件看 `start`/`end`、`location`、`structured_location`（含座標）、`alarms`、`availability`；提醒事項看
+`due`、`start`、`alarms`、`reminder_recurrence_rules`、`is_completed`。
 
-1. session：`create_event` 一次性事件（標題 A、地點 L0）→ session：`update_event` 改標題 B → `--cli`：`update_event`
-   把地點改成 L1 → session：`undo`：拒絕，訊息有 `The update changed: title. Changed after it: location.` 與
-   `keep_later_edits set to true`，紀錄還在 → session：`undo` 帶 `keep_later_edits: true`：回應寫還原了 title、保留了
-   location → `--cli` 讀回：標題 A、地點 L1。
+1. session：`create_event` 一次性事件（標題 A、地點 L0、`alarms_minutes_offsets: [15]`）→ session：`update_event` 改標題 B →
+   `--cli`：`update_event` 把地點改成 L1 → session：`undo`：拒絕，訊息有 `The update changed: title. Changed after it:
+   location.` 與 `keep_later_edits set to true`，紀錄還在 → session：`undo` 帶 `keep_later_edits: true`：回應寫還原了
+   title、保留了 location → `--cli` 讀回：標題 A、地點 L1，起訖、鬧鐘 [15] 不變。
 2. 重疊：同上，但 session 改 `start_time`/`end_time`，`--cli` 改 `timezone` → `undo` 帶 `keep_later_edits: true`：拒絕、
-   什麼都沒寫、紀錄保留（訊息說 timezone 在這次修改改過的範圍內）→ `discard_id` 移除。
-3. 提醒事項：session：`create_reminder`（標題 A）→ session：`update_reminder` 改標題 B → `--cli`：`complete_reminder` →
-   session：`undo` 帶 `keep_later_edits: true` → `--cli` 讀回：標題 A、仍是已完成。
-4. 提醒事項的連動組：session：`update_reminder` 改 `due_date` → `--cli`：`update_reminder` 加 `recurrence` → session：
+   什麼都沒寫、紀錄保留 → `discard_id` 移除。
+3. 一次性提醒事項：session：`create_reminder`（標題 A、帶時間的 `due_date`、`alarms_minutes_offsets: [15]`）→ session：
+   `update_reminder` 改標題 B → `--cli`：`update_reminder` 改 `priority` → session：`undo` 帶 `keep_later_edits: true` →
+   `--cli` 讀回：標題 A、priority 是新值，到期、鬧鐘不變。
+4. 重複提醒事項：session：`create_reminder`（每週、帶時間的到期與 [15]）→ session：`update_reminder` 改標題 → `--cli`：
+   改 `notes` → session：`undo` 帶 `keep_later_edits: true` → 讀回：標題還原、notes 是新值，`reminder_recurrence_rules`、
+   到期、鬧鐘不變。
+5. 提醒事項的連動組：session：`update_reminder` 改 `due_date` → `--cli`：`update_reminder` 加 `recurrence` → session：
    `undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
-5. 不帶參數：第 1 步的形狀再做一次，`undo` 不帶 `keep_later_edits`：照舊拒絕、紀錄保留，`--cli` 讀回標題 B、地點 L1。
-6. 第 1 步合併之後 `redo`：回 `Cannot redo the update`、什麼都沒寫。
+6. 完成狀態跟日期同組（M2）：重複提醒事項 → session：`update_reminder` 帶 `clear_recurrence: true` → `--cli`：
+   `complete_reminder` → session：`undo` 帶 `keep_later_edits: true`：拒絕（completed 在這次修改改過的範圍內）、
+   什麼都沒寫、提醒事項仍是已完成且沒有規則。
+7. 全天與鬧鐘：一次性事件（有時間、[15]）→ session：`update_event` 帶 `all_day: true` → `--cli` 改標題 → session：`undo`
+   帶 `keep_later_edits: true` → 讀回：回到有時間、起訖是原值、標題是新值，鬧鐘仍是 [15]（EventKit 對全天事件會自己加
+   預設鬧鐘；多出或少了鬧鐘就回報）。
+8. 日曆與忙碌狀態同組：拋棄式日曆 C、D → 在 C 建一次性事件 → session：`update_event` 帶 `calendar_name` D → `--cli`：
+   把 availability 改成 free → session：`undo` 帶 `keep_later_edits: true`：拒絕、什麼都沒寫。
+9. 座標（M3）：一次性事件，地點 "Room"、沒有座標 → session：`update_event` 帶 `structured_location`（同標題、加座標）
+   → `--cli` 改標題 → session：`undo`：拒絕訊息寫 `The update changed: structured_location` → `undo` 帶
+   `keep_later_edits: true` → 讀回：地點 "Room" 沒有座標、標題是新值。
+10. 原本沒有地點（第 1 輪 LOW 4）：一次性事件、沒有地點 → session：`update_event` 帶 `structured_location` → `--cli` 改
+    `notes` → session：`undo` 帶 `keep_later_edits: true` → 讀回：`location` 與 `structured_location` 都沒有、notes 是新值。
+11. 不帶參數：第 1 步的形狀再做一次，`undo` 不帶 `keep_later_edits`：照舊拒絕、紀錄保留，`--cli` 讀回標題 B、地點 L1。
+12. 第 1 步合併之後 `redo`：回 `Cannot redo the update`、訊息寫 `it stays as the undo left it`、什麼都沒寫。
 
 結果記在 #265。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#265` 的殘留。
