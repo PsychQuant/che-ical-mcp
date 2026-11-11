@@ -405,7 +405,7 @@ enum DeletedOccurrenceCheck {
         let found = "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach)"
         // Round 6 (LOW 9): a new pattern alone is refused because it was not measured; no time route.
         if change == .pattern {
-            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought them back, measured on iCloud, and a new end_date alone kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
+            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count; a count replaced by an end_date or by no bound counts as one) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought them back, measured on iCloud, and a new end_date alone on a series that already ended at one kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
         }
         return "\(found), and changing the start, end, all_day, or a time zone across a daylight-saving divergence, of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. \(keptText) \(route) Nothing was written."
     }
