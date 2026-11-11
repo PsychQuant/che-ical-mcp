@@ -362,6 +362,35 @@ Every event the module creates SHALL carry in its notes the two consecutive whol
 - **WHEN** the module searches
 - **THEN** that event is ignored and never updated
 
+### Requirement: Access codes in copied program text are masked
+
+Whenever the module copies program text or a forwarded thread into an event (its notes, title or location), a mapping table, a question or the report, it SHALL replace each of these values with `REMOVED`, and only these: in a link, the value of a query parameter named `pwd`, `pw`, `pass`, `passcode`, `password` or `p` in any letter case, and a password before the host; on a line with one of the labels `passcode` or `password` in any letter case, `パスコード`, `パスワード`, `密碼` or `密码`, the rest of the line after the first such label and any `:`, `：`, `=` and spaces right after it; and, when nothing follows such a label on its line, the next line when it is one token with no spaces. Any other value, the meeting ID included, SHALL be copied as it is. Every comparison of the program's text with an event's notes SHALL use the masked text. A line above the marker that, once masked, equals a line the module writes now SHALL be replaced as the module's own old copy, not moved below the marker. The report SHALL name the events in which a value was masked.
+
+#### Scenario: A meeting link with a passcode in the program
+
+- **GIVEN** a program whose text for a session holds `https://example.zoom.us/j/123456789?pwd=AbC123`
+- **WHEN** the module creates the session
+- **THEN** its notes hold `https://example.zoom.us/j/123456789?pwd=REMOVED`, `AbC123` appears nowhere in the event, and the report names the session
+
+#### Scenario: A passcode line in the program
+
+- **GIVEN** a program whose text for a session holds the lines `Meeting ID: 123 456 789` and `パスコード：987654`
+- **WHEN** the module creates the session
+- **THEN** its notes hold `Meeting ID: 123 456 789` and `パスコード：REMOVED`
+
+#### Scenario: Re-pasting a masked program changes nothing
+
+- **GIVEN** a session created from a program whose text holds a passcode line
+- **WHEN** the same program is pasted again
+- **THEN** the session is unchanged and nothing is written to it
+
+#### Scenario: An event written before masking
+
+- **GIVEN** a session written before this rule, whose notes above the marker hold `Passcode: 987654`
+- **WHEN** the same program is pasted again
+- **THEN** its notes are rewritten with `Passcode: REMOVED`, the old line is not moved below the marker, and the report names the session
+
+---
 ### Requirement: The calendar is resolved once through routing for the whole program
 
 The module SHALL resolve the destination calendar once for the whole program, in this order: a calendar the user named; the matching `calendar-routing` rule (asking once for the whole program when its items match different rules); the entry point's own calendar choice. It SHALL create the umbrella and every session in that calendar, except when the user chose to apply the program to an existing set in another calendar, in which case every event of that run SHALL go to that calendar, the hand-built search and the read-backs SHALL use it, and the report SHALL say so; when that set turns out not to be this program's, the run SHALL go back to the routed calendar, where the existing-set flow runs again and any new set is built, and the report line SHALL say the set in the other calendar is another conference. It SHALL NOT classify the umbrella separately from the sessions, and it SHALL NOT implement any calendar selection of its own. The report SHALL carry the `Routed to …` or `Not routed: …` line of `calendar-routing` once, the umbrella's first and last day read back (or that it was kept or is pending), the number of sessions created, updated, left unchanged, kept, declined and pending, and every question left unanswered. The clash check SHALL be run after the mapping table is answered (with nobody to answer, before the events no row names are created, skipping those the pending rows name) and before creating, against every calendar (`check_conflicts` without `calendar_name`), so a flight, class or meeting kept in another calendar is listed; the old events that rows answered yes map to program items SHALL be ignored with the program's own events, but an old event of the set whose row was answered no SHALL NOT be ignored, and a clash with a hand-built event the table lists SHALL be reported on a line of its own, not ignored.
