@@ -52,7 +52,7 @@ final class ConferenceAccessCodeDocsTests: XCTestCase {
 
     /// Round 3: titles are masked by rules 1 and 2 (round 1's exemption was wrong: "Password Managers" has
     /// no separator, so it was never a label); the location gets only the link rule.
-    func testTitlesAreNeverMasked() throws {
+    func testTitlesAreMasked() throws {
         XCTAssertFalse(try read(Self.standard).contains("Titles are never masked"))
         try assertOnce("In a title, rules 1 and 2 apply", in: Self.standard)
         try assertOnce("is quoted masked, an old event's stored title included", in: Self.standard)
@@ -112,10 +112,32 @@ final class ConferenceAccessCodeDocsTests: XCTestCase {
         try assertOnce("**Conference module: access codes in copied program text are masked** (#514)", in: Self.changelog)
     }
 
+    /// Round 4 MEDIUM: a title that differs only by masking says so, and its no keeps the event in its place.
+    func testAMaskingOnlyTitleRowKeepsTheEvent() throws {
+        try assertOnce("only an access code would be masked", in: Self.standard)
+        try assertOnce("a no keeps the old event in its place: nothing is created, and the item counts as *kept*", in: Self.standard)
+        try assertOnce("or equals it once both are masked (section 4)", in: Self.standard)
+        try assertOnce("#### Scenario: A masking-only title row answered no", in: Self.spec)
+        try assertOnce("the time the module appends is added after masking and is never masked", in: Self.standard)
+    }
+
+    /// Round 4 MEDIUM: a restore writes the notes masked and moves an old code line below the marker.
+    func testARestoreMasksTheNotes() throws {
+        try assertOnce("the standard notes masked as `conference.md` section 4 says, and a line above the marker that holds a value of its closed list moved below the marker", in: Self.layer)
+        try assertOnce("so the restore equals a standard-mode paste of the same program under this rule", in: Self.layer)
+        try assertOnce("Mode table row 3 and this paragraph cover the notes and the location; a title that differs only by masking goes to its mapping-table row", in: Self.layer)
+        try assertOnce("an access code from before masking is still above the marker in <event>; it moves when the event is next written", in: Self.standard)
+        try assertOnce("SHALL wait for a write the event gets anyway", in: Self.layerSpec)
+        try assertOnce("SHALL be rewritten masked whenever the layer writes the block", in: Self.layerSpec)
+        try assertOnce("notes SHALL be rewritten only when the program's text for that item changed or a line above the marker holds a value of the closed list of access codes that the module does not write as it stands", in: Self.spec)
+    }
+
     /// Round 1 MEDIUM: itinerary-check compares a program in masked form and never copies a code.
     func testItineraryCheckComparesInMaskedForm() throws {
         try assertOnce("both the program's text and the events' titles, notes and locations are masked by the closed list of `conference.md` section 4 (a location by its rule 1 only) before they are compared or quoted", in: Self.skill)
         try assertOnce("an access code will be moved below the marker / masked in <event>", in: Self.skill)
+        try assertOnce("kept for now, not changed this run", in: Self.skill)
+        try assertOnce("only these three places, not extended by similarity", in: Self.skill)
         try assertOnce("from an event's title, notes or location", in: Self.skill)
         try assertOnce("a meeting passcode or password", in: Self.skill)
     }
