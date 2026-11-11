@@ -22,17 +22,22 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // whole series also the first slot as #503 proves it, refused when it cannot be shown, and only
         // where an end is checked (an open series is not refused).
         XCTAssertFalse(code.contains("storedStarts:addressesOwnOccurrence?[event.startDate,eventSlot]:[event.startDate]"))
-        XCTAssertTrue(code.contains("letneedsFirstSlot=wholeThroughSeries&&!RuleEndShift.ends(stored:storedEnds,passedRule:passedRule).isEmpty"))
+        // PR #518 round 1: also where #513's month-end check of a series with no end can apply.
+        XCTAssertTrue(code.contains("letendsChecked=!RuleEndShift.ends(stored:storedEnds,passedRule:passedRule).isEmpty"))
+        XCTAssertTrue(code.contains("letneedsFirstSlot=RuleEndShift.needsFirstSlot(wholeThroughSeries:wholeThroughSeries,endsChecked:endsChecked,"
+                                    + "monthEndShape:RuleEndShift.monthEndShape(unit:unit,dayFromStart:dayFromStart,passedRule:passedRule))"))
         XCTAssertTrue(code.contains("letfirstSlot:Date?=needsFirstSlot?wholeSeriesBaseline(of:masterEvent,id:identifier,viaStandIn:resolved.viaStandIn).slot:nil"))
         XCTAssertTrue(code.contains("guardletstoredStarts=RuleEndShift.storedStarts(shown:event.startDate,slot:eventSlot,needsFirstSlot:needsFirstSlot,"
-                                    + "firstSlot:firstSlot)else{throwEventKitError.seriesWriteRefused(reason:RuleEndShift.uncheckedReason(.firstSlot))}"))
+                                    + "firstSlot:firstSlot)else{throwEventKitError.seriesWriteRefused(reason:endsChecked?RuleEndShift.uncheckedReason(.firstSlot):RuleEndShift.openFirstSlotReason)}"))
         XCTAssertTrue(code.contains("ifRuleEndShift.moves(planned:shiftStart,from:storedStarts)||changesZone||datePlan.isAllDay!=event.isAllDay{"))
         XCTAssertTrue(code.contains("letplan=RuleEndShift.Plan(storedStarts:storedStarts,"))
         // MEDIUM 6: a passed rule is checked against its own end; MEDIUM 7: the rule's unit.
         XCTAssertTrue(code.contains("letpassedRule=RuleEndShift.passedRule(recurrenceRule,clearing:clearRecurrence)"))
         XCTAssertTrue(code.contains("storedEnds:storedEnds,passedRule:passedRule,plan:plan,"))
         // #513: a rule passed in the call counts for the unit (the coarser) and the day.
-        XCTAssertTrue(code.contains("unit:RuleEndShift.coarser(RuleEndShift.unit(of:rules),passedUnit),"))
+        XCTAssertTrue(code.contains("letunit=RuleEndShift.coarser(RuleEndShift.unit(of:rules),passedUnit)"))
+        XCTAssertTrue(code.contains("letdayFromStart=parts.contains{!$0.fixesDay}||passedTakesDayFromStart"))
+        XCTAssertTrue(code.contains("plannedStart:shiftStart,storedZone:storedZone,newZone:newZone,unit:unit,"))
         XCTAssertTrue(code.contains("letpassedUnit=recurrenceRule.map{RuleEndShift.unit(of:$0.frequency)}"))
         XCTAssertTrue(code.contains("letpassedTakesDayFromStart=recurrenceRule.map{!RuleEndShift.namesDays(daysOfWeek:$0.daysOfWeek,daysOfMonth:$0.daysOfMonth)}??false"))
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
@@ -62,7 +67,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         XCTAssertFalse(code.contains("ruleHolder?.recurrenceRules??[]"))
         // Round 4 (HIGH): the day comes from the rule's parts, apart from whether it has BY parts.
         XCTAssertTrue(code.contains("letparts=rules.map(RuleEndShift.parts)"))
-        XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:parts.contains{!$0.fixesDay}||passedTakesDayFromStart,"
+        XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:dayFromStart,"
                                     + "expandable:parts.allSatisfy{$0.expandable},weeklyDays:RuleEndShift.weeklyDays(rules))"))
     }
 

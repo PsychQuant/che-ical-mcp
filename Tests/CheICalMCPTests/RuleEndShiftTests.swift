@@ -650,4 +650,23 @@ final class RuleEndShiftTests: XCTestCase {
         }
         XCTAssertFalse(text.contains("rule ends") || text.contains("end_date"), text)
     }
+
+    /// PR #518 round 1: on a series with no end the first slot is proven too where the month-end check can
+    /// apply (a monthly or yearly reading whose day comes from the start, the rule kept), so a first
+    /// occurrence moved on its own does not hide the series' day; a slot that cannot be shown refuses in
+    /// #513's words, with no rule end named.
+    func testTheFirstSlotIsProvenWhereTheMonthEndCheckCanApply() {
+        XCTAssertTrue(RuleEndShift.monthEndShape(unit: .month, dayFromStart: true, passedRule: nil))
+        XCTAssertTrue(RuleEndShift.monthEndShape(unit: .year, dayFromStart: true, passedRule: .count))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .day, dayFromStart: true, passedRule: nil))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .month, dayFromStart: false, passedRule: nil))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .month, dayFromStart: true, passedRule: .clear))
+        XCTAssertTrue(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: false, monthEndShape: true))
+        XCTAssertTrue(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: true, monthEndShape: false))
+        XCTAssertFalse(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: false, monthEndShape: false))
+        XCTAssertFalse(RuleEndShift.needsFirstSlot(wholeThroughSeries: false, endsChecked: true, monthEndShape: true))
+        let text = RuleEndShift.openFirstSlotReason
+        XCTAssertTrue(text.contains("#513") && text.contains("first occurrence") && text.contains("change the series in Calendar"), text)
+        XCTAssertFalse(text.contains("rule ends") || text.contains("past the end"), text)
+    }
 }

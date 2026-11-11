@@ -1468,26 +1468,30 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             let storedEnds = rules.compactMap { $0.recurrenceEnd?.endDate }
             let passedRule = RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence)
-            // Round 5 (MEDIUM): the first slot, proven as #503 proves it, only where an end is checked, so
-            // an open series is not refused; one that cannot be shown refuses (fail closed).
-            let needsFirstSlot = wholeThroughSeries && !RuleEndShift.ends(stored: storedEnds, passedRule: passedRule).isEmpty
+            // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
+            let parts = rules.map(RuleEndShift.parts)
+            // #513: a rule passed in the call counts for the unit and the day (fail closed).
+            let passedUnit = recurrenceRule.map { RuleEndShift.unit(of: $0.frequency) }
+            let passedTakesDayFromStart = recurrenceRule.map { !RuleEndShift.namesDays(daysOfWeek: $0.daysOfWeek, daysOfMonth: $0.daysOfMonth) } ?? false
+            let unit = RuleEndShift.coarser(RuleEndShift.unit(of: rules), passedUnit)
+            let dayFromStart = parts.contains { !$0.fixesDay } || passedTakesDayFromStart
+            // Round 5 (MEDIUM): the first slot, proven as #503 proves it, where an end is checked or (PR #518
+            // round 1) where the month-end check of a series with no end can apply (#513); one that cannot be
+            // shown refuses (fail closed), in that check's own words when no end is checked.
+            let endsChecked = !RuleEndShift.ends(stored: storedEnds, passedRule: passedRule).isEmpty
+            let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries, endsChecked: endsChecked,
+                                                             monthEndShape: RuleEndShift.monthEndShape(unit: unit, dayFromStart: dayFromStart, passedRule: passedRule))
             let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn).slot : nil
             guard let storedStarts = RuleEndShift.storedStarts(shown: event.startDate, slot: eventSlot, needsFirstSlot: needsFirstSlot,
                                                                 firstSlot: firstSlot) else {
-                throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.firstSlot))
+                throw EventKitError.seriesWriteRefused(reason: endsChecked ? RuleEndShift.uncheckedReason(.firstSlot) : RuleEndShift.openFirstSlotReason)
             }
             if RuleEndShift.moves(planned: shiftStart, from: storedStarts) || changesZone || datePlan.isAllDay != event.isAllDay {
                 let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
                 let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
-                // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
-                let parts = rules.map(RuleEndShift.parts)
-                // #513: a rule passed in the call counts for the unit and the day (fail closed).
-                let passedUnit = recurrenceRule.map { RuleEndShift.unit(of: $0.frequency) }
-                let passedTakesDayFromStart = recurrenceRule.map { !RuleEndShift.namesDays(daysOfWeek: $0.daysOfWeek, daysOfMonth: $0.daysOfMonth) } ?? false
                 let plan = RuleEndShift.Plan(storedStarts: storedStarts,
-                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone,
-                    unit: RuleEndShift.coarser(RuleEndShift.unit(of: rules), passedUnit),
-                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay } || passedTakesDayFromStart,
+                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: unit,
+                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: dayFromStart,
                     expandable: parts.allSatisfy { $0.expandable }, weeklyDays: RuleEndShift.weeklyDays(rules))
                 // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
                 // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
