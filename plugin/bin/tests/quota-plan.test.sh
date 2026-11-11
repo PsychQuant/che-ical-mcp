@@ -628,6 +628,14 @@ $M16
 reminder W completed 2026-11-17T03:30:00+08:00 2026-11-16 - 330,0 list weekly-monday
 reminder X open 2026-11-24T03:30:00+08:00 2026-11-23 - 330,0 list weekly-monday
 EOF
+# (2b) The same stop on the path that keeps the pair (no open reminder left, so no --replace): the old pair is
+# passed, its cycle is not the new one, and the old tick uses nothing.
+check "sync after a stopped update, old pair and an old tick: the new month is created" "used none
+action keys-changed
+action create 1 due=2026-11-16" "action used 1|action missing" -- "${B[@]}" --through 2026-11-30 --through-cycle weekly-monday <<EOF
+$M16
+reminder W completed 2026-11-17T03:30:00+08:00 2026-11-16 - 330,0 list weekly-monday
+EOF
 # (3) Create 1 succeeded, create 2 failed: the new reminder of month 1 is kept, not blocked as period-used.
 check "retry after a failed second create: the first new reminder is kept" "action keep N1 1 due=2026-11-16
 action delete X

@@ -293,7 +293,7 @@ final class QuotaSkillDocsTests: XCTestCase {
     func testListReportsEachCaseOnce() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
-            "- `used`: a completed reminder carries its key;\n- `not used`:",
+            "- `used`: the planner lists it as used (a completed reminder of this cycle carries its key);\n- `not used`:",
             "- `open, deadline passed, resets <reset>`:",
             "- `no reminder`: none of these.",
             "- **dates changed**:",

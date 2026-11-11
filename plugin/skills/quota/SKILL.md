@@ -311,7 +311,7 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
 
 1. Change only the fields the user changed and validate the new entry; until step 4 the file keeps the entry as it was. Run the helper for the new entry, with its `local_tz`.
 2. **Same schedule or a new one: the planner decides.** Run the planner for the new entry without `--replace` (section 5). It compares instants, so a change of `local_tz` alone, with the same resets and no `notify_at`, keeps every reminder. With `notify_at` the alarm offsets move with the zone: the planner reports the dates changed, and the replacement rewrites the alarms in place (`realarm`) and deletes nothing.
-   - **No `repair-needed`:** the open reminders already agree with the new dates. Write the new fields, apply the planner's `keep` and `create` actions as sync does (section 11), and offer each `missing` as in section 10. With `keys-changed` (the dates changed, but no reminder was left open to show it), `per_period_through` and `per_period_cycle` are replaced by the planner's `through` and the helper's cycle after the creates; until then the old pair stays, so a run stopped in between still shows the change.
+   - **No `repair-needed`:** the open reminders already agree with the new dates. Write the new fields, apply the planner's `keep` and `create` actions as sync does (section 11), and offer each `missing` as in section 10. With `keys-changed` (the dates changed, but no reminder was left open to show it), the first create that reads back replaces `per_period_through` and `per_period_cycle` with its key and the helper's cycle, even when lower (section 11), and the planner's `through` replaces them after the last; until the first one the old pair stays, so a run stopped before it still shows the change.
    - **`repair-needed dates-changed`:** go to step 3.
 3. **A new schedule replaces the open reminders.** Run the planner for the **new** entry with `--replace`. Show the plan in one table:
    - the reminders to delete (title, due), the ones kept because they are already on the new dates, and the ones kept with new alarms (`realarm`);
@@ -359,13 +359,13 @@ Also look at the write's own response for any of these signs: `alarms_minutes_of
 
 **Last period** (period 0), exactly one of:
 
-- `used`: a completed reminder carries its key;
+- `used`: the planner lists it as used (a completed reminder of this cycle carries its key);
 - `not used`: an open reminder carries its key (the overdue record);
 - `no record`: neither.
 
 **Current period** (period 1), exactly one of:
 
-- `used`: a completed reminder carries its key;
+- `used`: the planner lists it as used;
 - `open, due <due>`: an open reminder carries its key and its due is ahead;
 - `open, deadline passed, resets <reset>`: an open reminder carries its key, its due has passed and its reset has not;
 - `no reminder`: none of these.
@@ -387,7 +387,7 @@ For every active entry, take the `list` result, then (closed list):
 
 - **dates changed:** create nothing. Offer the replacement of section 8 (steps 3 to 5) for the entry as it is in the file, and on a yes for that quota run it. It needs no old entry: every decision is by the dates in the file, so a hand edit is handled the same way. Nobody to ask: pending. Without this path, sync would create the new periods' reminders next to the old ones.
 - **`keep`:** update the reminder in place if its fields differ (title, notes above the marker, keeping its `Period:` and `Record:` lines and writing the helper's cycle as its `Cycle:` line). Its due and alarms already agree: the planner prints `keep` only then.
-- **`create`:** create it, and raise `per_period_through` to the last key created; sync never lowers it, except after `keys-changed`, when the planner's `through` replaces a value written under another cycle. Every write of `per_period_through` writes `per_period_cycle` (the helper's cycle) in the same edit. Raise it only after the create succeeds and reads back; once every create of the entry succeeded, raise it to the planner's `through` when one is printed (it also counts the periods kept or used).
+- **`create`:** create it, and raise `per_period_through` to the last key created; sync never lowers it, except after `keys-changed`, when the planner's `through` replaces a value written under another cycle. Every write of `per_period_through` writes `per_period_cycle` (the helper's cycle) in the same edit. After `keys-changed`, the first create that reads back replaces the pair, even when lower. Raise it only after the create succeeds and reads back; once every create of the entry succeeded, raise it to the planner's `through` when one is printed (it also counts the periods kept or used).
 - **`missing`, `hold`, `list`:** listed. `missing` is created after a yes; `hold … outside-list` waits for the user to move a reminder back from another list; `hold … record-on-open-period` waits for the user to decide by hand.
 - **an entry with `retiring`:** write nothing; offer to finish the retirement (section 9).
 - **an entry with `mode: rule`:** write nothing (section 10).
@@ -416,7 +416,7 @@ One block, in this order:
 
 - **Sync must run at least once every 90 days**, or the reminders run out: there is no recurring reminder to carry the quota forward on its own. `list` says "run sync" when the last period with a reminder is due within 30 days.
 - **A schedule change can wait for a reset.** A reminder whose deadline passed but whose period has not reset under the new dates (the reset moved later, or to another day) blocks the replacement until the user deletes it or its period resets. Moving the reset to another day, each later old reminder blocks the runs between its own due and its reset in turn; the question lists them all, and while waiting no period of the new schedule has a reminder.
-- **Changing a schedule replaces the open reminders.** Text a user wrote below the marker of a deleted reminder goes with it. The table of section 8 step 3 shows every reminder that would be deleted before the user answers. A new period whose key a completed reminder of the same cycle carries is not created again (`used`). After a change of cadence or day, a completed reminder of the old cycle uses no new period, even when its key is one of the new dates; so a period used under other keys can still get a reminder. A change of time or zone keeps the cycle, so a tick still counts. A completed reminder without a `Cycle:` line counts under whatever cycle the entry has; nothing released writes one.
+- **Changing a schedule replaces the open reminders.** Text a user wrote below the marker of a deleted reminder goes with it. The table of section 8 step 3 shows every reminder that would be deleted before the user answers. A new period whose key a completed reminder of the same cycle carries is not created again (`used`). After a change of cadence or day, a completed reminder of the old cycle uses no new period, even when its key is one of the new dates; so a period used under other keys can still get a reminder. A change of time or zone keeps the cycle, so a tick still counts. A completed reminder without a `Cycle:` line counts under whatever cycle the entry has; nothing released writes one. An open reminder is judged by its key alone, so an unticked reminder of the old cycle whose key is the new period 0 is listed as that period's `not used`: a wrong report, nothing is written.
 
 ## 14. Worked example (fictional)
 
@@ -427,16 +427,16 @@ One block, in this order:
 - `lead_minutes: 30`, `notify_at: "22:00"`;
 - `local_tz: Asia/Taipei`. Today is 2026-11-09.
 
-**Helper:** `period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:30:00+08:00 alarm_minutes=330`, then one line per later week. The reset is Monday in UTC; the due is Tuesday locally.
+**Helper:** `cycle weekly-monday`, then `period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:30:00+08:00 alarm_minutes=330`, then one line per later week. The reset is Monday in UTC; the due is Tuesday locally.
 
 **Declare.** One `create_reminder` per week of the 90 days (13 of them):
 
 - `title: "Use up weekly usage limit (Account A, resets Mon 20:00 UTC)"`;
 - `due_date: 2026-11-10T03:30:00+08:00` (and so on, one week apart);
 - `alarms_minutes_offsets: [330, 0]`;
-- notes per section 4, with `Period: 2026-11-09` (and so on), ending in `quota-module: account-a-weekly`.
+- notes per section 4, with `Period: 2026-11-09` (and so on) and `Cycle: weekly-monday` (the helper's first line), ending in `quota-module: account-a-weekly`.
 
-The entry gets `mode: per-period`, and `per_period_through` rises with each create that reads back, to `2027-02-01` after the last.
+The entry gets `mode: per-period`, and `per_period_through` rises with each create that reads back, to `2027-02-01` after the last, each time with `per_period_cycle: weekly-monday`.
 
 **Used before the reset.** On Monday the user ticks this week's reminder. `list` reports the current period `used`; `sync` writes nothing for it.
 
