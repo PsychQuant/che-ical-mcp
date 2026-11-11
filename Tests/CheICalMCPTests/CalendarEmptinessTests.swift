@@ -192,6 +192,10 @@ final class CalendarEmptinessTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "let store = CountingEventStore()", in: manager).count, 1)
         let generation = try XCTUnwrap(SourcePins.body(of: "var writeGeneration: Int", in: manager))
         XCTAssertEqual(SourcePins.ranges(of: "eventStore.commitCount", in: generation).count, 1)
+        // #459: the write stores' commits move it too, counted by `onWriteStore` before anything else.
+        XCTAssertEqual(SourcePins.ranges(of: "writeStoreCommits", in: generation).count, 1)
+        let onWriteStore = try XCTUnwrap(SourcePins.body(of: "func onWriteStore<T>", in: try SourcePins.source("EventKit/ExistingReminderSave.swift")))
+        XCTAssertTrue(SourcePins.code(onWriteStore).contains("defer { writeStoreCommits &+= 1 }"), onWriteStore)
 
         let store = try SourcePins.source("EventKit/CountingEventStore.swift")
         let overrides = SourcePins.ranges(ofPattern: #"override func [a-zA-Z]+\("#, in: store)
@@ -226,11 +230,13 @@ final class CalendarEmptinessTests: XCTestCase {
             }
         }
         XCTAssertEqual(made, ["EventKit/EventKitManager.swift CountingEventStore": 1,
+                              "EventKit/EventKitManager.swift EKEventStore": 1,
                               "EventKit/AuthorizationStatusSource.swift EKEventStore": 1,
                               "EventKit/NewObjectSave.swift EKEventStore": 1,
                               "SetupRunner.swift EKEventStore": 1],
                        """
-                       The closed list of stores the server builds: the manager's counting one; the authorization \
+                       The closed list of stores the server builds: the manager's counting one; the #459 write stores \
+                       (their commits are counted by `writeStoreCommits`); the authorization \
                        default (unused when the manager passes its store); NewObjectSave's read-only fresh store; the \
                        setup's (access request only). A write through any other store would not be counted.
                        """)

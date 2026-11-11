@@ -110,7 +110,8 @@ final class ReminderUndoWiringTests: XCTestCase {
         let arms = [(restore,
                      "let reminder = try await applyReminderSnapshot(snapshot, for: .recreateDeleted, into: { EKReminder(eventStore: eventStore) })"),
                     (try slice(undo, from: "case .updateReminder(_, let oldSnapshot, _):", to: "\n        case ."),
-                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate, into: { try await verifiedReminder(of: operation, verb: .undo) })")]
+                     // PR #507 round 5: the closure also takes the verified reminder's identity.
+                     "let reminder = try await applyReminderSnapshot(oldSnapshot, for: .revertUpdate,")]
         for (arm, call) in arms {
             XCTAssertFalse(arm.contains("func restoredReminderMessage"), arm)
             let callRange = try XCTUnwrap(arm.range(of: call), arm)

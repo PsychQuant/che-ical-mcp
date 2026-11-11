@@ -404,7 +404,7 @@ final class CleanupHandlerTests: XCTestCase {
             ]
         )
 
-        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|Reminder not found|Reminder is no longer completed)$"#
+        let allowed = #"^(eventkit_error_[0-9]+|error_[a-z0-9_]+_[0-9]+|error_unknown|write_store_busy|write_store_lookup_failed|write_store_read_back_failed|Reminder not found|Reminder is no longer completed)$"#
         let regex = try NSRegularExpression(pattern: allowed)
         let failures = response["failures"] as? [[String: Any]] ?? []
         XCTAssertEqual(failures.count, 3)
@@ -418,10 +418,10 @@ final class CleanupHandlerTests: XCTestCase {
         }
     }
 
-    // MARK: - #274: a failed removal may still land
+    // MARK: - #459: a failed removal does not land, so there is no note
 
-    private func scripted(mayLand: Int) -> BatchDeleteResult {
-        BatchDeleteResult(successCount: 1, failedCount: 1, failures: [(identifier: "b", error: "error_unknown")], mayLandCount: mayLand)
+    private func scriptedFailure() -> BatchDeleteResult {
+        BatchDeleteResult(successCount: 1, failedCount: 1, failures: [(identifier: "b", error: "error_unknown")])
     }
 
     private func deleteBatch(_ fake: FakeEventKitManager) async throws -> [String: Any] {
@@ -430,15 +430,13 @@ final class CleanupHandlerTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
 
-    /// The row stays a stable code (spec R3); the warning is on the response.
-    func testDeleteRemindersBatchAddsTheNoteWhenARowCanStillLand() async throws {
+    /// The row stays a stable code (spec R3), and no note says it may still land: it ran on the
+    /// batch's write store, which is replaced after a failed row.
+    func testDeleteRemindersBatchAddsNoNoteWhenARowFails() async throws {
         let fake = FakeEventKitManager()
-        await fake.scriptDeleteResult(scripted(mayLand: 1))
+        await fake.scriptDeleteResult(scriptedFailure())
         let response = try await deleteBatch(fake)
-        let note = try XCTUnwrap(response["failed_rows_note"] as? String)
-        XCTAssertTrue(note.contains("may be deleted by the next save"), note)
-        XCTAssertTrue(note.contains("may already be deleted by a later row of this call"), note)
-        XCTAssertTrue(note.contains("back now does not rule this out"), note)
+        XCTAssertNil(response["failed_rows_note"])
         let failures = try XCTUnwrap(response["failures"] as? [[String: String]])
         XCTAssertEqual(failures.first?["error"], "error_unknown")
     }
@@ -451,22 +449,11 @@ final class CleanupHandlerTests: XCTestCase {
         XCTAssertNil(response["failed_rows_note"])
     }
 
-    func testCleanupAddsTheNoteOnlyWhenARowCanStillLand() async throws {
-        for (mayLand, expected) in [(1, true), (0, false)] {
-            let fake = FakeEventKitManager()
-            await fake.scriptDeleteResult(scripted(mayLand: mayLand))
-            let response = try await runCleanup(fake: fake, arguments: [
-                "reminder_ids": .array([.string("a"), .string("b")]), "dry_run": .bool(false)])
-            XCTAssertEqual(response["failed_rows_note"] != nil, expected, "\(mayLand)")
-        }
-    }
-
-    /// Only the catch of the removal counts: a row that was not found or was refused never reached it.
-    func testOnlyTheCatchOfTheRemovalCounts() throws {
-        let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(
-            of: "func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false)",
-            in: try SourcePins.source("EventKit/EventKitManager.swift"))))
-        XCTAssertEqual(body.components(separatedBy: "mayLandCount += 1").count - 1, 1)
-        XCTAssertTrue(body.contains("failures.append((id, sanitized.code)) mayLandCount += 1"), body)
+    func testCleanupAddsNoNoteWhenARowFails() async throws {
+        let fake = FakeEventKitManager()
+        await fake.scriptDeleteResult(scriptedFailure())
+        let response = try await runCleanup(fake: fake, arguments: [
+            "reminder_ids": .array([.string("a"), .string("b")]), "dry_run": .bool(false)])
+        XCTAssertNil(response["failed_rows_note"])
     }
 }
