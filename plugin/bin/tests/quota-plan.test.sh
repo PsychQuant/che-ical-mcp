@@ -759,6 +759,38 @@ action create 3 due=2027-01-31" "action create 1 |action create 2 " -- "${A[@]}"
 $M31
 EOF
 
+# --- round 12 ------------------------------------------------------------------------------------------
+# A second Period: or Record: line above the marker reaches the planner as unreadable, never left out.
+check "a repeated Record: line stops every write" "action list A unreadable record
+action stopped unreadable" "action create|action keep" -- "${A[@]}" <<EOF
+$M31
+reminder N open 2026-11-30 2026-11-30 - none list -
+unreadable A record
+EOF
+check "an id out of form is unreadable as id" "action list - unreadable id
+action stopped unreadable" "action create" -- "${A[@]}" <<EOF
+$M31
+unreadable - id
+EOF
+# lead_minutes 30 to 31 moves each due by exactly 60 s, outside the server's duplicate window (strictly under
+# 60 s, ReminderDueInputTests): an ordinary replacement, create then delete.
+L31="$(p --cadence weekly --weekday 2 --time 20:00 --lead-minutes 31 --from "$NOW")"
+check "lead_minutes 30 to 31: replaced, create before delete" "action delete A
+action create 1 due=2026-11-10T03:29:00+08:00" "replace-blocked|realarm" -- "${A[@]}" --replace <<EOF
+$L31
+reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 0 list weekly-monday
+EOF
+# MEDIUM: the --reminders file is read in one checked step (a failed read exits 2 with no plan), and it may only
+# carry reminder and unreadable lines: a helper line in it is refused.
+plan_src="$(cat "$PLAN")"
+if [[ "$plan_src" == *'rem_lines="$(cat -- "$reminders_file")" || die'* ]] && [[ "$plan_src" != *'|| cat -- "$reminders_file")'* ]]; then
+  pass=$((pass + 1)); else fail=$((fail + 1)); echo "FAIL the --reminders file is not read in one checked step"; fi
+RD="$(mktemp -d "${TMPDIR:-/tmp}/quota-plan-dir.XXXXXX")"
+RU="$RD/unreadable.txt"
+printf '%s\n' "reminder N open 2026-11-30 2026-11-30 - none list -" > "$RU"; chmod 000 "$RU"
+RP="$RD/period.txt"
+printf '%s\n' "period 9 key=2026-11-30 state=future reset=2026-11-30 due=2026-11-30" > "$RP"
+
 # --- bad input -----------------------------------------------------------------------------------------
 err() {
   local name="$1" want="$2" input="$3"; shift 3
@@ -789,6 +821,9 @@ err "an id both unreadable and read" "appears twice" "$M31
 reminder A open 2026-11-30 2026-11-30 - none list -
 unreadable A due" --now "$NOW"
 err "--reminders that is not a readable file" "cannot read --reminders" "$M31" --now "$NOW" --reminders /nonexistent/quota-reminders
+err "--reminders whose read fails (no read permission)" "cannot read --reminders" "$M31" --now "$NOW" --reminders "$RU"
+err "--reminders that is a directory" "cannot read --reminders" "$M31" --now "$NOW" --reminders "$RD"
+err "a helper line in the --reminders file" "only reminder and unreadable lines" "$M31" --now "$NOW" --reminders "$RP"
 err "--schedule-changed is gone" "unknown option --schedule-changed" "$M31" --now "$NOW" --schedule-changed
 err "old seven-field reminder line" "want 9 fields" "$M31
 reminder A open 2026-11-30 2026-11-30 none list" --now "$NOW"
@@ -814,6 +849,6 @@ err "--delete-passed for a reminder that is not due-passed" "does not list that 
 reminder N open 2026-11-30 2026-11-30 - none list -" --now "$NOW" --local-tz "$TPE" --replace --delete-passed N
 [ ! -e /tmp/quota-plan-x ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL the period number was evaluated"; rm -f /tmp/quota-plan-x; }
 
-rm -f "$RF"
+rm -f "$RF"; chmod 600 "$RU"; rm -rf "$RD"
 echo "quota-plan: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

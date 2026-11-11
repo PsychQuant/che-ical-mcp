@@ -81,7 +81,7 @@ per-period 一次建 90 天：週額度約 13 則、月額度 3 則；`list` 在
 
 第 9 輪的 `--schedule-changed` 只保護取代的那一次：新的 `per_period_schedule` 一寫下，之後的 sync 或建立失敗後的重試就不再帶旗標，舊 cadence 已勾的提醒又以日期鍵佔用新期別（新的那則被列成 `period-used`，重試還把 `through` 推過那一期）。簽章又含時刻與時區，這兩者不決定鍵：只改時刻就讓使用者刪掉的期別與已用的期別不經詢問重建；`08` 與 `8`、省略與明寫 `UTC`、同一時區的別名也會翻轉旗標。
 
-改成：日期 helper 第一行印 `cycle <cadence>-<weekday 或 day>`（`weekly-monday`、`monthly-8`），是決定鍵的部分的唯一正規寫法；skill 只抄這一行，不自己組。每則提醒的 notes 帶 `Cycle:`，完成的提醒只有在 `Cycle:` 等於現在的 cycle（或沒有這一行）時才佔用它的期別，所以這個判斷在每一次執行都成立，不靠單次旗標；開著的提醒只看鍵，保留它的寫入（keep、realarm、adopt）會把 `Cycle:` 改成現在的 cycle。entry 的 `per_period_cycle` 是 `per_period_through` 寫下時的 cycle，兩者一起寫、一起拿掉；planner 以 `--through-cycle` 比對，不同就不讀 `per_period_through`（`keys-changed`）。不需取代的 update 寫新欄位時不動這一對（需要取代且有 `keys-changed` 時，寫新欄位就一起拿掉這一對；刪除放在最後，留下的舊提醒仍讓下次看得出改過），所以在建立之前中斷的執行，下次 sync 仍看得出鍵變了，不會把每一期都列成 missing。只改時刻或時區時 cycle 不變：`per_period_through` 照讀，刪掉的期別仍是 missing，已勾的期別仍是 used。格式不對的 `Cycle:` 或 `per_period_cycle` 當成沒有並回報；`local_tz` 與 `per_period_through` 也列入 skill 的格式檢查清單。
+改成：日期 helper 第一行印 `cycle <cadence>-<weekday 或 day>`（`weekly-monday`、`monthly-8`），是決定鍵的部分的唯一正規寫法；skill 只抄這一行，不自己組。每則提醒的 notes 帶 `Cycle:`，完成的提醒只有在 `Cycle:` 的 cadence 與現在相同（或沒有這一行）時才佔用它的期別（第 11 輪由「cycle 相同」放寬成「cadence 相同」，見下），所以這個判斷在每一次執行都成立，不靠單次旗標；開著的提醒只看鍵，保留它的寫入（keep、realarm、adopt）會把 `Cycle:` 改成現在的 cycle。entry 的 `per_period_cycle` 是 `per_period_through` 寫下時的 cycle，兩者一起寫、一起拿掉；planner 以 `--through-cycle` 比對，不同就不讀 `per_period_through`（`keys-changed`）。不需取代的 update 寫新欄位時不動這一對（需要取代且有 `keys-changed` 時，寫新欄位就一起拿掉這一對；刪除放在最後，留下的舊提醒仍讓下次看得出改過），所以在建立之前中斷的執行，下次 sync 仍看得出鍵變了，不會把每一期都列成 missing。只改時刻或時區時 cycle 不變：`per_period_through` 照讀，刪掉的期別仍是 missing，已勾的期別仍是 used。格式不對的 `Cycle:` 或 `per_period_cycle` 當成沒有並回報；`local_tz` 與 `per_period_through` 也列入 skill 的格式檢查清單。
 
 ### 讀不了的提醒停下整個 quota、只預先核准三個 helper（verify 第 11 輪）
 
@@ -90,6 +90,10 @@ per-period 一次建 90 天：週額度約 13 則、月額度 3 則；`list` 在
 `allowed-tools` 原本有不受限的 `Bash`，所以「`delete_reminder` 沒有預先核准，harness 會再問一次」並不成立：同樣的刪除可以走 binary 的 `--cli`。改成只預先核准三個唯讀 helper，以路徑直接執行（`Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh *)`；Claude Code 會在 `allowed-tools` 的 Bash 規則裡代換 `${CLAUDE_PLUGIN_ROOT}`）。為了讓整個呼叫只有這兩個指令，planner 加 `--reminders FILE`，skill 以一條 pipe 執行 `quota-dates.sh … | quota-plan.sh … --reminders <file>`，值直接寫進指令、不用 shell 變數與重導；helper 中途失敗時，planner 因缺少第一行（cycle）或最後一行（rule）而停下。
 
 `--through-cycle` 等於現在的 cycle 時，`per_period_through` 確定是在同一組鍵下寫的；拒絕或失敗的刪除留下的 off-schedule 舊提醒不再讓它作廢，使用者刪掉的期別仍是 missing。完成的提醒改看 cadence：weekly 與 monthly 互撞的鍵是不同的額度，兩個 monthly 日只會在月底 clamp 撞在同一天，那是同一次重置，所以算用過。格式不對的 `Cycle:` 以 `unknown` 傳入、不佔期別。sync 的建立失敗也停下該 entry 之後的建立。
+
+### 讀取失敗一律停下、標記以上的行才算（verify 第 12 輪）
+
+`--reminders` 的檔案原本在 process substitution 裡讀，讀取失敗的 exit status 傳不回主程式，planner 可能用不完整的提醒清單規劃。改成先把整個檔案讀進變數、檢查狀態，失敗就 exit 2、不印任何計畫；檔案裡只能有 `reminder` 與 `unreadable` 行。`Period:`、`Record:`、`Cycle:` 只讀標記以上的部分，重複的 `Period:` 或 `Record:` 以 `unreadable` 交給 planner，不再把整則提醒排除在計畫之外。list、update、retire 遇到 `stopped unreadable` 都不寫（含檔案）、不問，只回報。`lead_minutes` 改一分鐘不會被 server 的重複檢查擋下：視窗是嚴格小於 60 秒（`ReminderDueInputTests` 固定），整分鐘的提前量差正好 60 秒。
 
 ## Risks
 

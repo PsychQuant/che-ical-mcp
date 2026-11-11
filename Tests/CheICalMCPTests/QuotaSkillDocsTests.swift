@@ -158,7 +158,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             "is never moved, never matched to another period, never deleted, and never offered for deletion.",
             "**A reminder in another list is only ever listed**",
             "**Read-back values never reach a shell unchecked.**",
-            "never put a read-back value into a command line",
+            "No read-back value goes into a command line, except an id that passed its check",
             "**The local zone is pinned.**",
             "**After every yes, plan again before writing.**",
             "**When the planner exits 2**, nothing is written for that quota.",
@@ -178,7 +178,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             // #499 r6 #5 and #12: what already matches is kept; a failure stops before anything further.
             "| `keep <id> <n>` | an open reminder already on the new dates",
             "**A failure stops the replacement.**",
-            "| `used <n>` | a new period whose key a completed reminder of this cycle (or without one) already carries; not created again |",
+            "| `used <n>` | a new period whose key a completed reminder of this cadence (or without a `Cycle:` line) already carries; not created again |",
             "raise `per_period_through` to the last key created; sync never lowers it",
         ])
         let spec = try read(Self.spec)
@@ -327,10 +327,30 @@ final class QuotaSkillDocsTests: XCTestCase {
         }
     }
 
+    /// #499 verify round 12: the --reminders file is read in one checked step; the module's lines count only above
+    /// the marker and a repeated one is unreadable; every operation stops on `stopped unreadable`; cadence wording.
+    func testRoundTwelveRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**Its `Period:`, `Record:` and `Cycle:` lines are read only above the marker**",
+            "**On `stopped unreadable`, write nothing, the file included, ask nothing, and report the reminder and the field; the update is pending.**",
+            "**On `stopped unreadable`, write nothing, the file included (no `retiring`), ask nothing, and report the reminder and the field; the retirement is pending.**",
+            "**On `stopped unreadable`, the quota's block is that line alone",
+            "a due less than 60 seconds away (strictly; `ReminderDueInputTests` pins it)",
+            "`unreadable`: restore the field named, or delete that reminder by hand",
+        ])
+        for gone in ["at most one `Period:` line", "a completed reminder of this cycle", "a completed reminder of the same cycle"] {
+            XCTAssertFalse(skill.contains(gone), "\(Self.skill) still says: \(gone)")
+        }
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, ["SHALL be read only above the marker, and a second `Period:` or `Record:` line there SHALL make the reminder unreadable"])
+        XCTAssertTrue(try read("plugin/bin/quota-plan.sh").contains("rem_lines=\"$(cat -- \"$reminders_file\")\" || die"), "the --reminders file must be read in one checked step")
+    }
+
     func testListReportsEachCaseOnce() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
-            "- `used`: the planner lists it as used (a completed reminder of this cycle carries its key);\n- `not used`:",
+            "- `used`: the planner lists it as used (a completed reminder of this cadence carries its key);\n- `not used`:",
             "- `open, deadline passed, resets <reset>`:",
             "- `no reminder`: none of these.",
             "- **dates changed**:",
@@ -350,7 +370,7 @@ final class QuotaSkillDocsTests: XCTestCase {
     func testMarkerMustBeTheOnlyQuotaModuleLine() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
-            "only when its notes have exactly one line that starts with `quota-module:`, that line is exactly `quota-module: <id>`",
+            "only when its notes have exactly one line that starts with `quota-module:`, and that line is exactly `quota-module: <id>`",
             "- **Any other count:** listed and never written.",
         ])
     }

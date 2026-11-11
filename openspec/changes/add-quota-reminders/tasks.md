@@ -55,6 +55,10 @@
 
 - [x] 2l.1（Each period has a stable identity；A retirement asks first；讀不了的提醒停下整個 quota、只預先核准三個 helper（verify 第 11 輪））屬於 quota 但欄位不合格式的提醒以 `unreadable` 交給 planner，停下這個 quota 的所有寫入；`allowed-tools` 只留三個 helper 的路徑規則，planner 加 `--reminders`，skill 以一條 pipe 呼叫；`--through-cycle` 等於 cycle 時 off-schedule 不讓 through 作廢；完成的提醒依 cadence 判斷是否佔用期別、格式不對的 `Cycle:` 為 `unknown`；sync 建立失敗即停；SKILL 與 design 對「這一對」的說法一致。驗證：`quota-plan.test.sh`、`QuotaSkillDocsTests`。
 
+## 2m. Verify 第 12 輪：`--reminders` 讀取失敗即停、標記以上的行
+
+- [x] 2m.1（Each period has a stable identity；讀取失敗一律停下、標記以上的行才算（verify 第 12 輪））`--reminders` 先讀進變數並檢查狀態，檔案只收 `reminder` 與 `unreadable` 行；`Period:`、`Record:`、`Cycle:` 只讀標記以上，重複的 `Period:`／`Record:` 為 `unreadable`，`unreadable` 加 `id` 欄；list、update、retire 對 `stopped unreadable` 都不寫不問；改用 cadence 的地方的措辭；`lead_minutes` 改一分鐘不會撞重複檢查（`ReminderDueInputTests`）；手改 `per_period_cycle` 與一個回合的預先核准列為 known limit。驗證：`quota-plan.test.sh`、`ReminderDueInputTests`、`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

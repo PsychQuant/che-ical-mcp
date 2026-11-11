@@ -15,8 +15,9 @@
 #   --through-cycle  the entry's per_period_cycle: the cycle per_period_through was written under (the two are
 #               written and removed together). Same form as the cycle line. When it is the input's cycle, the
 #               keys did not change: an open reminder off schedule does not make --through stale (#499 r11).
-#   --reminders FILE  also read input lines (the reminder and unreadable lines) from FILE, after stdin, so the date
-#               helper can be piped in directly: quota-dates.sh ... | quota-plan.sh ... --reminders FILE
+#   --reminders FILE  also read input lines from FILE, after stdin, so the date helper can be piped in directly:
+#               quota-dates.sh ... | quota-plan.sh ... --reminders FILE. FILE holds only reminder and unreadable
+#               lines, and is read before anything is planned: a failed read exits 2.
 #   --create-days  create only the periods whose due is within N days of --now (period 1 always). The helper may
 #               list more (a wider --horizon-days): those periods are judged, never created, so a reminder on a
 #               period just past the creation window is not taken for an off-schedule one.
@@ -30,7 +31,7 @@
 #   line; v1 does not use the rule, but the helper prints it last, so an input without it is a helper that stopped
 #   early). The cycle line, `cycle weekly-<weekday>|monthly-<day>`, is what sets the keys, in canonical form.
 #   reminder <id> open|completed <due> <period-key|-> <record-key|-> <alarms|-> list|other <cycle|-|unknown>
-#   unreadable <id|-> state|due|key|record|alarms|place   a reminder that is the quota's (its marker counts) with a
+#   unreadable <id|-> id|state|due|key|record|alarms|place   a reminder that is the quota's (its marker counts) with a
 #     read-back field out of form. Nothing is planned for the quota: every write stops (#499 r11), so its period
 #     is never created next to it. Output: `action list <id> unreadable <field>`, then `action stopped unreadable`
 #     (with --replace: `action replace-blocked unreadable`), and nothing else.
@@ -87,7 +88,16 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 [ -n "$now" ] || die "--now is required"
-[ -z "$reminders_file" ] || { [ -f "$reminders_file" ] && [ -r "$reminders_file" ]; } || die "cannot read --reminders: $reminders_file"
+# The reminders file is read here, in one step whose status is checked (#499 r12): a read that fails, or a file
+# that vanished since it was written, exits 2 and prints no plan. It holds only the skill's reminder and
+# unreadable lines; a helper line in it would not come from the date helper.
+rem_lines=""
+if [ -n "$reminders_file" ]; then
+  rem_lines="$(cat -- "$reminders_file")" || die "cannot read --reminders: $reminders_file"
+  while IFS=$' \t' read -r kind _; do
+    case "$kind" in ''|reminder|unreadable) ;; *) die "--reminders may hold only reminder and unreadable lines, not: $kind" ;; esac
+  done <<< "$rem_lines"
+fi
 [ "${#DELP[@]}" -eq 0 ] || [ "$replace" -eq 1 ] || die "--delete-passed is only read with --replace"
 is_day() {  # YYYY-MM-DD and a real calendar day (2026-02-30, 0000-00-00 and 9999-99-99 are not)
   case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
@@ -187,12 +197,12 @@ while IFS=$' \t' read -r -a f || [ "${#f[@]}" -gt 0 ]; do
     unreadable)
       [ "${#f[@]}" -eq 3 ] || die "bad unreadable line (want 3 fields): ${f[*]}"
       [ "${f[1]}" = "-" ] || case "${f[1]}" in *[!A-Za-z0-9:/._=-]*) false ;; *) true ;; esac || die "bad unreadable line: ${f[*]}"
-      case "${f[2]}" in state|due|key|record|alarms|place) ;; *) die "bad unreadable line: ${f[*]}" ;; esac
+      case "${f[2]}" in id|state|due|key|record|alarms|place) ;; *) die "bad unreadable line: ${f[*]}" ;; esac
       [ "${f[1]}" = "-" ] || seen_id "${f[1]}"
       U_ID+=("${f[1]}"); U_F+=("${f[2]}") ;;
     *) die "unknown input line: ${f[*]}" ;;
   esac
-done < <(cat; printf '\n'; [ -z "$reminders_file" ] || cat -- "$reminders_file")
+done < <(cat; printf '\n'; [ -z "$rem_lines" ] || printf '%s\n' "$rem_lines")
 np=${#N_KEY[@]}
 [ "$np" -ge 2 ] || die "need period 0 (--previous) and period 1"
 [ "${N_STATE[0]}" = past ] || die "period 0 must be the past period (run quota-dates.sh with --previous)"
