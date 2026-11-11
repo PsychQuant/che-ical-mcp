@@ -11,6 +11,11 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     static let standard = "plugin/rules/modules/conference.md"
     static let index = "plugin/rules/event-modules.md"
     static let spec = "openspec/changes/add-conference-recommend-layer/specs/conference-recommend-layer/spec.md"
+    static let conferenceSpec = "openspec/changes/add-conference-module/specs/conference-module/spec.md"
+
+    /// The one exception to "Whose text is whose" (conference.md section 6): moving the layer's lines
+    /// below the marker would make them the user's text, and they would come back on every paste.
+    static let dropException = "the recommendation layer's block lines and marks are dropped, not moved below the marker pair"
 
     static let blockLines = [
         "conference-recommend: begin",
@@ -47,33 +52,52 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         XCTAssertFalse(text.contains("is not part of this contract; it is tracked in #346"), "the old deferral sentence is back")
     }
 
+    /// Number of times `pin` occurs in `text`. A docs pin must occur exactly once, so a second copy
+    /// elsewhere in the document cannot keep the test green after the pinned rule is removed.
+    static func count(_ pin: String, in text: String) -> Int {
+        text.components(separatedBy: pin).count - 1
+    }
+
+    private func assertOnce(_ pin: String, in path: String, _ message: String = "",
+                            file: StaticString = #filePath, line: UInt = #line) throws {
+        let n = Self.count(pin, in: try read(path))
+        XCTAssertEqual(n, 1, "\(path): expected exactly one \"\(pin)\", found \(n). \(message)", file: file, line: line)
+    }
+
+    /// The whole fenced template, so a deleted or reordered line fails even though the single
+    /// `conference-recommend: begin` / `end` strings also occur in the prose (verify round 2, INFO).
+    static let blockTemplate = """
+        ```
+        conference-recommend: begin
+        Recommended: <room> #<number> <title>, <start> — <reason>
+        Alternate: <room> #<number> <title>, <start>
+        Online: <meeting link>
+        conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>
+        conference-recommend-location: <standard location>
+        conference-recommend-marks: <line numbers, comma-separated, or none>
+        conference-recommend: end
+        ```
+        """
+
     func testBlockLinesAppearInOrderInContractAndSpec() throws {
-        let layer = try read(Self.layer)
-        let block = Self.section(layer, 3)
-        var cursor = block.startIndex
-        for line in Self.blockLines {
-            guard let hit = block.range(of: line, range: cursor..<block.endIndex) else {
-                return XCTFail("section 3 block lost or reordered: \(line)")
-            }
-            cursor = hit.upperBound
-        }
+        try assertOnce(Self.blockTemplate, in: Self.layer, "section 3 block lost or reordered")
+        try assertOnce("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>`", in: Self.spec)
         let spec = try read(Self.spec)
         for line in Self.blockLines {
             XCTAssertTrue(spec.contains(line.components(separatedBy: " <").first!), "spec does not name \(line)")
         }
-        XCTAssertTrue(spec.contains("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>`"))
     }
 
     func testModeIsAClosedThreeStepOrder() throws {
         let one = Self.section(try read(Self.layer), 1)
         let rules = one.components(separatedBy: "\n").filter { $0.range(of: #"^[0-9]+\. \*\*"#, options: .regularExpression) != nil }
-        XCTAssertEqual(rules.count, 3, "mode rules changed: \(rules)")
+        guard rules.count == 3 else { return XCTFail("mode rules changed: \(rules)") }
         XCTAssertTrue(rules[1].contains("`conference_mode`"))
         XCTAssertTrue(rules[2].contains("`standard`"))
         let rows = one.components(separatedBy: "\n").filter { $0.hasPrefix("| `") }
         XCTAssertEqual(rows.map { String($0.prefix(24)) }, ["| `standard` | not used |", "| `recommend` | given | i", "| `recommend` | none | st"].map { String($0.prefix(24)) })
-        XCTAssertTrue(one.contains("asks once: remove the recommendations, or keep them?"),
-                      "a default-standard run must not remove recommendations without asking")
+        try assertOnce("asks once: remove the recommendations, or keep them?", in: Self.layer,
+                       "a run must not remove recommendations the message did not ask to remove")
     }
 
     func testPicksNotAppliedIsAClosedList() throws {
@@ -130,9 +154,10 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     /// MEDIUM 3 / LOW 13: a block that is not well-formed is dropped, never moved below the marker.
     func testMalformedBlockIsDroppedNotMoved() throws {
-        let standard = try read(Self.standard)
-        XCTAssertTrue(standard.contains("an event whose block is not well-formed has the block's lines and marks dropped, not moved below the marker pair"),
-                      "conference.md must say what happens to a block that is not well-formed")
+        // Verify round 2, MEDIUM 4: the same exception, worded the same, in all four documents.
+        for path in [Self.standard, Self.conferenceSpec, Self.layer, Self.spec] {
+            try assertOnce(Self.dropException, in: path, "the drop exception must read the same in every document")
+        }
         let three = Self.section(try read(Self.layer), 3)
         XCTAssertTrue(three.contains("Lines below the marker pair are the user's and are never parsed as block lines."))
     }
@@ -161,11 +186,76 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         let layer = try read(Self.layer)
         let one = Self.section(layer, 1)
         XCTAssertTrue(one.contains("A request that names slots is a `recommend` run with `none` for those slots"))
-        XCTAssertTrue(one.contains("any field of its standard form changes (title, start, end, location, notes, registration)"))
+        XCTAssertTrue(one.contains("the standard flow would change any field of its standard form (title, start, end, location, notes, registration)"))
         XCTAssertTrue(one.contains("from 60 days before to 365 days after the date the message names, or today when it names none"))
         XCTAssertTrue(one.contains("**On a first paste with picks**, the standard flow creates and reads back first"))
         let index = try read(Self.index)
         XCTAssertTrue(index.contains("no trigger, switch or calendar of its own"), "the index row must say the layer is not a module")
+    }
+
+    // MARK: - #346 verify round 2
+
+    /// MEDIUM 1: a line the user typed inside the block is never deleted. A block with any other line
+    /// between begin and end is not well-formed, and the drop removes only the block's own line kinds.
+    func testAUserLineInsideTheBlockIsNeverDeleted() throws {
+        try assertOnce("no other line lies between `conference-recommend: begin` and `conference-recommend: end`", in: Self.layer)
+        try assertOnce("**Block lines** (closed list):", in: Self.layer)
+        try assertOnce("Every other line in that range is the user's text", in: Self.layer,
+                       "a drop must move the user's lines below the marker, not delete them")
+        try assertOnce("#### Scenario: A line the user typed inside the block", in: Self.spec)
+    }
+
+    /// MEDIUM 2: a decorated event moved by hand pairs with its item through its item line, so it goes to
+    /// the mapping table instead of the item being offered as "not in the set".
+    func testAMalformedBlockIsComparedByOneRule() throws {
+        try assertOnce("its **comparison title**", in: Self.standard, "the comparison title must be defined once, in conference.md")
+        try assertOnce("is never an exact match (Match rule 1)", in: Self.standard,
+                       "a malformed decorated event must never be rewritten silently")
+        try assertOnce("only for an event that carries this module's marker pair", in: Self.standard,
+                       "a planted item line in a hand-built event must not count")
+        try assertOnce("by its comparison title (`conference.md` line 5)", in: Self.layer)
+        try assertOnce("#### Scenario: A decorated event moved by hand", in: Self.spec)
+        XCTAssertFalse(try read(Self.layer).contains("For the client-side skip, such an event is compared by the title in its item line"),
+                       "the second, layer-only rule for the client-side skip is back")
+    }
+
+    /// MEDIUM 3 (the client-side skip of another kind): only a timed event holds a session's slot.
+    func testTheClientSideSkipNeedsATimedEvent() throws {
+        let six = Self.section(try read(Self.standard), 6)
+        XCTAssertEqual(Self.count("a timed event whose standard title (its comparison title) equals the item's title", in: six), 1)
+        try assertOnce("#### Scenario: A same-named all-day event does not block a session", in: Self.spec)
+    }
+
+    /// MEDIUM 5: no run removes a recommendation that its message did not ask to remove without asking.
+    func testRemovalIsAClosedListOfAskedWays() throws {
+        let one = Self.section(try read(Self.layer), 1)
+        guard let start = one.range(of: "**A recommendation is removed only in these ways** (closed list):"),
+              let end = one.range(of: "\n\nIn no other case is a decorated event written without its block.", range: start.upperBound..<one.endIndex) else {
+            return XCTFail("removal list not found")
+        }
+        let bullets = one[start.upperBound..<end.lowerBound].components(separatedBy: "\n").filter { $0.hasPrefix("- ") }
+        XCTAssertEqual(bullets.count, 3, "removal ways changed: \(bullets)")
+        try assertOnce("**The recommendation question.**", in: Self.layer)
+        try assertOnce("the mode is `standard` by rule 2 or rule 3", in: Self.layer,
+                       "a config of standard must ask too, not only the default")
+        XCTAssertFalse(try read(Self.layer).contains("**A mode that is standard only by rule 3**"))
+        let spec = try read(Self.spec)
+        XCTAssertFalse(spec.contains("standard` only by the last rule"))
+        try assertOnce("#### Scenario: A one-off recommendation under `conference_mode: standard`", in: Self.spec)
+        try assertOnce("#### Scenario: Nobody answers the recommendation question", in: Self.spec)
+    }
+
+    /// LOW: conference.md line 7's list of what is parsed from notes includes the layer's block.
+    func testNotesParseListIncludesTheBlock() throws {
+        try assertOnce("only the two marker lines (section 6) and the recommendation layer's block lines (`conference-recommend.md` section 3) are parsed",
+                       in: Self.standard)
+    }
+
+    /// LOW: the scenario's item line carries the zone that well-formed criterion 5 needs.
+    func testSpecScenarioItemLineHasAZone() throws {
+        let spec = try read(Self.spec)
+        XCTAssertFalse(spec.contains("`conference-recommend-item: ES2026 午前1：… | 2026-11-10T10:30`"))
+        try assertOnce("`conference-recommend-item: ES2026 午前1：… | 2026-11-10T10:30 Asia/Tokyo`", in: Self.spec)
     }
 
     func testIndexListsTheLayer() throws {

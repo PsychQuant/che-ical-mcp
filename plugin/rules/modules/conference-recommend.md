@@ -18,13 +18,26 @@ What a run does with the module events of the set (`conference-module-item: sess
 
 | Mode | Picks in this run | A decorated event | An undecorated event |
 |---|---|---|---|
-| `standard` | not used | restored to its standard form (section 6) | standard mode only |
+| `standard` | not used | restored to its standard form (section 6), only in a way the removal list below allows; otherwise nothing is written to it | standard mode only |
 | `recommend` | given | its slot named with a pick: (re)decorated from the pick; named with `none`: restored; not named: the next row | its slot named with a pick: decorated |
-| `recommend` | none | standard form unchanged: left as it is; any field of its standard form changes (title, start, end, location, notes, registration): written in its new standard form, restored, and listed as "recommendation removed: the slot changed" | standard mode only |
+| `recommend` | none | standard form unchanged: left as it is; the standard flow would change any field of its standard form (title, start, end, location, notes, registration): written in its new standard form without the block only in a way the removal list below allows, then listed as "recommendation removed: the slot changed"; otherwise nothing is written to it, and the report says the change was not applied | standard mode only |
 
-**A mode that is standard only by rule 3**, in a set that has decorated events, asks once: remove the recommendations, or keep them? Keep means the run follows the `recommend` row without picks. When nobody can answer, keep, and list the question as pending. To keep recommendations across re-pastes without this question, set `conference_mode: recommend`.
+**A recommendation is removed only in these ways** (closed list):
 
-**A run without a program** (a message that only gives picks, or only asks to remove them) finds the set with `search_events` in the routed calendar, keyword `conference-module:`, from 60 days before to 365 days after the date the message names, or today when it names none. A group of module events is the set when the name the message uses equals its marker name, or equals the short name (the first word of its sessions' standard titles). With no such group, or with several, it asks. The block's item line gives each event's zone (section 3), so the run needs no program. Such a run applies only this layer; the standard flow does not run.
+- the message of this run asks for it (rule 1: a `standard` run, or `none` for the slot);
+- the user answers *remove* for the slot to the recommendation question below;
+- the user answers yes to the slot's mapping-table row (`conference.md` section 6, Match rule 2), when that row pairs the event with an item whose title or start the program changed, or pairs an event whose block is not well-formed (section 3), and says that the recommendation goes; a *keep* answer for the slot overrides it.
+
+In no other case is a decorated event written without its block.
+
+**The recommendation question.** A run asks it in these cases (closed list), in one question, in the same message as the mapping table when there is one:
+
+- the mode is `standard` by rule 2 or rule 3 and the set has decorated events: about each of them;
+- the mode is `recommend`, this run gives no pick for a decorated event's slot, and the standard flow would change the event's end, location, notes or registration while its title and start stay (an exact match, which the standard flow would otherwise update without asking): about that event.
+
+It asks once: remove the recommendations, or keep them? The answer may name slots. *Remove* restores the event, or writes it in its new standard form when the program changed it. *Keep* writes nothing to the event in this run, even on a yes to its mapping-table row. When the program changed the slot, its item counts as *kept*, so nothing is created beside it, and the report says the change was not applied. The question comes back on later runs while it applies. **Nobody to answer**: keep, and the question is listed as pending (`conference.md` section 7, line 10). To keep recommendations across re-pastes without this question, set `conference_mode: recommend`. `conference_mode: standard` asks like no setting does; it differs from no setting only in the report.
+
+**A run without a program** (a message that only gives picks, or only asks to remove them) finds the set with `search_events` in the routed calendar, keyword `conference-module:`, from 60 days before to 365 days after the date the message names, or today when it names none. A group of module events is the set when the name the message uses equals its marker name, or equals the short name (the first word of its sessions' standard titles, after any `（未報名）` prefix). With no such group, or with several, it asks. The block's item line gives each event's zone (section 3), so the run needs no program. Such a run applies only this layer; the standard flow does not run.
 
 **On a first paste with picks**, the standard flow creates and reads back first. The picks are checked (section 2) and applied only after that, with `update_event`. A slot event is never created with a decorated title: the server's skip and the standard form of section 3 both depend on the standard title being what `create_event` wrote.
 
@@ -34,7 +47,7 @@ A pick names one slot and gives, for that slot (closed list of fields):
 
 | Field | Required | Meaning |
 |---|---|---|
-| `slot` | yes | the slot's label as the program writes it (`午前1`), or its start time; it must identify exactly one session event of the set |
+| `slot` | yes | the slot's label as the program writes it (`午前1`), or its start time in the conference's zone; it must identify exactly one session event of the set |
 | `recommended` | yes, or `none` | an ordered list of talks: `room`, `number` (the talk's number in the program), optional `title`, optional `start` (with `basis` when it is an estimate), `reason` (one line), optional `online` (`yes` / `no`, default `no`), optional `meeting_link`, optional `meeting_id` |
 | `alternates` | no | talks in the same window as a recommended talk, same fields without `reason` |
 
@@ -88,12 +101,19 @@ conference-recommend: end
 - **`conference-recommend-marks:`** lists the lines that carry a mark. They are counted from 1 in the standard notes, the lines between `conference-recommend: end` and the marker pair. A marked line begins with `★ ` (recommended) or `☆ ` (alternate).
 - A value the layer copies from a pick is one line (line breaks become spaces). A value that begins with `conference-` is written with `· ` in front, so a value can never form a block line or a marker.
 
+**Block lines** (closed list): only lines above the `conference-module` marker pair can be block lines, and only these:
+
+- a line that begins with `conference-recommend` (the begin, item, location, marks and end lines, or a damaged copy of one);
+- a line that begins with `Recommended: `, `Alternate: ` or `Online: `, or is empty, and lies between the begin line and the end line (without an end line, between the begin line and the last line above the marker pair that begins with `conference-recommend`).
+
+No other line is a block line, wherever it lies.
+
 **Well-formed.** The block is well-formed when **all** of these hold (closed list). Only lines above the `conference-module` marker pair count. Lines below the marker pair are the user's and are never parsed as block lines.
 
 1. it starts on the first line of the notes;
 2. it occurs exactly once: one `conference-recommend: begin` line above the marker pair;
 3. it lies above the `conference-module` marker pair;
-4. its five `conference-recommend` lines are present in the order shown, each exactly once;
+4. its five `conference-recommend` lines are present in the order shown, each exactly once, any `Recommended:`, `Alternate:` and `Online:` lines lie between the begin line and the item line, and no other line lies between `conference-recommend: begin` and `conference-recommend: end`;
 5. the start in the item line equals the event's start, read from `start_date_local` with `display_timezone` set to the item line's zone;
 6. every line the marks line names begins with `★ ` or `☆ `.
 
@@ -101,19 +121,17 @@ conference-recommend: end
 
 - **title:** the title in the item line, decoded;
 - **location:** the location line, decoded;
-- **notes:** the event's notes with the block's lines removed and the first two characters removed from each marked line;
+- **notes:** the event's notes with the block lines removed and the first two characters removed from each marked line;
 - **start, end, alarms, calendar:** the event's own, which the layer never changes.
 
 An event without a block is its own standard form. So a re-paste matches a decorated event by its standard title and start, as it matches a plain one, and creates no second event. The match never goes through the decorated title. `create_event`'s server-side skip compares the decorated title, so it would not protect a decorated slot (device check below). The standard-form match is what does, and `conference.md` section 6 compares it on the client before every `create_event` of a session.
 
-**Not well-formed** (a line edited or missing, a mark gone, the event moved by hand): the layer never writes to the event, and the report lists it. For the standard flow it is "an event whose title another layer rewrote", which `conference.md` section 6 sends to the mapping table. On the user's yes there, the event gets the standard values the program gives, without the block (below). On a no, the client-side skip of `conference.md` section 6 finds it by its item line's title, so the item is *kept*, not created a second time.
+**Not well-formed** (a line edited, added or missing, a mark gone, the event moved by hand): the layer never writes to the event, and the report lists it. The standard flow compares it by its comparison title (`conference.md` line 5): the title in its item line when that line occurs once above the marker pair and parses, otherwise its own title; its start and end are its own. It is never an exact match, so it always goes to the mapping table, where the pairing passes pair it with its item by that title even when it was moved by hand. Its row says that the recommendation goes on a yes:
 
-**A block that is not well-formed is dropped, never moved.** When `conference.md` section 6 rewrites the notes of an event with such a block, these are removed:
+- **yes** writes the standard values the program gives (the program's start included, when the event was moved), without the block (below);
+- **no** leaves the event as it is. When it still covers the item's start, the client-side skip of `conference.md` section 6 finds it by its comparison title, so the item is *kept*, not created a second time, and the row reads "no keeps <event> in its place". When it was moved off the item's start, no creates the item beside it and lists the old event, as for any old event whose time changed (Match rule 2), and the row reads "no creates the item beside <event>".
 
-- the lines from `conference-recommend: begin` through `conference-recommend: end` above the marker pair (without an end line, through the last line above the marker that begins with `conference-recommend`);
-- any other line above the marker that begins with `conference-recommend`.
-
-A leading `★ ` or `☆ ` is also removed from the lines a parsable marks line names. Without one, it is removed from a line only when the rest equals a line the module writes now. Then the usual rule of "Whose text is whose" applies, so none of these lines becomes the user's text below the marker. For the client-side skip, such an event is compared by the title in its item line when that line is present once and parses, and otherwise by its own title.
+**A block that is not well-formed is dropped, never moved.** When `conference.md` section 6 rewrites the notes of an event with such a block, the recommendation layer's block lines and marks are dropped, not moved below the marker pair. The range is the one **Block lines** names, from the begin line through the end line. Every other line in that range is the user's text: the usual rule of "Whose text is whose" moves it below the marker, so nothing the user wrote is lost. A leading `★ ` or `☆ ` is removed from the lines a parsable marks line names. Without one, it is removed from a line only when the rest equals a line the module writes now.
 
 ## 4. The decorated event
 
@@ -134,7 +152,7 @@ A leading `★ ` or `☆ ` is also removed from the lines a parsable marks line 
 
 ## 6. Restore (the layer off)
 
-Restoring writes the event's standard form (section 3) as its title, location and notes, in one `update_event`. When the standard flow updates the event in the same run, the new standard values are written instead. After a restore, the event's title, location and notes equal those of a standard-mode paste of the same program; the read-back checks this. A restore needs no program: the standard form is stored in the event.
+Restoring writes the event's standard form (section 3) as its title, location and notes, in one `update_event`. An event that also carries a `lodging-module:` marker line is never restored or otherwise written, in any mode (section 2); the report lists it. When the standard flow updates the event in the same run, the new standard values are written instead. After a restore, the event's title, location and notes equal those of a standard-mode paste of the same program; the read-back checks this. A restore needs no program: the standard form is stored in the event.
 
 ## 7. Report
 
@@ -142,7 +160,7 @@ These lines are added after line 3 of `conference.md` section 7:
 
 - `Recommendation mode: <mode> (<from the message | from <config path> | default>)`;
 - `Recommendations: decorated N, restored N, unchanged N`, with the slots named;
-- picks not applied, and why (section 2); a meeting link left out (section 2); talks with no mark; events with a block that is not well-formed; slots whose recommendation was removed because the slot changed; a code left out; a question left pending.
+- picks not applied, and why (section 2); a meeting link left out (section 2); talks with no mark; events with a block that is not well-formed; slots whose recommendation was removed because the slot changed; slots kept with their recommendation although the program changed them; a code left out; a question left pending.
 
 ## 8. Worked example (fictional)
 
@@ -160,5 +178,5 @@ The program of `conference.md` section 8, "Example Symposium 2026", in the stand
     - `conference-recommend-marks: 2,3`;
     - `conference-recommend: end`;
     - then the listing with `★ ` on the `A #2` and `B #3` lines.
-- **Re-paste, `conference_mode: recommend`, no picks:** the standard form equals the program, so the event is unchanged and nothing is written. With `conference_mode` unset, the run asks whether to keep the recommendations.
+- **Re-paste, `conference_mode: recommend`, no picks:** the standard form equals the program, so the event is unchanged and nothing is written. With `conference_mode` unset or `standard`, the run asks whether to remove or keep the recommendations; with nobody to answer, it keeps them.
 - **Layer off** ("remove the recommendations"): one `update_event` writes back `ES2026 午前1：…`, `Example Hall` and the unmarked listing.
