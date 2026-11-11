@@ -1481,9 +1481,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
                 // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
                 let parts = rules.map(RuleEndShift.parts)
+                // #513: a rule passed in the call counts for the unit and the day (fail closed).
+                let passedUnit = recurrenceRule.map { RuleEndShift.unit(of: $0.frequency) }
+                let passedTakesDayFromStart = recurrenceRule.map { !RuleEndShift.namesDays(daysOfWeek: $0.daysOfWeek, daysOfMonth: $0.daysOfMonth) } ?? false
                 let plan = RuleEndShift.Plan(storedStarts: storedStarts,
-                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: RuleEndShift.unit(of: rules),
-                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay },
+                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone,
+                    unit: RuleEndShift.coarser(RuleEndShift.unit(of: rules), passedUnit),
+                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay } || passedTakesDayFromStart,
                     expandable: parts.allSatisfy { $0.expandable }, weeklyDays: RuleEndShift.weeklyDays(rules))
                 // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
                 // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a

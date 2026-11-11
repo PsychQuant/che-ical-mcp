@@ -31,7 +31,10 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // MEDIUM 6: a passed rule is checked against its own end; MEDIUM 7: the rule's unit.
         XCTAssertTrue(code.contains("letpassedRule=RuleEndShift.passedRule(recurrenceRule,clearing:clearRecurrence)"))
         XCTAssertTrue(code.contains("storedEnds:storedEnds,passedRule:passedRule,plan:plan,"))
-        XCTAssertTrue(code.contains("unit:RuleEndShift.unit(of:rules)"))
+        // #513: a rule passed in the call counts for the unit (the coarser) and the day.
+        XCTAssertTrue(code.contains("unit:RuleEndShift.coarser(RuleEndShift.unit(of:rules),passedUnit),"))
+        XCTAssertTrue(code.contains("letpassedUnit=recurrenceRule.map{RuleEndShift.unit(of:$0.frequency)}"))
+        XCTAssertTrue(code.contains("letpassedTakesDayFromStart=recurrenceRule.map{!RuleEndShift.namesDays(daysOfWeek:$0.daysOfWeek,daysOfMonth:$0.daysOfMonth)}??false"))
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
         XCTAssertTrue(code.contains("from:applyToAll?nil:eventSlot,"))
         XCTAssertTrue(code.contains("route:RuleEndShift.route(ruleWritable:SeriesRuleWrite.writableRule(seriesRules)!=nil,addressesOwnOccurrence:addressesOwnOccurrence,"
@@ -59,7 +62,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         XCTAssertFalse(code.contains("ruleHolder?.recurrenceRules??[]"))
         // Round 4 (HIGH): the day comes from the rule's parts, apart from whether it has BY parts.
         XCTAssertTrue(code.contains("letparts=rules.map(RuleEndShift.parts)"))
-        XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:parts.contains{!$0.fixesDay},"
+        XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:parts.contains{!$0.fixesDay}||passedTakesDayFromStart,"
                                     + "expandable:parts.allSatisfy{$0.expandable},weeklyDays:RuleEndShift.weeklyDays(rules))"))
     }
 
@@ -88,6 +91,8 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // offers the recurrence route where a retry meets one of those causes.
         let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "if!plan.expandable{returnuncheckedReason(.unexpandable)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
                      "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "iflisted.isEmpty{returnuncheckedReason(.empty)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}", "ifstartsPastEnd("]
+        // #513: with no end, only the month-end shape refuses, before the other steps.
+        XCTAssertTrue(decision.contains("guard!ends.isEmptyelse{returnpassedRule!=.clear&&nearMonthEnd(plan)?openMonthEndReason:nil}"))
         let found = try steps.map { try XCTUnwrap(decision.range(of: $0), $0).lowerBound }
         XCTAssertEqual(found, found.sorted())
     }
