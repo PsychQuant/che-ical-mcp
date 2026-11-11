@@ -364,7 +364,7 @@ Every event the module creates SHALL carry in its notes the two consecutive whol
 
 ### Requirement: Access codes in copied program text are masked
 
-When the module writes program text or a forwarded thread into an event's notes, it SHALL replace each of these values with `REMOVED`, and only these, applying the first before the second: in a link (a run of text beginning with `http://` or `https://` up to the next space or line end), the value of a query parameter named `pwd`, `pw`, `pass`, `passcode` or `password` in any letter case, the value of one named `p` only when the host is `teams.microsoft.com` or `teams.live.com`, and a password before the host; after a label outside any link (`passcode` or `password` in any letter case as a whole word, or `パスコード`, `パスワード`, `密碼` or `密码`, followed after any spaces by `:`, `：` or `=`), the rest of the line when anything but spaces is left in it; and, when only spaces follow the separator, the next line when it is one token with no spaces. In the location it SHALL apply only the link rule. It SHALL NOT mask a title. Any other value, the meeting ID included, SHALL be copied as it is. In every comparison the module's own output SHALL be masked and the event's notes and location SHALL be compared as stored. When an event's notes would be rewritten and a line above the marker holds a value of this closed list that the module does not write as it stands, the module SHALL NOT decide alone: the mapping table SHALL carry one row, "mask the old code in <event>?", that shows each such line only in its masked form and needs its own answer; a yes SHALL replace each such line with its masked form, a no SHALL keep the line and move it below the marker, and with nobody to answer that event's notes SHALL NOT be rewritten and the row SHALL be pending. A code already below the marker SHALL be left as it is. The report SHALL name the events in which the run masked a value.
+When the module writes program text or a forwarded thread into an event's notes, it SHALL replace each of these values with `REMOVED`, and only these, applying the first before the second: in a link (a run of text beginning with `http://` or `https://` and ending before the first character that is not one of RFC 3986's unreserved or reserved characters or `%`, so a full-width bracket, U+3000 or any other non-ASCII character ends it), the value of a query parameter named `pwd`, `pw`, `pass`, `passcode` or `password` in any letter case, the value of one named `p` only when the host is `teams.microsoft.com` or `teams.live.com`, and a password before the host; after a label anywhere on the line (`passcode` or `password` in any letter case as a whole word, or `パスコード`, `パスワード`, `密碼` or `密码`, followed after any spaces by `:`, `：` or `=`, and not directly after `?` or `&`), the rest of the line when anything but spaces is left in it; and, when only spaces follow the separator, the next line when it is one token with no spaces (a next line beginning with `http://` or `https://` getting the link rule only). In the location it SHALL apply only the link rule. It SHALL NOT mask a title, a marker line or a recommendation block line. Any other value, the meeting ID included, SHALL be copied as it is. In every comparison the module's own output SHALL be masked and the event's notes and location SHALL be compared as stored. Masking SHALL apply only to what the module writes now: an event written before this rule SHALL be handled as any line the module does not write is handled, so a line above the marker holding a value of this closed list SHALL be moved below the marker unchanged when the notes are rewritten, without a question, and the report SHALL name each such event and say the code was kept as the user's text and can be removed by hand. Old codes, above and below the marker, are not masked by v1. The report SHALL name the events in which the run wrote a masked value.
 
 #### Scenario: A meeting link with a passcode in the program
 
@@ -377,6 +377,18 @@ When the module writes program text or a forwarded thread into an event's notes,
 - **GIVEN** a program whose text for a session holds the lines `Meeting ID: 123 456 789` and `パスコード：987654`
 - **WHEN** the module creates the session
 - **THEN** its notes hold `Meeting ID: 123 456 789` and `パスコード：REMOVED`
+
+#### Scenario: A passcode in full-width brackets after a link
+
+- **GIVEN** a program line `https://zoom.us/j/12345678901（パスコード：987654）`
+- **WHEN** the module writes it into a session's notes
+- **THEN** the link ends at `（`, the label after it is found, and the notes hold `https://zoom.us/j/12345678901（パスコード：REMOVED`
+
+#### Scenario: A passcode after a link and an ideographic space
+
+- **GIVEN** a program line `URL：https://zoom.us/j/1　パスコード：987654`, with U+3000 between the link and the label
+- **WHEN** the module writes it into a session's notes
+- **THEN** the link ends at the U+3000 and the notes hold `URL：https://zoom.us/j/1　パスコード：REMOVED`
 
 #### Scenario: A talk title with a label word
 
@@ -394,19 +406,13 @@ When the module writes program text or a forwarded thread into an event's notes,
 
 - **GIVEN** a session written before this rule, whose notes above the marker hold `Passcode: 987654`
 - **WHEN** the same program is pasted again
-- **THEN** the mapping table asks "mask the old code in <event>?", showing the line as `Passcode: REMOVED`; on a yes its notes hold `Passcode: REMOVED`; on a no the line is kept and moved below the marker; with nobody to answer its notes are not rewritten and the row is pending
+- **THEN** its notes are rewritten with `Passcode: REMOVED` above the marker, the old line `Passcode: 987654` is moved below the marker unchanged, no question is asked, and the report names the session and says the code was kept as the user's text and can be removed by hand
 
 #### Scenario: A code line the user edited
 
-- **GIVEN** a session whose notes above the marker hold `Passcode: 482913`, a code the user typed over the module's `Passcode: REMOVED`
+- **GIVEN** a session written under this rule whose notes above the marker hold `Passcode: 482913`, a code the user typed over the module's `Passcode: REMOVED`
 - **WHEN** a corrected program changes that session's text
-- **THEN** the line is not replaced without an answer: the old-code row asks about it, and a no keeps `Passcode: 482913` below the marker
-
-#### Scenario: An old event whose meeting link changed
-
-- **GIVEN** a session written before this rule whose notes hold `https://example.zoom.us/j/111?pwd=OldSecret`, and a corrected program whose link is `https://example.zoom.us/j/222?pwd=NewSecret`
-- **WHEN** the corrected program is pasted
-- **THEN** the notes are written with `https://example.zoom.us/j/222?pwd=REMOVED`, the old line is asked about in the old-code row, and `OldSecret` is not moved below the marker without the user's no
+- **THEN** the line is moved below the marker unchanged, as the user's text, and the notes above the marker hold the module's masked lines
 
 ### Requirement: The calendar is resolved once through routing for the whole program
 
