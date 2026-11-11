@@ -21,6 +21,7 @@
 # reads as the time after the jump.
 #
 # stdout, one line each:
+#   cycle <weekly-<weekday name>|monthly-<day>>   first: what sets the keys, canonical (weekly-monday, monthly-8)
 #   period <n> key=<reset day YYYY-MM-DD> state=<past|current|future> reset=<ISO in reset zone, or YYYY-MM-DD>
 #          due=<ISO local with offset, or YYYY-MM-DD> [alarm_minutes=<M>]
 #   key is the period's identity: the reset day in the reset zone. state: past = period 0 (--previous), current =
@@ -98,6 +99,15 @@ else
   [ "$lead_minutes" -eq 0 ] || die "--lead-minutes needs --time (a date-only reset has no time)"
   [ -z "$notify_at" ] || die "--notify-at needs --time: a date-only reminder takes no alarm"
 fi
+# The cycle: what sets the period keys (cadence and weekday or day), nothing else. Time, zone, leads and alarms
+# move dues, never keys, so they are not in it. One canonical token per key sequence (#499 r10).
+if [ "$cadence" = weekly ]; then
+  set -- sunday monday tuesday wednesday thursday friday saturday
+  cycle="weekly-${!weekday}"
+else
+  cycle="monthly-$day"
+fi
+set --
 
 # --- time helpers (BSD date) -------------------------------------------------------------------
 in_local() { if [ -n "$local_tz" ]; then TZ="$local_tz" "$@"; else "$@"; fi; }
@@ -206,6 +216,7 @@ compute() {
 limit_epoch=""
 [ -z "$horizon" ] || limit_epoch=$(( from_epoch + horizon * 86400 ))
 n=0 listed=0 first_n="" prev_line=""
+echo "cycle $cycle"
 period_line() {  # number state
   PLINE="period $1 key=$RD state=$2 reset=$RESET_TXT due=$DUE_TXT"
   [ -z "$ALARM" ] || PLINE="$PLINE alarm_minutes=$ALARM"

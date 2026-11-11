@@ -79,7 +79,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             let label = line[line.startIndex..<colon]
             return label.allSatisfy({ $0.isLetter }) && !label.isEmpty ? "`\(label):`" : nil
         }
-        XCTAssertEqual(labels.count, 12, "template labels changed: \(labels)")
+        XCTAssertEqual(labels.count, 13, "template labels changed: \(labels)")
         guard let open = skill.range(of: "one of the labels above ("),
               let close = skill.range(of: ")", range: open.upperBound..<skill.endIndex) else {
             return XCTFail("escape list not found")
@@ -165,7 +165,7 @@ final class QuotaSkillDocsTests: XCTestCase {
             // #499 r6 #5 and #12: what already matches is kept; a failure stops before anything further.
             "| `keep <id> <n>` | an open reminder already on the new dates",
             "**A failure stops the replacement.**",
-            "| `used <n>` | a new period whose key a completed reminder already carries; not created again |",
+            "| `used <n>` | a new period whose key a completed reminder of this cycle (or without one) already carries; not created again |",
             "raise `per_period_through` to the last key created; sync never lowers it",
         ])
         let spec = try read(Self.spec)
@@ -241,24 +241,52 @@ final class QuotaSkillDocsTests: XCTestCase {
         }
     }
 
-    /// #499 verify round 9: a replacement never empties a period it deletes from; the schedule signature, not the
-    /// high-water date, says the keys changed; an old server's missing alarms are not a date change.
+    /// #499 verify round 9: a replacement never empties a period it deletes from; an old server's missing alarms
+    /// are not a date change. (Its schedule signature was replaced by the per-reminder cycle of round 10.)
     func testRoundNineRules() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
             "**A period whose reminder this replacement deletes is always created again**",
-            "**When the entry has `per_period_schedule` and it differs from the signature of the entry as it is now, the planner gets `--schedule-changed`**",
-            "the five the skill writes: `local_tz`, `mode`, `per_period_through`, `per_period_schedule`, `retiring`.",
             "`alarms-missing` (on its period with its due",
         ])
         let spec = try read(Self.spec)
         assertOnce(spec, Self.spec, [
             "A period whose open reminder the replacement deletes SHALL be created again in the same replacement",
-            "When `per_period_schedule` differs from the entry's schedule, the keys SHALL be taken as changed",
         ])
         let plan = try read("plugin/bin/quota-plan.sh")
-        for pinned in ["--schedule-changed", "alarms-missing", "REPL"] {
+        for pinned in ["alarms-missing", "REPL"] {
             XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
+        }
+    }
+
+    /// #499 verify round 10: the cycle (cadence and weekday or day, canonical, printed by the helper) is carried by
+    /// each reminder, so a tick of another cycle uses no period on any run; per_period_cycle travels with
+    /// per_period_through; the one-run --schedule-changed flag and the time-and-zone signature are gone.
+    func testRoundTenRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**A completed reminder uses its period only when its `Cycle:` line is the entry's cycle, or it has none.**",
+            "the five the skill writes: `local_tz`, `mode`, `per_period_through`, `per_period_cycle`, `retiring`.",
+            "**`per_period_cycle` is written and removed together with `per_period_through`**",
+            "\nCycle: <cycle>  ",
+            "A `Cycle:` line out of form, or a second one, is passed as `-` and reported",
+            "`local_tz` (letters, digits and `_+-/`, no `..`, a zone file under `/usr/share/zoneinfo`)",
+        ])
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, [
+            "Every reminder the skill writes SHALL carry a `Cycle:` line",
+            "`per_period_cycle` SHALL be the cycle `per_period_through` was written under",
+        ])
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for pinned in ["--through-cycle", "R_CYC", "no cycle line"] {
+            XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
+        }
+        XCTAssertTrue(try read("plugin/bin/quota-dates.sh").contains("echo \"cycle $cycle\""), "quota-dates.sh must print the cycle line")
+        for path in [Self.skill, Self.spec, "plugin/bin/quota-plan.sh", "plugin/CHANGELOG.md", "plugin/README.md"] {
+            let text = try read(path)
+            for gone in ["per_period_schedule", "--schedule-changed"] {
+                XCTAssertFalse(text.contains(gone), "\(path) still mentions \(gone)")
+            }
         }
     }
 

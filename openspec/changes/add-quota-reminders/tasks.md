@@ -47,6 +47,10 @@
 
 - [x] 2j.1（An update replaces the open reminders when the schedule changes；Each period has a stable identity；被取代的期別一定重建、排程簽章（verify 第 9 輪））取代刪掉的那一則所在的期別一律重建（不看 `--through` 與 `--create-days`），測試以不變式涵蓋每個 `--replace` 案例（有無 `--through`）；entry 加 `per_period_schedule`，不同時傳 `--schedule-changed`：不讀 `per_period_through`、完成的提醒不佔用新期別；讀回沒有任何鬧鐘時報 `alarms-missing`、sync 照常建立。驗證：`quota-plan.test.sh` 先紅後綠，`QuotaSkillDocsTests`。
 
+## 2k. Verify 第 10 輪：每則提醒帶 cycle
+
+- [x] 2k.1（Each period has a stable identity；The dates come from the helper；每則提醒帶自己的 cycle（verify 第 10 輪））helper 第一行印正規的 `cycle`（cadence 與 weekday 或 day，不含時刻、時區、lead）；notes 加 `Cycle:`，完成的提醒只有同 cycle（或沒有這一行）才佔用期別；entry 的 `per_period_schedule` 改成 `per_period_cycle`，與 `per_period_through` 一起寫、一起拿掉，planner 以 `--through-cycle` 比對；拿掉 `--schedule-changed`；`local_tz`、`per_period_through`、`per_period_cycle` 列入格式檢查。驗證：`quota-plan.test.sh`（取代之後的 sync、建立失敗後的重試、只改時刻且帶 `--through` 與已勾期別、`08` 與 `monthly-8`）、`quota-dates.test.sh`（同一排程不同寫法的 cycle 相同）、`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

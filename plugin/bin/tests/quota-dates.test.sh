@@ -39,31 +39,36 @@ FROM=(--from 2026-11-09T10:00:00+08:00)
 
 # A weekly reset at night: the due stays at the deadline (reset minus lead) and the alarm is the
 # evening before (decision record row 4, corrected 2026-10-20). Monday 20:00 UTC = Tuesday 04:00 local.
-expect "weekly timed, lead, notify-at" "period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:30:00+08:00 alarm_minutes=330
+expect "weekly timed, lead, notify-at" "cycle weekly-monday
+period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:30:00+08:00 alarm_minutes=330
 period 2 key=2026-11-16 state=future reset=2026-11-16T20:00:00+00:00 due=2026-11-17T03:30:00+08:00 alarm_minutes=330
 period 3 key=2026-11-23 state=future reset=2026-11-23T20:00:00+00:00 due=2026-11-24T03:30:00+08:00 alarm_minutes=330
 rule weekly days_of_week=3 due_time=03:30 alarm_minutes=330" -- \
   --cadence weekly --weekday 2 --time 20:00 --reset-tz UTC --lead-minutes 30 --notify-at 22:00 "${FROM[@]}" "${TPE[@]}"
 
 # notify-at later in the day than the due: the alarm is the day before, never after the due.
-expect "notify-at after due time goes to the previous day" "period 1 key=2026-11-10 state=current reset=2026-11-10T09:00:00+08:00 due=2026-11-10T09:00:00+08:00 alarm_minutes=660
+expect "notify-at after due time goes to the previous day" "cycle weekly-tuesday
+period 1 key=2026-11-10 state=current reset=2026-11-10T09:00:00+08:00 due=2026-11-10T09:00:00+08:00 alarm_minutes=660
 rule weekly days_of_week=3 due_time=09:00 alarm_minutes=660" -- \
   --cadence weekly --weekday 3 --time 09:00 --reset-tz Asia/Taipei --notify-at 22:00 --count 1 "${FROM[@]}" "${TPE[@]}"
 
 # A monthly date-only credit expiry, reminded the day before: no zone conversion, no alarm.
-expect "monthly date-only, lead-days" "period 1 key=2026-11-18 state=current reset=2026-11-18 due=2026-11-17
+expect "monthly date-only, lead-days" "cycle monthly-18
+period 1 key=2026-11-18 state=current reset=2026-11-18 due=2026-11-17
 period 2 key=2026-12-18 state=future reset=2026-12-18 due=2026-12-17
 period 3 key=2027-01-18 state=future reset=2027-01-18 due=2027-01-17
 rule monthly days_of_month=17 due_time=date-only" -- \
   --cadence monthly --day 18 --lead-days 1 "${FROM[@]}" "${TPE[@]}"
 
 # A monthly UTC reset whose local due keeps one day and time: one rule fits.
-expect "monthly timed UTC, rule fits" "period 1 key=2026-11-18 state=current reset=2026-11-18T00:00:00+00:00 due=2026-11-18T07:30:00+08:00
+expect "monthly timed UTC, rule fits" "cycle monthly-18
+period 1 key=2026-11-18 state=current reset=2026-11-18T00:00:00+00:00 due=2026-11-18T07:30:00+08:00
 rule monthly days_of_month=18 due_time=07:30" -- \
   --cadence monthly --day 18 --time 00:00 --lead-minutes 30 --count 1 "${FROM[@]}" "${TPE[@]}"
 
 # Day 31 follows the clamp rule (last day of a shorter month, back to 31): no single rule fits.
-expect "monthly day 31 clamps" "period 1 key=2026-11-30 state=current reset=2026-11-30T00:00:00+00:00 due=2026-11-30T08:00:00+08:00
+expect "monthly day 31 clamps" "cycle monthly-31
+period 1 key=2026-11-30 state=current reset=2026-11-30T00:00:00+00:00 due=2026-11-30T08:00:00+08:00
 period 2 key=2026-12-31 state=future reset=2026-12-31T00:00:00+00:00 due=2026-12-31T08:00:00+08:00
 period 3 key=2027-01-31 state=future reset=2027-01-31T00:00:00+00:00 due=2027-01-31T08:00:00+08:00
 period 4 key=2027-02-28 state=future reset=2027-02-28T00:00:00+00:00 due=2027-02-28T08:00:00+08:00
@@ -71,14 +76,16 @@ rule none reason=the local due or alarm changes (period 2 of the next 24: 2026-1
   --cadence monthly --day 31 --time 00:00 --count 4 "${FROM[@]}" "${TPE[@]}"
 
 # Leap year: day 30 lands on February 29.
-expect "monthly day 30 in a leap February" "period 1 key=2028-01-30 state=current reset=2028-01-30 due=2028-01-30
+expect "monthly day 30 in a leap February" "cycle monthly-30
+period 1 key=2028-01-30 state=current reset=2028-01-30 due=2028-01-30
 period 2 key=2028-02-29 state=future reset=2028-02-29 due=2028-02-29
 period 3 key=2028-03-30 state=future reset=2028-03-30 due=2028-03-30
 rule none reason=the local due or alarm changes (period 2 of the next 24: 2028-02-29)" -- \
   --cadence monthly --day 30 --from 2028-01-15T00:00:00+08:00 "${TPE[@]}"
 
 # A reset zone with daylight saving time against a local zone without it: the local due moves an hour.
-expect "DST in the reset zone, horizon" "period 1 key=2026-11-10 state=current reset=2026-11-10T05:00:00-08:00 due=2026-11-10T20:30:00+08:00
+expect "DST in the reset zone, horizon" "cycle weekly-tuesday
+period 1 key=2026-11-10 state=current reset=2026-11-10T05:00:00-08:00 due=2026-11-10T20:30:00+08:00
 period 2 key=2026-11-17 state=future reset=2026-11-17T05:00:00-08:00 due=2026-11-17T20:30:00+08:00
 period 3 key=2026-11-24 state=future reset=2026-11-24T05:00:00-08:00 due=2026-11-24T20:30:00+08:00
 period 4 key=2026-12-01 state=future reset=2026-12-01T05:00:00-08:00 due=2026-12-01T20:30:00+08:00
@@ -87,51 +94,62 @@ rule none reason=the local due or alarm changes (period 19 of the next 104: 2027
   --cadence weekly --weekday 3 --time 05:00 --reset-tz America/Los_Angeles --lead-minutes 30 --horizon-days 30 "${FROM[@]}" "${TPE[@]}"
 
 # A lead time that crosses midnight into the previous month: the day of the month changes.
-expect "lead crosses into the previous month" "period 1 key=2026-12-01 state=current reset=2026-12-01T00:10:00+00:00 due=2026-11-30T23:40:00+00:00
+expect "lead crosses into the previous month" "cycle monthly-1
+period 1 key=2026-12-01 state=current reset=2026-12-01T00:10:00+00:00 due=2026-11-30T23:40:00+00:00
 rule none reason=the local due or alarm changes (period 2 of the next 24: 2026-12-31T23:40:00+00:00)" -- \
   --cadence monthly --day 1 --time 00:10 --lead-minutes 30 --count 1 "${FROM[@]}" --local-tz UTC
 
 # --from exactly at a reset: that period is over, the next one is listed.
-expect "from at a reset lists the next period" "period 1 key=2026-11-16 state=current reset=2026-11-16T20:00:00+00:00 due=2026-11-17T04:00:00+08:00
+expect "from at a reset lists the next period" "cycle weekly-monday
+period 1 key=2026-11-16 state=current reset=2026-11-16T20:00:00+00:00 due=2026-11-17T04:00:00+08:00
 rule weekly days_of_week=3 due_time=04:00" -- \
   --cadence weekly --weekday 2 --time 20:00 --count 1 --from 2026-11-09T20:00:00Z "${TPE[@]}"
 
 # A reset that is past but whose due is today still counts while the reset is ahead.
-expect "due passed, reset ahead" "period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:00:00+08:00
+expect "due passed, reset ahead" "cycle weekly-monday
+period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:00:00+08:00
 rule weekly days_of_week=3 due_time=03:00" -- \
   --cadence weekly --weekday 2 --time 20:00 --lead-minutes 60 --count 1 --from 2026-11-10T03:30:00+08:00 "${TPE[@]}"
 
 # --previous also lists the latest period whose reset is not after --from, as period 0 (state past): the
 # record of the period just lost or used. Weekly date-only (no zone conversion; the reset day is the key).
-expect "weekly date-only with --previous" "period 0 key=2026-11-04 state=past reset=2026-11-04 due=2026-11-03
+expect "weekly date-only with --previous" "cycle weekly-wednesday
+period 0 key=2026-11-04 state=past reset=2026-11-04 due=2026-11-03
 period 1 key=2026-11-11 state=current reset=2026-11-11 due=2026-11-10
 period 2 key=2026-11-18 state=future reset=2026-11-18 due=2026-11-17
 rule weekly days_of_week=3 due_time=date-only" -- \
   --cadence weekly --weekday 4 --lead-days 1 --count 2 --previous "${FROM[@]}" "${TPE[@]}"
 
 # Per-period top-up: every period due within 90 days (day 31 under the clamp rule).
-expect "per-period 90-day top-up" "period 1 key=2026-11-30 state=current reset=2026-11-30 due=2026-11-30
+expect "per-period 90-day top-up" "cycle monthly-31
+period 1 key=2026-11-30 state=current reset=2026-11-30 due=2026-11-30
 period 2 key=2026-12-31 state=future reset=2026-12-31 due=2026-12-31
 period 3 key=2027-01-31 state=future reset=2027-01-31 due=2027-01-31
 rule none reason=the local due or alarm changes (period 2 of the next 24: 2026-12-31)" -- \
   --cadence monthly --day 31 --horizon-days 90 "${FROM[@]}" "${TPE[@]}"
 
 # DST in the LOCAL zone: a fixed UTC reset moves an hour on the local clock.
-expect "DST in the local zone" "period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-09T15:00:00-05:00
+expect "DST in the local zone" "cycle weekly-monday
+period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-09T15:00:00-05:00
 rule none reason=the local due or alarm changes (period 19 of the next 104: 2027-03-15T16:00:00-04:00)" -- \
   --cadence weekly --weekday 2 --time 20:00 --count 1 "${FROM[@]}" --local-tz America/New_York
 
 # Zero-padded numbers are decimal, not octal (#327 verify round 1). Day 09 is today (Nov 9) in the local zone: its date-only reset has not passed.
-expect "zero-padded day 08" "period 1 key=2026-12-08 state=current reset=2026-12-08 due=2026-12-08
+expect "zero-padded day 08" "cycle monthly-8
+period 1 key=2026-12-08 state=current reset=2026-12-08 due=2026-12-08
 rule monthly days_of_month=8 due_time=date-only" -- --cadence monthly --day 08 --count 1 "${FROM[@]}" "${TPE[@]}"
-expect "zero-padded day 09" "period 1 key=2026-11-09 state=current reset=2026-11-09 due=2026-11-09
+expect "zero-padded day 09" "cycle monthly-9
+period 1 key=2026-11-09 state=current reset=2026-11-09 due=2026-11-09
 rule monthly days_of_month=9 due_time=date-only" -- --cadence monthly --day 09 --count 1 "${FROM[@]}" "${TPE[@]}"
-expect "zero-padded day 010 is ten" "period 1 key=2026-11-10 state=current reset=2026-11-10 due=2026-11-10
+expect "zero-padded day 010 is ten" "cycle monthly-10
+period 1 key=2026-11-10 state=current reset=2026-11-10 due=2026-11-10
 rule monthly days_of_month=10 due_time=date-only" -- --cadence monthly --day 010 --count 1 "${FROM[@]}" "${TPE[@]}"
-expect "zero-padded lead-minutes 010 is ten" "period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:50:00+08:00
+expect "zero-padded lead-minutes 010 is ten" "cycle weekly-monday
+period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T03:50:00+08:00
 rule weekly days_of_week=3 due_time=03:50" -- \
   --cadence weekly --weekday 2 --time 20:00 --lead-minutes 010 --count 1 "${FROM[@]}" "${TPE[@]}"
-expect "zero-padded weekday 02" "period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T04:00:00+08:00
+expect "zero-padded weekday 02" "cycle weekly-monday
+period 1 key=2026-11-09 state=current reset=2026-11-09T20:00:00+00:00 due=2026-11-10T04:00:00+08:00
 rule weekly days_of_week=3 due_time=04:00" -- \
   --cadence weekly --weekday 02 --time 20:00 --count 1 "${FROM[@]}" "${TPE[@]}"
 
@@ -145,9 +163,11 @@ expect_error "a directory is not a zone" "unknown --local-tz" -- --cadence weekl
 # Sunday 04:00 local; without notify_at one weekly rule fits, with 22:00 the evening before the offset changes
 # in the week DST starts, so no rule fits. The skill compares the two rule lines before an update.
 NY=(--cadence weekly --weekday 1 --time 04:00 --reset-tz America/New_York --count 1 --from 2026-11-09T10:00:00-05:00 --local-tz America/New_York)
-expect "no notify_at: one rule fits" "period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00
+expect "no notify_at: one rule fits" "cycle weekly-sunday
+period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00
 rule weekly days_of_week=1 due_time=04:00" -- "${NY[@]}"
-expect "notify_at 22:00: no rule fits" "period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00 alarm_minutes=360
+expect "notify_at 22:00: no rule fits" "cycle weekly-sunday
+period 1 key=2026-11-15 state=current reset=2026-11-15T04:00:00-05:00 due=2026-11-15T04:00:00-05:00 alarm_minutes=360
 rule none reason=the local due or alarm changes (period 18 of the next 104: 2027-03-14T04:00:00-04:00)" -- "${NY[@]}" --notify-at 22:00
 
 # A number too long to be a lead wraps in 64-bit arithmetic; it is refused before any arithmetic (LOW 13).
@@ -166,6 +186,26 @@ expect_error "zone path escape" "unknown --reset-tz" -- --cadence weekly --weekd
 expect_error "bad time" "--time must be HH:MM" -- --cadence weekly --weekday 2 --time 24:00 "${FROM[@]}"
 expect_error "bad cadence" "--cadence must be weekly or monthly" -- --cadence daily --day 1 "${FROM[@]}"
 expect_error "unknown option" "unknown option --list" -- --cadence weekly --weekday 2 --list Quotas "${FROM[@]}"
+
+# Round 10: the cycle line is canonical. Two ways of writing the same keys print the same cycle; it holds only
+# what sets the keys (cadence and weekday or day), so time, zone and leads never change it.
+cycle_of() { bash "$HELPER" "$@" --count 1 "${FROM[@]}" "${TPE[@]}" | grep '^cycle '; }
+same_cycle() {  # <name> <want> -- <args A> -- <args B>
+  local name="$1" want="$2"; shift 3
+  local a=() b=() x
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do a+=("$1"); shift; done; shift
+  b=("$@")
+  x="$(cycle_of "${a[@]}")/$(cycle_of "${b[@]}")"
+  if [ "$x" = "cycle $want/cycle $want" ]; then pass=$((pass + 1)); else
+    fail=$((fail + 1)); printf 'FAIL %s: got %s, want cycle %s twice\n' "$name" "$x" "$want"; fi
+}
+same_cycle "day 8 and 08" monthly-8 -- --cadence monthly --day 8 -- --cadence monthly --day 08
+same_cycle "weekday 2 and 02" weekly-monday -- --cadence weekly --weekday 2 -- --cadence weekly --weekday 02
+same_cycle "reset_tz UTC and omitted" weekly-monday -- --cadence weekly --weekday 2 --time 20:00 --reset-tz UTC -- --cadence weekly --weekday 2 --time 20:00
+same_cycle "UTC and Etc/UTC" monthly-21 -- --cadence monthly --day 21 --time 12:00 --reset-tz UTC -- --cadence monthly --day 21 --time 12:00 --reset-tz Etc/UTC
+same_cycle "two zones with the same offset" monthly-21 -- --cadence monthly --day 21 --time 12:00 --reset-tz Asia/Taipei -- --cadence monthly --day 21 --time 12:00 --reset-tz Asia/Shanghai
+same_cycle "time and lead do not enter it" weekly-tuesday -- --cadence weekly --weekday 3 --time 20:00 --lead-minutes 30 -- --cadence weekly --weekday 3 --time 21:00
+same_cycle "date-only and timed" monthly-31 -- --cadence monthly --day 31 --lead-days 2 -- --cadence monthly --day 31 --time 08:00 --reset-tz Europe/Paris
 
 echo "quota-dates: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
