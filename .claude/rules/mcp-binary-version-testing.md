@@ -838,7 +838,8 @@ Steps 6 to 9 cover the copy order of round 1, the list removal, the history occu
 round 6 的 MEDIUM 1）。拒絕不寫入、也不進 undo，是 stateless 的，所以**出 #503 的那個版本打 tag 之前**，用剛 build 的
 binary 的 `--cli`，只在名稱含 `#503` 的拋棄式日曆上做。每個系列都是每週 10:00、有 `end_date` 的 timed 系列，標題各不相同；
 每次被拒絕之後，用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回整個系列，逐場比對 title、start、end、notes、
-location、alarms，與拒絕前相同：
+location、alarms，與拒絕前相同。每個系列的 `end_date` 至少放在最後一場之後一週：#509 的檢查排在 #503 之前，結束時刻貼近
+最後一場時，往後移的時間會先被 #509 拒絕，回的是 #509 的文字，第 3 步預期成功的那一步也會被擋：
 
 1. **第一場被刪**：`delete_event` span `this` 刪第一場 → 用系列 id、span `future`、`occurrence_date` 為第三場（第一個剩下的場次之後）、
    帶新的 `start_time` 與 `end_time` → 以 unknown 拒絕，訊息寫「its first slot cannot be shown (it is read through its first
@@ -852,3 +853,21 @@ location、alarms，與拒絕前相同：
 
 任何一步拒絕後讀回的欄位有變、或第 3 步第二場回來，就是 bug，回報到 #503。結果記在 #503。結束後刪掉拋棄式日曆，隔一分鐘以上
 `list_calendars` 兩次，名稱含 `#503` 的都是 0。
+
+## Release gate: rule end shift (#509)
+
+#509 的檢查（`RuleEndShift`）只有純函式與原始碼釘選的測試。PR #510 round 5 加的形狀沒有在裝置上量過：經系列 ID 改整個系列、
+第一場單獨移動過時，store 是從第一場顯示的時間、還是從它原本的時段重新展開規則，不知道。檢查兩個都讀，不論哪一個都會拒絕，
+所以這一步**不擋 tag**；量到的結果用來決定能不能把檢查收窄。拒絕不寫入、也不進 undo，是 stateless 的，用剛 build 的 binary 的
+`--cli`（見上表；不用 AppleScript），只在名稱含 `#509` 的拋棄式日曆上做，每個系列用不同的標題：
+
+1. 建從下週開始、每週 10:00、5 場的系列（還沒有場次發生，#451 才不會先拒絕），`recurrence.end_date` 設在最後一場當天 10:30 → `update_event` span `this`、`occurrence_date`
+   為第一場，把第一場單獨移到 11:00（結束時間跟著移）；
+2. 用系列 ID、span `all`、`start_time` 為第一天 10:40（`end_time` 對應）：要被拒絕（訊息含 `#509`），什麼都沒寫；用另一次
+   `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回 5 場，逐場比對 title、start、end 與拒絕前相同；
+3. 會被放行的變形，用來記錄 store 從哪個開始時間展開：另建同樣的系列並同樣移動第一場，用系列 ID、span `all`、`start_time`
+   10:40，同一次呼叫帶 `recurrence`（每週、`end_date` 為最後一場之後一週）。成功後讀回，記下每一場的開始時間與場數：
+   第一場留在 11:00 還是變成 10:40、各場是不是都在 10:40、有沒有多出或少了一場。
+
+第 2 步沒被拒絕、或拒絕後讀回的欄位有變，就是 bug，回報到 #509；第 3 步的結果記在 #509。結束後刪掉拋棄式日曆，隔一分鐘以上
+`list_calendars` 兩次，名稱含 `#509` 的都是 0。
