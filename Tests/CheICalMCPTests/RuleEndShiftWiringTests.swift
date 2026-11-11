@@ -12,13 +12,25 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // PR #510 round 1 (HIGH 2): gated on the series' rules, so the own-id routes are checked.
         XCTAssertTrue(code.contains("repeats:RuleEndShift.repeats(masterHasRules:masterEvent.hasRecurrenceRules,addressesOwnOccurrence:addressesOwnOccurrence),"
                                     + "reachesEnd:applyToAll||span==.futureEvents,"
-                                    + "movesStart:!UndoPostState.sameInstant(shiftStart,event.startDate),changesZone:changesZone,"
+                                    + "movesStart:RuleEndShift.mayMoveStart(planned:shiftStart,from:[event.startDate,eventSlot],"
+                                    + "writesDates:datePlan.datesToWrite!=nil,firstSlotUnread:wholeThroughSeries),changesZone:changesZone,"
                                     + "changesAllDay:datePlan.isAllDay!=event.isAllDay)"))
+        XCTAssertTrue(code.contains("letwholeThroughSeries=applyToAll&&!addressesOwnOccurrence"))
         XCTAssertFalse(code.contains("repeats:event.hasRecurrenceRules"))
         XCTAssertTrue(code.contains("letruleHolder:EKEvent?=addressesOwnOccurrence?tryseriesObject(ofOccurrence:identifier):event"))
-        XCTAssertTrue(code.contains("storedStarts:addressesOwnOccurrence?[event.startDate,eventSlot]:[event.startDate]"))
+        // Round 5 (MEDIUM): every route reads the shown start and the slot; through the series id over the
+        // whole series also the first slot as #503 proves it, refused when it cannot be shown, and only
+        // where an end is checked (an open series is not refused).
+        XCTAssertFalse(code.contains("storedStarts:addressesOwnOccurrence?[event.startDate,eventSlot]:[event.startDate]"))
+        XCTAssertTrue(code.contains("letneedsFirstSlot=wholeThroughSeries&&!RuleEndShift.ends(stored:storedEnds,passedRule:passedRule).isEmpty"))
+        XCTAssertTrue(code.contains("letfirstSlot:Date?=needsFirstSlot?wholeSeriesBaseline(of:masterEvent,id:identifier,viaStandIn:resolved.viaStandIn).slot:nil"))
+        XCTAssertTrue(code.contains("guardletstoredStarts=RuleEndShift.storedStarts(shown:event.startDate,slot:eventSlot,needsFirstSlot:needsFirstSlot,"
+                                    + "firstSlot:firstSlot)else{throwEventKitError.seriesWriteRefused(reason:RuleEndShift.uncheckedReason(.firstSlot))}"))
+        XCTAssertTrue(code.contains("ifRuleEndShift.moves(planned:shiftStart,from:storedStarts)||changesZone||datePlan.isAllDay!=event.isAllDay{"))
+        XCTAssertTrue(code.contains("letplan=RuleEndShift.Plan(storedStarts:storedStarts,"))
         // MEDIUM 6: a passed rule is checked against its own end; MEDIUM 7: the rule's unit.
-        XCTAssertTrue(code.contains("passedRule:RuleEndShift.passedRule(recurrenceRule,clearing:clearRecurrence)"))
+        XCTAssertTrue(code.contains("letpassedRule=RuleEndShift.passedRule(recurrenceRule,clearing:clearRecurrence)"))
+        XCTAssertTrue(code.contains("storedEnds:storedEnds,passedRule:passedRule,plan:plan,"))
         XCTAssertTrue(code.contains("unit:RuleEndShift.unit(of:rules)"))
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
         XCTAssertTrue(code.contains("from:applyToAll?nil:eventSlot,"))
@@ -71,8 +83,10 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // The order of the decision (round 2): all-day, past the end, over a year, listing, placing.
         let source2 = try SourcePins.source("EventKit/RuleEndShift.swift")
         let decision = flat(try XCTUnwrap(SourcePins.body(of: "static func refusal(", in: source2)))
-        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "if!plan.expandable{returnuncheckedReason(.unexpandable)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifstartsPastEnd(", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
-                     "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "iflisted.isEmpty{returnuncheckedReason(.empty)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}"]
+        // Round 5 (LOW): a start past the end is decided after the move's size and the listing, so it never
+        // offers the recurrence route where a retry meets one of those causes.
+        let steps = ["ifallDay{returnuncheckedReason(.allDay)}", "if!plan.expandable{returnuncheckedReason(.unexpandable)}", "ifnearMonthEnd(plan){returnuncheckedReason(.monthEnd)}", "ifexceedsMaxShift(plan){returnuncheckedReason(.tooFar)}",
+                     "guardletlisted=list(range)else{returnuncheckedReason(.unlisted)}", "iflisted.isEmpty{returnuncheckedReason(.empty)}", "guardletslots=place(listed)else{returnuncheckedReason(.unplaced)}", "ifstartsPastEnd("]
         let found = try steps.map { try XCTUnwrap(decision.range(of: $0), $0).lowerBound }
         XCTAssertEqual(found, found.sorted())
     }

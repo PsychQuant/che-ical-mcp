@@ -195,7 +195,7 @@ final class RuleEndShiftTests: XCTestCase {
                                                keepEnd: at("2027-01-04T11:00", taipei), zone: taipei, route: .unwritableRule)
         XCTAssertFalse(calendar.contains("end_date"), calendar)
         XCTAssertTrue(calendar.contains("Calendar"), calendar)
-        for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd, .unexpandable] {
+        for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd, .unexpandable, .firstSlot] {
             let text = RuleEndShift.uncheckedReason(cause)
             XCTAssertTrue(text.contains("Nothing was written") && text.contains("Calendar"), text)
             XCTAssertFalse(text.contains("end_date") || text.contains("recurrence"), text)
@@ -455,5 +455,80 @@ final class RuleEndShiftTests: XCTestCase {
         XCTAssertTrue(reason.contains("the end_date in this call is"), reason)
         let stored = refusal(mondays, stored: [mondays[4]], plan: plan(planned: at("2026-12-07T11:00", taipei)))!
         XCTAssertTrue(stored.contains("the series' rule ends at"), stored)
+    }
+
+    // MARK: - Round 5 findings
+
+    /// MEDIUM: through the series id with span all, a first occurrence moved on its own (10:00 to
+    /// 11:00) shows its moved time, while the store may re-expand the rule from its slot. Weekly at
+    /// 10:00, the rule ending on the last day at 10:30, start_time 10:40 on the first day: read from the
+    /// shown start alone it is 20 minutes earlier and kept everything; from the slot it is 40 minutes
+    /// later and the last occurrence may be dropped. Read from the rule's semantics, not measured.
+    func testThroughTheSeriesIdAFirstOccurrenceMovedOnItsOwnIsReadFromItsSlot() {
+        let shown = at("2026-12-07T11:00", taipei)
+        let end = at("2027-01-04T10:30", taipei)
+        let planned = at("2026-12-07T10:40", taipei)
+        func plan(_ starts: [Date]) -> RuleEndShift.Plan {
+            .init(storedStarts: starts, plannedStart: planned, storedZone: taipei, newZone: taipei, unit: .day,
+                  keepsDays: false, dayFromStart: true, expandable: true)
+        }
+        XCTAssertNil(refusal(mondays, stored: [end], plan: plan([shown])), "the shown start alone lets it through")
+        // The object's occurrenceDate may report the moved time (2026-10-10), so the slot is the proven one.
+        let starts = RuleEndShift.storedStarts(shown: shown, slot: shown, needsFirstSlot: true, firstSlot: mondays[0])
+        XCTAssertEqual(starts, [shown, shown, mondays[0]])
+        let reason = refusal(mondays, stored: [end], plan: plan(starts!))
+        XCTAssertNotNil(reason)
+        XCTAssertTrue(reason!.contains("2027-01-04T10:00:00+08:00") && reason!.contains("Nothing was written"), reason!)
+        // A first slot that cannot be shown refuses (fail closed); a route that needs none reads the two.
+        XCTAssertNil(RuleEndShift.storedStarts(shown: shown, slot: shown, needsFirstSlot: true, firstSlot: nil))
+        XCTAssertEqual(RuleEndShift.storedStarts(shown: shown, slot: mondays[0], needsFirstSlot: false, firstSlot: nil), [shown, mondays[0]])
+        let firstSlot = RuleEndShift.uncheckedReason(.firstSlot)
+        XCTAssertTrue(firstSlot.contains("first occurrence") && firstSlot.contains("Calendar"), firstSlot)
+    }
+
+    /// MEDIUM, the gate: writing the shown start back moves the series from its slot, so it enters the
+    /// check; through the series id over the whole series any date written enters, and the stored
+    /// starts then decide whether anything moves.
+    func testWritingTheShownStartBackFromAMovedSlotEntersTheCheck() {
+        let shown = at("2026-12-07T11:00", taipei)
+        XCTAssertTrue(RuleEndShift.moves(planned: shown, from: [shown, mondays[0]]))
+        XCTAssertFalse(RuleEndShift.moves(planned: mondays[0], from: [mondays[0], mondays[0]]))
+        XCTAssertTrue(RuleEndShift.mayMoveStart(planned: shown, from: [shown, mondays[0]], writesDates: true, firstSlotUnread: false))
+        XCTAssertFalse(RuleEndShift.mayMoveStart(planned: shown, from: [shown, shown], writesDates: true, firstSlotUnread: false))
+        XCTAssertTrue(RuleEndShift.mayMoveStart(planned: shown, from: [shown, shown], writesDates: true, firstSlotUnread: true))
+        XCTAssertFalse(RuleEndShift.mayMoveStart(planned: shown, from: [shown, mondays[0]], writesDates: false, firstSlotUnread: true),
+                       "no date written: a zone or all-day change enters on its own")
+    }
+
+    /// LOW: a move of more than a year that also passes the end is refused as too far, with no route
+    /// through recurrence (a retry would be refused the same); and a new start past the end with no
+    /// listing, an empty one or one that cannot be placed gets that cause, not the recurrence route.
+    func testAStartPastTheEndWithoutSlotsGivesTheCauseNotTheRoute() {
+        let far = plan(planned: mondays[0].addingTimeInterval(400 * 86_400))
+        XCTAssertTrue(RuleEndShift.startsPastEnd(plannedStart: far.plannedStart, ruleEnd: mondays[4]))
+        XCTAssertEqual(refusal(mondays, stored: [mondays[4]], plan: far), RuleEndShift.uncheckedReason(.tooFar))
+        let past = plan(planned: at("2027-01-05T10:00", taipei))
+        func decide(_ list: @escaping (DateInterval) -> [RuleEndShift.Listed]?) -> String? {
+            RuleEndShift.refusal(storedEnds: [mondays[4]], passedRule: nil, plan: past, from: nil, allDay: false, route: .passRule, list: list)
+        }
+        XCTAssertEqual(decide { _ in nil }, RuleEndShift.uncheckedReason(.unlisted))
+        XCTAssertEqual(decide { _ in [] }, RuleEndShift.uncheckedReason(.empty))
+        let unplaced = RuleEndShift.Listed(isDetached: true, ridSlot: nil, occurrenceDate: nil, start: mondays[4])
+        XCTAssertEqual(decide { _ in [unplaced] }, RuleEndShift.uncheckedReason(.unplaced))
+    }
+
+    /// LOW: the recurrence route says #503 can still refuse it (an occurrence deleted on its own, or
+    /// one that check cannot rule out); a rule with days of its own is told span 'this' needs one of
+    /// its days (#454). The not-checked texts no longer say every rule ends at a fixed time (a count
+    /// rule does not).
+    func testTheRoutesSayWhatCanStillRefuseThem() {
+        let reason = refusal(mondays, stored: [mondays[4]], plan: plan(planned: at("2026-12-07T11:00", taipei)))!
+        XCTAssertTrue(reason.contains("#503") && reason.contains("deleted on its own"), reason)
+        let fromLast = plan(planned: at("2027-01-04T11:00", taipei), stored: mondays[4], keepsDays: true)
+        let last = refusal(mondays, stored: [mondays[4]], plan: fromLast, from: mondays[4], route: .ruleWithDays)!
+        XCTAssertTrue(last.contains("span 'this'") && last.contains("#454"), last)
+        for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd, .unexpandable, .firstSlot] {
+            XCTAssertFalse(RuleEndShift.uncheckedReason(cause).contains("ends at a fixed time"), "\(cause)")
+        }
     }
 }

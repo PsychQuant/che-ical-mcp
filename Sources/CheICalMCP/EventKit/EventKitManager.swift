@@ -1429,10 +1429,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // (HIGH 2); a zone change counts (MEDIUM 5); a rule passed in the call is checked against its
         // own end (MEDIUM 6).
         let shiftStart: Date = datePlan.datesToWrite?.start ?? event.startDate
+        // PR #510 round 5 (MEDIUM): through the series id over the whole series the shown start may not be
+        // the first slot the store expands from, so any date written enters; the slot is proven below.
+        let wholeThroughSeries = applyToAll && !addressesOwnOccurrence
         if RuleEndShift.applies(
             repeats: RuleEndShift.repeats(masterHasRules: masterEvent.hasRecurrenceRules, addressesOwnOccurrence: addressesOwnOccurrence),
             reachesEnd: applyToAll || span == .futureEvents,
-            movesStart: !UndoPostState.sameInstant(shiftStart, event.startDate), changesZone: changesZone,
+            movesStart: RuleEndShift.mayMoveStart(planned: shiftStart, from: [event.startDate, eventSlot],
+                                                  writesDates: datePlan.datesToWrite != nil, firstSlotUnread: wholeThroughSeries),
+            changesZone: changesZone,
             changesAllDay: datePlan.isAllDay != event.isAllDay) {
             let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
             let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
@@ -1443,27 +1448,36 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             guard let holder = ruleHolder, let rules = RuleEndShift.readRules(holder.recurrenceRules) else {
                 throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.unreadable))
             }
-            let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
-            let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
-            // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
-            let parts = rules.map(RuleEndShift.parts)
-            let plan = RuleEndShift.Plan(
-                storedStarts: addressesOwnOccurrence ? [event.startDate, eventSlot] : [event.startDate],
-                plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: RuleEndShift.unit(of: rules),
-                keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay },
-                expandable: parts.allSatisfy { $0.expandable })
-            // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
-            // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
-            // rule with days of its own (MEDIUM 3) and a series that ended after an occurrence
-            // happened (LOW 7, #451).
             let storedEnds = rules.compactMap { $0.recurrenceEnd?.endDate }
-            if let reason = ruleEndShiftRefusal(
-                series: holder, seriesID: seriesID, storedEnds: storedEnds,
-                passedRule: RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence), plan: plan,
-                from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
-                route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence,
-                                          viaStandIn: resolved.viaStandIn, keepsDays: plan.keepsDays, endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
-                throw EventKitError.seriesWriteRefused(reason: reason)
+            let passedRule = RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence)
+            // Round 5 (MEDIUM): the first slot, proven as #503 proves it, only where an end is checked, so
+            // an open series is not refused; one that cannot be shown refuses (fail closed).
+            let needsFirstSlot = wholeThroughSeries && !RuleEndShift.ends(stored: storedEnds, passedRule: passedRule).isEmpty
+            let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn).slot : nil
+            guard let storedStarts = RuleEndShift.storedStarts(shown: event.startDate, slot: eventSlot, needsFirstSlot: needsFirstSlot,
+                                                                firstSlot: firstSlot) else {
+                throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.firstSlot))
+            }
+            if RuleEndShift.moves(planned: shiftStart, from: storedStarts) || changesZone || datePlan.isAllDay != event.isAllDay {
+                let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
+                let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
+                // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
+                let parts = rules.map(RuleEndShift.parts)
+                let plan = RuleEndShift.Plan(storedStarts: storedStarts,
+                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: RuleEndShift.unit(of: rules),
+                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: parts.contains { !$0.fixesDay },
+                    expandable: parts.allSatisfy { $0.expandable })
+                // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
+                // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
+                // rule with days of its own (MEDIUM 3) and a series that ended after an occurrence
+                // happened (LOW 7, #451).
+                if let reason = ruleEndShiftRefusal(
+                    series: holder, seriesID: seriesID, storedEnds: storedEnds, passedRule: passedRule, plan: plan,
+                    from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
+                    route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence,
+                                              viaStandIn: resolved.viaStandIn, keepsDays: plan.keepsDays, endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
+                    throw EventKitError.seriesWriteRefused(reason: reason)
+                }
             }
         }
         // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
