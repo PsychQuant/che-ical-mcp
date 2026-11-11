@@ -17,14 +17,6 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     /// below the marker would make them the user's text, and they would come back on every paste.
     static let dropException = "the recommendation layer's block lines and marks are dropped, not moved below the marker pair"
 
-    static let blockLines = [
-        "conference-recommend: begin",
-        "conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>",
-        "conference-recommend-location: <standard location>",
-        "conference-recommend-marks: <line numbers",
-        "conference-recommend: end",
-    ]
-
     private func read(_ path: String) throws -> String {
         var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         for _ in 0..<6 {
@@ -81,11 +73,10 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     func testBlockLinesAppearInOrderInContractAndSpec() throws {
         try assertOnce(Self.blockTemplate, in: Self.layer, "section 3 block lost or reordered")
-        try assertOnce("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>`", in: Self.spec)
-        let spec = try read(Self.spec)
-        for line in Self.blockLines {
-            XCTAssertTrue(spec.contains(line.components(separatedBy: " <").first!), "spec does not name \(line)")
-        }
+        // One unique stretch of the spec's block sentence, so a lost line cannot hide behind another
+        // mention of the same prefix elsewhere in the spec.
+        try assertOnce("`conference-recommend-item: <standard title> | <YYYY-MM-DDTHH:MM> <zone>` (the layer's item identifier: the start in the conference's zone and that zone, read as the text after the last ` | `); `conference-recommend-location: <standard location>`; `conference-recommend-marks: <line numbers or none>`; `conference-recommend: end`.", in: Self.spec)
+        try assertOnce("A decorated event's notes SHALL start with one block of whole lines: `conference-recommend: begin`;", in: Self.spec)
     }
 
     func testModeIsAClosedThreeStepOrder() throws {
@@ -213,7 +204,7 @@ final class ConferenceRecommendDocsTests: XCTestCase {
                        "a malformed decorated event must never be rewritten silently")
         try assertOnce("only for an event that carries this module's marker pair", in: Self.standard,
                        "a planted item line in a hand-built event must not count")
-        try assertOnce("by its comparison title (`conference.md` line 5)", in: Self.layer)
+        try assertOnce("by its comparison title (`conference.md`, opening paragraph)", in: Self.layer)
         try assertOnce("#### Scenario: A decorated event moved by hand", in: Self.spec)
         XCTAssertFalse(try read(Self.layer).contains("For the client-side skip, such an event is compared by the title in its item line"),
                        "the second, layer-only rule for the client-side skip is back")
@@ -243,6 +234,9 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         XCTAssertFalse(spec.contains("standard` only by the last rule"))
         try assertOnce("#### Scenario: A one-off recommendation under `conference_mode: standard`", in: Self.spec)
         try assertOnce("#### Scenario: Nobody answers the recommendation question", in: Self.spec)
+        try assertOnce("**The mapping-table row of every decorated event the table pairs with an item, well-formed or not, says that its recommendation goes on a yes**", in: Self.layer,
+                       "a plain yes to the table must never remove a recommendation the user was not told about")
+        try assertOnce("The mapping-table row of every decorated event the table pairs with an item SHALL say that its recommendation goes on a yes.", in: Self.spec)
     }
 
     /// LOW: conference.md line 7's list of what is parsed from notes includes the layer's block.
