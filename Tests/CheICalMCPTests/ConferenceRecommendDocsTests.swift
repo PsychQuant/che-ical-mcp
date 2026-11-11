@@ -297,6 +297,8 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     /// MEDIUM 4: on a candidate set's set-level yes a decorated session takes the new marker too.
     func testACandidateSetsYesLeavesNoOrphan() throws {
         try assertOnce("so no session is left under the old marker", in: Self.layer)
+        try assertOnce("A set-level row, the rename question and the choice among several sets each name the set's decorated sessions and say that their recommendations go on a yes", in: Self.layer)
+        try assertOnce("A set-level row, the rename question and the choice among several sets SHALL each name the set's decorated sessions", in: Self.spec)
         try assertOnce("#### Scenario: A candidate set's set-level yes", in: Self.spec)
     }
 

@@ -2,6 +2,7 @@
 
 - [x] 1.1 `plugin/rules/modules/conference-recommend.md`：模式（The mode of a run is chosen from the message, then the config, then standard）、推薦（Picks come from the caller and are checked before they are applied）、比對：存標準形式，標準流程讀標準形式（方案 A，不改標記）；區塊與標準形式（A decorated event stores its standard form in one block；The standard flow reads every event in its standard form）、版面（The layer changes only the title, the location and the notes）、還原（Turning the layer off restores the standard form）、重新計算（Recomputing applies new picks per named slot）、密碼（Access codes are never written）、報告、虛構實例。驗證：對照 spec 逐條；`ConferenceRecommendDocsTests` 釘住區塊格式、模式表與 `conference.md` 的指標段。
 - [x] 1.2 `conference.md` 開頭指標段改成標準形式與比較用標題的掛鉤、第 7 行的解析清單加上區塊行、第 6 節加上「Whose text is whose」的區塊行例外與建立前的客戶端比對；`event-modules.md` 索引加一列；`add-conference-module` spec 加上同一個例外。驗證：`git diff` 只動這幾處，第 4、7 節未動；`ConferenceRecommendDocsTests` 釘住每一處，每個釘住的字串在文件裡只出現一次。
+- [x] 1.3 v1 範圍（verify 第 3 輪）：推薦層只在帶議程的會議模組執行裡跑；只寫完全相符、沒有列點名、沒有待答的組或行事曆問題的場次（或這次新建的場次）；還原只寫存著的標準形式加標準流程這次的完全相符更新；點名推薦事件的列（含 set-level、改名、多組選擇）寫明 yes 會拿掉推薦；客戶端比對讀每一組。驗證：`ConferenceRecommendDocsTests` round 3 的釘選。
 
 ## 2. 文件
 

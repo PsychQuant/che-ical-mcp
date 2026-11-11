@@ -37,7 +37,7 @@ What a run does with the session events the layer may write (`conference-module-
 - the user answers *remove* for the slot to the recommendation question below;
 - the user answers yes to a row that names the event: its own row in the mapping table (`conference.md` section 6, Match rule 2), or a set-level yes, a rename answer or a choice among several sets that applies its row. The yes writes the program's standard values without the block, as the standard flow writes any matched event (the drop of section 3); the layer adds nothing to that write.
 
-In no other case is a decorated event written without its block. **Every row that names a decorated event says that its recommendation goes on a yes**, so a plain yes to the table is never a removal the user was not told about. On a candidate set's set-level yes (or the rename answer that stands for it), a decorated session takes the new marker with the rest of the set, so no session is left under the old marker for a later paste to find missing and create again.
+In no other case is a decorated event written without its block. **Every row that names a decorated event says that its recommendation goes on a yes**, so a plain yes to the table is never a removal the user was not told about. A set-level row, the rename question and the choice among several sets each name the set's decorated sessions and say that their recommendations go on a yes, since one answer there applies the rows of every session of the set. On a candidate set's set-level yes (or the rename answer that stands for it), a decorated session takes the new marker with the rest of the set, so no session is left under the old marker for a later paste to find missing and create again.
 
 **The recommendation question.** A run asks it in these cases (closed list), in one question, in the same message as the mapping table when there is one:
 
@@ -187,4 +187,4 @@ The program of `conference.md` section 8, "Example Symposium 2026", in the stand
     - `conference-recommend: end`;
     - then the listing with `★ ` on the `A #2` and `B #3` lines.
 - **Re-paste, `conference_mode: recommend`, no picks:** the standard form equals the program, so the event is unchanged and nothing is written. With `conference_mode` unset or `standard`, the run asks whether to remove or keep the recommendations; with nobody to answer, it keeps them.
-- **Layer off** ("remove the recommendations"): one `update_event` writes back `ES2026 午前1：…`, `Example Hall` and the unmarked listing.
+- **Layer off** (the program pasted again with "remove the recommendations"): one `update_event` writes back `ES2026 午前1：…`, `Example Hall` and the unmarked listing.
