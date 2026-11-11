@@ -145,6 +145,7 @@ Plugin version: 1.23.0 (matches MCP server version)
 ### Changelog
 
 **Unreleased**
+- **Conference module: recommendation layer** (#346) — *plugin shell only*: give picks together with a pasted program and each named slot event gets a recommendation in its title, notes and location (`rules/modules/conference-recommend.md`). The mode comes from your message, then `conference_mode` (`standard` or `recommend`) in the same `.claude/.ical/config.yaml` as `conference_module`, then `standard`; a recommendation is removed only when your message asks, or you answer remove or yes to a row that says so. No binary change.
 - **Trip-folder reminder and the `itinerary-check` skill** (#341) — *plugin shell only*: in a folder with a project-level `.claude/.ical/config.yaml`, a Stop hook reminds once per session, when files changed there, to run `itinerary-check`, which lists differences between the calendar and the trip and changes nothing until you agree. **On by default: existing project-level configs start getting the reminder after this upgrade.** `itinerary_check: off` turns it off; `itinerary_ignore:` skips globs.
 - **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server reads a date-only all-day end the same way on `create_event` and `update_event`. `create_event` `skipped` now means a same-titled event of the same kind (timed, or all-day starting on the same day). Needs the binary that ships #364.
 

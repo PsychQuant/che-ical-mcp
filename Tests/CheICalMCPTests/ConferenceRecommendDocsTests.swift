@@ -38,8 +38,8 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     func testStandardContractHooksTheStandardForm() throws {
         let text = try read(Self.standard)
-        XCTAssertTrue(text.contains("[`conference-recommend.md`](conference-recommend.md)"))
-        XCTAssertTrue(text.contains("**Every comparison and write in section 6, and the duplicate search before any `create_event`, uses an event's standard form**"),
+        try assertOnce("[`conference-recommend.md`](conference-recommend.md)", in: Self.standard)
+        try assertOnce("**Every comparison and write in section 6, and the duplicate search before any `create_event`, uses an event's standard form**", in: Self.standard,
                       "conference.md lost the hook that makes section 6 read decorated events in their standard form")
         XCTAssertFalse(text.contains("is not part of this contract; it is tracked in #346"), "the old deferral sentence is back")
     }
@@ -110,37 +110,33 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     }
 
     func testAccessCodesAreNeverWritten() throws {
-        XCTAssertTrue(try read(Self.layer).contains("**Never written**: a meeting passcode, a password, or any other access code"))
-        XCTAssertTrue(try read(Self.spec).contains("SHALL NOT write a meeting passcode, a password or any other access code"))
+        try assertOnce("**Never written**: a meeting passcode, a password, or any other access code", in: Self.layer)
+        try assertOnce("SHALL NOT write a meeting passcode, a password or any other access code", in: Self.spec)
     }
 
     func testLayerWritesOnlyByUpdate() throws {
-        let five = Self.section(try read(Self.layer), 5)
-        XCTAssertTrue(five.contains("**One `update_event` per event**"))
-        XCTAssertTrue(five.contains("It is never `create_event`, and never `delete_event`."))
-        XCTAssertTrue(five.contains("`calendar_name` set to the set's calendar"), "read-backs must stay scoped to the set's calendar")
+        try assertOnce("**One `update_event` per event**", in: Self.layer)
+        try assertOnce("It is never `create_event`, and never `delete_event`.", in: Self.layer)
+        try assertOnce("`calendar_name` set to the set's calendar", in: Self.layer, "read-backs must stay scoped to the set's calendar")
     }
 
     // MARK: - #346 verify round 1
 
     /// HIGH 1 / MEDIUM 5: a link can carry the passcode (`?pwd=`), so "never written" must cover links.
     func testMeetingLinksNeverCarryACode() throws {
-        let two = Self.section(try read(Self.layer), 2)
-        XCTAssertTrue(two.contains("**A meeting link is written only in one of these forms** (closed list):"))
-        XCTAssertTrue(two.contains("`https://<host>/j/<digits>`"), "the Zoom form must drop the query (pwd)")
-        XCTAssertTrue(two.contains("Any other link is **left out**"))
-        let spec = try read(Self.spec)
-        XCTAssertTrue(spec.contains("#### Scenario: A link with an embedded passcode"))
-        XCTAssertTrue(spec.contains("`pwd=` appears nowhere"))
+        try assertOnce("**A meeting link is written only in one of these forms** (closed list):", in: Self.layer)
+        try assertOnce("`https://<host>/j/<digits>`", in: Self.layer, "the Zoom form must drop the query (pwd)")
+        try assertOnce("Any other link is **left out**", in: Self.layer)
+        try assertOnce("#### Scenario: A link with an embedded passcode", in: Self.spec)
+        try assertOnce("`pwd=` appears nowhere", in: Self.spec)
     }
 
     /// MEDIUM 2 / LOW 9: stored values round-trip, and the start is read after the last separator.
     func testStoredValuesAreEncodedReversibly() throws {
-        let three = Self.section(try read(Self.layer), 3)
-        XCTAssertTrue(three.contains("a backslash as `\\\\`, a line feed as `\\n` and a carriage return as `\\r`"),
+        try assertOnce("a backslash as `\\\\`, a line feed as `\\n` and a carriage return as `\\r`", in: Self.layer,
                       "the encoding of the stored title and location must be reversible")
-        XCTAssertTrue(three.contains("the text after the **last** ` | `"))
-        XCTAssertTrue(try read(Self.spec).contains("#### Scenario: A location on two lines survives a restore"))
+        try assertOnce("the text after the **last** ` | `", in: Self.layer)
+        try assertOnce("#### Scenario: A location on two lines survives a restore", in: Self.spec)
     }
 
     /// MEDIUM 3 / LOW 13: a block that is not well-formed is dropped, never moved below the marker.
@@ -149,15 +145,13 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         for path in [Self.standard, Self.conferenceSpec, Self.layer, Self.spec] {
             try assertOnce(Self.dropException, in: path, "the drop exception must read the same in every document")
         }
-        let three = Self.section(try read(Self.layer), 3)
-        XCTAssertTrue(three.contains("Lines below the marker pair are the user's and are never parsed as block lines."))
+        try assertOnce("Lines below the marker pair are the user's and are never parsed as block lines.", in: Self.layer)
     }
 
     /// MEDIUM 4: program text cannot plant a block. The shared escape list owns the prefix.
     func testCopiedTextCannotFormABlock() throws {
-        let index = try read(Self.index)
         // The prefix list is main's (#365); `conference-` covers the layer's block lines.
-        XCTAssertTrue(index.contains("and only these: `conference-` (marker lines and block lines), `lodging-module`."),
+        try assertOnce("and only these: `conference-` (marker lines and block lines), `lodging-module`.", in: Self.index,
                       "the shared copy escape must cover every conference- line")
         let three = Self.section(try read(Self.layer), 3)
         let wellFormed = three.components(separatedBy: "\n").filter { $0.range(of: #"^[0-9]+\. "#, options: .regularExpression) != nil }
@@ -167,23 +161,21 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     /// MEDIUM 6: the server skips only an equal title, so the client compares the standard form first.
     func testClientSideSkipBeforeEveryCreate() throws {
-        let six = Self.section(try read(Self.standard), 6)
-        XCTAssertTrue(six.contains("**Before every `create_event` of a session**"))
-        XCTAssertTrue(six.contains("so it never skips a decorated event (#346, measured 2026-11-09)"))
+        try assertOnce("**Before every `create_event` of a session**", in: Self.standard)
+        try assertOnce("so it never skips a decorated event (#346, measured 2026-11-09)", in: Self.standard)
     }
 
     /// LOW 7, 8, 10, 11, 12, 14.
     func testSmallerRulesOfRoundOne() throws {
         let layer = try read(Self.layer)
         let one = Self.section(layer, 1)
-        XCTAssertTrue(one.contains("A request that names slots is a `recommend` run with `none` for those slots"))
+        try assertOnce("A request that names slots is a `recommend` run with `none` for those slots", in: Self.layer)
         // Round 3 narrowed v1: a title or start change always has a row, so only the exact-match fields remain here,
         // and a message without a program is no longer a recommendation run (the 60/365-day search is gone).
         try assertOnce("an exact match whose end, location, notes or registration the standard flow would change", in: Self.layer)
         XCTAssertFalse(one.contains("from 60 days before to 365 days after the date the message names"))
-        XCTAssertTrue(one.contains("**On a first paste with picks**, the standard flow creates and reads back first"))
-        let index = try read(Self.index)
-        XCTAssertTrue(index.contains("no trigger, switch or calendar of its own"), "the index row must say the layer is not a module")
+        try assertOnce("**On a first paste with picks**, the standard flow creates and reads back first", in: Self.layer)
+        try assertOnce("no trigger, switch or calendar of its own", in: Self.index, "the index row must say the layer is not a module")
     }
 
     // MARK: - #346 verify round 2
@@ -297,8 +289,8 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     /// MEDIUM 4: on a candidate set's set-level yes a decorated session takes the new marker too.
     func testACandidateSetsYesLeavesNoOrphan() throws {
         try assertOnce("so no session is left under the old marker", in: Self.layer)
-        try assertOnce("A set-level row, the rename question and the choice among several sets each name the set's decorated sessions and say that their recommendations go on a yes", in: Self.layer)
-        try assertOnce("A set-level row, the rename question and the choice among several sets SHALL each name the set's decorated sessions", in: Self.spec)
+        try assertOnce("A set-level row and the rename question each name the set's decorated sessions and say that their recommendations go on a yes", in: Self.layer)
+        try assertOnce("A set-level row and the rename question SHALL each name the set's decorated sessions", in: Self.spec)
         try assertOnce("#### Scenario: A candidate set's set-level yes", in: Self.spec)
     }
 
@@ -308,7 +300,42 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         try assertOnce("#### Scenario: A pick whose number is not in the slot", in: Self.spec)
     }
 
+    // MARK: - #346 verify round 4
+
+    /// MEDIUM 1: the choice among several sets only picks the set; its rows are worked out and asked after it.
+    func testChoosingASetApprovesNothing() throws {
+        try assertOnce("The choice among several sets applies no row", in: Self.layer)
+        XCTAssertFalse(try read(Self.layer).contains("the choice among several sets each name"))
+        XCTAssertFalse(try read(Self.layer).contains("or a choice among several sets that applies its row"))
+        try assertOnce("#### Scenario: A set choice alone writes nothing", in: Self.spec)
+    }
+
+    /// MEDIUM 2: a program-only re-paste is a recommendation run, so it reaches the mode table and the question.
+    func testAProgramOnlyRePasteIsARecommendationRun() throws {
+        try assertOnce("**A recommendation run is any run that carries a program and triggers the conference module**", in: Self.layer)
+        try assertOnce("a program-only re-paste included", in: Self.index)
+        try assertOnce("SHALL be a recommendation run, a program-only re-paste included", in: Self.spec)
+        try assertOnce("#### Scenario: A program-only re-paste reaches the recommendation question", in: Self.spec)
+        XCTAssertFalse(try read(Self.layer).contains("**The layer runs only inside a conference-module run on a program.**"))
+    }
+
+    /// MEDIUM 3: a yes or a remove that takes a recommendation away writes all three fields, so it converges.
+    func testARemovalAlwaysWritesTheStandardValues() throws {
+        try assertOnce("the title, location and notes are always written with their standard values", in: Self.layer)
+        try assertOnce("SHALL always write the title, location and notes with their standard values", in: Self.spec)
+        try assertOnce("(a decorated event: `conference-recommend.md` section 1 decides what is written)", in: Self.standard)
+    }
+
+    /// LOWs of round 4.
+    func testSmallerRulesOfRoundFour() throws {
+        try assertOnce("every title comparison in section 6 (step 1's set detection", in: Self.standard)
+        try assertOnce("or named with a pick that section 2 does not apply", in: Self.layer)
+        try assertOnce("as sub-lines of line 3 of `conference.md` section 7", in: Self.layer)
+        XCTAssertFalse(try read(Self.layer).contains("or for the standard listing"))
+        try assertOnce("`conference_mode`", in: "plugin/README.md")
+    }
+
     func testIndexListsTheLayer() throws {
-        XCTAssertTrue(try read(Self.index).contains("[`modules/conference-recommend.md`](modules/conference-recommend.md)"))
+        try assertOnce("[`modules/conference-recommend.md`](modules/conference-recommend.md)", in: Self.index)
     }
 }
