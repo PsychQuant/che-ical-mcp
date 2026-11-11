@@ -170,7 +170,8 @@ final class RuleEndShiftTests: XCTestCase {
         XCTAssertEqual(RuleEndShift.firstLost(slots: mondays, ruleEnd: at("2027-01-04T22:00", taipei), plan: p), mondays[3])
     }
 
-    /// MEDIUM 3: the listing has a cap, and a start already past the end is refused before any read.
+    /// MEDIUM 3: the listing has a cap, and a start already past the end is refused (round 5: after the
+    /// listing, which gives its route; see `testAStartPastTheEndWithoutSlotsGivesTheCauseNotTheRoute`).
     func testTheListingIsBoundedAndAStartPastTheEndIsRefusedEarly() {
         let end = mondays[4]
         XCTAssertNotNil(RuleEndShift.listingRange(ruleEnd: end, plan: plan(planned: at("2026-12-07T11:00", taipei))))

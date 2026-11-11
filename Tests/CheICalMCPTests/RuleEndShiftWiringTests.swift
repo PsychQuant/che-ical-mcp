@@ -80,7 +80,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("guardletseriesID,letcalendar=series.calendar,"))
         XCTAssertTrue(body.contains("letlisted=try?events(from:range.start,to:range.end,calendars:[calendar])else{returnnil}"))
         XCTAssertTrue(body.contains("RuleEndShift.refusal("))
-        // The order of the decision (round 2): all-day, past the end, over a year, listing, placing.
+        // The order of the decision (round 5): all-day, unexpandable, month end, over a year, listing, placing, past the end.
         let source2 = try SourcePins.source("EventKit/RuleEndShift.swift")
         let decision = flat(try XCTUnwrap(SourcePins.body(of: "static func refusal(", in: source2)))
         // Round 5 (LOW): a start past the end is decided after the move's size and the listing, so it never
