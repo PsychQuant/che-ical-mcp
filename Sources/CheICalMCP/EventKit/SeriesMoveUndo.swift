@@ -48,6 +48,17 @@ enum SeriesMoveUndo {
     /// write by another process (Calendar.app, a sync) landing between the two refreshes would be
     /// seen only by the second one. The window is a few lines of code long, so it is accepted
     /// rather than closed by moving the account check into the comparison.
+    /// #511: the undo of a whole-series move whose way back crosses accounts is a create plus a delete,
+    /// as the forward move is, so #503's verdict (`verdict`, read only here) must be `none`; otherwise
+    /// the refusal text. A redo of a move does not write; a one-off has no deletions; within one account
+    /// the move kept them (measured). An unknown account counts as across (`movesAcrossAccounts`).
+    static func deletedOccurrenceRefusal(isSeries: Bool, verb: UndoHistoryVerb, acrossAccounts: Bool,
+                                         verdict: () -> DeletedOccurrenceCheck.Verdict) -> String? {
+        guard isSeries, verb == .undo, acrossAccounts else { return nil }
+        let result = verdict()
+        return result == .none ? nil : DeletedOccurrenceCheck.undoAccountMoveReason(result)
+    }
+
     static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () throws -> Bool,
                               resolved: Resolved<Event>?, original: OriginalCalendar?,
                               missingOriginal: () -> Error?) throws -> Event? {

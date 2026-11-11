@@ -159,6 +159,11 @@ extension EventKitManager {
                             throw refusal
                         }
                         let fields = keepingLaterEdits?(event, expected.changedFields(in: event)) ?? expected.changedFields(in: event)
+                        // #511: a whole series moved back across accounts goes through #503's verdict, here in the
+                        // comparison the move arm passes before it writes; the record is kept.
+                        if fields.isEmpty, let reason = seriesMoveBackRefusal(operation, expected, event, verb: verb) {
+                            throw EventKitError.moveRefused(reason: reason)
+                        }
                         guard deletesSeries, event.hasRecurrenceRules else { return fields }
                         return fields + UndoPostState.seriesConflicts(
                             modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
@@ -214,6 +219,22 @@ extension EventKitManager {
             },
             original: original.map { SeriesMoveUndo.OriginalCalendar(sourceID: $0.source?.sourceIdentifier) },
             missingOriginal: { operation.moveBackCalendarMissing })
+    }
+
+    /// #511: the refusal of the undo of a whole-series move whose way back crosses accounts, unless
+    /// #503's verdict over every slot is `none` (`SeriesMoveUndo.deletedOccurrenceRefusal`). The series
+    /// is the object the comparison passed: a stand-in across accounts was refused by `decide`. A missing
+    /// original calendar is left to the move arm's #269 refusal. Read only.
+    func seriesMoveBackRefusal(_ operation: UndoOperation, _ expected: UndoPostState, _ series: EKEvent,
+                               verb: UndoHistoryVerb) -> String? {
+        guard case .moveEvent(_, _, _, _, let isSeries) = operation, isSeries, verb == .undo,
+              let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap({ eventStore.calendar(withIdentifier: $0) })
+        else { return nil }
+        return SeriesMoveUndo.deletedOccurrenceRefusal(
+            isSeries: isSeries, verb: verb,
+            acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: series.calendar?.source?.sourceIdentifier,
+                                                                         toSourceID: original.source?.sourceIdentifier),
+            verdict: { deletedOccurrenceVerdict(of: series, id: expected.itemID, reachedFrom: nil, viaStandIn: false, changesAllDay: false) })
     }
 
     /// #377: the not-found message of an event undo, asked only after the lookup found nothing or

@@ -871,3 +871,20 @@ location、alarms，與拒絕前相同。每個系列的 `end_date` 至少放在
 
 第 2 步沒被拒絕、或拒絕後讀回的欄位有變，就是 bug，回報到 #509；第 3 步的結果記在 #509。結束後刪掉拋棄式日曆，隔一分鐘以上
 `list_calendars` 兩次，名稱含 `#509` 的都是 0。
+
+## Release gate：跨帳號整串搬移的 undo（#511）
+
+#511 的檢查（`SeriesMoveUndo.deletedOccurrenceRefusal` 與 `seriesMoveBackRefusal`）只有純函式與原始碼釘選的測試。undo 是
+stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二個帳號，所以**有 Google 或 Exchange 帳號時**，在重啟後的 session MCP 上
+（行為探測確認是新 binary 之後）做；沒有第二個帳號就記成無法執行，不擋 tag。使用者在該帳號手動建拋棄式日曆 G（`create_calendar`
+只建在預設來源），`--cli` 建 iCloud 的拋棄式日曆 A，名稱都含 `#511`。系列的建立與刪場次都用 `--cli`，不進 session 的 undo stack：
+
+1. `--cli` 在 A 建從下週開始、每週 5 場、有 `end_date` 的系列 → session：`move_events_batch` 用系列 ID、span `all` 搬到 G
+   （沒有刪過的場次，#503 放行），記下回應裡的新 ID；
+2. `--cli` 用新 ID 的 `delete_event` span `this` 刪掉第三場；
+3. session：`undo`：要以「Cannot undo the move: moving the whole series back to its original calendar in another account is a
+   create plus a delete」拒絕（訊息含 `#503` 與 `discard_id`），什麼都沒寫：另一次 `--cli` 的 `list_events` 讀回 G 有 4 場、A 沒有；
+   `undo_history` 最上面仍是那筆搬移 → `undo` 帶它的 `discard_id` 移除；
+4. 對照組：同第 1 步但不刪場次 → session：`undo`：系列回到 A，5 場都在。跨帳號搬回本身沒有量過，記下讀回的場次數。
+
+結果記在 #511。結束後刪掉拋棄式日曆（G 由使用者刪），隔一分鐘以上 `list_calendars` 兩次，名稱含 `#511` 的都是 0。

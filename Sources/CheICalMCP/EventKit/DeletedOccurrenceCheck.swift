@@ -416,14 +416,20 @@ enum DeletedOccurrenceCheck {
     /// and the same-account measurement is named as update_event's.
     /// Round 6 (LOW 6): `fromLaterOccurrence` names the part a span-future write moves.
     static func accountMoveReason(_ verdict: Verdict, fromLaterOccurrence: Bool = false) -> String {
-        let found: String
-        if case .unknown(let cause) = verdict {
-            found = "and this check cannot rule one out: \(unknownCause(cause))"
-        } else {
-            found = "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
-        }
+        let found = foundText(verdict)
         let subject = fromLaterOccurrence ? "Moving the occurrences from this one on" : "Moving this series"
         return "\(subject) to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it with update_event to a calendar of the same account kept them (measured with span all, and with span future from a later occurrence together with a new end_date). Nothing was written."
+    }
+
+    private static func foundText(_ verdict: Verdict) -> String {
+        if case .unknown(let cause) = verdict { return "and this check cannot rule one out: \(unknownCause(cause))" }
+        return "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
+    }
+
+    /// #511: the undo of a whole-series move back to a calendar of another account, refused as the
+    /// forward move is (`accountMoveReason`). The record is kept, so the text gives #269's way on.
+    static func undoAccountMoveReason(_ verdict: Verdict) -> String {
+        "Cannot undo the move: moving the whole series back to its original calendar in another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(foundText(verdict)). Nothing was written and this history entry was kept. Move the series back in Calendar if it should go back; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     }
 
     /// MEDIUM 2 of round 6 (measured on iCloud, 2026-11-09): the fields that kept the deletions, and the spans.
