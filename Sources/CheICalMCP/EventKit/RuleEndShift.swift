@@ -187,6 +187,48 @@ enum RuleEndShift {
         return days.contains { $0 >= 29 }
     }
 
+    /// #513: the refusal of the month-end shape on a series with no end instant. Read from the rule's
+    /// semantics, as #509's month-end refusal is, and not measured.
+    static let openMonthEndReason = "Cannot change the start, end or zone of this recurring event: it repeats monthly or yearly on its start's day of the month, and that day is, or after this write would be, the 29th, 30th or 31st (read in the event's time zone, before and after the write), so the series skips, or would skip, months without that day, and which months have an occurrence may change; undo cannot bring a lost one back (#513; read from the rule, not measured). Nothing was written. To move it, change the series in Calendar."
+
+    /// PR #518 round 1: the shape #513's month-end check applies to on a series with no end: a monthly or
+    /// yearly reading whose day comes from the start, with the rule kept.
+    static func monthEndShape(unit: Unit, dayFromStart: Bool, passedRule: PassedRule?) -> Bool {
+        unit != .day && dayFromStart && passedRule != .clear
+    }
+
+    /// Round 5 (MEDIUM), PR #518 round 1: the first slot is proven through the series id over the whole
+    /// series where an end is checked, or where the month-end check of a series with no end can apply.
+    static func needsFirstSlot(wholeThroughSeries: Bool, endsChecked: Bool, monthEndShape: Bool) -> Bool {
+        wholeThroughSeries && (endsChecked || monthEndShape)
+    }
+
+    /// PR #518 round 1: the refusal when that first slot cannot be shown on a series with no end.
+    static let openFirstSlotReason = "Cannot change the start, end or zone of this recurring event: it repeats monthly or yearly on its start's day of the month, and the original slot of its first occurrence cannot be shown (it may have been moved on its own), so whether this write moves that day to or from the 29th, 30th or 31st cannot be checked (#513). Nothing was written. To move it, change the series in Calendar."
+
+    /// #513: the unit a passed rule repeats by.
+    static func unit(of frequency: RecurrenceRuleInput.Frequency) -> Unit {
+        switch frequency {
+        case .daily, .weekly: return .day
+        case .monthly: return .month
+        case .yearly: return .year
+        }
+    }
+
+    /// #513: the coarser of two units (fail closed: a month-end reading applies to the coarser).
+    static func coarser(_ a: Unit, _ b: Unit?) -> Unit {
+        guard let b else { return a }
+        if a == .year || b == .year { return .year }
+        if a == .month || b == .month { return .month }
+        return .day
+    }
+
+    /// #513: whether a passed rule names its days (weekdays or days of the month), so its day does not
+    /// come from the start.
+    static func namesDays(daysOfWeek: [Int]?, daysOfMonth: [Int]?) -> Bool {
+        !(daysOfWeek ?? []).isEmpty || !(daysOfMonth ?? []).isEmpty
+    }
+
     /// The new start is already after the end: the occurrences after the first it moves may be dropped.
     static func startsPastEnd(plannedStart: Date, ruleEnd: Date) -> Bool {
         plannedStart > ruleEnd
@@ -301,7 +343,9 @@ enum RuleEndShift {
     static func refusal(storedEnds: [Date], passedRule: PassedRule?, plan: Plan, from: Date?, allDay: Bool, route: Route,
                         list: (DateInterval) -> [Listed]?) -> String? {
         let ends = ends(stored: storedEnds, passedRule: passedRule)
-        guard !ends.isEmpty else { return nil }
+        // #513: the month-end shape needs no end, so a series with none (open-ended, or bounded by a
+        // count, stored or passed) is refused for it too; a cleared rule leaves one event.
+        guard !ends.isEmpty else { return passedRule != .clear && nearMonthEnd(plan) ? openMonthEndReason : nil }
         if allDay { return uncheckedReason(.allDay) }
         if !plan.expandable { return uncheckedReason(.unexpandable) }
         if nearMonthEnd(plan) { return uncheckedReason(.monthEnd) }

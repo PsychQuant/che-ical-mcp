@@ -583,4 +583,90 @@ final class RuleEndShiftTests: XCTestCase {
         let allDay = SeriesRuleWrite.allDayReason.components(separatedBy: ". ").first { $0.contains("Pass span 'all'") }
         XCTAssertTrue(allDay?.contains("#509") == true, SeriesRuleWrite.allDayReason)
     }
+
+    // MARK: - #513: the month-end shape on a series with no end
+
+    private let tokyo = TimeZone(identifier: "Asia/Tokyo")!
+    private let losAngeles = TimeZone(identifier: "America/Los_Angeles")!
+
+    private func monthly(_ start: Date, planned: Date? = nil, newZone: TimeZone? = nil, storedZone: TimeZone? = nil,
+                         unit: RuleEndShift.Unit = .month, dayFromStart: Bool = true) -> RuleEndShift.Plan {
+        .init(storedStarts: [start], plannedStart: planned ?? start, storedZone: storedZone ?? tokyo, newZone: newZone ?? storedZone ?? tokyo,
+              unit: unit, keepsDays: !dayFromStart, dayFromStart: dayFromStart, expandable: true)
+    }
+
+    /// 05:00 Tokyo on 2026-12-01 is 2026-11-30 in Los Angeles: a zone change alone moves a plain monthly
+    /// series to the 30th, which skips February; with no end, #509 returned nil before (#513).
+    func testAZoneChangeThatMovesAnOpenMonthlySeriesToTheMonthEndIsRefused() {
+        let first = at("2026-12-01T05:00", tokyo)
+        let zone = monthly(first, newZone: losAngeles)
+        XCTAssertTrue(RuleEndShift.nearMonthEnd(zone))
+        for passed in [nil, RuleEndShift.PassedRule.count, .open] {
+            XCTAssertEqual(refusal([first], stored: [], passed: passed, plan: zone), RuleEndShift.openMonthEndReason, "\(String(describing: passed))")
+        }
+        XCTAssertNil(refusal([first], stored: [], passed: .clear, plan: zone), "clear_recurrence leaves one event")
+        // 2027-03-01 05:00 Tokyo is February 28 in Los Angeles: not the 29th to 31st, goes through.
+        XCTAssertNil(refusal([first], stored: [], plan: monthly(at("2027-03-01T05:00", tokyo), newZone: losAngeles)))
+    }
+
+    /// The cost: any start, zone or all_day change on such a series whose start is or would be on the
+    /// 29th to 31st, a time of day on the same day included. Days before the 29th, a daily or weekly rule,
+    /// and a rule with days of its own go through.
+    func testTheOpenMonthEndRefusalCoversTheSameDayAndSparesTheOthers() {
+        let thirtieth = at("2027-01-30T10:00", tokyo)
+        XCTAssertEqual(refusal([thirtieth], stored: [], plan: monthly(thirtieth, planned: at("2027-01-30T11:00", tokyo))),
+                       RuleEndShift.openMonthEndReason)
+        XCTAssertEqual(refusal([thirtieth], stored: [], plan: monthly(at("2027-01-15T10:00", tokyo), planned: thirtieth)),
+                       RuleEndShift.openMonthEndReason)
+        let fifteenth = at("2027-01-15T10:00", tokyo)
+        XCTAssertNil(refusal([fifteenth], stored: [], plan: monthly(fifteenth, planned: at("2027-01-15T11:00", tokyo))))
+        XCTAssertNil(refusal([thirtieth], stored: [], plan: monthly(thirtieth, planned: at("2027-01-30T11:00", tokyo), unit: .day)))
+        XCTAssertNil(refusal([thirtieth], stored: [], plan: monthly(thirtieth, planned: at("2027-01-30T11:00", tokyo), dayFromStart: false)))
+        XCTAssertEqual(refusal([thirtieth], stored: [], plan: monthly(thirtieth, planned: at("2027-01-30T11:00", tokyo), unit: .year)),
+                       RuleEndShift.openMonthEndReason)
+        // A series with an end keeps #509's own text.
+        XCTAssertEqual(refusal([thirtieth], stored: [at("2027-06-30T10:00", tokyo)], plan: monthly(thirtieth, planned: at("2027-01-30T11:00", tokyo))),
+                       RuleEndShift.uncheckedReason(.monthEnd))
+    }
+
+    /// A rule passed in the call counts too: its frequency (the coarsest unit wins) and whether it names
+    /// days, so a monthly rule without days over a weekly series is checked.
+    func testAPassedRuleSetsTheUnitAndTheDay() {
+        XCTAssertEqual(RuleEndShift.unit(of: .weekly), .day)
+        XCTAssertEqual(RuleEndShift.unit(of: .monthly), .month)
+        XCTAssertEqual(RuleEndShift.unit(of: .yearly), .year)
+        XCTAssertEqual(RuleEndShift.coarser(.day, .month), .month)
+        XCTAssertEqual(RuleEndShift.coarser(.year, .month), .year)
+        XCTAssertEqual(RuleEndShift.coarser(.month, nil), .month)
+        XCTAssertTrue(RuleEndShift.namesDays(daysOfWeek: [2], daysOfMonth: nil))
+        XCTAssertTrue(RuleEndShift.namesDays(daysOfWeek: nil, daysOfMonth: [15]))
+        XCTAssertFalse(RuleEndShift.namesDays(daysOfWeek: [], daysOfMonth: nil))
+    }
+
+    func testTheOpenMonthEndTextNamesItsCauseAndCalendar() {
+        let text = RuleEndShift.openMonthEndReason
+        for part in ["#513", "29th, 30th or 31st", "Nothing was written", "change the series in Calendar", "not measured"] {
+            XCTAssertTrue(text.contains(part), part)
+        }
+        XCTAssertFalse(text.contains("rule ends") || text.contains("end_date"), text)
+    }
+
+    /// PR #518 round 1: on a series with no end the first slot is proven too where the month-end check can
+    /// apply (a monthly or yearly reading whose day comes from the start, the rule kept), so a first
+    /// occurrence moved on its own does not hide the series' day; a slot that cannot be shown refuses in
+    /// #513's words, with no rule end named.
+    func testTheFirstSlotIsProvenWhereTheMonthEndCheckCanApply() {
+        XCTAssertTrue(RuleEndShift.monthEndShape(unit: .month, dayFromStart: true, passedRule: nil))
+        XCTAssertTrue(RuleEndShift.monthEndShape(unit: .year, dayFromStart: true, passedRule: .count))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .day, dayFromStart: true, passedRule: nil))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .month, dayFromStart: false, passedRule: nil))
+        XCTAssertFalse(RuleEndShift.monthEndShape(unit: .month, dayFromStart: true, passedRule: .clear))
+        XCTAssertTrue(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: false, monthEndShape: true))
+        XCTAssertTrue(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: true, monthEndShape: false))
+        XCTAssertFalse(RuleEndShift.needsFirstSlot(wholeThroughSeries: true, endsChecked: false, monthEndShape: false))
+        XCTAssertFalse(RuleEndShift.needsFirstSlot(wholeThroughSeries: false, endsChecked: true, monthEndShape: true))
+        let text = RuleEndShift.openFirstSlotReason
+        XCTAssertTrue(text.contains("#513") && text.contains("first occurrence") && text.contains("change the series in Calendar"), text)
+        XCTAssertFalse(text.contains("rule ends") || text.contains("past the end"), text)
+    }
 }
