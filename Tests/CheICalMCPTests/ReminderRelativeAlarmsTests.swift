@@ -159,7 +159,7 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
     func testUpdateReminderWiresTheAlarmReadBack() throws {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        XCTAssertTrue(code.contains("let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: reminder, dateSync: dateSync, reload: { reminder.refresh() })"), "the read-back")
+        XCTAssertTrue(code.contains("let alarms = ReminderUpdateWrite.alarmReadBack(request, saved: saved, dateSync: dateSync, reload: { saved.refresh() })"), "the read-back")
         XCTAssertTrue(code.contains("storedRelativeAlarms: alarms.stored"), "the stored alarms")
         XCTAssertTrue(code.contains("listShowsAlarmTime: alarms.listShowsAlarmTime"), "the note's judgement")
     }
@@ -385,7 +385,7 @@ final class ReminderRelativeAlarmsTests: XCTestCase {
     func testUpdateReminderWiresTheLeftoverNote() throws {
         let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        XCTAssertEqual(code.components(separatedBy: "leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: reminder, request: request, dateSync: dateSync)").count - 1, 1)
+        XCTAssertEqual(code.components(separatedBy: "leftoverAlarmsNote: ReminderRelativeAlarms.leftoverNote(saved: saved, request: request, dateSync: dateSync)").count - 1, 1)
         // PR #415 verify round 3: compared without whitespace, so a line break cannot hide a second call.
         let compact = code.filter { !$0.isWhitespace }
         XCTAssertFalse(compact.contains("ReminderRelativeAlarms.leftoverNote(requested:"), "no second, hand-wired computation")
