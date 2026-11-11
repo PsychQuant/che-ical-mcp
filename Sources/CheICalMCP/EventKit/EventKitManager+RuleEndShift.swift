@@ -16,6 +16,11 @@ extension RuleEndShift {
         return .day
     }
 
+    /// Round 6 (LOW): a weekly rule with days of the week (`Plan.weeklyDays`).
+    static func weeklyDays(_ rules: [EKRecurrenceRule]) -> Bool {
+        rules.contains { $0.frequency == .weekly && !($0.daysOfTheWeek ?? []).isEmpty }
+    }
+
     static func passedRule(_ rule: RecurrenceRuleInput?, clearing: Bool) -> PassedRule? {
         if clearing { return .clear }
         guard let rule else { return nil }

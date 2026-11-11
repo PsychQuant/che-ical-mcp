@@ -285,10 +285,14 @@ final class RuleEndShiftTests: XCTestCase {
     /// LOW 3, LOW 6: a route only where one works. Through an occurrence's own id (#416, #428) a call
     /// cannot also pass the rule, so it points to Calendar, as an unwritable rule does.
     func testEachCauseHasARouteThatWorks() {
-        func route(_ writable: Bool, own: Bool = false, standIn: Bool = false, days: Bool = false, ended: Bool = false) -> RuleEndShift.Route {
+        func route(_ writable: Bool, own: Bool = false, standIn: Bool = false, days: Bool = false, ended: Bool = false,
+                   agree: Bool = true) -> RuleEndShift.Route {
             RuleEndShift.route(ruleWritable: writable, addressesOwnOccurrence: own, viaStandIn: standIn, keepsDays: days,
-                               endedAfterHappening: ended)
+                               startsAgree: agree, endedAfterHappening: ended)
         }
+        // Round 6 (LOW): stored starts that disagree (an occurrence moved on its own) get Calendar.
+        XCTAssertEqual(route(true, agree: false), .startsDisagree)
+        XCTAssertEqual(route(true, own: true, agree: false), .ownOccurrence)
         // Round 4 LOW 1: through a stand-in (#326) passing recurrence is refused, so Calendar.
         XCTAssertEqual(route(true, standIn: true), .standIn)
         XCTAssertEqual(route(true), .passRule)
@@ -525,11 +529,58 @@ final class RuleEndShiftTests: XCTestCase {
     func testTheRoutesSayWhatCanStillRefuseThem() {
         let reason = refusal(mondays, stored: [mondays[4]], plan: plan(planned: at("2026-12-07T11:00", taipei)))!
         XCTAssertTrue(reason.contains("#503") && reason.contains("deleted on its own"), reason)
-        let fromLast = plan(planned: at("2027-01-04T11:00", taipei), stored: mondays[4], keepsDays: true)
+        var fromLast = plan(planned: at("2027-01-04T11:00", taipei), stored: mondays[4], keepsDays: true)
+        fromLast.weeklyDays = true
         let last = refusal(mondays, stored: [mondays[4]], plan: fromLast, from: mondays[4], route: .ruleWithDays)!
-        XCTAssertTrue(last.contains("span 'this'") && last.contains("#454"), last)
+        XCTAssertTrue(last.contains("span 'this' on one of the series' weekdays (onto another weekday #454 refuses it"), last)
         for cause in [RuleEndShift.Unchecked.unreadable, .unlisted, .unplaced, .empty, .tooFar, .allDay, .monthEnd, .unexpandable, .firstSlot] {
             XCTAssertFalse(RuleEndShift.uncheckedReason(cause).contains("ends at a fixed time"), "\(cause)")
         }
+    }
+
+    // MARK: - Round 6 findings
+
+    /// LOW: #454 refuses span 'this' onto another day only on a weekly rule (`WeekdayCheck.storedDaysCount`),
+    /// so a monthly rule with days of the month, or a daily one with weekdays, gets span 'this' without it.
+    func testTheSpanThisHintNamesWeekdaysOnlyForAWeeklyRule() {
+        let fromLast = plan(planned: at("2027-01-04T11:00", taipei), stored: mondays[4], keepsDays: true)
+        XCTAssertFalse(fromLast.weeklyDays)
+        let last = refusal(mondays, stored: [mondays[4]], plan: fromLast, from: mondays[4], route: .ruleWithDays)!
+        XCTAssertTrue(last.contains("To move only this occurrence, use span 'this'."), last)
+        XCTAssertFalse(last.contains("#454"), last)
+    }
+
+    /// LOW: when the starts the store may expand from disagree (the occurrence the write starts from was
+    /// moved on its own), an end late enough for every reading can bring in an occurrence the series
+    /// never had, so the route is Calendar, as for a rule with days of its own.
+    func testStartsThatDisagreeGetTheCalendarRoute() {
+        let shown = at("2026-12-07T11:00", taipei)
+        XCTAssertTrue(RuleEndShift.startsAgree([mondays[0], mondays[0], mondays[0]]))
+        XCTAssertFalse(RuleEndShift.startsAgree([shown, shown, mondays[0]]))
+        XCTAssertTrue(RuleEndShift.startsAgree([]))
+        let p = RuleEndShift.Plan(storedStarts: [shown, mondays[0]], plannedStart: at("2026-12-07T10:40", taipei), storedZone: taipei,
+                                  newZone: taipei, unit: .day, keepsDays: false, dayFromStart: true, expandable: true)
+        let reason = refusal(mondays, stored: [at("2027-01-04T10:30", taipei)], plan: p, route: .startsDisagree)!
+        XCTAssertFalse(reason.contains("end_date"), reason)
+        XCTAssertTrue(reason.contains("Calendar") && reason.contains("moved on its own"), reason)
+    }
+
+    /// LOW: through the series id an end_time alone can enter the check, so the refusals name the start,
+    /// the end and the zone instead of saying the start moves.
+    func testTheRefusalsNameTheStartTheEndAndTheZone() {
+        let lost = RuleEndShift.lostReason(slot: mondays[4], ruleEnd: mondays[4], movedTo: mondays[4], keepEnd: mondays[4], zone: taipei, route: .passRule)
+        XCTAssertTrue(lost.hasPrefix("Cannot change the start, end or zone of this recurring event: "), lost)
+        XCTAssertTrue(RuleEndShift.uncheckedReason(.empty).hasPrefix("Cannot change the start, end or zone of this recurring event: "))
+    }
+
+    /// LOW: the #451 and #478 routes that #509 can still refuse say so, inside the sentence that gives
+    /// the route (`replacingSpanFutureSentence` swaps that sentence whole).
+    func testTheRoutesOfTheStartedSeriesChecksNameTheRuleEndCheck() {
+        for reason in [SeriesRuleWrite.startPassesOccurrencesReason, SeriesRuleWrite.laterStartReason, SeriesRuleWrite.zoneChangeReason] {
+            let sentence = reason.components(separatedBy: ". ").first { $0.contains("span 'future'") && $0.contains("occurrence_date") }
+            XCTAssertTrue(sentence?.contains("past the rule end") == true && sentence?.contains("#509") == true, reason)
+        }
+        let allDay = SeriesRuleWrite.allDayReason.components(separatedBy: ". ").first { $0.contains("Pass span 'all'") }
+        XCTAssertTrue(allDay?.contains("#509") == true, SeriesRuleWrite.allDayReason)
     }
 }

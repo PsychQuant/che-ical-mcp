@@ -43,6 +43,9 @@ enum RuleEndShift {
         /// Every rule is a shape the readings expand (round 4: weeks of the year or set positions with
         /// no day are not).
         let expandable: Bool
+        /// Round 6 (LOW): a weekly rule with days of the week, the one shape where #454 refuses span
+        /// 'this' onto another day (`WeekdayCheck.storedDaysCount`).
+        var weeklyDays: Bool = false
     }
 
     /// Which BY parts a rule has (PR #510 round 4, HIGH): having one is not the same as fixing the
@@ -89,15 +92,24 @@ enum RuleEndShift {
     /// 3: an end_date late enough for every reading can bring in an occurrence the series never had),
     /// nor for a series whose rule ended after an occurrence happened (LOW 7: #451 refuses a later end).
     /// Round 4 (LOW 1): nor through a stand-in (#326), where a call that passes recurrence is refused.
-    enum Route: Equatable { case passRule, unwritableRule, ownOccurrence, standIn, ruleWithDays, endedSeries }
+    /// Round 6 (LOW): nor when the stored starts disagree (`startsAgree`): an end late enough for every
+    /// reading can bring in an occurrence the series never had, as for a rule with days of its own.
+    enum Route: Equatable { case passRule, unwritableRule, ownOccurrence, standIn, ruleWithDays, startsDisagree, endedSeries }
 
     static func route(ruleWritable: Bool, addressesOwnOccurrence: Bool, viaStandIn: Bool, keepsDays: Bool,
-                      endedAfterHappening: Bool) -> Route {
+                      startsAgree: Bool, endedAfterHappening: Bool) -> Route {
         if addressesOwnOccurrence { return .ownOccurrence }
         if viaStandIn { return .standIn }
         if !ruleWritable { return .unwritableRule }
         if keepsDays { return .ruleWithDays }
+        if !startsAgree { return .startsDisagree }
         return endedAfterHappening ? .endedSeries : .passRule
+    }
+
+    /// Round 6 (LOW): whether every start the store may expand from is the same instant.
+    static func startsAgree(_ starts: [Date]) -> Bool {
+        guard let first = starts.first else { return true }
+        return starts.allSatisfy { UndoPostState.sameInstant($0, first) }
     }
 
     /// The series' rules as read, or nil when none could be read (PR #510 round 2, HIGH 1). The check
@@ -309,7 +321,7 @@ enum RuleEndShift {
                 let onlyThis = from.map { start in !slots.contains { $0.timeIntervalSince(start) >= 1 && $0 <= end.rule } } ?? false
                 let keep = keepEnd(slots: slots, ruleEnd: plan.plannedStart, plan: plan, from: from)
                 return pastEndReason(ruleEnd: end.rule, zone: plan.newZone, route: route, keepEnd: max(keep, plan.plannedStart),
-                                     onlyThisOccurrence: onlyThis, passedEnd: passedEnd, keepsDays: plan.keepsDays)
+                                     onlyThisOccurrence: onlyThis, passedEnd: passedEnd, weeklyDays: plan.keepsDays && plan.weeklyDays)
             }
             if let slot = firstLost(slots: slots, ruleEnd: end.rule, plan: plan, from: from) {
                 return lostReason(slot: slot, ruleEnd: end.rule, movedTo: latestMove(slot: slot, plan: plan),
@@ -340,6 +352,8 @@ enum RuleEndShift {
             return "This write goes through an occurrence edited on its own, and such a call cannot also pass the series' rule (#416), so to move it, change the series in Calendar."
         case .ruleWithDays:
             return "This series' rule has days of its own, and passing it with an end late enough for every reading of the move can bring in an occurrence the series never had, so to move it, change the series in Calendar."
+        case .startsDisagree:
+            return "The occurrence this write starts from was moved on its own, so the rule may be expanded again from its shown start or from its original slot, and passing the rule with an end late enough for both can bring in an occurrence the series never had, so to move it, change the series in Calendar."
         case .standIn:
             return "This write goes through a series whose first occurrence was deleted, and such a call cannot also pass the series' rule (#326), so to move it, change the series in Calendar."
         case .endedSeries:
@@ -352,7 +366,7 @@ enum RuleEndShift {
     /// Round 4 (INFO): an end passed in the call is named as that.
     static func lostReason(slot: Date, ruleEnd: Date, movedTo: Date, keepEnd: Date, zone: TimeZone, route: Route,
                            passedEnd: Bool = false) -> String {
-        "Cannot move the start or zone of this recurring event: " + endText(passedEnd) + " \(iso(ruleEnd, zone)), and the occurrence at "
+        "Cannot change the start, end or zone of this recurring event: " + endText(passedEnd) + " \(iso(ruleEnd, zone)), and the occurrence at "
             + "\(iso(slot, zone)) may start as late as \(iso(movedTo, zone)) after this write, after that end, so the store may drop it and "
             + "undo cannot bring it back (#509; measured on iCloud to drop an occurrence: a later time or day on a weekly series, a zone "
             + "change across a daylight-saving change, a plain monthly series moved to the next month, and the series' rule passed again "
@@ -364,12 +378,13 @@ enum RuleEndShift {
     }
 
     /// Round 4 (LOW 5): with the route; from the last occurrence before the end, span 'this'.
-    /// Round 5 (LOW): for a rule with days of its own, span 'this' onto another day is refused (#454).
+    /// Round 5 (LOW), round 6 (LOW): on a weekly rule with days of the week, span 'this' onto another
+    /// weekday is refused (#454); on other rules #454 does not check span 'this'.
     static func pastEndReason(ruleEnd: Date, zone: TimeZone, route: Route? = nil, keepEnd: Date? = nil,
-                              onlyThisOccurrence: Bool = false, passedEnd: Bool = false, keepsDays: Bool = false) -> String {
+                              onlyThisOccurrence: Bool = false, passedEnd: Bool = false, weeklyDays: Bool = false) -> String {
         let head = "Cannot move the start of this recurring event after its end (" + endText(passedEnd) + " \(iso(ruleEnd, zone))): "
         if onlyThisOccurrence {
-            let days = keepsDays ? " on a day the series' rule names (onto another day #454 refuses it; change it in Calendar)" : ""
+            let days = weeklyDays ? " on one of the series' weekdays (onto another weekday #454 refuses it; change it in Calendar)" : ""
             return head + "this write splits the series at its last occurrence before that end, and what the store keeps then was not "
                 + "measured (#509). Nothing was written. To move only this occurrence, use span 'this'" + days + "."
         }
@@ -395,7 +410,8 @@ enum RuleEndShift {
         case .firstSlot: why = "the original slot of the series' first occurrence cannot be shown (it may have been moved on its own), so the start the rule is expanded from again is not known"
         }
         // PR #510 round 5 (LOW): the end checked may be the one passed in the call (a count rule has no end time).
-        return "Cannot move the start or zone of this recurring event: whether the move would push an occurrence past the end of the "
+        // Round 6 (LOW): through the series id an end_time alone can enter (`mayMoveStart`).
+        return "Cannot change the start, end or zone of this recurring event: whether the move would push an occurrence past the end of the "
             + "series' rule, or of the rule passed in this call, cannot be checked (#509): \(why). Nothing was written. To move it, change the series in Calendar."
     }
 }

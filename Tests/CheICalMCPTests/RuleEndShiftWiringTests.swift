@@ -35,7 +35,8 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // LOW 8; round 2 LOW 6: through an occurrence's own id the route is Calendar (#416).
         XCTAssertTrue(code.contains("from:applyToAll?nil:eventSlot,"))
         XCTAssertTrue(code.contains("route:RuleEndShift.route(ruleWritable:SeriesRuleWrite.writableRule(seriesRules)!=nil,addressesOwnOccurrence:addressesOwnOccurrence,"
-                                    + "viaStandIn:resolved.viaStandIn,keepsDays:plan.keepsDays,endedAfterHappening:happened&&storedEnds.contains{$0<now}))"))
+                                    + "viaStandIn:resolved.viaStandIn,keepsDays:plan.keepsDays,startsAgree:RuleEndShift.startsAgree(storedStarts),"
+                                    + "endedAfterHappening:happened&&storedEnds.contains{$0<now}))"))
         // Round 2 LOW 7: an all-day series, before or after the write, is not checked and refused.
         XCTAssertTrue(code.contains("allDay:event.isAllDay||datePlan.isAllDay||holder.isAllDay,"))
         XCTAssertTrue(code.contains("throwEventKitError.seriesWriteRefused(reason:reason)"))
@@ -59,7 +60,7 @@ final class RuleEndShiftWiringTests: XCTestCase {
         // Round 4 (HIGH): the day comes from the rule's parts, apart from whether it has BY parts.
         XCTAssertTrue(code.contains("letparts=rules.map(RuleEndShift.parts)"))
         XCTAssertTrue(code.contains("keepsDays:parts.contains{$0.fixesDay},dayFromStart:parts.contains{!$0.fixesDay},"
-                                    + "expandable:parts.allSatisfy{$0.expandable})"))
+                                    + "expandable:parts.allSatisfy{$0.expandable},weeklyDays:RuleEndShift.weeklyDays(rules))"))
     }
 
     func testTheSeriesIdRouteThroughAnEditedFirstOccurrenceReentersTheCheck() throws {
