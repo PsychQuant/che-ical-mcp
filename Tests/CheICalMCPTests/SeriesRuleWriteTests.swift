@@ -538,20 +538,53 @@ final class SeriesRuleWriteTests: XCTestCase {
         XCTAssertTrue(namesTheDeletedOccurrenceCheck(routeSentence(SeriesRuleWrite.countReason, "Use end_date")), SeriesRuleWrite.countReason)
     }
 
-    /// After a deleted first slot an end_date is not checked on a series with no occurrence_count (not a
-    /// pattern change) and always refused on one with it (#503 is unknown there), so Calendar.
-    func testTheCountAfterADeletedFirstRouteIsLimitedToSeriesWithoutACount() {
+    /// PR #515 round 1: this text is a fallback (#416's `firstLeftRecurrenceReason` answers the same call
+    /// first), so it offers no route through this tool: Calendar, with #416 and #503 named.
+    func testTheCountAfterADeletedFirstTextIsAFallbackThatPointsToCalendar() {
         let reason = SeriesRuleWrite.countAfterDeletedFirstReason
-        XCTAssertTrue(routeSentence(reason, "use end_date")?.contains("no occurrence_count") == true, reason)
-        let count = routeSentence(reason, "On a series with an occurrence_count")
-        XCTAssertTrue(count?.contains("#503") == true && count?.contains("Calendar") == true, reason)
-        XCTAssertFalse(reason.contains("Use end_date."), "no unconditional route")
+        XCTAssertFalse(reason.contains("use end_date") || reason.contains("Use end_date"), reason)
+        XCTAssertTrue(reason.contains("#416") && reason.contains("#503") && reason.contains("change the series in Calendar"), reason)
+    }
+
+    /// PR #515 round 1: where a deleted first occurrence leaves #503 unable to rule one out, every
+    /// count or pattern route says to change it in Calendar then.
+    func testTheCountAndPatternRoutesPointToCalendarAfterADeletedFirst() {
+        let gone = "which it cannot be once the series' first occurrence was deleted, so then change it in Calendar"
+        XCTAssertTrue(routeSentence(SeriesRuleWrite.startedRuleReason, "To end the series")?.contains(gone) == true)
+        XCTAssertTrue(routeSentence(SeriesRuleWrite.startedRuleReason, "To change the pattern")?.contains(gone) == true)
+        XCTAssertTrue(routeSentence(SeriesRuleWrite.countReason, "Use end_date")?.contains(gone) == true)
+        XCTAssertTrue(routeSentence(SeriesRuleWrite.calendarReason, "To move the occurrences from one that has not happened yet")?.contains(gone) == true)
+    }
+
+    /// PR #515 round 1: span all to another account is checked too, over every occurrence of the series
+    /// (`reachedFrom` nil across accounts); and through a series whose first occurrence was deleted both
+    /// routes are refused (#326), so the text names move_events_batch (measured, #369) or Calendar.
+    func testTheCalendarRoutesNameTheAccountCheckAndTheStandIn() {
+        let account = "to a calendar of another account it is refused while an occurrence deleted on its own is found among any occurrences of the series or cannot be ruled out (#503)"
+        for reason in [SeriesRuleWrite.calendarReason, SeriesRuleWrite.calendarUnwritableReason] {
+            XCTAssertTrue(routeSentence(reason, "Pass span 'all'")?.contains(account) == true, reason)
+            let standIn = routeSentence(reason, "first occurrence was deleted both routes")
+            XCTAssertTrue(standIn?.contains("#326") == true && standIn?.contains("move_events_batch") == true
+                          && standIn?.contains("#369") == true && standIn?.contains("Calendar") == true, reason)
+            XCTAssertFalse(standIn?.contains("span 'future'") == true, "survives the span future swap")
+        }
+        let future = routeSentence(SeriesRuleWrite.calendarReason, "To move the occurrences from one that has not happened yet")
+        XCTAssertTrue(future?.contains(account) == true, SeriesRuleWrite.calendarReason)
+    }
+
+    /// PR #515 round 1: #503's pattern text says a count replaced by an end_date is a pattern change, and
+    /// the measured new end_date was on a series that already ended at one.
+    func testThePatternTextCountsABoundChangeAsAPatternChange() {
+        let text = DeletedOccurrenceCheck.deletedReason(blocked: nil, change: .pattern)
+        XCTAssertTrue(text.contains("a count replaced by an end_date or by no bound counts as one"), text)
+        XCTAssertTrue(text.contains("a new end_date alone on a series that already ended at one kept them"), text)
     }
 
     func testTheCalendarRouteNamesTheDeletedOccurrenceCheck() {
         let sentence = routeSentence(SeriesRuleWrite.calendarReason, "To move the occurrences from one that has not happened yet")
         XCTAssertTrue(namesTheDeletedOccurrenceCheck(sentence), SeriesRuleWrite.calendarReason)
         XCTAssertTrue(sentence?.contains("another account") == true, sentence ?? "")
+        XCTAssertFalse(sentence?.contains("another account, is refused while an occurrence deleted on its own is found among the occurrences it moves") == true)
         XCTAssertTrue(sentence?.contains("span 'future'") == true, "the condition stays in the sentence a swap replaces")
     }
 }
