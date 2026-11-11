@@ -63,7 +63,7 @@ final class UndoKeepLaterEditsWiringTests: XCTestCase {
                          "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:",
                          "? try old.resolveList(in: lists, identifier: { $0.calendarIdentifier }, for: .revertUpdate) : nil",
                          "old.applyRestoring(Set(plan.restored), to: reminder, list: list, now: Date())",
-                         "try saveExistingReminder(reminder, handler:",
+                         "let note = try saveForHistory(reminder, handler:",
                          "markNeedsRefresh()"], in: arm)
     }
 

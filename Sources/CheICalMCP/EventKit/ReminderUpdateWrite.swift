@@ -12,6 +12,37 @@ import Foundation
 /// the reminder untouched; the reminder object lives on in the server's store, so a change left
 /// on it would be written by whatever saves it next.
 enum ReminderUpdateWrite {
+    /// PR #507 round 2: the fields this request names, with the ones it derives from them. The write
+    /// store's copy always gets these, also when the reminder already held the value (the cache may
+    /// be stale: A in the cache, B stored elsewhere, A asked for).
+    static func requestedFields(_ request: ReminderUpdateRequest) -> Set<ReminderFieldCopy.Field> {
+        var fields: Set<ReminderFieldCopy.Field> = []
+        if request.title != nil { fields.insert(.title) }
+        if request.notes != nil { fields.insert(.notes) }
+        if request.priority != nil { fields.insert(.priority) }
+        if request.calendarName != nil { fields.insert(.calendar) }
+        // A due date moves or clears the start and the absolute alarms, and may zone the item. Round 3:
+        // each alarm argument names its own kind (`setDue`, `setDueDay`, `clear` and `realign` touch
+        // the absolute alarms only), so a relative or location alarm changed elsewhere is not written
+        // back by a due change, and the other way round.
+        // Round 4: not the zone. When the due write zones the item, `changed()` carries it; named here,
+        // a cached zone older than the stored one was written back, and a zone assigned to a zoned item
+        // moves its instants.
+        if request.due != nil || request.clearDueDate { fields.formUnion([.dueDateComponents, .startDateComponents, .absoluteAlarms]) }
+        // Round 4 INFO 9 / round 6, a known limit: `realign` computes the start and the absolute alarms
+        // from this server's cached due. When another app changed the stored due (cache D1, store D2)
+        // and the refresh before the call did not pick it up, the copy keeps D2 and gets a start and
+        // alarms aligned to D1, so the call can unalign a reminder it was meant to repair;
+        // `date_sync.aligned` then reads false on the saved reminder. On main the cached D1 was written
+        // with them, in the same window. On a floating timed due, `realign` also rewrites the due and
+        // zones the item; `changed()` carries those. Release gate step 9 of #459 records it.
+        if request.realignToDue { fields.formUnion([.startDateComponents, .absoluteAlarms]) }
+        if request.alarmOffsets != nil { fields.insert(.relativeAlarms) }
+        if request.locationTrigger != nil || request.clearLocationTrigger { fields.insert(.locationAlarms) }
+        if request.recurrenceRule != nil || request.clearRecurrence { fields.insert(.recurrenceRules) }
+        return fields
+    }
+
     /// #486: a value with the flag that clears it, refused before any write, as
     /// `ReminderRecurrenceWrite.bothMessage` is for the rule. The clear used to win silently.
     static let locationTriggerBothMessage = "Cannot specify both location_trigger and clear_location_trigger"
@@ -56,8 +87,9 @@ enum ReminderUpdateWrite {
     /// `rollback` is `EKObject.rollback()`, which clears `hasChanges` and does not drop the change
     /// (#274, `ExistingReminderSave`); when `save` throws, it runs and the error is rethrown.
     static func apply(_ request: ReminderUpdateRequest, to reminder: EKReminder, calendar: EKCalendar?,
-                      save: () throws -> Void, reload: () -> Bool,
-                      rollback: () -> Void) throws -> ReminderDateSync.Report? {
+                      save: () throws -> Void, saveAgain: (() throws -> Void)? = nil, reload: () -> Bool,
+                      rollback: () -> Void,
+                      current: (() -> EKReminder)? = nil) throws -> ReminderDateSync.Report? {
         // The seam-level guard: the caller runs it before its own lookups too, but `apply` does not
         // rely on that.
         try checkRealign(request, existingDue: reminder.dueDateComponents)
@@ -118,7 +150,10 @@ enum ReminderUpdateWrite {
             throw error
         }
         guard let dateSync else { return nil }
-        return ReminderDateSync.confirmSaved(reminder, report: dateSync, save: save, reload: reload, rollback: rollback)
+        // PR #507 round 1: `current` is the reminder the save left behind (another object when the
+        // save gave it another identifier); the date check reads and, on fallback, writes that one.
+        return ReminderDateSync.confirmSaved(current?() ?? reminder, report: dateSync, save: save, saveAgain: saveAgain,
+                                             reload: reload, rollback: rollback)
     }
 
     /// What `update_reminder` may say about the alarms after the save (PR #438 verify).

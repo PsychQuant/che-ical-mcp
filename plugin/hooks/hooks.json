@@ -6,6 +6,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-mcp.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh start",
+            "timeout": 10
           }
         ]
       }
@@ -17,6 +22,17 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/verify-weekday.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/itinerary-reminder.sh stop",
+            "timeout": 10
           }
         ]
       }

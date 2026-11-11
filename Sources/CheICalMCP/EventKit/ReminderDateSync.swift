@@ -271,7 +271,7 @@ enum ReminderDateSync {
     ///   otherwise `error_<domain>_<N>`, or `error_unknown` for a Swift error), never the
     ///   reminder's content. A failed fallback
     ///   save is not thrown: the update itself is saved and recorded for undo, and the report then
-    ///   says `aligned: false`. `rollback` does not drop that save (#274), so it may still land. A read-back after the fallback that fails is treated
+    ///   says `aligned: false`. For an update that save ran on a write store and did not land (#459); for a create it ran on the long-lived store, where `rollback` does not drop it (#274), so it may still land. A read-back after the fallback that fails is treated
     ///   like the first one: not confirmed, `aligned: false`.
     ///
     /// Known limit: a source that never hands the due's zone back would save twice on every timed
@@ -297,6 +297,7 @@ enum ReminderDateSync {
     /// f8c54e9 removed lived in the Reminders store under one alarm UUID, and EventKit read back
     /// only one of them, so a reminder in that state reads as aligned here as well.
     static func confirmSaved(_ reminder: EKReminder, report: Report, save: () throws -> Void,
+                             saveAgain: (() throws -> Void)? = nil,
                              reload: () -> Bool, rollback: () -> Void, tool: String = "update_reminder",
                              fallback: Bool = true,
                              log: (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) -> Report {
@@ -326,13 +327,21 @@ enum ReminderDateSync {
             log("\(tool): the saved due date read back without its time or zone; writing it around the start date and saving again\n")
             writeDueAroundStart(reminder, due: written)
             do {
-                try save()
+                // PR #507 round 4: an update's second save writes the copy in this order too.
+                if let saveAgain { try saveAgain() } else { try save() }
             } catch {
-                // #274: this answers with `aligned: false`, not an error, and `rollback` does not
-                // drop the change, so the due date written here may still land with the next save.
+                // This answers with `aligned: false`, not an error. For an update the save ran on a
+                // write store and did not land (#459); for a create it ran on the long-lived store,
+                // where `rollback` does not drop it, so it may still land with the next save (#274).
                 rollback()
-                let code = (error as? EventKitError)?.mayLandCode ?? EventKitErrorSanitizer.sanitize(error).code
-                log("\(tool): saving the due date again failed (\(code)); it may still be written by the next save\n")
+                if case EventKitError.writeStoreReadBackFailed = error {
+                    // PR #507 round 3 INFO 7: an update's second save returned without an error and
+                    // only its read-back failed; the caller records its undo and reports it.
+                    log("\(tool): the second save returned without an error, but the reminder could not be read back after it\n")
+                } else {
+                    let code = EventKitErrorSanitizer.sanitize(error).code
+                    log("\(tool): saving the due date again failed (\(code)); for a create it may still be written by the next save\n")
+                }
             }
             confirmed.reread = reload()
             guard confirmed.reread == true, reminder.dueDateComponents != nil else {

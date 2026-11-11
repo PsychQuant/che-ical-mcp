@@ -811,6 +811,26 @@ update-undo 訊息裡有 `The update changed:`），只用名稱含 `#265` 的�
 
 結果記在 #265。結束後刪掉拋棄式日曆與清單，用 `list_calendars` 確認沒有名稱含 `#265` 的殘留。
 
+## Release gate: the reminder write store (#459)
+
+#459 commits existing reminder and list writes on a separate store. The commit itself, the failed-commit
+case (1010) and the batch's store replacement were checked on 2026-11-09 in one process, through a lease
+injected by a local probe. Undo and redo are stateful, and `--cli` cannot reach them (see the table above).
+**Before tagging the release that ships #459**, run these on the session MCP after a restart, once a
+behaviour probe has confirmed the new binary. Use only a disposable list whose name contains `#459`:
+
+1. Run `create_reminder` and then `update_reminder` on the title and notes. A `list_reminders` read shows the new values. Then `undo`: the old values come back. Then `redo`: it is refused (`Cannot redo the update`, nothing written; redo does not apply updates again). Redo separately on a completion: `complete_reminder` on a one-off reminder, `undo` (it is open again), `redo` (it is completed again).
+2. Run `complete_reminder` on a weekly reminder: it succeeds and rolls over (a refusal saying the reminder is no longer at the occurrence this server read means the occurrence check of PR #507 round 4 misfires on this source). Then `undo`: refused by the occurrence identity guard (`its identifier no longer resolves to the recorded occurrence`), the record is discarded, and `list_reminders` (`filter: all`) shows nothing changed by it: the next occurrence is still open and the completed one still completed.
+3. Run `delete_reminders_batch` on three reminders, then `undo`: all three come back.
+4. Run `update_calendar` to rename the list: the response's `calendar` is the new name (it is read off this server's list after `rollback()` and `refresh()`, which was measured for reminders only), and `list_calendars` shows the new name.
+5. After each step, `undo_history` shows the expected top record, and no step answers with `writeStoreBusy`.
+6. Dates through the copy (PR #507 round 2): on a reminder with a timed start and due in a zone other than the host's, `update_reminder` only the due (another time the same day), then only the title, then `undo` twice. After each step `list_reminders` shows the start, the due and their zone as the step leaves them (the start the call did not touch keeps its stored value; the zone survives).
+7. A list deletion on the write store: create a second disposable `#459` list, `delete_calendar` it, and right after it `list_calendars` and a `create_reminder` naming that list: the list is not listed and the create answers that the list is not found.
+8. The occurrence check of undo and redo (PR #507 round 5): `complete_reminder` on a one-off reminder, `undo`, `redo`: both succeed (the check passes on a one-off). Then on a weekly reminder whose completion the store does not roll over in place (on iCloud it does, and the identity guard refuses first, step 2): `complete_reminder`, `undo`: succeeds, and the reminder is open at the same occurrence. Then `update_reminder` on the title of a weekly reminder, `undo`: succeeds. A refusal that says the reminder "is no longer at the occurrence that was checked" in any of these means the check misfires on this source. The refusal itself needs another process to complete the reminder between the identity check and the write, and is covered by `ReminderHistoryOccurrenceTests` only.
+9. `realign_to_due` against a due changed elsewhere (PR #507 round 6, a known limit, not a pass condition): a reminder with a timed due D1 and an absolute alarm at D1 → `--cli` `update_reminder` moves the due to D2 → right after, `update_reminder` with only `realign_to_due: true` on the session MCP → record `date_sync` and the start, due and alarm `list_reminders` reads back. Aligned to D2 is the expected case (the refresh before the call picked D2 up); aligned to D1 with `aligned: false` is the known limit, and is recorded on #459.
+
+Steps 6 to 9 cover the copy order of round 1, the list removal, the history occurrence check of round 5 and the realign limit of round 6, which the device run of 2026-11-09 did not exercise. Record the results on #459. Delete the list afterwards and confirm with `list_calendars`.
+
 ## Release gate：刪除過場次的系列改時間（#503）
 
 #503 的檢查（`DeletedOccurrenceCheck` 與 `deletedOccurrenceVerdict`）的純邏輯有單元測試，接線只有原始碼釘選；EventKit 的系列

@@ -62,6 +62,8 @@ The plugin automatically detects your MCP installation from these locations:
 
 A **SessionStart hook** checks if the MCP is properly installed and shows setup instructions if needed.
 
+A **trip-folder reminder** (#341): in a folder with a project-level `.claude/.ical/config.yaml`, when files change during a session (a receipt archived, a program revised, a booking saved), a Stop hook asks Claude once per interactive session (never in `claude -p`, Agent SDK or scheduled runs) to run `itinerary-check`, which compares the calendar with what changed and changes nothing until you agree. A calendar module it hands a change to writes nothing before that yes either. Your yes to its table is the only gate for a write: if your settings already allow calendar writes, nothing else stops one. It is on by default: existing project-level configs start getting the reminder after upgrading. Put `itinerary_check: off` in that config to turn it off, or `itinerary_ignore: [drafts/]` to skip files (`/drafts/` skips only the one at the top of the folder; sync clients such as Dropbox, and another session in the same folder, also change files; `.DS_Store` is always skipped). It compares modification times, so a file copied with its old time kept (`unzip`, `cp -p`, some sync clients) is not seen, and neither is a fact that exists only outside the folder. The user-level `~/.claude/.ical/config.yaml` does not turn it on. **Known limit:** a session run as a Claude Code background job may get no reminder: such a session's processes have been seen with `CLAUDE_CODE_SESSION_ATTENDED=0` while a person was answering in it, and whether the main agent's Stop hook sees that value is not known yet.
+
 ## Included Components
 
 ### MCP Server
@@ -77,6 +79,7 @@ A **SessionStart hook** checks if the MCP is properly installed and shows setup 
 | `calendar-management` | Comprehensive guide for calendar operations |
 | `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer; from v1.23.0 the server uses CheICalMCP's own grant whenever the host has no full Calendar and Reminders access of its own, #343) |
 | `archive-event` | Archive an event from a narrative source (meeting notice, announcement, mail thread) with correction tracking and source citation |
+| `itinerary-check` | Compare the calendar with what changed about a trip (registration, payment, program, lodging, transport), list the differences, change nothing until you agree (#341) |
 
 ### Commands
 
@@ -142,6 +145,7 @@ Plugin version: 1.23.0 (matches MCP server version)
 ### Changelog
 
 **Unreleased**
+- **Trip-folder reminder and the `itinerary-check` skill** (#341) — *plugin shell only*: in a folder with a project-level `.claude/.ical/config.yaml`, a Stop hook reminds once per session, when files changed there, to run `itinerary-check`, which lists differences between the calendar and the trip and changes nothing until you agree. **On by default: existing project-level configs start getting the reminder after this upgrade.** `itinerary_check: off` turns it off; `itinerary_ignore:` skips globs.
 - **The lodging and conference contracts pass the check-out day (the day after the last day) on create and on update** (#364): the server reads a date-only all-day end the same way on `create_event` and `update_event`. `create_event` `skipped` now means a same-titled event of the same kind (timed, or all-day starting on the same day). Needs the binary that ships #364.
 
 **1.23.0** (2026-11-01)

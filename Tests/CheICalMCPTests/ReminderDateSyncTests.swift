@@ -870,6 +870,24 @@ final class ReminderDateSyncTests: XCTestCase {
         XCTAssertEqual(confirmed.aligned, false)
     }
 
+    /// PR #507 round 3 INFO 7: an update's second save that landed but could not be read back
+    /// (`writeStoreReadBackFailed`) is not logged as a failed save.
+    func testConfirmSavedDoesNotLogALandedSecondSaveAsFailed() {
+        let reminder = floatingDateOnlyReminder()
+        let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
+        var reloads = 0
+        var logged: [String] = []
+
+        _ = ReminderDateSync.confirmSaved(reminder, report: report,
+                                          save: { throw EventKitError.writeStoreReadBackFailed(kind: "reminder", undo: .recorded) },
+                                          reload: { reloads += 1; if reloads == 1 { self.dropZone(reminder) }; return true },
+                                          rollback: {}, log: { logged.append($0) })
+
+        XCTAssertEqual(logged.count, 2, "\(logged)")
+        XCTAssertFalse(logged[1].contains("failed"), logged[1])
+        XCTAssertTrue(logged[1].contains("the second save returned without an error, but the reminder could not be read back after it"), logged[1])
+    }
+
     func testConfirmSavedRollsBackAFallbackWhoseSaveFails() {
         let reminder = floatingDateOnlyReminder()
         let report = ReminderDateSync.setDue(reminder, to: local(2026, 10, 8, 10))
