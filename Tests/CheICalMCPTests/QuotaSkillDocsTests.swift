@@ -41,6 +41,18 @@ final class QuotaSkillDocsTests: XCTestCase {
         XCTAssertFalse(front.contains("delete_calendar"), "the skill never deletes a list")
         XCTAssertTrue(front.contains("mcp__che-ical-mcp__update_reminder"))
         XCTAssertTrue(front.contains("mcp__che-ical-mcp__create_reminder"))
+        // #499 r11: no shell command but the three read-only helpers is pre-approved, so a delete through the
+        // binary's --cli also meets the harness's question. Every Bash entry names one helper by its path.
+        let bashEntries = front.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("- Bash") }
+        XCTAssertEqual(bashEntries, [
+            "- Bash(${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh *)",
+            "- Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh *)",
+            "- Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh *)",
+        ], "allowed-tools must pre-approve only the three helpers")
+        let skill = try read(Self.skill)
+        XCTAssertFalse(skill.contains("bash \"${CLAUDE_PLUGIN_ROOT}"), "a helper run through bash would not match its rule")
     }
 
     func testTemplateMarkerAndFileAgreeBetweenSkillAndSpec() throws {
@@ -55,8 +67,9 @@ final class QuotaSkillDocsTests: XCTestCase {
 
     func testSkillCallsTheHelpers() throws {
         let skill = try read(Self.skill)
-        XCTAssertTrue(skill.contains("bash \"${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh\" --quotas"))
-        XCTAssertTrue(skill.contains("bash \"${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh\""))
+        XCTAssertTrue(skill.contains("${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh --quotas"))
+        XCTAssertTrue(skill.contains("${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh <entry arguments>"))
+        XCTAssertTrue(skill.contains("| ${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh --now <now>"))
         let root = try repoRoot()
         for helper in ["plugin/bin/quota-dates.sh", "plugin/bin/find-ical-config.sh", "plugin/bin/tests/quota-dates.test.sh"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(helper).path), "missing \(helper)")
@@ -194,7 +207,7 @@ final class QuotaSkillDocsTests: XCTestCase {
     func testRoundSevenRules() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
-            "**A date helper that exits 2 stops the entry before the planner runs.**",
+            "**A date helper that fails stops the entry.**",
             "| `realarm <id> <n> due=<D> alarms=<A>` |",
             "**A `skipped` create is never a reminder created.**",
             "**A `skipped` create stops a replacement before any delete**",
@@ -265,11 +278,10 @@ final class QuotaSkillDocsTests: XCTestCase {
     func testRoundTenRules() throws {
         let skill = try read(Self.skill)
         assertOnce(skill, Self.skill, [
-            "**A completed reminder uses its period only when its `Cycle:` line is the entry's cycle, or it has none.**",
             "the five the skill writes: `local_tz`, `mode`, `per_period_through`, `per_period_cycle`, `retiring`.",
             "**`per_period_cycle` is written and removed together with `per_period_through`**",
             "\nCycle: <cycle>  ",
-            "A `Cycle:` line out of form, or a second one, is passed as `-` and reported",
+            "A `Cycle:` line out of form, or a second one, is passed as `unknown` and reported",
             "`local_tz` (letters, digits and `_+-/`, no `..`, a zone file under `/usr/share/zoneinfo`)",
         ])
         let spec = try read(Self.spec)
@@ -287,6 +299,31 @@ final class QuotaSkillDocsTests: XCTestCase {
             for gone in ["per_period_schedule", "--schedule-changed"] {
                 XCTAssertFalse(text.contains(gone), "\(path) still mentions \(gone)")
             }
+        }
+    }
+
+    /// #499 verify round 11: a reminder of the quota that cannot be read stops every write; the stored cycle
+    /// outranks an off-schedule leftover; one pipe of the helpers; a failed create stops sync too.
+    func testRoundElevenRules() throws {
+        let skill = try read(Self.skill)
+        assertOnce(skill, Self.skill, [
+            "**A reminder that counts as the quota's but has a field that does not match**",
+            "| `stopped unreadable` |",
+            "**What runs without asking (closed list):**",
+            "**One pipe, the date helper into the planner.**",
+            "**A failed create stops the entry's creates**",
+            "**A completed reminder uses its period only when its `Cycle:` line has the entry's cadence, or it has none.**",
+        ])
+        XCTAssertFalse(skill.contains("listed and left out"), "an invalid reminder of the quota is no longer left out")
+        let spec = try read(Self.spec)
+        assertOnce(spec, Self.spec, [
+            "SHALL stop every write for that quota in that run",
+            "When `per_period_cycle` is the current cycle, an open reminder off schedule SHALL NOT make `per_period_through` stale",
+            "a failed create SHALL stop the creates of that entry in that run",
+        ])
+        let plan = try read("plugin/bin/quota-plan.sh")
+        for pinned in ["action stopped unreadable", "--reminders", "[ -z \"$through_cycle\" ] && kc=1"] {
+            XCTAssertTrue(plan.contains(pinned), "quota-plan.sh lost: \(pinned)")
         }
     }
 
@@ -319,7 +356,7 @@ final class QuotaSkillDocsTests: XCTestCase {
     }
 
     func testHelperArgumentsAreNeverInterpolated() throws {
-        assertOnce(try read(Self.skill), Self.skill, ["It is then passed as its own quoted argument (`--reset-tz \"$zone\"`), and never pasted into a command string."])
+        assertOnce(try read(Self.skill), Self.skill, ["Only then is it written into the command, as its own quoted argument (`--reset-tz \"Asia/Taipei\"`); none of the checked forms holds a quote, a space or a shell character."])
     }
 
     func testScheduleLineCarriesNoPerPeriodReason() throws {

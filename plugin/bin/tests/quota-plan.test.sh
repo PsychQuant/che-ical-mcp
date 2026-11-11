@@ -704,6 +704,61 @@ $MON0
 reminder A open 2026-11-09T19:30:00Z 2026-11-09 - 330,0 list -
 EOF
 
+# --- round 11 ------------------------------------------------------------------------------------------
+# HIGH: a reminder that is the quota's (its marker counts) but has a read-back field out of form reaches the
+# planner as an `unreadable` line. Every write for the quota stops: its period is never created next to it.
+check "a quota reminder with a cleared due stops every write" "action list A unreadable due
+action stopped unreadable" "action create|action keep|action through" -- "${A[@]}" <<EOF
+$M31
+unreadable A due
+EOF
+check "an unreadable reminder blocks a replacement" "action list A unreadable key
+action replace-blocked unreadable" "action create|action delete|action through" -- "${A[@]}" --replace <<EOF
+$M31
+reminder N open 2026-11-30 2026-11-30 - none list -
+unreadable A key
+EOF
+# MEDIUM: --through-cycle equal to the cycle proves per_period_through holds. An off-schedule reminder (an old one
+# a declined delete left behind) then does not set keys-changed, so deleted periods stay missing.
+WMON="$(p --cadence weekly --weekday 2 --from "$NOW")"
+check "an off-schedule leftover does not discard a same-cycle through" "action keep A1 1 due=2026-11-09
+action missing 2
+action keep A3 3 due=2026-11-23
+action missing 4
+action delete X1" "keys-changed|action create 2 |action create 4 " -- "${A[@]}" --replace --through 2026-11-30 --through-cycle weekly-monday <<EOF
+$WMON
+reminder A1 open 2026-11-09 2026-11-09 - none list weekly-monday
+reminder A3 open 2026-11-23 2026-11-23 - none list weekly-monday
+reminder X1 open 2026-11-20 2026-11-20 - none list monthly-20
+EOF
+check "without --through-cycle an off-schedule reminder still says the keys changed" "action keys-changed" "action missing 2" -- "${A[@]}" --replace --through 2026-11-30 <<EOF
+$WMON
+reminder A1 open 2026-11-09 2026-11-09 - none list -
+reminder X1 open 2026-11-20 2026-11-20 - none list -
+EOF
+# LOW: a completed reminder whose Cycle: line was out of form is passed as `unknown` and uses no period.
+check "an unknown cycle on a completed reminder uses no period" "reminder W class=history period=- dates=- place=list
+used none" "action used 1" -- "${B[@]}" <<EOF
+$M16
+reminder W completed 2026-11-16 2026-11-16 - - list unknown
+EOF
+# LOW: monthly 31 changed to 30. Both put November's reset on the 30th: the same reset, the same quota. A tick of
+# another monthly cycle on a key of this one still uses it (a weekly tick does not, round 10).
+TN20=2026-11-20T12:00:00+08:00
+check "a month-end tick of another monthly day uses the shared period" "used 1" "action create 1 " -- --now "$TN20" --local-tz "$TPE" --create-days 90 <<EOF
+$(bash "$DATES" --cadence monthly --day 30 --previous --horizon-days 90 --local-tz "$TPE" --from "$TN20")
+reminder C1 completed 2026-11-30 2026-11-30 - - list monthly-31
+EOF
+# MEDIUM (allowed-tools): the reminders come from a file named by --reminders, so the skill runs one pipe of the
+# two helpers and needs no redirection. The same input as the stdin form gives the same plan.
+RF="$(mktemp "${TMPDIR:-/tmp}/quota-plan-test.XXXXXX")"
+printf '%s\n' "reminder N open 2026-11-30 2026-11-30 - none list -" "reminder D completed 2026-12-31 2026-12-31 - - list -" > "$RF"
+check "--reminders reads the reminder lines from a file" "used 2
+action keep N 1 due=2026-11-30
+action create 3 due=2027-01-31" "action create 1 |action create 2 " -- "${A[@]}" --reminders "$RF" <<EOF
+$M31
+EOF
+
 # --- bad input -----------------------------------------------------------------------------------------
 err() {
   local name="$1" want="$2" input="$3"; shift 3
@@ -728,6 +783,12 @@ err "a cycle line after the periods" "must come first" "$(printf '%s\n' "$M31" |
 cycle monthly-31" --now "$NOW"
 err "--through-cycle zero-padded" "--through-cycle must be" "$M31" --now "$NOW" --through-cycle monthly-08
 err "--through-cycle in capitals" "--through-cycle must be" "$M31" --now "$NOW" --through-cycle weekly-Monday
+err "an unreadable line with a field outside the closed list" "bad unreadable line" "$M31
+unreadable A title" --now "$NOW"
+err "an id both unreadable and read" "appears twice" "$M31
+reminder A open 2026-11-30 2026-11-30 - none list -
+unreadable A due" --now "$NOW"
+err "--reminders that is not a readable file" "cannot read --reminders" "$M31" --now "$NOW" --reminders /nonexistent/quota-reminders
 err "--schedule-changed is gone" "unknown option --schedule-changed" "$M31" --now "$NOW" --schedule-changed
 err "old seven-field reminder line" "want 9 fields" "$M31
 reminder A open 2026-11-30 2026-11-30 none list" --now "$NOW"
@@ -753,5 +814,6 @@ err "--delete-passed for a reminder that is not due-passed" "does not list that 
 reminder N open 2026-11-30 2026-11-30 - none list -" --now "$NOW" --local-tz "$TPE" --replace --delete-passed N
 [ ! -e /tmp/quota-plan-x ] && pass=$((pass + 1)) || { fail=$((fail + 1)); echo "FAIL the period number was evaluated"; rm -f /tmp/quota-plan-x; }
 
+rm -f "$RF"
 echo "quota-plan: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

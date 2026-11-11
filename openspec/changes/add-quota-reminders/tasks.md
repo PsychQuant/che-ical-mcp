@@ -51,6 +51,10 @@
 
 - [x] 2k.1（Each period has a stable identity；The dates come from the helper；每則提醒帶自己的 cycle（verify 第 10 輪））helper 第一行印正規的 `cycle`（cadence 與 weekday 或 day，不含時刻、時區、lead）；notes 加 `Cycle:`，完成的提醒只有同 cycle（或沒有這一行）才佔用期別；entry 的 `per_period_schedule` 改成 `per_period_cycle`，與 `per_period_through` 一起寫、一起拿掉，planner 以 `--through-cycle` 比對；拿掉 `--schedule-changed`；`local_tz`、`per_period_through`、`per_period_cycle` 列入格式檢查。驗證：`quota-plan.test.sh`（取代之後的 sync、建立失敗後的重試、只改時刻且帶 `--through` 與已勾期別、`08` 與 `monthly-8`）、`quota-dates.test.sh`（同一排程不同寫法的 cycle 相同）、`QuotaSkillDocsTests`。
 
+## 2l. Verify 第 11 輪：讀不了的提醒停下 quota、收窄預先核准
+
+- [x] 2l.1（Each period has a stable identity；A retirement asks first；讀不了的提醒停下整個 quota、只預先核准三個 helper（verify 第 11 輪））屬於 quota 但欄位不合格式的提醒以 `unreadable` 交給 planner，停下這個 quota 的所有寫入；`allowed-tools` 只留三個 helper 的路徑規則，planner 加 `--reminders`，skill 以一條 pipe 呼叫；`--through-cycle` 等於 cycle 時 off-schedule 不讓 through 作廢；完成的提醒依 cadence 判斷是否佔用期別、格式不對的 `Cycle:` 為 `unknown`；sync 建立失敗即停；SKILL 與 design 對「這一對」的說法一致。驗證：`quota-plan.test.sh`、`QuotaSkillDocsTests`。
+
 ## 3. 實機檢查
 
 - [x] 3.1 以 repo 內 build 的 binary 的 `--cli`，在名稱含 `#327` 的拋棄式清單：每週帶提前量與 `notify_at`、每月純日期、就地更新、完成後滾到下一期。驗證：讀回到期、鬧鐘與規則；更新後識別碼不變、標記以下文字保留；清單刪除後隔一分鐘以上 `list_calendars` 兩次無 `#327`。

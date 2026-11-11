@@ -5,7 +5,7 @@
 # Reads stdin, writes nothing anywhere else.
 #
 # Usage: quota-plan.sh --now WHEN [--local-tz ZONE] [--through KEY [--through-cycle CYCLE]] [--create-days N]
-#                      [--replace [--delete-passed ID]...] < input
+#                      [--reminders FILE] [--replace [--delete-passed ID]...] < input
 #   --now       the reference time: the same value given to quota-dates.sh as --from (epoch or ISO with offset)
 #   --local-tz  the entry's local_tz: the zone of a date-only due's end of day, and of a due given without an offset
 #   --through   the entry's per_period_through: the highest period the skill created under the current cycle.
@@ -13,7 +13,10 @@
 #               --through-cycle is not the input's cycle line; or, without --through-cycle, it lies inside the listed
 #               periods and is not one of them.
 #   --through-cycle  the entry's per_period_cycle: the cycle per_period_through was written under (the two are
-#               written and removed together). Same form as the cycle line.
+#               written and removed together). Same form as the cycle line. When it is the input's cycle, the
+#               keys did not change: an open reminder off schedule does not make --through stale (#499 r11).
+#   --reminders FILE  also read input lines (the reminder and unreadable lines) from FILE, after stdin, so the date
+#               helper can be piped in directly: quota-dates.sh ... | quota-plan.sh ... --reminders FILE
 #   --create-days  create only the periods whose due is within N days of --now (period 1 always). The helper may
 #               list more (a wider --horizon-days): those periods are judged, never created, so a reminder on a
 #               period just past the creation window is not taken for an off-schedule one.
@@ -26,14 +29,19 @@
 #   the output of quota-dates.sh --previous for the entry as it is now (its cycle line, period lines, then its rule
 #   line; v1 does not use the rule, but the helper prints it last, so an input without it is a helper that stopped
 #   early). The cycle line, `cycle weekly-<weekday>|monthly-<day>`, is what sets the keys, in canonical form.
-#   reminder <id> open|completed <due> <period-key|-> <record-key|-> <alarms|-> list|other <cycle|->
+#   reminder <id> open|completed <due> <period-key|-> <record-key|-> <alarms|-> list|other <cycle|-|unknown>
+#   unreadable <id|-> state|due|key|record|alarms|place   a reminder that is the quota's (its marker counts) with a
+#     read-back field out of form. Nothing is planned for the quota: every write stops (#499 r11), so its period
+#     is never created next to it. Output: `action list <id> unreadable <field>`, then `action stopped unreadable`
+#     (with --replace: `action replace-blocked unreadable`), and nothing else.
 #     <due>        YYYY-MM-DD (date-only), or YYYY-MM-DDTHH:MM:SS with an offset or Z (or without, read in --local-tz)
 #     <period-key>, <record-key>  the `Period:` and `Record:` lines' keys, real days YYYY-MM-DD, or -
 #     <alarms>     the relative alarms read back, minutes before, digits joined by `,` (`330,0`), `none`, or `-`
 #     list|other   whether it is in the quota's list or in another list (found by the marker search)
-#     <cycle>      the `Cycle:` line: the cycle the reminder was written under, or - (no line, or one out of form).
-#                  A completed reminder uses its period only when it is this cycle or -; an open one is judged by
-#                  its key alone.
+#     <cycle>      the `Cycle:` line: the cycle the reminder was written under; - when there is no line; unknown
+#                  when the line is out of form or repeated. A completed reminder uses its period only when its
+#                  cycle has this cadence (a monthly key shared by two days is the same month-end reset) or is -;
+#                  unknown uses none. An open one is judged by its key alone.
 #   Each id appears once: the open reminders are searched first, so one ticked between the two searches appears
 #   twice, and the input is refused.
 # Every class is judged by the CURRENT (new) schedule only. A record is a reminder whose period reset under it
@@ -64,21 +72,22 @@ set -u
 set -f                       # fields come from user-editable notes: never glob-expand them
 die() { echo "quota-plan.sh: $*" >&2; exit 2; }
 
-now="" local_tz="" through="" through_cycle="" replace=0 create_days=""
+now="" local_tz="" through="" through_cycle="" replace=0 create_days="" reminders_file=""
 DELP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --replace) replace=1; shift; continue ;;
-    --now|--local-tz|--through|--through-cycle|--create-days|--delete-passed) [ $# -ge 2 ] || die "missing value for $1" ;;
+    --now|--local-tz|--through|--through-cycle|--create-days|--delete-passed|--reminders) [ $# -ge 2 ] || die "missing value for $1" ;;
     *) die "unknown option $1" ;;
   esac
   case "$1" in --now) now="$2" ;; --local-tz) local_tz="$2" ;; --through) through="$2" ;; --create-days) create_days="$2" ;;
-    --through-cycle) through_cycle="$2" ;;
+    --through-cycle) through_cycle="$2" ;; --reminders) reminders_file="$2" ;;
     --delete-passed) case "$2" in ''|*[!A-Za-z0-9:/._=-]*) die "bad --delete-passed id: $2" ;; esac; DELP+=("$2") ;;
   esac
   shift 2
 done
 [ -n "$now" ] || die "--now is required"
+[ -z "$reminders_file" ] || { [ -f "$reminders_file" ] && [ -r "$reminders_file" ]; } || die "cannot read --reminders: $reminders_file"
 [ "${#DELP[@]}" -eq 0 ] || [ "$replace" -eq 1 ] || die "--delete-passed is only read with --replace"
 is_day() {  # YYYY-MM-DD and a real calendar day (2026-02-30, 0000-00-00 and 9999-99-99 are not)
   case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
@@ -124,8 +133,14 @@ alarms_norm() {  # digits joined by `,`, sorted, or none / - ; anything else (`,
 
 # --- read the input ------------------------------------------------------------------------------
 N_KEY=() N_STATE=() N_DUE=() N_AL=() N_TXT=() N_RESET=() N_RTXT=()
-R_ID=() R_ST=() R_DUE=() R_KEY=() R_REC=() R_AL=() R_OUT=() R_DTXT=() R_CYC=()
+R_ID=() R_ST=() R_DUE=() R_KEY=() R_REC=() R_AL=() R_OUT=() R_DTXT=() R_CYC=() U_ID=() U_F=()
 seen_rule=0 cycle=""
+seen_id() {  # each id once: one ticked between the two searches appears twice
+  local x
+  for x in "${R_ID[@]+"${R_ID[@]}"}" "${U_ID[@]+"${U_ID[@]}"}"; do
+    [ "$x" != "$1" ] || die "reminder $1 appears twice (ticked between the two searches?): search again"
+  done
+}
 add_period() {  # fields after "period"
   local n="${1:-}" key="" state="" due="" al="" reset="" kv e re exp
   shift || true
@@ -165,20 +180,32 @@ while IFS=$' \t' read -r -a f || [ "${#f[@]}" -gt 0 ]; do
       [ "${f[5]}" = "-" ] || is_day "${f[5]}" || die "bad record key: ${f[*]}"
       a="$(alarms_norm "${f[6]}")" || die "bad alarms: ${f[*]}"
       case "${f[7]}" in list|other) ;; *) die "bad list field: ${f[*]}" ;; esac
-      [ "${f[8]}" = "-" ] || is_cycle "${f[8]}" || die "bad cycle: ${f[*]}"
-      for x in "${R_ID[@]+"${R_ID[@]}"}"; do
-        [ "$x" != "${f[1]}" ] || die "reminder ${f[1]} appears twice (ticked between the two searches?): search again"
-      done
+      [ "${f[8]}" = "-" ] || [ "${f[8]}" = unknown ] || is_cycle "${f[8]}" || die "bad cycle: ${f[*]}"
+      seen_id "${f[1]}"
       R_ID+=("${f[1]}"); R_ST+=("${f[2]}"); R_DUE+=("$e"); R_KEY+=("${f[4]}"); R_REC+=("${f[5]}"); R_AL+=("$a"); R_OUT+=("${f[7]}")
       R_DTXT+=("${f[3]}"); R_CYC+=("${f[8]}") ;;
+    unreadable)
+      [ "${#f[@]}" -eq 3 ] || die "bad unreadable line (want 3 fields): ${f[*]}"
+      [ "${f[1]}" = "-" ] || case "${f[1]}" in *[!A-Za-z0-9:/._=-]*) false ;; *) true ;; esac || die "bad unreadable line: ${f[*]}"
+      case "${f[2]}" in state|due|key|record|alarms|place) ;; *) die "bad unreadable line: ${f[*]}" ;; esac
+      [ "${f[1]}" = "-" ] || seen_id "${f[1]}"
+      U_ID+=("${f[1]}"); U_F+=("${f[2]}") ;;
     *) die "unknown input line: ${f[*]}" ;;
   esac
-done
+done < <(cat; printf '\n'; [ -z "$reminders_file" ] || cat -- "$reminders_file")
 np=${#N_KEY[@]}
 [ "$np" -ge 2 ] || die "need period 0 (--previous) and period 1"
 [ "${N_STATE[0]}" = past ] || die "period 0 must be the past period (run quota-dates.sh with --previous)"
 [ -n "$cycle" ] || die "no cycle line: the date helper is older than this planner; nothing is planned"
 [ "$seen_rule" -eq 1 ] || die "no rule line: the date helper's output stopped early (did quota-dates.sh exit 2?); nothing is planned"
+
+# A reminder of the quota that could not be read stops everything for it (#499 r11): planning around it could create
+# its period again, or delete beside it.
+if [ "${#U_ID[@]}" -gt 0 ]; then
+  for ((u = 0; u < ${#U_ID[@]}; u++)); do echo "action list ${U_ID[$u]} unreadable ${U_F[$u]}"; done
+  if [ "$replace" -eq 1 ]; then echo "action replace-blocked unreadable"; else echo "action stopped unreadable"; fi
+  exit 0
+fi
 
 nr=${#R_ID[@]}
 ORDER=()   # reminder indexes in due order, then id: every list below follows it, never input order
@@ -208,7 +235,11 @@ for r in "${ORDER[@]+"${ORDER[@]}"}"; do
     if [ "${R_KEY[$r]}" = "-" ]; then cls=older
     else
       cls=history   # a tick written under another cycle uses no period of this one, on every run (#499 r10)
-      if [ "${R_CYC[$r]}" = "-" ] || [ "${R_CYC[$r]}" = "$cycle" ]; then p="$(idx_of_key "${R_KEY[$r]}")"; fi
+      # a tick of the same cadence on a key of this cycle is the same reset (a month-end day two monthly days
+      # share, #499 r11); a weekly tick on a monthly key is not; unknown (a Cycle: line out of form) uses none
+      if [ "${R_CYC[$r]}" = "-" ] || { [ "${R_CYC[$r]}" != unknown ] && [ "${R_CYC[$r]%%-*}" = "${cycle%%-*}" ]; }; then
+        p="$(idx_of_key "${R_KEY[$r]}")"
+      fi
     fi
   elif [ "${R_REC[$r]}" != "-" ]; then
     cls=record                               # written down by a replacement: a record whatever its date
@@ -285,7 +316,8 @@ if [ "$replace" -eq 1 ]; then
     # past-record in another list stays too, unwritten: the skill never writes there (#499 r8 #3).
     if [ "${R_CLASS[$r]}" = record ]; then ACT+=("action record $id"); continue; fi   # its open periods: below
     if [ "${R_CLASS[$r]}" = past-record ] && [ "${R_OUT[$r]}" = other ]; then ACT+=("action record $id"); continue; fi
-    [ "${R_CLASS[$r]}" = off-schedule ] && kc=1
+    # an open reminder off schedule says the keys changed, unless the stored cycle proves they did not (#499 r11)
+    [ "${R_CLASS[$r]}" = off-schedule ] && [ -z "$through_cycle" ] && kc=1
     if [ "${R_OUT[$r]}" = other ]; then block "$id" outside-list; continue; fi
     case "${R_CLASS[$r]}" in
       past-record) ACT+=("action mark-record $id ${R_KEY[$r]}"); continue ;;

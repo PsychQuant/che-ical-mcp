@@ -11,7 +11,9 @@ allowed-tools:
   - Read
   - Write
   - Edit
-  - Bash
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh *)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh *)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh *)
 ---
 
 # Quota reminders
@@ -19,6 +21,8 @@ allowed-tools:
 A **quota** is an allowance that resets on a fixed cycle and is lost if it is not used before the reset: a weekly usage limit, a monthly credit grant. **Each period is its own one-off reminder** in a dedicated list, due at the last useful moment before that period's reset. The user ticks it once the quota is used up; an unticked reminder turns overdue, which records that the period was not used up. Normative source: the `quota-reminders` spec (`openspec/changes/add-quota-reminders/specs/quota-reminders/spec.md` until the change is archived, then `openspec/specs/quota-reminders/spec.md`).
 
 Reminders only, no calendar events: a calendar event cannot be ticked, so it cannot carry "used" versus "not used".
+
+**What runs without asking (closed list):** the three read-only helpers in `bin/`, each run directly by its path as this skill writes it (`${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh …`, values written literally, no shell variables or redirections); the reminder tools in the frontmatter; `Read`, `Write` and `Edit`. Every other shell command asks first, the server binary's `--cli` included, and so does `delete_reminder`: a delete always meets the harness's own question after the user's yes.
 
 **v1 is per-period only.** There is no recurring reminder: a period is never inferred from a series that rolled forward. Every reminder carries its period's key, and a record is written down, not guessed from a date (section 5).
 
@@ -39,7 +43,7 @@ Anything else (ticking a reminder, deleting a list) is not this skill's: say so 
 ## 2. The declarations file
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh" --quotas
+${CLAUDE_PLUGIN_ROOT}/bin/find-ical-config.sh --quotas
 ```
 
 | Exit | Meaning | Do |
@@ -94,21 +98,20 @@ quotas:
 ## 3. The dates come from the helper, never from mental arithmetic
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh" --cadence weekly --weekday 2 --time 20:00 --reset-tz UTC \
-  --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz Asia/Taipei --from "$now"
+${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh --cadence weekly --weekday 2 --time 20:00 --reset-tz UTC --lead-minutes 30 --notify-at 22:00 --previous --horizon-days 90 --local-tz Asia/Taipei --from 2026-11-09T10:00:00+08:00
 ```
 
-**The local zone is pinned.** `declare` records the host's zone as `local_tz` (the target of `/etc/localtime`, the part after `zoneinfo/`). Every later call of the helper and of the planner (section 5) passes `--local-tz "$local_tz"`, so the dues do not move with the host.
+**The local zone is pinned.** `declare` records the host's zone as `local_tz` (the target of `/etc/localtime`, the part after `zoneinfo/`). Every later call of the helper and of the planner (section 5) passes the entry's `local_tz` as `--local-tz`, so the dues do not move with the host.
 
 **The cycle.** The helper's first line is `cycle <cycle>`: what sets the period keys, the cadence and the weekday or day, in one canonical form (`weekly-monday`, `monthly-8`; `day: 08` gives `monthly-8`). The time, the zones, the leads and `notify_at` are not in it: they move dues and alarms, never keys. Take the cycle only from that line, never build it by hand. Each reminder carries it as its `Cycle:` line (section 4), and the entry carries the cycle of its high-water mark as `per_period_cycle`:
 
-- **A completed reminder uses its period only when its `Cycle:` line is the entry's cycle, or it has none.** A tick written under another cadence or day is a date of the old keys, so it uses no period of the new ones, on the replacement and on every run after it. A reminder without the line was written before it existed, under the cycle the entry still has (nothing released writes one without it). An open reminder is judged by its key alone; every write that keeps it on the current dates (`keep`, `realarm`, an adoption) rewrites its `Cycle:` line.
-- **`per_period_cycle` is written and removed together with `per_period_through`**: in the same edit, with the cycle of the run that set the high-water mark. When it is not the cycle of the entry as it is now, `per_period_through` was written under other keys: the planner, given `--through-cycle "$per_period_cycle"`, does not read it (`keys-changed`), and its `through` replaces both. An update writes its new fields without touching the pair, so a run stopped before its creates still shows the change. An entry without `per_period_cycle` gets no `--through-cycle`; the planner's check of a stale `per_period_through` is then the only signal.
+- **A completed reminder uses its period only when its `Cycle:` line has the entry's cadence, or it has none.** A weekly tick on the key of a monthly period (or the reverse) is a date of other keys, so it uses no period of the new ones, on the replacement and on every run after it. Two monthly days share a key only at a month-end (31 and 30 both reset on Nov 30): that is the same reset, so the tick counts. A `Cycle:` line out of form uses no period (`unknown`, section 5). A reminder without the line was written before it existed, under the cycle the entry still has (nothing released writes one without it). An open reminder is judged by its key alone; every write that keeps it on the current dates (`keep`, `realarm`, an adoption) rewrites its `Cycle:` line.
+- **`per_period_cycle` is written and removed together with `per_period_through`**: in the same edit, with the cycle of the run that set the high-water mark. When it is not the cycle of the entry as it is now, `per_period_through` was written under other keys: the planner, given `--through-cycle`, does not read it (`keys-changed`), and its `through` replaces both. When it is, the keys did not change, and an open reminder off schedule (one a declined delete left behind) does not make `per_period_through` stale. An update that needs no replacement writes its new fields without touching the pair, so a run stopped before its creates still shows the change; a replacement with `keys-changed` removes the pair when it writes the new fields (section 8), and its old open reminders, deleted last, keep the change visible. An entry without `per_period_cycle` gets no `--through-cycle`; the planner's check of a stale `per_period_through` is then the only signal.
 - A time-only or zone-only change keeps the cycle: `per_period_through` is still read, a deleted period stays `missing`, and a tick still uses its period.
 
 **While the host is in another zone than `local_tz`**, the skill writes nothing. `list` still reads the reminders correctly, because the planner gets each due with its offset (section 5), but it never proposes a replacement; it says the host is in another zone. To move a quota to the new zone for good, change `local_tz` with `update`.
 
-**Arguments are built from validated values only.** Every value taken from the file is checked first (closed list): `id`, `weekday`, `day`, `time`, `reset_tz`, the leads and `notify_at` must have their declared form (section 2); `local_tz` (letters, digits and `_+-/`, no `..`, a zone file under `/usr/share/zoneinfo`); `per_period_through` (`YYYY-MM-DD`); `per_period_cycle` (`weekly-<weekday>` or `monthly-<day>`, as the helper prints it). It is then passed as its own quoted argument (`--reset-tz "$zone"`), and never pasted into a command string. A value that fails its check makes the entry invalid; it never reaches a shell. The one exception is `per_period_cycle`: out of form, it is treated as absent (no `--through-cycle`) and reported.
+**Arguments are built from validated values only.** Every value taken from the file is checked first (closed list): `id`, `weekday`, `day`, `time`, `reset_tz`, the leads and `notify_at` must have their declared form (section 2); `local_tz` (letters, digits and `_+-/`, no `..`, a zone file under `/usr/share/zoneinfo`); `per_period_through` (`YYYY-MM-DD`); `per_period_cycle` (`weekly-<weekday>` or `monthly-<day>`, as the helper prints it). Only then is it written into the command, as its own quoted argument (`--reset-tz "Asia/Taipei"`); none of the checked forms holds a quote, a space or a shell character. A value that fails its check makes the entry invalid; it never reaches a shell. The one exception is `per_period_cycle`: out of form, it is treated as absent (no `--through-cycle`) and reported.
 
 Map the entry to the arguments:
 
@@ -164,7 +167,7 @@ Notify: the latest <HH:MM> local before the due    (only with notify_at)
 Check: <check_note>                                (only when set)
 Verify: the reset is not confirmed yet; check it in the next period.   (only with verify_next_period)
 Period: <key>                                      (this reminder's period; written once, when the reminder is created)
-Cycle: <cycle>                                     (the helper's cycle line; rewritten by every update of the notes)
+Cycle: <cycle>                                     (the helper's cycle; rewritten only by keep, realarm and adoption)
 Schedule: one reminder per period
 Source: ~/.claude/.ical/quotas.yaml (change the entry there and run /che-ical-mcp:quota sync; text above the marker line is rewritten)
 Record: <key>                                      (only on a record a replacement kept, section 8)
@@ -188,22 +191,15 @@ The last line the module writes is `quota-module: <id>`. Everything **above** it
 
 **The plan comes from the planner, never from reasoning over the list by hand.** Use **one** `--from` time for both helpers (`now`, written with its offset), so the period states and the planner's "due before now" test agree.
 
-**Read-back values never reach a shell unchecked.** Each `reminder` line is built from values read back from the server, and the notes they come from can be edited by the user or by anyone the list is shared with. Check every field against its closed form below. A reminder with a field that does not match is listed and left out. Write the checked lines with `Write` to a file in the job's temporary directory, then give that file to the planner on stdin; never put a read-back value into a command line.
+**Read-back values never reach a shell unchecked.** Each `reminder` line is built from values read back from the server, and the notes they come from can be edited by the user or by anyone the list is shared with. Check every field against its closed form below. **A reminder that counts as the quota's but has a field that does not match** (a cleared due, a `Period:` line out of form) is passed as `unreadable <id> <field>` (`-` for an id out of form; the field is one of `state`, `due`, `key`, `record`, `alarms`, `place`): the planner then stops every write for the quota in this run, in every operation, retire included, because planning around it could create its period again next to it. Report it and say how to fix it (restore the field, or delete the reminder by hand). Write the checked lines with `Write` to a file in the job's temporary directory and give that file to the planner as `--reminders`; never put a read-back value into a command line.
 
-**A date helper that exits 2 stops the entry before the planner runs.** The helper prints its periods as it goes and can still fail after some of them, so its output goes to a file of its own and its exit code is checked before anything else runs. Never pipe it straight into the planner: a `cat` after it in the same group hides its exit code. The planner also refuses an input that lacks the helper's last line (the rule line):
+**One pipe, the date helper into the planner.** Write it on one line, every value literally (no shell variables), so it matches the two pre-approved helpers:
 
 ```bash
-dates_file="$job_tmp/quota-dates.txt"          # the same temporary directory as $reminders_file
-bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh" <entry arguments> --previous --horizon-days 125 --local-tz "$local_tz" --from "$now" > "$dates_file"
-dates_rc=$?
-if [ "$dates_rc" -ne 0 ]; then
-  echo "quota-dates.sh exited $dates_rc: nothing is written for this entry" >&2
-else
-  cat "$dates_file" "$reminders_file" \
-  | bash "${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh" --now "$now" --local-tz "$local_tz" --create-days 90 \
-      [--through "$per_period_through" [--through-cycle "$per_period_cycle"]] [--replace [--delete-passed <id>]...]
-fi
+${CLAUDE_PLUGIN_ROOT}/bin/quota-dates.sh <entry arguments> --previous --horizon-days 125 --local-tz <local_tz> --from <now> | ${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh --now <now> --local-tz <local_tz> --create-days 90 --reminders <reminders file> [--through <per_period_through> [--through-cycle <per_period_cycle>]] [--replace [--delete-passed <id>]...]
 ```
+
+**A date helper that fails stops the entry.** The helper prints its periods as it goes and can fail after some of them; its message goes to stderr. The planner refuses an input without the helper's first line (the cycle line) or its last line (the rule line), so a helper that stopped early makes the planner exit 2, and nothing is written for the entry.
 
 **The planner judges 125 days and creates 90.** The helper lists the periods of the next 125 days, and `--create-days 90` keeps the creates to the 90 days of section 4. A reminder on a period just past the 90 days (a `local_tz` moved west pushes every due later) is still on a listed period, so it is judged by its key instead of being taken for an off-schedule one. `--through` is passed whenever the entry has `per_period_through`, with `--replace` too, and `--through-cycle` with it whenever the entry has a valid `per_period_cycle`.
 
@@ -218,9 +214,9 @@ One line per reminder of the quota, `reminder <id> <state> <due> <key> <record> 
 | record | the `Record:` line's key, `YYYY-MM-DD`, or `-` |
 | alarms | the relative alarms' `minutes_before`, digits joined by `,` (`330,0`), or `none` |
 | place | `list` when it is in the quota's list, `other` when it is not |
-| cycle | the `Cycle:` line's value, `weekly-<weekday>` or `monthly-<day>` as the helper prints it, or `-`. A `Cycle:` line out of form, or a second one, is passed as `-` and reported; the reminder stays in the input (left out, a completed one would stop using its period) |
+| cycle | the `Cycle:` line's value, `weekly-<weekday>` or `monthly-<day>` as the helper prints it; `-` when there is no `Cycle:` line. A `Cycle:` line out of form, or a second one, is passed as `unknown` and reported: the reminder stays in the input, and a completed one uses no period |
 
-**When the planner exits 2**, nothing is written for that quota. The report gives its message, for example a reminder whose due was cleared, or a key that is not a real day. **One id twice** means a reminder was ticked between the two searches: search again (both searches), then plan again.
+**When the planner exits 2**, nothing is written for that quota. The report gives its message, for example a key that is not a real day (`2026-02-30`), or a date helper that stopped early. **One id twice** means a reminder was ticked between the two searches: search again (both searches), then plan again.
 
 **Each reminder's class**, from its keys, never from its date alone, and judged by the entry's dates as they are now (the new dates in an update). The class line also says `place=list` or `place=other`:
 
@@ -245,10 +241,11 @@ One line per reminder of the quota, `reminder <id> <state> <due> <key> <record> 
 | `create <n>` | create the reminder of period n |
 | `missing <n>` | period n has no reminder and is not after `per_period_through`. A reminder was created for it and then deleted, perhaps after the period was used; or the period was held (`hold`) while a later create raised `per_period_through`, and the hold has since cleared. Listed with an offer to create it, never created unasked |
 | `hold <n> <why>` | period n is not created: `outside-list` (a reminder in another list sits on it) or `record-on-open-period` (a record's `Record:` key or `Period:` key is that period, still open). Listed, never written |
-| `list <id> <why>` | listed, never written: `two-open-reminders` (a second open reminder on one period), `period-used` (an open reminder on a period a completed reminder already used), `outside-list`, `no-period`, `record-on-open-period`, `alarms-missing` (on its period with its due, but no relative alarm read back where one is expected: section 6. It is also kept, and sync goes on creating) |
+| `list <id> <why>` | listed, never written: `two-open-reminders` (a second open reminder on one period), `period-used` (an open reminder on a period a completed reminder already used), `outside-list`, `no-period`, `record-on-open-period`, `alarms-missing` (on its period with its due, but no relative alarm read back where one is expected: section 6. It is also kept, and sync goes on creating), `unreadable <field>` (with `stopped unreadable`) |
+| `stopped unreadable` | a reminder of the quota has a field out of form (`list <id> unreadable <field>`, section 5). The planner prints nothing else: nothing is written for the quota in this run, in `list`, `sync`, `update` or `retire`; the report names the reminder and the field |
 | `repair-needed dates-changed` | an open reminder, in the quota's list or in another, is off schedule, or a matched one has other dates. Nothing is created; the replacement of section 8 is offered |
 | `through <key>` | the highest period used, kept or created, when it is above `per_period_through` (or `per_period_through` was not read): the value to raise it to once every create of the run succeeded (section 11) |
-| `keys-changed` | the period keys changed although no reminder is left open to show it: `per_period_through` was written under another cycle (`--through-cycle` is not the helper's cycle, section 3; without it, `per_period_through` lies among the listed periods and is not one of them). It is not read (no period is `missing` because of it), and the planner's `through` replaces it and `per_period_cycle`, even when lower |
+| `keys-changed` | the period keys changed although no reminder is left open to show it: `per_period_through` was written under another cycle (`--through-cycle` is not the helper's cycle, section 3; without `--through-cycle`, `per_period_through` lies among the listed periods and is not one of them). It is not read (no period is `missing` because of it), and the planner's `through` replaces it and `per_period_cycle`, even when lower |
 
 **A reminder in another list is only ever listed**, and the period its key names is held: nothing is created next to it. Off schedule or on other dates, it still means the dates changed. **A record holds every open period its keys name**: a record whose `Record:` key or `Period:` key is a period still open holds that period the same way, in the quota's list or in another, in sync as in a replacement: nothing is created next to it, and the user decides by hand.
 
@@ -264,9 +261,9 @@ One line per reminder of the quota, `reminder <id> <state> <due> <key> <record> 
 | `create <n>` | a new period of the 90 days that has no reminder kept for it |
 | `used <n>` | a new period whose key a completed reminder of this cycle (or without one) already carries; not created again |
 | `missing <n>` | the keys did not change (no `keys-changed`), period n is not after `per_period_through`, and no open reminder carried its key: the user deleted it. Not created; offered as in section 10 after the replacement. **A period whose reminder this replacement deletes is always created again**, whatever `per_period_through` or the 90-day window says: a replacement never leaves a period it emptied |
-| `keys-changed` | the period keys changed: `per_period_through` written under another cycle, or an open reminder off schedule. `per_period_through` is not read, and is removed with `per_period_cycle` when the new fields are written |
+| `keys-changed` | the period keys changed: `per_period_through` written under another cycle, or, without `--through-cycle`, an open reminder off schedule (with `--through-cycle` equal to the cycle, an off-schedule reminder is deleted but the keys did not change). `per_period_through` is not read, and is removed with `per_period_cycle` when the new fields are written |
 | `through <key>` | the value to write as `per_period_through`: the last key the replacement created, kept or used (without `keys-changed`, at least the current `per_period_through`). Written only after every create succeeded (step 4 of section 8) |
-| `list <id> <why>`, `replace-blocked <why>` | the whole replacement waits; nothing is deleted, marked or created. `outside-list`: an open reminder in another list that is neither a `record` nor a `past-record`. `due-passed due=<D> resets=<R>`: an open reminder the replacement would delete whose due `<D>` has passed or comes before `<R>`, the new reset that makes it a record; listed only while at least one of them has passed, and then every such reminder is listed, because each would block a later run in turn. `record-on-open-period`: a record's key is a period the new schedule still has open. `two-open-reminders`, `period-used`: a second reminder for a period kept or used. `no-period`: an open reminder without a `Period:` line |
+| `list <id> <why>`, `replace-blocked <why>` | the whole replacement waits; nothing is deleted, marked or created. `outside-list`: an open reminder in another list that is neither a `record` nor a `past-record`. `due-passed due=<D> resets=<R>`: an open reminder the replacement would delete whose due `<D>` has passed or comes before `<R>`, the new reset that makes it a record; listed only while at least one of them has passed, and then every such reminder is listed, because each would block a later run in turn. `record-on-open-period`: a record's key is a period the new schedule still has open. `two-open-reminders`, `period-used`: a second reminder for a period kept or used. `no-period`: an open reminder without a `Period:` line. `unreadable`: a reminder of the quota with a field out of form (section 5); nothing else is printed |
 
 **No create can collide with a delete.** `create_reminder` skips a create only when an open reminder in the list has the **same title** and a due within a minute. The title is built from the declared reset (section 4), which also sets the keys. A reminder the replacement deletes is either off schedule (its key changed, so its title did too) or on its period with another due (by a whole lead: at least a minute, or another day for a date-only due). So none can be taken for a new one. A `skipped` create in a replacement still stops it before any delete (section 8), in case a title was edited by hand.
 
@@ -387,7 +384,7 @@ For every active entry, take the `list` result, then (closed list):
 
 - **dates changed:** create nothing. Offer the replacement of section 8 (steps 3 to 5) for the entry as it is in the file, and on a yes for that quota run it. It needs no old entry: every decision is by the dates in the file, so a hand edit is handled the same way. Nobody to ask: pending. Without this path, sync would create the new periods' reminders next to the old ones.
 - **`keep`:** update the reminder in place if its fields differ (title, notes above the marker, keeping its `Period:` and `Record:` lines and writing the helper's cycle as its `Cycle:` line). Its due and alarms already agree: the planner prints `keep` only then.
-- **`create`:** create it, and raise `per_period_through` to the last key created; sync never lowers it, except after `keys-changed`, when the planner's `through` replaces a value written under another cycle. Every write of `per_period_through` writes `per_period_cycle` (the helper's cycle) in the same edit. After `keys-changed`, the first create that reads back replaces the pair, even when lower. Raise it only after the create succeeds and reads back; once every create of the entry succeeded, raise it to the planner's `through` when one is printed (it also counts the periods kept or used).
+- **`create`:** create it, and raise `per_period_through` to the last key created; sync never lowers it, except after `keys-changed`, when the planner's `through` replaces a value written under another cycle. Every write of `per_period_through` writes `per_period_cycle` (the helper's cycle) in the same edit. After `keys-changed`, the first create that reads back replaces the pair, even when lower. Raise it only after the create succeeds and reads back; once every create of the entry succeeded, raise it to the planner's `through` when one is printed (it also counts the periods kept or used). **A failed create stops the entry's creates**, as in declare and a replacement: a later create would raise `per_period_through` past the failed period, and the next run would list it as `missing` instead of creating it. With `keys-changed` from `--through-cycle`, the report names the stored pair and the helper's cycle before the creates (a `per_period_cycle` edited by hand would otherwise recreate deleted periods unannounced).
 - **`missing`, `hold`, `list`:** listed. `missing` is created after a yes; `hold … outside-list` waits for the user to move a reminder back from another list; `hold … record-on-open-period` waits for the user to decide by hand.
 - **an entry with `retiring`:** write nothing; offer to finish the retirement (section 9).
 - **an entry with `mode: rule`:** write nothing (section 10).
@@ -416,7 +413,8 @@ One block, in this order:
 
 - **Sync must run at least once every 90 days**, or the reminders run out: there is no recurring reminder to carry the quota forward on its own. `list` says "run sync" when the last period with a reminder is due within 30 days.
 - **A schedule change can wait for a reset.** A reminder whose deadline passed but whose period has not reset under the new dates (the reset moved later, or to another day) blocks the replacement until the user deletes it or its period resets. Moving the reset to another day, each later old reminder blocks the runs between its own due and its reset in turn; the question lists them all, and while waiting no period of the new schedule has a reminder.
-- **Changing a schedule replaces the open reminders.** Text a user wrote below the marker of a deleted reminder goes with it. The table of section 8 step 3 shows every reminder that would be deleted before the user answers. A new period whose key a completed reminder of the same cycle carries is not created again (`used`). After a change of cadence or day, a completed reminder of the old cycle uses no new period, even when its key is one of the new dates; so a period used under other keys can still get a reminder. A change of time or zone keeps the cycle, so a tick still counts. A completed reminder without a `Cycle:` line counts under whatever cycle the entry has; nothing released writes one. An open reminder is judged by its key alone, so an unticked reminder of the old cycle whose key is the new period 0 is listed as that period's `not used`: a wrong report, nothing is written.
+- **Changing a schedule replaces the open reminders.** Text a user wrote below the marker of a deleted reminder goes with it. The table of section 8 step 3 shows every reminder that would be deleted before the user answers. A new period whose key a completed reminder of the same cycle carries is not created again (`used`). After a change of cadence or day, a completed reminder of the old cycle uses no new period, even when its key is one of the new dates; so a period used under other keys can still get a reminder. A change of time or zone keeps the cycle, so a tick still counts. A completed reminder without a `Cycle:` line counts under whatever cycle the entry has; nothing released writes one. An open reminder is judged by its key alone, so an unticked reminder of the old cycle whose key is the new period 0 is listed as that period's `not used`: a wrong report, nothing is written. For the same reason an old-cycle reminder whose key is a new open period counts as that period's reminder while the replacement waits (`due-passed`); ticked in the meantime, it uses no period, and the replacement creates that period again after the yes.
+- **A date-only due that a source stores as a timed 00:00** reads back with a time, so every run reports the dates changed, and the replacement's create of the same title is `skipped`, which stops it. Measured on iCloud, the form is kept; other sources are not measured. Fix such a reminder by hand (`update_reminder` with the bare date).
 
 ## 14. Worked example (fictional)
 
