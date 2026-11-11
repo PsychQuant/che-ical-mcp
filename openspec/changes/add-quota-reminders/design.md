@@ -1,0 +1,102 @@
+## Context
+
+#327 的決策紀錄（2026-10-19）與更正（2026-10-20）定了五件事：只做 plugin skill（建議）、一份全域設定檔、只建提醒事項、睡眠時段的重置仍把到期放在真正的截止時刻並另設提早通知、29–31 日照 Stripe 的 clamp 規則。#333 讓 `create_reminder` / `update_reminder` 能設相對鬧鐘，#354 讓 `update_reminder` 就地換重複規則；兩者都在 `main` 上、尚未發布。
+
+## Decisions
+
+### v1 只做 per-period，紀錄要寫下來（verify 第 5 輪，可撤回的決定）
+
+五輪驗證的發現幾乎都出在 rule mode：一則重複提醒要推回它代表哪些期別（滾過、停住、重啟、寫入時的模式、沒有重複旗標、夏令時間讓模式翻轉）；另一個來源是「紀錄」是推出來的，不是記下來的。v1 收窄成只有 per-period：每一期一則一次性提醒、帶 `Period: <key>`，一律以鍵比對；被取代保留下來的紀錄寫一行 `Record: <key>`，之後不論日期都是紀錄；到期日已過、沒有 `Record:`、新的期別也沒說它已重置的提醒，列出來問，不自動保留或刪除（第 6 輪起只看新排程，見下）。代價：沒有重複提醒自己往下走，sync 每 90 天至少要跑一次。下面「rule mode 與 per-period mode 的判準」「沒用完時 rule mode 會停住」「歷史邊界與重新配對分開」「寫入時的模式」四節是被取代的歷史，保留以說明為什麼收窄。
+
+
+### 設定檔放 `~/.claude/.ical/quotas.yaml`，不放 `${CLAUDE_PLUGIN_DATA}`
+
+決策紀錄的提案是 `${CLAUDE_PLUGIN_DATA}` 裡的 JSON。官方文件（plugins reference）寫明該目錄是 `~/.claude/plugins/data/<id>/`，`<id>` 是 plugin 識別碼，且**從最後一處解除安裝時會被刪除**；從另一個 marketplace 安裝同一個 plugin 也是另一個目錄。額度宣告是使用者的資料，不該隨解除安裝消失。`~/.claude/.ical/` 已是本 plugin 的使用者層設定位置（`config.yaml`），跨更新保留、使用者看得到也能手改。決策紀錄要的性質（全域一份、標籤而非憑證、提醒由它產生）都保留。
+
+只讀這一個位置、不往上找：額度屬於帳號。另一個檔案而不是 `config.yaml` 的一個區塊，是因為 `config.yaml` 走「最近者勝、不合併」，資料夾層的 `config.yaml` 會把全域的額度遮住。
+
+### 日期由 helper 算
+
+錯誤都出在手算（UTC 與 +08:00、提前量、月底）。helper 用 BSD `date`（macOS 內建，不需要 Python，避免觸發命令列工具安裝）。輸出每期一行與一行規則判斷，skill 照抄，不自己算。
+
+### rule mode 與 per-period mode 的判準
+
+一條提醒的重複規則在本機時區重複固定的星期或日期與固定時刻。判準是性質而非列舉：helper 實際算出接下來 104 週或 24 個月每一期的本機到期（星期或日、時刻）與鬧鐘偏移，全部相同才用規則。這同時涵蓋 29–31 日、提前量跨日、重置時區的夏令時間，以及之後想不到的形狀。工具沒有 `BYSETPOS`，表達不了「每月最後一天」。
+
+per-period 一次建 90 天：週額度約 13 則、月額度 3 則；`list` 在最後一則 30 天內到期時提示 `sync`。
+
+### 鬧鐘
+
+`notify_at` 是「到期前最近的當地 HH:MM」，換成相對分鐘數，所以跟著每一期移動（2026-11-09 在 iCloud 實測：完成重複提醒後下一期保留 `[390, 0]`）。另加 `0`：EventKit 建的帶時間提醒本身不帶鬧鐘，是否在到期時通知要看 Reminders.app；明寫一個到期時的鬧鐘就不依賴它。`[n, 0]` 與 `[0]` 都是 #433 量過的形狀。
+
+### 逾期的那一則不移動
+
+逾期的未完成提醒就是「那一期沒用完」的紀錄；更新若把它的到期日往後移，紀錄就消失。所以更新只改標題、notes、規則與鬧鐘，到期日留著，並在報告說明。
+
+### 每一期的識別（verify 第 1 輪）
+
+第一版用「到期日的順序」對應提醒與期別，又以「重置還沒到」判斷一期是否還要提醒，於是重置前就用完而打勾的那一期會被 sync 重建或把滾到下週的提醒移回來，過了重置還沒勾的逾期提醒也會讓後面每一則往後錯一期。改成：每一期以重置日為鍵（`key`），per-period 的提醒在 notes 帶 `Period: <key>`，rule mode 由提醒的到期日讀出期別（EventKit 完成重複提醒時會把 notes 複製到完成的那一則、並保留在滾到下一期的那一則上，`Period:` 行會指錯期，所以 rule mode 不寫）。有提醒（未完成或已完成）的期別算已涵蓋；rule mode 中未完成提醒之前的期別也算已涵蓋，往前滾過的提醒不移回；重置已過的那一則是紀錄，不移動、不配對、不提議刪除。唯一按順序配對的地方是改了日期的 `update`，只配對尚未重置的未完成提醒。
+
+### 沒用完時 rule mode 會停住
+
+重複提醒只在打勾時往下一期走，所以沒用完、沒打勾的那一期會讓之後每一期都沒有通知。選擇保留紀錄的誠實：不替使用者打勾加註「沒用完」（打勾就是「用完」的意思），而是 `list` 回報系列停住、提議重啟；同意後把舊的那則以 `clear_recurrence` 改成一次性（到期日、完成狀態都不動），再從第一個未涵蓋的期別開新系列，免得之後有人勾了舊的那則又滾進新系列已涵蓋的期別。
+
+### 歷史邊界與重新配對分開（verify 第 2 輪）
+
+第 1 輪把「有提醒（未完成或已完成）」都算已涵蓋，再拿已涵蓋的最後一期當 update 的界線，於是未完成提醒自己那一期被當成歷史：重置往前挪時本週沒有提醒、per-period 改日期時配錯或略過。改成兩件事：歷史邊界只看已用的期別（已完成的提醒；rule mode 裡未完成提醒已滾過的期別），要重新配對的是尚未重置的未完成提醒。這段邏輯不再交給模型讀文字推，而是 `quota-plan.sh`，用測試釘住。模式由新舊 rule line 比對決定，不由改了哪個欄位決定；本機時區在 declare 時釘住，主機時區不同時不寫入，免得 rule/per-period 在檔案沒改時自己翻轉。
+
+### 寫入時的模式（verify 第 3 輪）
+
+第 2 輪的 planner 用「要寫成的模式」去讀既有提醒，模式轉換時就讀錯：per-period 轉 rule 時把一次性提醒當成滾過前面期別的系列，rule 轉 per-period 時又忘了系列滾過的期別。改成 planner 另收「既有提醒是用哪個模式寫的」（entry 的 `mode`），只有那個模式是 rule 時才有「滾過」這件事；同一個期別鍵但到期日不同，也不再算 keep，而是 rewrite，免得改了時間之後提醒還在舊時間響。
+
+### 改排程改成取代，不再重新配對（verify 第 4 輪，可撤回的決定）
+
+四輪驗證每輪都找到新的重新配對狀態（舊紀錄被配到新期別、高水位被調低、別清單的提醒被寫入）。v1 收窄：改了日期或模式的 update 一律取代：先用舊期別認出紀錄，列出要刪除的未重置提醒與要建立的新排程，問一次，同意才寫。代價是使用者寫在被刪提醒標記下方的文字會跟著刪掉，舊排程下已用過的那一期在新排程下可能再提醒一次；這兩件事寫成 Known limit，並在詢問的表格裡先列出來。
+
+### 紀錄只看新排程（verify 第 6 輪，可撤回的決定）
+
+第 6 輪的 MEDIUM 都出在用舊排程認紀錄、用舊排程選要刪的提醒：重置提前時把新排程下已重置的那一則刪掉，重置延後時把新排程還開著的那一期寫成紀錄又在旁邊再建一則。v1 再收窄：紀錄只有兩種，帶 `Record:` 行的，或鍵在新排程的第 0 期或更早的；取代不再讀舊的 entry。到期已過但在新排程下還沒重置的提醒不會變成紀錄，只能在使用者同意後刪掉並重建該期（`--delete-passed`），或等它重置。已經在新日期上的提醒保留（`keep`），所以刪除失敗後的下一次取代只動剩下的那一則；任何寫入失敗就停在那裡。sync 對開著的那一期上的紀錄同樣暫停建立。退役只刪 planner 判為 `matched`、在本清單的提醒。代價：把重置往後或改到別天時，剛過到期日的那一則會讓取代等到新的重置；改到別天時之後每一則舊提醒也會在自己的到期與重置之間再擋一次，第 7 輪改成一次列出全部（見下）。
+
+### 只改鬧鐘時就地改寫、`per_period_through` 寫在建立之後（verify 第 7 輪）
+
+`create_reminder` 的重複檢查只比對標題與到期（一分鐘內）。取代先建立後刪除，所以只改了鬧鐘（加、改、拿掉 `notify_at`，或帶 `notify_at` 改 `local_tz`）時，新建立的那則會被判成重複而略過、回傳舊提醒的 id，接著的刪除就把那一期唯一的提醒刪掉。改成：期別與到期都對、只有鬧鐘不同的提醒是 `realarm`，用 `update_reminder` 就地寫 `alarms_minutes_offsets`；取代中任何 `skipped` 的建立都算失敗，在刪除之前停下。（第 7 輪另加的 `same-due` 檢查在第 8 輪拿掉，見下。）
+
+`per_period_through` 只記真的建立過（或保留、用過）的期別：declare 先寫 entry 不帶它，每則建立成功並讀回後才往上推；取代寫新欄位時拿掉它，建立完才寫 planner 的 `through`（也算用過的期別）。否則第一則建立失敗時，高水位已經說那些期別建立過，sync 只會把它們列成 missing、不會自動補。
+
+`due-passed` 只在至少一則已過到期時擋下，但那時會把每一則「到期早於讓它變成紀錄的新重置」的舊提醒都列出來（含到期與重置日），一次同意全部刪掉；問句明說等待期間新排程的每一期都沒有提醒。紀錄（帶 `Record:`）不論在哪個清單都不擋取代，並以 `Record:` 鍵與 `Period:` 鍵保留仍開著的期別。日期 helper 的輸出先寫到檔案、檢查 exit code 才跑 planner，planner 也拒絕沒有最後那行規則行的輸入。
+
+### `same-due` 拿掉、`per_period_through` 也是排程的簽章（verify 第 8 輪）
+
+`same-due` 擋住了每一個把 date-only 到期挪一天的取代（兩邊都是 date-only 時也做了 00:00 的換算），而它要防的情況其實不會發生：伺服器只在標題相同時才略過建立，標題由宣告的重置組成，而重置也決定鍵；鍵變了標題就變，鍵沒變則到期至少差一個 lead（一分鐘或一天）。所以拿掉，只留「取代中的 `skipped` 建立算失敗」作為手改標題時的後備。
+
+`per_period_through` 是寫下它的排程的鍵。落在列出的期別之間、卻不是其中一期的值，表示鍵變了（`keys-changed`）：即使沒有開著的提醒，也能看出排程改過，不再把新期別報成 missing。鍵沒變的取代（只改到期或鬧鐘）照常讀 `--through`，使用者刪掉的那一期仍是 missing，不在取代時重建。為了讓剛超過 90 天的合法期不被當成 off-schedule，helper 列 125 天、planner 只建立 90 天內的（`--create-days 90`）。其他清單裡的 past-record 比照紀錄，不擋取代、不寫入；搜尋固定先 open 後 completed；sync 先處理保留（hold）再處理本清單，結果不隨 id 順序改變。
+
+### 被取代的期別一定重建、排程簽章（verify 第 9 輪）
+
+第 8 輪讓鍵沒變的取代讀 `--through`，卻沒有區分「使用者刪掉的期別」和「這次取代要刪掉並重建的期別」：只改 lead、時間或同一天的 `reset_tz` 時，每一則都被刪、對應的期別卻印 `missing`，一則都不建。改成：這次計畫刪掉的那一則所在的期別一律重建，不看 `per_period_through`，也不看 90 天的建立範圍；`missing` 只給沒有開著的提醒帶過該鍵的期別。測試加上不變式：每個 `--replace` 案例都另以最大的 `--through` 跑一次，每一則刪除都要在同一期有 create、keep 或 realarm。
+
+用 `per_period_through` 推斷排程是否改過，漏掉月底 clamp、超出列出範圍、換 cadence 剛好撞上新鍵這幾種；完成的提醒的鍵也只是日期，換 cadence 後會把新排程的第一期當成已用。改成在 entry 存 `per_period_schedule`（cadence、日、時刻、重置時區，不含 lead 與 `notify_at`），與目前的 entry 不同時 planner 收到 `--schedule-changed`：不讀 `per_period_through`、完成的提醒不佔用新期別。沒有這個欄位的舊 entry 仍以 stale-through 的推斷為後備。#333 之前的 server 讀回的鬧鐘一律是空的，planner 報 `alarms-missing`，不再當成日期改了，sync 照常建立。
+
+### 每則提醒帶自己的 cycle（verify 第 10 輪）
+
+第 9 輪的 `--schedule-changed` 只保護取代的那一次：新的 `per_period_schedule` 一寫下，之後的 sync 或建立失敗後的重試就不再帶旗標，舊 cadence 已勾的提醒又以日期鍵佔用新期別（新的那則被列成 `period-used`，重試還把 `through` 推過那一期）。簽章又含時刻與時區，這兩者不決定鍵：只改時刻就讓使用者刪掉的期別與已用的期別不經詢問重建；`08` 與 `8`、省略與明寫 `UTC`、同一時區的別名也會翻轉旗標。
+
+改成：日期 helper 第一行印 `cycle <cadence>-<weekday 或 day>`（`weekly-monday`、`monthly-8`），是決定鍵的部分的唯一正規寫法；skill 只抄這一行，不自己組。每則提醒的 notes 帶 `Cycle:`，完成的提醒只有在 `Cycle:` 的 cadence 與現在相同（或沒有這一行）時才佔用它的期別（第 11 輪由「cycle 相同」放寬成「cadence 相同」，見下），所以這個判斷在每一次執行都成立，不靠單次旗標；開著的提醒只看鍵，保留它的寫入（keep、realarm、adopt）會把 `Cycle:` 改成現在的 cycle。entry 的 `per_period_cycle` 是 `per_period_through` 寫下時的 cycle，兩者一起寫、一起拿掉；planner 以 `--through-cycle` 比對，不同就不讀 `per_period_through`（`keys-changed`）。不需取代的 update 寫新欄位時不動這一對（需要取代且有 `keys-changed` 時，寫新欄位就一起拿掉這一對；刪除放在最後，留下的舊提醒仍讓下次看得出改過），所以在建立之前中斷的執行，下次 sync 仍看得出鍵變了，不會把每一期都列成 missing。只改時刻或時區時 cycle 不變：`per_period_through` 照讀，刪掉的期別仍是 missing，已勾的期別仍是 used。格式不對的 `Cycle:` 或 `per_period_cycle` 當成沒有並回報；`local_tz` 與 `per_period_through` 也列入 skill 的格式檢查清單。
+
+### 讀不了的提醒停下整個 quota、只預先核准三個 helper（verify 第 11 輪）
+
+屬於這個 quota（標記成立）、但讀回的某個欄位不合格式的提醒（例如使用者清掉了到期），原本被「列出並排除」，planner 因此不知道那一期已有提醒，在 `per_period_through` 還沒涵蓋它時或取代中就再建一則。改成：skill 以 `unreadable <id> <field>` 交給 planner，planner 只印出它與 `stopped unreadable`（取代時是 `replace-blocked unreadable`），這一次執行對這個 quota 什麼都不寫，retire 也一樣，報告說明怎麼修。
+
+`allowed-tools` 原本有不受限的 `Bash`，所以「`delete_reminder` 沒有預先核准，harness 會再問一次」並不成立：同樣的刪除可以走 binary 的 `--cli`。改成只預先核准三個唯讀 helper，以路徑直接執行（`Bash(${CLAUDE_PLUGIN_ROOT}/bin/quota-plan.sh *)`；Claude Code 會在 `allowed-tools` 的 Bash 規則裡代換 `${CLAUDE_PLUGIN_ROOT}`）。為了讓整個呼叫只有這兩個指令，planner 加 `--reminders FILE`，skill 以一條 pipe 執行 `quota-dates.sh … | quota-plan.sh … --reminders <file>`，值直接寫進指令、不用 shell 變數與重導；helper 中途失敗時，planner 因缺少第一行（cycle）或最後一行（rule）而停下。
+
+`--through-cycle` 等於現在的 cycle 時，`per_period_through` 確定是在同一組鍵下寫的；拒絕或失敗的刪除留下的 off-schedule 舊提醒不再讓它作廢，使用者刪掉的期別仍是 missing。完成的提醒改看 cadence：weekly 與 monthly 互撞的鍵是不同的額度，兩個 monthly 日只會在月底 clamp 撞在同一天，那是同一次重置，所以算用過。格式不對的 `Cycle:` 以 `unknown` 傳入、不佔期別。sync 的建立失敗也停下該 entry 之後的建立。
+
+### 讀取失敗一律停下、標記以上的行才算（verify 第 12 輪）
+
+`--reminders` 的檔案原本在 process substitution 裡讀，讀取失敗的 exit status 傳不回主程式，planner 可能用不完整的提醒清單規劃。改成先把整個檔案讀進變數、檢查狀態，失敗就 exit 2、不印任何計畫；檔案裡只能有 `reminder` 與 `unreadable` 行。`Period:`、`Record:`、`Cycle:` 只讀標記以上的部分，重複的 `Period:` 或 `Record:` 以 `unreadable` 交給 planner，不再把整則提醒排除在計畫之外。list、update、retire 遇到 `stopped unreadable` 都不寫（含檔案）、不問，只回報。`lead_minutes` 改一分鐘不會被 server 的重複檢查擋下：視窗是嚴格小於 60 秒（`ReminderDueInputTests` 固定），整分鐘的提前量差正好 60 秒。
+
+## Risks
+
+- 重複規則改變而到期日不在新規則的日子上時，#354 只量過每週規則；其他規則是預期行為。
+- per-period 要使用者跑 `sync`；`list` 會提示，但沒有排程。
+- clamp 規則是對 Anthropic 帳單的推論（不公開帳單商），app store 內購不適用。

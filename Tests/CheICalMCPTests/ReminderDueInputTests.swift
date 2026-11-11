@@ -116,6 +116,18 @@ final class ReminderDueInputTests: XCTestCase {
         XCTAssertFalse(ReminderDueInput.matches(.timed(instant.addingTimeInterval(120)), existing: stored))
     }
 
+    // #499 r12: the window is strictly under a minute. The quota skill relies on it: a lead changed by one whole
+    // minute (lead_minutes 30 to 31) moves the due by exactly 60 s, so the replacement's create is not skipped.
+    func testADueOneWholeMinuteAwayIsNotADuplicate() throws {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = .current
+        var stored = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: instant)
+        stored.timeZone = .current
+        XCTAssertFalse(ReminderDueInput.matches(.timed(instant.addingTimeInterval(-60)), existing: stored))
+        XCTAssertFalse(ReminderDueInput.matches(.timed(instant.addingTimeInterval(60)), existing: stored))
+        XCTAssertTrue(ReminderDueInput.matches(.timed(instant.addingTimeInterval(-59)), existing: stored))
+    }
+
     // As before: a timed request at 00:00 matches a date-only reminder on that day; one later that
     // day does not.
     func testATimedDueComparesWithADateOnlyDueAtMidnight() {
