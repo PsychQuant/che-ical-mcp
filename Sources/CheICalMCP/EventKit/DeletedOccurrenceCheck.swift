@@ -405,7 +405,7 @@ enum DeletedOccurrenceCheck {
         let found = "Among the occurrences this write reaches, at least one was deleted on its own (or moved where the listing does not reach)"
         // Round 6 (LOW 9): a new pattern alone is refused because it was not measured; no time route.
         if change == .pattern {
-            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought them back, measured on iCloud, and a new end_date alone kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
+            return "\(found), and whether a new pattern of the rule (frequency, interval, days or count; a count replaced by an end_date or by no bound counts as one) over more than one occurrence keeps such occurrences was not measured (#503; a change of the start, end, all_day, or a time zone across a daylight-saving divergence brought them back, measured on iCloud, and a new end_date alone on a series that already ended at one kept them); undo does not restore them. \(keptText) No update route was measured for a new pattern: change the series in Calendar (not measured). Nothing was written."
         }
         return "\(found), and changing the start, end, all_day, or a time zone across a daylight-saving divergence, of more than one occurrence of a series brought every such occurrence back, while the call answered updated (#503, measured on iCloud); undo does not restore it. \(keptText) \(route) Nothing was written."
     }
@@ -416,14 +416,22 @@ enum DeletedOccurrenceCheck {
     /// and the same-account measurement is named as update_event's.
     /// Round 6 (LOW 6): `fromLaterOccurrence` names the part a span-future write moves.
     static func accountMoveReason(_ verdict: Verdict, fromLaterOccurrence: Bool = false) -> String {
-        let found: String
-        if case .unknown(let cause) = verdict {
-            found = "and this check cannot rule one out: \(unknownCause(cause))"
-        } else {
-            found = "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
-        }
+        let found = foundText(verdict)
         let subject = fromLaterOccurrence ? "Moving the occurrences from this one on" : "Moving this series"
         return "\(subject) to a calendar of another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(found); undo does not restore them. Moving it with update_event to a calendar of the same account kept them (measured with span all, and with span future from a later occurrence together with a new end_date). Nothing was written."
+    }
+
+    private static func foundText(_ verdict: Verdict) -> String {
+        if case .unknown(let cause) = verdict { return "and this check cannot rule one out: \(unknownCause(cause))" }
+        return "and at least one occurrence of it was deleted on its own (or moved where the listing does not reach)"
+    }
+
+    /// #511: the undo of a whole-series move back to a calendar of another account, refused as the
+    /// forward move is (`accountMoveReason`). The record is kept, so the text gives #269's way on.
+    /// PR #516 round 1: the event named; Calendar's own move back is the same unmeasured move, so the
+    /// text says to check the deleted occurrences after it; an unreadable account counts as another.
+    static func undoAccountMoveReason(_ verdict: Verdict, title: String) -> String {
+        "Cannot undo the move of the recurring event '\(undoShownTitle(title))': moving the whole series back to its original calendar in another account (or one whose account could not be read) is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(foundText(verdict)). Nothing was written and this history entry was kept. If it should go back, move it in Calendar, which may also bring back the occurrences deleted on their own, so check them afterwards; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     }
 
     /// MEDIUM 2 of round 6 (measured on iCloud, 2026-11-09): the fields that kept the deletions, and the spans.

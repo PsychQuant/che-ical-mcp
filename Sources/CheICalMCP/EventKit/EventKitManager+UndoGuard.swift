@@ -159,6 +159,11 @@ extension EventKitManager {
                             throw refusal
                         }
                         let fields = keepingLaterEdits?(event, expected.changedFields(in: event)) ?? expected.changedFields(in: event)
+                        // #511: a whole series moved back across accounts goes through #503's verdict, here in the
+                        // comparison the move arm passes before it writes; the record is kept.
+                        if fields.isEmpty, let reason = try seriesMoveBackRefusal(operation, expected, event, verb: verb) {
+                            throw EventKitError.moveRefused(reason: reason)
+                        }
                         guard deletesSeries, event.hasRecurrenceRules else { return fields }
                         return fields + UndoPostState.seriesConflicts(
                             modifiedOccurrences: UndoPostState.modifiedOccurrenceCount(of: event, in: eventStore))
@@ -214,6 +219,30 @@ extension EventKitManager {
             },
             original: original.map { SeriesMoveUndo.OriginalCalendar(sourceID: $0.source?.sourceIdentifier) },
             missingOriginal: { operation.moveBackCalendarMissing })
+    }
+
+    /// #511: the refusal of the undo of a whole-series move whose way back crosses accounts, unless
+    /// #503's verdict over every slot is `none` (`SeriesMoveUndo.deletedOccurrenceRefusal`). The series
+    /// is the object the comparison passed: a stand-in across accounts was refused by `decide`. A miss of
+    /// the original calendar here counts as across (PR #516 round 1: fail closed; the move arm read it
+    /// before). A move made through an occurrence's own id lists its series (`verdictTarget`). Read only.
+    func seriesMoveBackRefusal(_ operation: UndoOperation, _ expected: UndoPostState, _ series: EKEvent,
+                               verb: UndoHistoryVerb) throws -> String? {
+        guard case .moveEvent(_, _, _, _, let isSeries) = operation else { return nil }
+        let original = SeriesMoveUndo.restoringCalendarID(of: expected).flatMap { eventStore.calendar(withIdentifier: $0) }
+        return try SeriesMoveUndo.deletedOccurrenceRefusal(
+            isSeries: isSeries, verb: verb,
+            acrossAccounts: FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: series.calendar?.source?.sourceIdentifier,
+                                                                         toSourceID: original?.source?.sourceIdentifier),
+            title: expected.title,
+            verdict: {
+                guard let target = try SeriesMoveUndo.verdictTarget(id: expected.itemID, isDetached: series.isDetached, resolved: series,
+                                                                    seriesOf: { try self.seriesObject(ofOccurrence: $0) }) else {
+                    return .unknown(.notListed)
+                }
+                if target.series !== series { _ = target.series.refresh() }
+                return deletedOccurrenceVerdict(of: target.series, id: target.id, reachedFrom: nil, viaStandIn: false, changesAllDay: false)
+            })
     }
 
     /// #377: the not-found message of an event undo, asked only after the lookup found nothing or

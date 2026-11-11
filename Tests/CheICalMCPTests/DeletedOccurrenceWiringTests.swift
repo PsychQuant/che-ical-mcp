@@ -111,3 +111,35 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         }
     }
 }
+
+/// #511: the undo of a whole-series move across accounts goes through #503's verdict inside the #236
+/// comparison, which the move arm passes before it writes, after the fields come back empty,
+/// and its refusal keeps the record (not `UnrecoverableUndoError`).
+final class SeriesMoveUndoAccountWiringTests: XCTestCase {
+    func testTheCheckRunsInTheComparisonBeforeTheMoveArmWrites() throws {
+        let guardFile = SourcePins.code(try SourcePins.source("EventKit/EventKitManager+UndoGuard.swift"))
+        let target = try XCTUnwrap(SourcePins.body(of: "func verifiedHistoryTarget(", in: guardFile))
+        let fields = try XCTUnwrap(target.range(of: "let fields = keepingLaterEdits?(event, expected.changedFields(in: event)) ?? expected.changedFields(in: event)"))
+        let check = try XCTUnwrap(target.range(of: "if fields.isEmpty, let reason = try seriesMoveBackRefusal(operation, expected, event, verb: verb) {"))
+        XCTAssertLessThan(fields.lowerBound, check.lowerBound)
+        XCTAssertTrue(target.contains("throw EventKitError.moveRefused(reason: reason)"))
+        let helper = try XCTUnwrap(SourcePins.body(of: "func seriesMoveBackRefusal(", in: guardFile))
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.restoringCalendarID(of: expected)"))
+        XCTAssertTrue(helper.contains("FirstRemainingOccurrence.movesAcrossAccounts("))
+        // PR #516 round 1: a calendar lookup miss counts as across (nil source), not as no check.
+        XCTAssertTrue(helper.contains("toSourceID: original?.source?.sourceIdentifier"))
+        // Round 1: an occurrence's own id lists the series behind it (#426), as the forward move does.
+        XCTAssertTrue(helper.contains("SeriesMoveUndo.verdictTarget(id: expected.itemID, isDetached: series.isDetached, resolved: series,"))
+        XCTAssertTrue(helper.contains("seriesOf: { try self.seriesObject(ofOccurrence: $0) }"))
+        XCTAssertTrue(helper.contains("deletedOccurrenceVerdict(of: target.series, id: target.id, reachedFrom: nil, viaStandIn: false, changesAllDay: false)"))
+        XCTAssertTrue(helper.contains("title: expected.title"))
+        XCTAssertFalse(helper.contains("UnrecoverableUndoError"))
+        // The move arm writes only after verifiedEvent, which runs the comparison.
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        let arm = try XCTUnwrap(manager.range(of: "case .moveEvent(let movedID, let fromCalendarIdentifier, _, let title, let isSeries):"))
+        let rest = manager[arm.lowerBound...]
+        let verified = try XCTUnwrap(rest.range(of: "let event = try await verifiedEvent(of: operation, verb: .undo)"))
+        let write = try XCTUnwrap(rest.range(of: "event.calendar = original"))
+        XCTAssertLessThan(verified.lowerBound, write.lowerBound)
+    }
+}
