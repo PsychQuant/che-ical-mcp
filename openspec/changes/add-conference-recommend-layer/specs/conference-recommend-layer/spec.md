@@ -199,7 +199,7 @@ The layer SHALL write a decorated event's title as `<slot label> ★<room> #<num
 ---
 ### Requirement: Turning the layer off restores the standard form
 
-A restore SHALL write the event's stored standard form as its title, location and notes in one `update_event`, plus only what the standard flow writes to the event in the same run (an exact-match update of its end, location, the program's text or registration), and SHALL NOT change a title or a start on its own; the result SHALL equal a standard-mode paste of the same program, except for a line the user added above the marker, which SHALL stay where it was.
+A restore SHALL write the event's stored standard form as its title, location and notes, with the link rule applied to the stored location and the closed list to the stored title (the conference module's masking), in one `update_event`, plus only what the standard flow writes to the event in the same run (an exact-match update of its end, location, the program's text or registration), and SHALL NOT change a title or a start on its own; the result SHALL equal a standard-mode paste of the same program, except for a line the user added above the marker, which SHALL stay where it was.
 
 #### Scenario: Remove the recommendations
 
@@ -210,7 +210,7 @@ A restore SHALL write the event's stored standard form as its title, location an
 ---
 ### Requirement: Recomputing applies new picks per named slot
 
-In a `recommend` run with picks, a slot named with a pick SHALL be decorated or redecorated from it, a slot named with `none` SHALL be restored, and a decorated slot not named SHALL be left as it is when its standard form is unchanged. In a `recommend` run, a decorated slot that is an exact match whose end, location, notes or registration the standard flow would change, and that this run gives no pick for, SHALL be restored with the new values only after the user answers remove to the recommendation question, and then listed as a recommendation removed because the slot changed; otherwise nothing SHALL be written to it. A decorated slot whose title or start the program changed has a mapping-table row, and only a yes to that row writes it. An event whose result equals what it holds SHALL NOT be written.
+In a `recommend` run with picks, a slot named with a pick SHALL be decorated or redecorated from it, a slot named with `none` SHALL be restored, and a decorated slot not named SHALL be left as it is when its standard form is unchanged. In a `recommend` run, a decorated slot that is an exact match whose end, location, notes or registration the standard flow would change, and that this run gives no pick for, SHALL be restored with the new values only after the user answers remove to the recommendation question, and then listed as a recommendation removed because the slot changed; otherwise nothing SHALL be written to it. A decorated slot whose title or start the program changed has a mapping-table row, and only a yes to that row writes it. An event whose result equals what it holds SHALL NOT be written. In every mode, a difference that comes only from masking SHALL NOT raise the recommendation question; the move of an old line below the marker it causes SHALL wait for a write the event gets anyway (a restore after remove, a yes to a row that names it, a redecoration), and keep or nobody to answer SHALL write nothing for it. The block's item and location lines SHALL be rewritten masked whenever the layer writes the block.
 
 #### Scenario: The program moves a talk to another room
 
