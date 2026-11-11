@@ -288,7 +288,8 @@ final class ConferenceRecommendDocsTests: XCTestCase {
 
     /// MEDIUM 4: on a candidate set's set-level yes a decorated session takes the new marker too.
     func testACandidateSetsYesLeavesNoOrphan() throws {
-        try assertOnce("so no session is left under the old marker", in: Self.layer)
+        try assertOnce("takes the new marker with the rest of the set, as its row decides", in: Self.layer)
+        XCTAssertFalse(try read(Self.layer).contains("so no session is left under the old marker"))
         try assertOnce("A set-level row and the rename question each name the set's decorated sessions and say that their recommendations go on a yes", in: Self.layer)
         try assertOnce("A set-level row and the rename question SHALL each name the set's decorated sessions", in: Self.spec)
         try assertOnce("#### Scenario: A candidate set's set-level yes", in: Self.spec)
@@ -333,6 +334,32 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         try assertOnce("as sub-lines of line 3 of `conference.md` section 7", in: Self.layer)
         XCTAssertFalse(try read(Self.layer).contains("or for the standard listing"))
         try assertOnce("`conference_mode`", in: "plugin/README.md")
+    }
+
+    // MARK: - #346 verify round 5
+
+    /// MEDIUM: a partial correction triggers the module on the set's program, so it is a recommendation run.
+    func testAPartialCorrectionIsARecommendationRun() throws {
+        let phrase = "a partial correction (`conference.md` section 6) is a recommendation run too, judged on the program the thread or the existing set holds"
+        try assertOnce(phrase, in: Self.layer)
+        try assertOnce(phrase, in: Self.spec)
+        try assertOnce(phrase, in: Self.index)
+        try assertOnce("#### Scenario: A partial correction to a decorated slot", in: Self.spec)
+    }
+
+    /// LOWs of round 5.
+    func testSmallerRulesOfRoundFive() throws {
+        try assertOnce("when another event the pre-create comparison reads holds the slot, the row names that event and says that no creates nothing", in: Self.layer)
+        try assertOnce("#### Scenario: Another event holds the slot a moved event left", in: Self.spec)
+        try assertOnce("and from any line whose rest equals a line the module writes now, whether or not the marks line parses", in: Self.layer)
+        try assertOnce("except for a line the user added above the marker, which SHALL stay where it was", in: Self.spec)
+        try assertOnce("(a yes or a remove that takes a recommendation away rewrites them too: the `conference-recommend-layer` spec)", in: Self.conferenceSpec)
+        try assertOnce("(a yes or a remove that takes a recommendation away rewrites them too: `conference-recommend.md` section 1)", in: Self.standard)
+        try assertOnce("The standard notes are those of section 3: every line between the block and the marker pair, so a line the user added above the marker stays there, unchanged", in: Self.layer)
+        try assertOnce("decoded in one left-to-right pass", in: Self.layer)
+        try assertOnce("It is a choice row: a plain yes to the table does not answer it", in: Self.layer)
+        try assertOnce("read the event's standard form after this run's standard values", in: Self.layer)
+        try assertOnce("is a `recommend` run with `none` for every decorated slot it gives no pick", in: Self.layer)
     }
 
     func testIndexListsTheLayer() throws {
