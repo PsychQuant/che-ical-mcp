@@ -26,6 +26,29 @@ enum SeriesMoveUndo {
         return nil
     }
 
+    /// #511: the undo of a whole-series move whose way back crosses accounts is a create plus a delete,
+    /// as the forward move is, so #503's verdict (`verdict`, read only here) must be `none`; otherwise
+    /// the refusal text, naming the record's `title`. A redo of a move does not write; a one-off has no
+    /// deletions; within one account the move kept them (measured). An unknown account counts as across
+    /// (`movesAcrossAccounts`).
+    static func deletedOccurrenceRefusal(isSeries: Bool, verb: UndoHistoryVerb, acrossAccounts: Bool, title: String,
+                                         verdict: () throws -> DeletedOccurrenceCheck.Verdict) rethrows -> String? {
+        guard isSeries, verb == .undo, acrossAccounts else { return nil }
+        let result = try verdict()
+        return result == .none ? nil : DeletedOccurrenceCheck.undoAccountMoveReason(result, title: title)
+    }
+
+    /// PR #516 round 1: what #503's verdict lists for the undo of a whole-series move. A move made
+    /// through an occurrence's own id (#426) records that id, whose object has no rules of its own, so
+    /// the series behind it is listed under the part before `/RID=` (`seriesOf`), as the forward move
+    /// does. nil when that series cannot be named or read, which the caller refuses as not listed.
+    static func verdictTarget<Event>(id: String, isDetached: Bool, resolved: Event,
+                                     seriesOf: (String) throws -> Event?) rethrows -> (series: Event, id: String)? {
+        guard DetachedOccurrenceSpan.addressesOneOccurrence(identifier: id, isDetached: isDetached) else { return (resolved, id) }
+        guard let seriesID = DetachedOccurrenceSpan.seriesIdentifier(of: id), let series = try seriesOf(id) else { return nil }
+        return (series, seriesID)
+    }
+
     /// - nothing resolved and nothing stored (`stored` is asked only here): nil, which
     ///   `UndoTargetCheck` reports as not found;
     /// - nothing resolved but the identifier is stored: the residual not-found;
@@ -48,17 +71,6 @@ enum SeriesMoveUndo {
     /// write by another process (Calendar.app, a sync) landing between the two refreshes would be
     /// seen only by the second one. The window is a few lines of code long, so it is accepted
     /// rather than closed by moving the account check into the comparison.
-    /// #511: the undo of a whole-series move whose way back crosses accounts is a create plus a delete,
-    /// as the forward move is, so #503's verdict (`verdict`, read only here) must be `none`; otherwise
-    /// the refusal text. A redo of a move does not write; a one-off has no deletions; within one account
-    /// the move kept them (measured). An unknown account counts as across (`movesAcrossAccounts`).
-    static func deletedOccurrenceRefusal(isSeries: Bool, verb: UndoHistoryVerb, acrossAccounts: Bool,
-                                         verdict: () -> DeletedOccurrenceCheck.Verdict) -> String? {
-        guard isSeries, verb == .undo, acrossAccounts else { return nil }
-        let result = verdict()
-        return result == .none ? nil : DeletedOccurrenceCheck.undoAccountMoveReason(result)
-    }
-
     static func decide<Event>(_ expected: UndoPostState, verb: UndoHistoryVerb, stored: () throws -> Bool,
                               resolved: Resolved<Event>?, original: OriginalCalendar?,
                               missingOriginal: () -> Error?) throws -> Event? {

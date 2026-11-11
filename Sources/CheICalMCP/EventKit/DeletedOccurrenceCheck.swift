@@ -428,8 +428,10 @@ enum DeletedOccurrenceCheck {
 
     /// #511: the undo of a whole-series move back to a calendar of another account, refused as the
     /// forward move is (`accountMoveReason`). The record is kept, so the text gives #269's way on.
-    static func undoAccountMoveReason(_ verdict: Verdict) -> String {
-        "Cannot undo the move: moving the whole series back to its original calendar in another account is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(foundText(verdict)). Nothing was written and this history entry was kept. Move the series back in Calendar if it should go back; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+    /// PR #516 round 1: the event named; Calendar's own move back is the same unmeasured move, so the
+    /// text says to check the deleted occurrences after it; an unreadable account counts as another.
+    static func undoAccountMoveReason(_ verdict: Verdict, title: String) -> String {
+        "Cannot undo the move of the recurring event '\(undoShownTitle(title))': moving the whole series back to its original calendar in another account (or one whose account could not be read) is a create plus a delete, and whether the new series keeps the occurrences deleted on its own was not measured (#503), \(foundText(verdict)). Nothing was written and this history entry was kept. If it should go back, move it in Calendar, which may also bring back the occurrences deleted on their own, so check them afterwards; then ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
     }
 
     /// MEDIUM 2 of round 6 (measured on iCloud, 2026-11-09): the fields that kept the deletions, and the spans.

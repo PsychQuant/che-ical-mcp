@@ -881,10 +881,16 @@ stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二�
 
 1. `--cli` 在 A 建從下週開始、每週 5 場、有 `end_date` 的系列 → session：`move_events_batch` 用系列 ID、span `all` 搬到 G
    （沒有刪過的場次，#503 放行），記下回應裡的新 ID；
-2. `--cli` 用新 ID 的 `delete_event` span `this` 刪掉第三場；
-3. session：`undo`：要以「Cannot undo the move: moving the whole series back to its original calendar in another account is a
-   create plus a delete」拒絕（訊息含 `#503` 與 `discard_id`），什麼都沒寫：另一次 `--cli` 的 `list_events` 讀回 G 有 4 場、A 沒有；
-   `undo_history` 最上面仍是那筆搬移 → `undo` 帶它的 `discard_id` 移除；
-4. 對照組：同第 1 步但不刪場次 → session：`undo`：系列回到 A，5 場都在。跨帳號搬回本身沒有量過，記下讀回的場次數。
+2. 另一次 `--cli` 的 `list_events`（只列 G）讀回搬過去的 5 場，依開始時間取第三場自己的 id（含 `/RID=`）→ `--cli` 的
+   `delete_event` span `this` 用那個 id（或用系列 ID 加第三場的 `occurrence_date`）刪掉它 → 再一次 `--cli` 的 `list_events`
+   確認第一場還在、第三場不見（4 場）。刪錯了就停下來，這一步不算數；
+3. session：先 `list_events`（只列 G），確認 session 也看到 4 場；仍是 5 場就停下來回報（跨 process 的刪除沒傳到長駐 store，
+   見 #287 的同一個檢查）→ session：`undo`：要以「Cannot undo the move of the recurring event '…': moving the whole series back
+   to its original calendar in another account」拒絕（訊息含系列標題、`#503`、`check them afterwards` 與 `discard_id`），
+   什麼都沒寫：另一次 `--cli` 的 `list_events` 讀回 G 有 4 場、A 沒有；`undo_history` 最上面仍是那筆搬移 → `undo` 帶它的
+   `discard_id` 移除；
+4. 經場次自己的 id 搬（#426）：同第 1 步，但先用 `--cli` 單獨改第二場的標題，再用它自己的 id（含 `/RID=`）帶 span `all` 搬整串，其餘同第 2、3 步，結果要相同
+   （回應是那段拒絕，不是「the series could not be listed」）；
+5. 對照組：同第 1 步但不刪場次 → session：`undo`：系列回到 A，5 場都在。跨帳號搬回本身沒有量過，記下讀回的場次數。
 
 結果記在 #511。結束後刪掉拋棄式日曆（G 由使用者刪），隔一分鐘以上 `list_calendars` 兩次，名稱含 `#511` 的都是 0。
