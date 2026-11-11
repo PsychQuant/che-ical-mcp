@@ -98,7 +98,7 @@ final class ConferenceRecommendDocsTests: XCTestCase {
             return XCTFail("not-applied list not found")
         }
         let bullets = two[start.upperBound..<end.lowerBound].components(separatedBy: "\n").filter { $0.hasPrefix("- ") }
-        XCTAssertEqual(bullets.count, 7, "not-applied cases changed: \(bullets)")
+        XCTAssertEqual(bullets.count, 8, "not-applied cases changed: \(bullets)")
         XCTAssertTrue(bullets.contains { $0.contains("`（未報名）`") })
         // The shared rule "Whose event it is": an event with two modules' markers belongs to neither,
         // so the layer does not decorate it either.
@@ -177,8 +177,10 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         let layer = try read(Self.layer)
         let one = Self.section(layer, 1)
         XCTAssertTrue(one.contains("A request that names slots is a `recommend` run with `none` for those slots"))
-        XCTAssertTrue(one.contains("the standard flow would change any field of its standard form (title, start, end, location, notes, registration)"))
-        XCTAssertTrue(one.contains("from 60 days before to 365 days after the date the message names, or today when it names none"))
+        // Round 3 narrowed v1: a title or start change always has a row, so only the exact-match fields remain here,
+        // and a message without a program is no longer a recommendation run (the 60/365-day search is gone).
+        try assertOnce("an exact match whose end, location, notes or registration the standard flow would change", in: Self.layer)
+        XCTAssertFalse(one.contains("from 60 days before to 365 days after the date the message names"))
         XCTAssertTrue(one.contains("**On a first paste with picks**, the standard flow creates and reads back first"))
         let index = try read(Self.index)
         XCTAssertTrue(index.contains("no trigger, switch or calendar of its own"), "the index row must say the layer is not a module")
@@ -213,7 +215,7 @@ final class ConferenceRecommendDocsTests: XCTestCase {
     /// MEDIUM 3 (the client-side skip of another kind): only a timed event holds a session's slot.
     func testTheClientSideSkipNeedsATimedEvent() throws {
         let six = Self.section(try read(Self.standard), 6)
-        XCTAssertEqual(Self.count("a timed event whose standard title (its comparison title) equals the item's title", in: six), 1)
+        XCTAssertEqual(Self.count("a timed event whose comparison title equals the item's title", in: six), 1)
         try assertOnce("#### Scenario: A same-named all-day event does not block a session", in: Self.spec)
     }
 
@@ -234,9 +236,9 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         XCTAssertFalse(spec.contains("standard` only by the last rule"))
         try assertOnce("#### Scenario: A one-off recommendation under `conference_mode: standard`", in: Self.spec)
         try assertOnce("#### Scenario: Nobody answers the recommendation question", in: Self.spec)
-        try assertOnce("**The mapping-table row of every decorated event the table pairs with an item, well-formed or not, says that its recommendation goes on a yes**", in: Self.layer,
+        try assertOnce("**Every row that names a decorated event says that its recommendation goes on a yes**", in: Self.layer,
                        "a plain yes to the table must never remove a recommendation the user was not told about")
-        try assertOnce("The mapping-table row of every decorated event the table pairs with an item SHALL say that its recommendation goes on a yes.", in: Self.spec)
+        try assertOnce("Every row that names a decorated event SHALL say that its recommendation goes on a yes", in: Self.spec)
     }
 
     /// LOW: conference.md line 7's list of what is parsed from notes includes the layer's block.
@@ -250,6 +252,58 @@ final class ConferenceRecommendDocsTests: XCTestCase {
         let spec = try read(Self.spec)
         XCTAssertFalse(spec.contains("`conference-recommend-item: ES2026 午前1：… | 2026-11-10T10:30`"))
         try assertOnce("`conference-recommend-item: ES2026 午前1：… | 2026-11-10T10:30 Asia/Tokyo`", in: Self.spec)
+    }
+
+    // MARK: - #346 verify round 3 (v1 narrowed)
+
+    /// MEDIUM 6: a message without a program never reaches the module, so it is not a recommendation run.
+    func testPicksNeedAProgram() throws {
+        try assertOnce("**A message without a program** (only picks, or only a request to remove the recommendations) is not a recommendation run", in: Self.layer)
+        XCTAssertFalse(try read(Self.layer).contains("**A run without a program**"))
+        try assertOnce("a message with picks or a removal request and no program is not a recommendation run", in: Self.index)
+        XCTAssertFalse(try read(Self.index).contains("a run that only gives picks or asks to remove them"))
+        try assertOnce("SHALL NOT be a recommendation run", in: Self.spec)
+    }
+
+    /// MEDIUM 5: the layer writes only to an event no unanswered question names.
+    func testTheLayerWritesOnlyEventsNothingPendingNames() throws {
+        try assertOnce("**The events the layer may write** (closed list):", in: Self.layer)
+        try assertOnce("the event is not one the layer may write in this run (section 1)", in: Self.layer)
+        try assertOnce("#### Scenario: A pick while the slot's row is unanswered", in: Self.spec)
+        try assertOnce("#### Scenario: A pick while the rename question is unanswered", in: Self.spec)
+    }
+
+    /// MEDIUM 3: remove writes the stored standard form, never a title or start of its own.
+    func testRemoveWritesOnlyTheStoredStandardForm() throws {
+        try assertOnce("It never changes a title or a start on its own.", in: Self.layer)
+        try assertOnce("SHALL NOT change a title or a start on its own", in: Self.spec)
+    }
+
+    /// MEDIUM 2: the client-side skip reads every set's module events, so another set's decorated
+    /// session holds its slot as the server's skip did before #346.
+    func testTheClientSideSkipReadsEverySet() throws {
+        let phrase = "every module event the run's search of its calendar read (step 1, every set)"
+        try assertOnce(phrase, in: Self.standard)
+        try assertOnce(phrase, in: Self.spec)
+        XCTAssertFalse(try read(Self.standard).contains("the events already read in this run (the set of step 1 and the hand-built events of step 3)"))
+    }
+
+    /// MEDIUM 1: "no keeps" only when the client-side skip will hold the slot.
+    func testNoKeepsOnlyWhenTheSlotIsHeld() throws {
+        try assertOnce("the row reads \"no keeps <event> in its place\" only when its comparison title equals the item's title and it covers the item's start", in: Self.layer)
+        try assertOnce("#### Scenario: A block whose item line was deleted", in: Self.spec)
+    }
+
+    /// MEDIUM 4: on a candidate set's set-level yes a decorated session takes the new marker too.
+    func testACandidateSetsYesLeavesNoOrphan() throws {
+        try assertOnce("so no session is left under the old marker", in: Self.layer)
+        try assertOnce("#### Scenario: A candidate set's set-level yes", in: Self.spec)
+    }
+
+    /// LOW: a talk's room and number must name exactly one listing line.
+    func testATalkMustBeInTheSlot() throws {
+        try assertOnce("a talk's room and number do not name exactly one line of the slot's listing", in: Self.layer)
+        try assertOnce("#### Scenario: A pick whose number is not in the slot", in: Self.spec)
     }
 
     func testIndexListsTheLayer() throws {

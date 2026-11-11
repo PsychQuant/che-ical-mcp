@@ -9,7 +9,8 @@
 - 模式：這次的訊息 → 最近設定檔的 `conference_mode: standard | recommend`（與 `conference_module` 同一份設定檔、同一個查找）→ `standard`。推薦只在訊息要求、使用者回答移除、或使用者對寫明推薦會拿掉的對照表列回答 yes 時拿掉；其他情況先問一次要移除還是保留，沒人回答就保留。
 - 推薦過的事件在 notes 最上方帶一個區塊：推薦行、備選行、線上連結，以及三行狀態：`conference-recommend-item: <標準標題> | <起始>`（推薦層的項目識別碼）、`conference-recommend-location: <標準地點>`、`conference-recommend-marks: <加了標記的行號>`。標準流程讀這類事件時一律讀它的標準形式，所以重貼照常以標準標題加起始時間比對。
 - 關掉推薦就是把標準形式寫回去；重新計算推薦按被點名的時段套用新推薦。推薦層只改標題、地點、notes，不改時間、日曆、提醒，不建立也不刪除事件。
-- 不寫會議密碼或任何存取碼。
+- 不寫會議密碼或任何存取碼（推薦層自己寫的區塊、標題、地點）。
+- v1 範圍：推薦層只在帶議程、觸發會議模組的執行裡跑；只給推薦或只說移除、沒有議程的訊息不是推薦執行。推薦層只寫完全相符、沒有列點名、沒有待答的組或行事曆問題的場次（或這次新建的場次）。
 - 新 spec 能力 `conference-recommend-layer`（只有 ADDED），不依賴 `add-conference-module` 先封存。不改 Swift、不發 binary。
 
 ## Non-Goals

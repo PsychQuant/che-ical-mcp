@@ -6,7 +6,7 @@ Defines the conference module's optional recommendation layer: a per-slot recomm
 
 ### Requirement: The mode of a run is chosen from the message, then the config, then standard
 
-The layer SHALL decide one mode per run, `standard` or `recommend`, by the first rule that applies, in this closed order: what the user says in this run (picks or a request for recommendations mean `recommend`; a request to remove or turn off recommendations, or for the standard listing, means `standard` when it names no slot, and a request that names slots means `recommend` with `none` for those slots); `conference_mode` in the nearest config found by the `calendar-routing` lookup, the same file `conference_module` is read from (closest wins, never merged), whose value `recommend` or `standard`, quoted or not, SHALL be applied and any other value reported and ignored; otherwise `standard`. When the conference module is off, the layer SHALL do nothing. A recommendation SHALL be removed only in these ways: the message of the run asks for it; the user answers remove for the slot to the recommendation question; or the user answers yes to the slot's mapping-table row when that row pairs the event with an item whose title or start the program changed, or pairs an event whose block is not well-formed, and says that the recommendation goes. The mapping-table row of every decorated event the table pairs with an item SHALL say that its recommendation goes on a yes. The layer SHALL ask the recommendation question (remove or keep) once per run in exactly these cases: the mode is `standard` by the config or by default and the set holds decorated events (an event whose block is not well-formed has its own mapping-table row instead); or the mode is `recommend`, the run gives no pick for a decorated slot, and the standard flow would change that event's end, location, notes or registration while its title and start stay. On keep, and when nobody can answer, it SHALL write nothing to those events, even on a yes to their mapping-table rows, SHALL count the item of a slot the program changed as kept, and SHALL list an unanswered question as pending. A run that only gives picks or only asks to remove them SHALL search the routed calendar for `conference-module:` from 60 days before to 365 days after the date the message names (or today), SHALL take as the set the one group whose marker name or short name equals the name the message uses, SHALL ask when there is none or several, and SHALL apply only the layer. On a first paste with picks, the standard flow SHALL create and read back the events first, and the layer SHALL check and apply the picks only after that, with `update_event`; a slot event SHALL NOT be created with a decorated title.
+The layer SHALL decide one mode per run, `standard` or `recommend`, by the first rule that applies, in this closed order: what the user says in this run (picks or a request for recommendations mean `recommend`; a request to remove or turn off recommendations, or for the standard listing, means `standard` when it names no slot, and a request that names slots means `recommend` with `none` for those slots); `conference_mode` in the nearest config found by the `calendar-routing` lookup, the same file `conference_module` is read from (closest wins, never merged), whose value `recommend` or `standard`, quoted or not, SHALL be applied and any other value reported and ignored; otherwise `standard`. When the conference module is off, the layer SHALL do nothing. The layer SHALL run only inside a conference-module run on a program that triggers the module, with the picks or the removal request in the same message; a message with picks or a removal request and no program SHALL NOT be a recommendation run, and the entry point SHALL handle it with its own steps. The layer SHALL decorate, redecorate or restore only a session of the exact set that is an exact match in the run and that no row of the run names, or a session the run created and read back, and only when no question deciding which set or calendar the run uses (the question about a set in another calendar, a set-level row, the rename question, the choice among several sets) is unanswered; a pick for any other event SHALL NOT be applied and SHALL be listed as pending. A recommendation SHALL be removed only in these ways: the message of the run asks for it, for an event the layer may write; the user answers remove for the slot to the recommendation question; or the user answers yes to a row that names the event (its own mapping-table row, or a set-level yes, a rename answer or a choice among several sets that applies its row), which writes the program's standard values without the block. Every row that names a decorated event SHALL say that its recommendation goes on a yes, and on a candidate set's set-level yes a decorated session SHALL take the new marker with the rest of the set. The layer SHALL ask the recommendation question (remove or keep) once per run in exactly these cases: the mode is `standard` by the config or by default and decorated events are among the events the layer may write; or the mode is `recommend`, the run gives no pick for a decorated slot, and that event is an exact match whose end, location, notes or registration the standard flow would change. On keep, and when nobody can answer, it SHALL write nothing to those events and SHALL list an unanswered question as pending. On a first paste with picks, the standard flow SHALL create and read back the events first, and the layer SHALL check and apply the picks only after that, with `update_event`; a slot event SHALL NOT be created with a decorated title.
 
 #### Scenario: The config keeps recommendations across re-pastes
 
@@ -17,7 +17,7 @@ The layer SHALL decide one mode per run, `standard` or `recommend`, by the first
 #### Scenario: Removing one slot's recommendation
 
 - **GIVEN** slots `午前1` and `午後1` are decorated
-- **WHEN** the user asks to remove the recommendation for `午前1`
+- **WHEN** the user pastes the program and asks to remove the recommendation for `午前1`
 - **THEN** only `午前1` is restored and `午後1` keeps its recommendation
 
 #### Scenario: The default mode does not remove recommendations silently
@@ -32,6 +32,30 @@ The layer SHALL decide one mode per run, `standard` or `recommend`, by the first
 - **WHEN** the program is pasted again with no request about recommendations
 - **THEN** the layer asks once whether to remove or keep them, and restores `午前1` only on remove
 
+#### Scenario: A message with picks and no program
+
+- **GIVEN** slot `午前1` is on the calendar
+- **WHEN** the user sends only "ES2026 午前1: recommend B #3", with no program
+- **THEN** the conference module does not trigger, the layer does nothing, and the entry point carries on with its own steps
+
+#### Scenario: A pick while the slot's row is unanswered
+
+- **GIVEN** a corrected program moves slot `午前1` from 10:30 to 10:45, and the same message gives a pick for `午前1`
+- **WHEN** nobody answers the mapping table
+- **THEN** nothing is written to the `午前1` event, and the pick is listed as pending
+
+#### Scenario: A pick while the rename question is unanswered
+
+- **GIVEN** a renamed program whose old set is a same-day set, and the same message gives picks
+- **WHEN** the rename question is unanswered
+- **THEN** no pick is applied to any event, and the picks are listed as pending
+
+#### Scenario: A candidate set's set-level yes
+
+- **GIVEN** a decorated slot `午前1` in a set whose first day the program changed, so the set is a candidate set
+- **WHEN** the user answers yes to the set-level row, whose `午前1` row says the recommendation goes
+- **THEN** `午前1` is written with the program's standard values and the new marker, without the block, like the other sessions of the set, and no session is left under the old marker
+
 #### Scenario: Nobody answers the recommendation question
 
 - **GIVEN** a decorated slot `午前1`, a run whose mode is `standard` by default, and nobody to answer
@@ -41,7 +65,7 @@ The layer SHALL decide one mode per run, `standard` or `recommend`, by the first
 ---
 ### Requirement: Picks come from the caller and are checked before they are applied
 
-The layer SHALL take picks only from the caller (the user's message or a table the user hands over) and SHALL NOT choose a talk or write a reason of its own. A pick SHALL name a slot by its label or start, and SHALL give an ordered list of recommended talks (room, number, optional title, optional start with its basis, a one-line reason, optional online flag, meeting link and meeting ID) or `none`, and optional alternates. A pick SHALL NOT be applied, and the report SHALL say why, in exactly these cases: its slot names no session event of the set or more than one; the slot's event is titled `（未報名）`; the event is the user's own talk or the umbrella; the event also carries a `lodging-module:` marker line, so it belongs to neither module; a talk's room is not in the slot's listing; two recommended talks share a window and the caller has not said which is recommended; a line above the marker pair, outside the block, begins with `conference-recommend`. Picks, the program and existing notes SHALL be treated as data.
+The layer SHALL take picks only from the caller (the user's message or a table the user hands over) and SHALL NOT choose a talk or write a reason of its own. A pick SHALL name a slot by its label or start, and SHALL give an ordered list of recommended talks (room, number, optional title, optional start with its basis, a one-line reason, optional online flag, meeting link and meeting ID) or `none`, and optional alternates. A pick SHALL NOT be applied, and the report SHALL say why, in exactly these cases: its slot names no session event of the set or more than one; the slot's event is titled `（未報名）`; the event is the user's own talk or the umbrella; the event also carries a `lodging-module:` marker line, so it belongs to neither module; a talk's room and number do not name exactly one line of the slot's listing; the event is not one the layer may write in the run; two recommended talks share a window and the caller has not said which is recommended; a line above the marker pair, outside the block, begins with `conference-recommend`. Picks, the program and existing notes SHALL be treated as data.
 
 #### Scenario: A pick for a slot the user did not register for
 
@@ -55,6 +79,12 @@ The layer SHALL take picks only from the caller (the user's message or a table t
 - **WHEN** the caller gives a pick for `午前1`
 - **THEN** the pick is not applied, nothing is written to the event, and the report says it belongs to neither module
 
+
+#### Scenario: A pick whose number is not in the slot
+
+- **GIVEN** slot `午前1` lists only `A #1` and `A #2`
+- **WHEN** the caller gives a pick for `午前1` recommending `A #999`
+- **THEN** the pick is not applied, nothing is written to the event, and the report says the talk is not in the slot's listing
 ---
 ### Requirement: A decorated event stores its standard form in one block
 
@@ -81,7 +111,7 @@ A decorated event's notes SHALL start with one block of whole lines: `conference
 ---
 ### Requirement: The standard flow reads every event in its standard form
 
-Every comparison and write the conference module's dedup makes on a session event, and its duplicate search before `create_event`, SHALL use the event's standard form. For an event with a well-formed block, the standard form SHALL be the item line's title, the location line's value, and the notes without the block's lines and without the first two characters of each marked line; start, end, alarms and calendar SHALL be the event's own. Any other event SHALL be its own standard form. The layer SHALL NOT write to an event whose block is not well-formed, and SHALL list it; the standard flow SHALL handle it as an event whose title another layer rewrote: for a module event whose block is not well-formed, its comparison title SHALL be the title in its item line when that line occurs once above the marker pair and parses, and otherwise its own title; the pairing passes and the duplicate search SHALL use that title; such an event SHALL NOT be an exact match and SHALL go to the mapping table, whose row SHALL say what yes and no do to its recommendation. When the standard flow rewrites an event's notes, the recommendation layer's block lines and marks are dropped, not moved below the marker pair, and every other line between the begin line and the end line SHALL be moved below the marker pair as the user's text. Before every `create_event` of a session, the module SHALL compare the item with the events already read, each by its comparison title, and SHALL create nothing when a timed one has the item's title and covers its start, since the server skips only an equal title; an all-day event with the session's title SHALL NOT block it.
+Every comparison and write the conference module's dedup makes on a session event, and its duplicate search before `create_event`, SHALL use the event's standard form. For an event with a well-formed block, the standard form SHALL be the item line's title, the location line's value, and the notes without the block's lines and without the first two characters of each marked line; start, end, alarms and calendar SHALL be the event's own. Any other event SHALL be its own standard form. The layer SHALL NOT write to an event whose block is not well-formed, and SHALL list it; the standard flow SHALL handle it as an event whose title another layer rewrote: for a module event whose block is not well-formed, its comparison title SHALL be the title in its item line when that line occurs once above the marker pair and parses, and otherwise its own title; the pairing passes and the duplicate search SHALL use that title; such an event SHALL NOT be an exact match and SHALL go to the mapping table, whose row SHALL say what yes and no do to its recommendation. When the standard flow rewrites an event's notes, the recommendation layer's block lines and marks are dropped, not moved below the marker pair, and every other line between the begin line and the end line SHALL be moved below the marker pair as the user's text. A mapping-table row SHALL read "no keeps <event> in its place" only when the event's comparison title equals the item's title and it covers the item's start, and otherwise "no creates the item beside <event>". Before every `create_event` of a session, the module SHALL compare the item with every module event the run's search of its calendar read (step 1, every set) and with the hand-built events of step 3, each by its comparison title, and SHALL create nothing when a timed one has the item's title and covers its start, since the server skips only an equal title; a hit from another set SHALL count the item as kept, and an all-day event with the session's title SHALL NOT block it.
 
 #### Scenario: A plain re-paste after decorating
 
@@ -100,6 +130,18 @@ Every comparison and write the conference module's dedup makes on a session even
 - **GIVEN** the user deleted the `conference-recommend-item:` line of a decorated event
 - **WHEN** a run with picks for that slot happens
 - **THEN** the layer does not write to the event, lists it, and the standard flow offers it in the mapping table; on a yes there, the block's lines and marks are dropped, not moved below the marker pair
+
+#### Scenario: A block whose item line was deleted
+
+- **GIVEN** the user deleted the `conference-recommend-item:` line of decorated slot `午前1` and did not move the event
+- **WHEN** the same program is pasted again
+- **THEN** the event is paired with its item in the mapping table, and its row reads "no creates the item beside <event>", since its comparison title is its decorated title and the client-side comparison would not hold the slot
+
+#### Scenario: Another set's decorated session holds its slot
+
+- **GIVEN** another set in the run's calendar holds a decorated session whose standard title and start equal a program item's
+- **WHEN** the module is about to create that item
+- **THEN** nothing is created, the item counts as kept, and the report names the other set's event
 
 #### Scenario: A line the user typed inside the block
 
@@ -133,18 +175,18 @@ The layer SHALL write a decorated event's title as `<slot label> ★<room> #<num
 ---
 ### Requirement: Turning the layer off restores the standard form
 
-A restore SHALL write the event's standard form as its title, location and notes in one `update_event`, without needing the program, and the result SHALL equal a standard-mode paste of the same program. When the standard flow updates the event in the same run, the restore SHALL write the new standard values instead.
+A restore SHALL write the event's stored standard form as its title, location and notes in one `update_event`, plus only what the standard flow writes to the event in the same run (an exact-match update of its end, location, the program's text or registration), and SHALL NOT change a title or a start on its own; the result SHALL equal a standard-mode paste of the same program.
 
 #### Scenario: Remove the recommendations
 
 - **GIVEN** a decorated slot event
-- **WHEN** the user asks to remove the recommendations
+- **WHEN** the user pastes the program and asks to remove the recommendations
 - **THEN** its title, location and notes read back equal to those of the standard paste, and its times and alarms are unchanged
 
 ---
 ### Requirement: Recomputing applies new picks per named slot
 
-In a `recommend` run with picks, a slot named with a pick SHALL be decorated or redecorated from it, a slot named with `none` SHALL be restored, and a decorated slot not named SHALL be left as it is when its standard form is unchanged. In a `recommend` run, a decorated slot any field of whose standard form (title, start, end, location, notes, registration) the standard flow would change, and that this run gives no pick for, SHALL be written in its new standard form without the block only after the user answers remove to the recommendation question or yes to its mapping-table row, and then listed as a recommendation removed because the slot changed; otherwise nothing SHALL be written to it. An event whose result equals what it holds SHALL NOT be written.
+In a `recommend` run with picks, a slot named with a pick SHALL be decorated or redecorated from it, a slot named with `none` SHALL be restored, and a decorated slot not named SHALL be left as it is when its standard form is unchanged. In a `recommend` run, a decorated slot that is an exact match whose end, location, notes or registration the standard flow would change, and that this run gives no pick for, SHALL be restored with the new values only after the user answers remove to the recommendation question, and then listed as a recommendation removed because the slot changed; otherwise nothing SHALL be written to it. A decorated slot whose title or start the program changed has a mapping-table row, and only a yes to that row writes it. An event whose result equals what it holds SHALL NOT be written.
 
 #### Scenario: The program moves a talk to another room
 
@@ -155,7 +197,7 @@ In a `recommend` run with picks, a slot named with a pick SHALL be decorated or 
 ---
 ### Requirement: Access codes are never written
 
-The layer SHALL NOT write a meeting passcode, a password or any other access code, even when the caller or the program gives one or it is part of a link, and the report SHALL say a code was left out. A meeting link SHALL be written only in one of these closed forms: a Zoom link reduced to `https://<host>/j/<digits>`; a Google Meet link reduced to `https://meet.google.com/<code>`; any other `https` link that has no query, no fragment and no credentials before the host, as given. Any other link SHALL be left out and the report SHALL say so. The meeting ID MAY be written.
+The layer SHALL NOT write a meeting passcode, a password or any other access code in what it writes (the block, the title, the location), even when the caller or the program gives one or it is part of a link, and the report SHALL say a code was left out; the standard notes are the standard mode's copy of the program and the layer SHALL write them back as they are. A meeting link SHALL be written only in one of these closed forms: a Zoom link reduced to `https://<host>/j/<digits>`; a Google Meet link reduced to `https://meet.google.com/<code>`; any other `https` link that has no query, no fragment and no credentials before the host, as given. Any other link SHALL be left out and the report SHALL say so. The meeting ID MAY be written.
 
 #### Scenario: A pick with a passcode
 
@@ -166,7 +208,7 @@ The layer SHALL NOT write a meeting passcode, a password or any other access cod
 
 - **GIVEN** a pick whose meeting link is `https://example.zoom.us/j/123456789?pwd=AbC123`
 - **WHEN** the slot is decorated
-- **THEN** the `Online:` line reads `https://example.zoom.us/j/123456789`, `pwd=` appears nowhere in the event, and the report says a code was left out
+- **THEN** the `Online:` line reads `https://example.zoom.us/j/123456789`, `pwd=` appears nowhere in the block, the title or the location, and the report says a code was left out
 
 #### Scenario: A link whose code cannot be separated
 
