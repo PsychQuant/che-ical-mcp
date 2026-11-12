@@ -1693,7 +1693,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             kind: RecurringUpdateKind.of(hadRules: hadRules, hasRulesAfter: clearRecurrence ? false : (recurrenceRule != nil || hadRules),
                                          onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span),
             wholeSeries: applyToAll, throughOwnOccurrence: addressesOwnOccurrence, viaStandIn: resolved.viaStandIn,
-            requested: fields)
+            requested: fields, written: SeriesUpdateUndo.writtenValues(title: title, notes: notes, location: location))
 
         if let t = title { event.title = t }
 

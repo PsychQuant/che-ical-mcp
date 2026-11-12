@@ -38,14 +38,45 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
     func testThePlanGatesOnTheRecordableShapeBeforeListing() throws {
         let plan = try Self.body("func seriesUpdatePlan(", in: Self.arm)
         try assertOrder(["SeriesUpdateUndo.recordable(",
+                         "markNeedsRefresh()",
+                         "refreshIfNeeded()",
                          "captureSeriesExceptions(of: series)",
                          "SeriesUpdateUndo.covers("], in: plan)
+        XCTAssertTrue(plan.contains("defer { markNeedsRefresh() }"))
         let record = try Self.body("func seriesUpdateRecord(", in: Self.arm)
-        try assertOrder(["refreshIfNeeded()",
+        try assertOrder(["markNeedsRefresh()",
+                         "refreshIfNeeded()",
                          "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: plan.before.windows)",
                          "postWriteSnapshot(eventID: id, saved: series)",
-                         "SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue("], in: record)
+                         "SeriesUpdateUndo.occurrencesFollowOrKeep(before: plan.before, after: after, old: old,",
+                         "written: plan.written, fields: plan.fields)"], in: record)
         XCTAssertTrue(record.contains("defer { markNeedsRefresh() }"), "the next read of another call still refreshes")
+    }
+
+    /// Verify r1: the arguments of the gate's call sites, each once, so a bypass there turns a test red.
+    func testTheGateArgumentsAreThoseOfTheCall() throws {
+        let update = try Self.body("func updateEvent(", in: Self.manager)
+        let start = try XCTUnwrap(update.range(of: "let seriesPlan = seriesUpdatePlan(")).lowerBound
+        let end = try XCTUnwrap(update.range(of: "if let t = title { event.title = t }")).lowerBound
+        let call = String(update[start..<end])
+        for argument in ["series: masterEvent,",
+                         "wholeSeries: applyToAll, throughOwnOccurrence: addressesOwnOccurrence, viaStandIn: resolved.viaStandIn,",
+                         "requested: fields, written: SeriesUpdateUndo.writtenValues(title: title, notes: notes, location: location))",
+                         "onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span),"] {
+            XCTAssertEqual(SourcePins.ranges(of: argument, in: call).count, 1, argument)
+        }
+        let arm = SourcePins.code(try SourcePins.source(Self.arm))
+        XCTAssertEqual(SourcePins.ranges(of: "isICloud: Self.isICloudSeries(series)", in: arm).count, 2, "the plan and the undo arm")
+        XCTAssertEqual(SourcePins.ranges(of: "placeHasCoordinates: series.structuredLocation?.geoLocation != nil", in: arm).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "requested: requested, isICloud: Self.isICloudSeries(series),", in: arm).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "kind: kind, wholeSeriesCall: wholeSeries, throughOwnOccurrence: throughOwnOccurrence, viaStandIn: viaStandIn,", in: arm).count, 1)
+    }
+
+    /// Verify r1: keep_later_edits merges only one-off updates; this record is not routed to a merge arm.
+    func testKeepLaterEditsDoesNotMergeThisRecord() throws {
+        let dispatch = try Self.body("func executeUndoKeepingLaterEdits(", in: "EventKit/EventKitManager+KeepLaterEdits.swift")
+        XCTAssertNil(dispatch.range(of: ".updateSeries"))
+        XCTAssertTrue(dispatch.contains("default: return try await executeUndo(operation)"))
     }
 
     func testTheUndoArmChecksBeforeItWritesAndReadsBackAfter() throws {

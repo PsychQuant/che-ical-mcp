@@ -8,6 +8,8 @@ extension EventKitManager {
     /// What the record site knows before the save of a restorable update.
     struct SeriesUpdatePlan {
         let fields: [String]
+        /// The values the call wrote (`SeriesUpdateUndo.writtenValues`).
+        let written: [String: String]
         /// The series' exceptions before the save, over the window placed now.
         let before: SeriesExceptions
     }
@@ -20,27 +22,32 @@ extension EventKitManager {
     /// Called after every refusal of `updateEvent` and before its first field is assigned. Nil keeps
     /// the #236 marker: the shape is not restorable, or the series' exceptions cannot be listed, or
     /// the listing does not cover the whole series (a series with no end never is). Lists only when
-    /// the shape is restorable.
+    /// the shape is restorable, after a forced refresh (verify r1: without it a long-lived store can
+    /// list an occurrence edited elsewhere with its old fields, as the listing after the save is not).
     func seriesUpdatePlan(series: EKEvent, kind: RecurringUpdateKind?, wholeSeries: Bool, throughOwnOccurrence: Bool,
-                          viaStandIn: Bool, requested: Set<String>) -> SeriesUpdatePlan? {
+                          viaStandIn: Bool, requested: Set<String>, written: [String: String]) -> SeriesUpdatePlan? {
         guard let fields = SeriesUpdateUndo.recordable(
             kind: kind, wholeSeriesCall: wholeSeries, throughOwnOccurrence: throughOwnOccurrence, viaStandIn: viaStandIn,
             requested: requested, isICloud: Self.isICloudSeries(series),
             placeHasCoordinates: series.structuredLocation?.geoLocation != nil) else { return nil }
+        markNeedsRefresh()
+        refreshIfNeeded()
+        defer { markNeedsRefresh() }
         guard let before = captureSeriesExceptions(of: series) else { return nil }
         guard SeriesUpdateUndo.covers(before, firstStart: series.startDate, end: seriesExceptionsStore.seriesEnd(of: series)) else {
             return nil
         }
-        return SeriesUpdatePlan(fields: fields, before: before)
+        return SeriesUpdatePlan(fields: fields, written: written, before: before)
     }
 
     /// Called after the save: the record, with the series' exceptions listed again over the windows
     /// listed before the save, and the series read back as the undo reads it. Nil (the marker) when
     /// the series has no identifier, its exceptions cannot be listed now, or an occurrence edited on
-    /// its own already held a value the update wrote (`editedOccurrenceHoldsWrittenValue`). The
-    /// listing refreshes the store; the refresh flag is set again after it, so the next read of
+    /// its own is in neither measured shape (`SeriesUpdateUndo.occurrencesFollowOrKeep`). The listing
+    /// runs after a forced refresh; the refresh flag is set again after it, so the next read of
     /// another call still refreshes, as after any write.
     func seriesUpdateRecord(plan: SeriesUpdatePlan, series: EKEvent, old: EventSnapshot) -> SeriesUpdateRecord? {
+        markNeedsRefresh()
         refreshIfNeeded()
         defer { markNeedsRefresh() }
         guard let id = series.eventIdentifier, !id.isEmpty,
@@ -48,7 +55,8 @@ extension EventKitManager {
             return nil
         }
         let saved = postWriteSnapshot(eventID: id, saved: series)
-        guard !SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: plan.before, old: old, saved: saved, fields: plan.fields) else {
+        guard SeriesUpdateUndo.occurrencesFollowOrKeep(before: plan.before, after: after, old: old,
+                                                       written: plan.written, fields: plan.fields) else {
             return nil
         }
         return SeriesUpdateRecord(id: id, externalIdentifier: series.calendarItemExternalIdentifier, old: old,
@@ -78,7 +86,7 @@ extension EventKitManager {
             throw SeriesUpdateUndo.refusalError(refusal, title: record.saved.title)
         }
         guard let calendar = series.calendar else {
-            throw SeriesUpdateUndo.refusalError(.unlisted, title: record.saved.title)
+            throw SeriesUpdateUndo.refusalError(.noCalendar, title: record.saved.title)
         }
         record.old.applyRestoring(Set(record.fields), to: series, calendar: calendar)
         do {

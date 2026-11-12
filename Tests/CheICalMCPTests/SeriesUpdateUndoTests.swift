@@ -1,3 +1,4 @@
+import CoreLocation
 import EventKit
 import XCTest
 @testable import CheICalMCP
@@ -75,45 +76,114 @@ final class SeriesUpdateUndoTests: XCTestCase {
         XCTAssertEqual(recordable(coordinates: true), ["title"], "coordinates matter only when the location is written")
     }
 
-    /// Review before the PR: an occurrence edited on its own that already held the value the update
-    /// wrote cannot be told apart from one that took it from the series, so the inverse write could
-    /// overwrite its own edit. Such an update keeps the marker.
-    func testAnEditedOccurrenceHoldingTheWrittenValueKeepsTheMarker() {
-        let old = snapshot("Weekly", weekly: 5)
-        func detached(title: String, notes: String?, location: String?) -> SeriesExceptions {
-            let event = EKEvent(eventStore: SharedTestStore.store)
-            event.calendar = calendar
-            event.title = title
-            event.notes = notes
-            event.location = location
-            event.startDate = slot(3)
-            event.endDate = slot(3).addingTimeInterval(3600)
-            return SeriesExceptions(window: window, keptSlots: [slot(0)],
-                                    detached: [DetachedOccurrence(slot: slot(3), snapshot: EventSnapshot(from: event, includeRecurrence: false))])
+    /// #263 verify r1 (A): the two measured shapes of an occurrence edited on its own, judged from the
+    /// listings before and after the save, through the production rule. Anything else keeps the marker.
+    private func occurrence(title: String = "Weekly", notes: String? = nil, location: String? = nil,
+                            lat: Double? = nil, at week: Int = 3) -> DetachedOccurrence {
+        let event = EKEvent(eventStore: SharedTestStore.store)
+        event.calendar = calendar
+        event.title = title
+        event.notes = notes
+        event.location = location
+        event.startDate = slot(week)
+        event.endDate = slot(week).addingTimeInterval(3600)
+        if let lat {
+            let place = EKStructuredLocation(title: location ?? "Place")
+            place.geoLocation = CLLocation(latitude: lat, longitude: 121.5)
+            event.structuredLocation = place
         }
-        func saved(location: String?, notes: String? = nil, title: String = "Weekly") -> EventSnapshot {
-            let event = EKEvent(eventStore: SharedTestStore.store)
-            event.calendar = calendar
-            event.title = title
-            event.notes = notes
-            event.location = location
-            event.startDate = start
-            event.endDate = start.addingTimeInterval(3600)
-            return EventSnapshot(from: event)
-        }
-        let roomB = detached(title: "Weekly", notes: nil, location: "Room B")
-        XCTAssertTrue(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room B"), fields: ["location"]))
-        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room C"), fields: ["location"]),
-                       "its own value differs from the new one: kept by the store (measured for a title)")
-        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room B", title: "New"), fields: ["title"]),
-                       "only the written fields count")
-        let ownTitle = detached(title: "New", notes: nil, location: nil)
-        XCTAssertTrue(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: ownTitle, old: old, saved: saved(location: nil, title: "New"), fields: ["title"]))
-        let sameAsSeries = detached(title: "Weekly", notes: nil, location: nil)
-        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: sameAsSeries, old: old, saved: saved(location: nil, notes: "N"), fields: ["notes"]),
-                       "an occurrence that had the series' old value takes the new one and gets the old one back")
-        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: exceptions(kept: [0, 1]), old: old, saved: saved(location: "Room B"), fields: ["location"]),
-                       "no occurrence edited on its own")
+        return DetachedOccurrence(slot: slot(week), snapshot: EventSnapshot(from: event, includeRecurrence: false))
+    }
+
+    private func listing(_ detached: [DetachedOccurrence]) -> SeriesExceptions {
+        SeriesExceptions(window: window, keptSlots: [slot(0)], detached: detached)
+    }
+
+    private func seriesWith(notes: String?, location: String? = nil, title: String = "Weekly") -> EventSnapshot {
+        let event = EKEvent(eventStore: SharedTestStore.store)
+        event.calendar = calendar
+        event.title = title
+        event.notes = notes
+        event.location = location
+        event.startDate = start
+        event.endDate = start.addingTimeInterval(3600)
+        return EventSnapshot(from: event)
+    }
+
+    private func followOrKeep(before: [DetachedOccurrence], after: [DetachedOccurrence], old: EventSnapshot,
+                              written: [String: String]) -> Bool {
+        SeriesUpdateUndo.occurrencesFollowOrKeep(before: listing(before), after: listing(after), old: old,
+                                                 written: written, fields: SeriesUpdateUndo.restorableOrder.filter { written[$0] != nil })
+    }
+
+    func testAnOccurrenceThatFollowedOrKeptItsOwnValueIsRestorable() {
+        let old = seriesWith(notes: "Default")
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: "Default")], after: [occurrence(notes: "New")], old: old,
+                                   written: ["notes": "New"]), "follows: the series' old value, then the new one")
+        XCTAssertTrue(followOrKeep(before: [occurrence(title: "Own")], after: [occurrence(title: "Own")], old: seriesWith(notes: nil),
+                                   written: ["title": "Changed"]), "keeps: an own title different from both")
+        XCTAssertTrue(followOrKeep(before: [], after: [], old: old, written: ["notes": "New"]), "no occurrence edited on its own")
+    }
+
+    /// Codex's scenario: the series' notes are Default, occurrence 3 has its own Private, the update
+    /// writes New. Whether it took New or kept Private, a later shape decides.
+    func testAnOwnValueTheWriteReplacedKeepsTheMarker() {
+        let old = seriesWith(notes: "Default")
+        XCTAssertFalse(followOrKeep(before: [occurrence(notes: "Private")], after: [occurrence(notes: "New")], old: old,
+                                    written: ["notes": "New"]), "its own Private was replaced: the inverse would write Default")
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: "Private")], after: [occurrence(notes: "Private")], old: old,
+                                   written: ["notes": "New"]), "Private kept: neither write touches it")
+    }
+
+    func testAnOccurrenceAlreadyHoldingTheWrittenValueKeepsTheMarker() {
+        let old = seriesWith(notes: nil, location: "Room A")
+        XCTAssertFalse(followOrKeep(before: [occurrence(location: "Room B")], after: [occurrence(location: "Room B")], old: old,
+                                    written: ["location": "Room B"]), "it cannot be told from one that followed")
+        XCTAssertFalse(followOrKeep(before: [occurrence(title: "New")], after: [occurrence(title: "New")], old: seriesWith(notes: nil),
+                                    written: ["title": "New"]))
+    }
+
+    func testAnOccurrenceThatDidNotFollowOrChangedOtherwiseKeepsTheMarker() {
+        let old = seriesWith(notes: "Default")
+        XCTAssertFalse(followOrKeep(before: [occurrence(notes: "Default")], after: [occurrence(notes: "Default")], old: old,
+                                    written: ["notes": "New"]), "it had the old value and did not take the new one")
+        XCTAssertFalse(followOrKeep(before: [occurrence(notes: "Default")], after: [occurrence(notes: "Other")], old: old,
+                                    written: ["notes": "New"]))
+        XCTAssertFalse(followOrKeep(before: [occurrence(title: "Own", notes: "Default")], after: [occurrence(title: "Own 2", notes: "New")], old: old,
+                                    written: ["notes": "New"]), "another field changed too")
+        XCTAssertFalse(followOrKeep(before: [occurrence(notes: "Default")], after: [], old: old, written: ["notes": "New"]),
+                       "the detached slots before and after differ")
+        XCTAssertFalse(followOrKeep(before: [], after: [occurrence(notes: "New")], old: old, written: ["notes": "New"]))
+        XCTAssertFalse(followOrKeep(before: [occurrence(notes: "Default", at: 3)], after: [occurrence(notes: "New", at: 4)], old: old,
+                                    written: ["notes": "New"]))
+        XCTAssertFalse(SeriesUpdateUndo.occurrencesFollowOrKeep(before: listing([]), after: listing([]), old: old, written: [:], fields: ["notes"]),
+                       "a field without its written value (fail closed)")
+    }
+
+    func testNilAndEmptyTextAreTheSameInTheRule() {
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: nil)], after: [occurrence(notes: "New")], old: seriesWith(notes: ""),
+                                   written: ["notes": "New"]))
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: "Old")], after: [occurrence(notes: "")], old: seriesWith(notes: "Old"),
+                                   written: ["notes": ""]), "a cleared field that reads back as empty")
+    }
+
+    func testAnEditedOccurrenceWithCoordinatesKeepsTheMarkerWhenLocationIsWritten() {
+        let old = seriesWith(notes: nil, location: "Room A")
+        XCTAssertFalse(followOrKeep(before: [occurrence(location: "Room A", lat: 25.0)], after: [occurrence(location: "Room B")], old: old,
+                                    written: ["location": "Room B"]))
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: "Default", lat: 25.0)], after: [occurrence(notes: "New", lat: 25.0)],
+                                   old: seriesWith(notes: "Default"), written: ["notes": "New"]), "only when location is written")
+    }
+
+    func testTheWrittenValuesComeFromTheCall() {
+        XCTAssertEqual(SeriesUpdateUndo.writtenValues(title: "T", notes: nil, location: ""), ["title": "T", "location": ""])
+    }
+
+    func testThisRecordComparesNilAndEmptyTextAsTheSame() {
+        let a = seriesWith(notes: nil, location: nil), b = seriesWith(notes: "", location: "")
+        XCTAssertEqual(SeriesUpdateUndo.changedFields(a, b), [])
+        XCTAssertEqual(SeriesUpdateUndo.changedFields(a, seriesWith(notes: "x")), ["notes"])
+        XCTAssertFalse(a.changedFields(in: b, restoring: nil).isEmpty, "#236's guard is unchanged")
     }
 
     /// The #416 and #428 routes write through an occurrence's own object: never the series kind.
@@ -138,6 +208,14 @@ final class SeriesUpdateUndoTests: XCTestCase {
         XCTAssertFalse(SeriesUpdateUndo.isICloud(sourceType: .local, sourceTitle: "iCloud"))
         XCTAssertFalse(SeriesUpdateUndo.isICloud(sourceType: .subscribed, sourceTitle: "iCloud"))
         XCTAssertFalse(SeriesUpdateUndo.isICloud(sourceType: nil, sourceTitle: "iCloud"), "no source refuses")
+    }
+
+    /// Verify r1: the gate reads the series' own calendar; one with no account is not iCloud.
+    func testAnEventWithoutAnAccountIsNotAnICloudSeries() {
+        let event = EKEvent(eventStore: SharedTestStore.store)
+        XCTAssertFalse(EventKitManager.isICloudSeries(event), "no calendar")
+        event.calendar = calendar
+        XCTAssertFalse(EventKitManager.isICloudSeries(event), "a calendar with no source")
     }
 
     // MARK: - Coverage
@@ -239,7 +317,7 @@ final class SeriesUpdateUndoTests: XCTestCase {
     func testRefusalsKeepTheRecordAndGiveTheWayOn() {
         let r = record()
         let refusals: [SeriesUpdateUndo.Refusal] = [
-            .identity, .ruleChanged, .notICloud, .notCovered, .unlisted,
+            .identity, .ruleChanged, .notICloud, .notCovered, .unlisted, .noCalendar,
             .exceptionsChanged(SeriesUpdateUndo.diff(recorded: r.after, current: exceptions(kept: [0], detached: [(3, "Own"), (2, "x")]))),
         ]
         for refusal in refusals {
@@ -289,7 +367,7 @@ final class SeriesUpdateUndoTests: XCTestCase {
 
     func testTheUndoneTextNamesTheRestoredFields() {
         XCTAssertEqual(SeriesUpdateUndo.undoneMessage(record(fields: ["title", "notes", "location"])),
-                       "Undone: restored the title, notes and location of the whole recurring event 'Before' to their values before the update; its occurrences edited or deleted on their own were checked before and after the write and are as they were before the update")
+                       "Undone: restored the title, notes and location of the whole recurring event 'Before' to their values before the update; its occurrences edited or deleted on their own within a year of the series' dates were listed before and after the write and are as they were before the update")
         XCTAssertTrue(SeriesUpdateUndo.undoneMessage(record(fields: ["notes"])).hasPrefix("Undone: restored the notes of the whole recurring event"))
     }
 
@@ -308,6 +386,7 @@ final class SeriesUpdateUndoTests: XCTestCase {
         XCTAssertEqual(restoring?.title, "Before")
         XCTAssertNil(op.recurringTargetRefusal(hasRecurrenceRules: true, isDetached: false), "the one record that writes to a series")
         XCTAssertNil(op.batchMemberUndoRefusal)
+        XCTAssertNil(op.updateRefusalNote(changedElsewhere: ["location"]), "no keep_later_edits note (verify r1)")
         XCTAssertEqual(op.replacingEventIdentifier("S", with: "T").undoPostState?.itemID, "T", "#435")
     }
 }

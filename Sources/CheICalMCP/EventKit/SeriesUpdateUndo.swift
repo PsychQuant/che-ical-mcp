@@ -81,30 +81,85 @@ enum SeriesUpdateUndo {
         return fields
     }
 
-    /// Whether an occurrence edited on its own held, before the update, the value the update wrote to
-    /// a field, while the series held another. After the update it cannot be told from an occurrence
-    /// that took the value from the series, so the inverse write could replace its own edit (the
-    /// measured shape kept an own title that differed from both values). Such an update keeps the
-    /// marker. nil and empty text are the same, as `differsFromSeries` reads them.
-    static func editedOccurrenceHoldsWrittenValue(before: SeriesExceptions, old: EventSnapshot, saved: EventSnapshot,
-                                                  fields: [String]) -> Bool {
-        func value(_ field: String, _ event: EventSnapshot) -> String? {
-            switch field {
-            case "title": return event.title
-            case "notes": return event.notes ?? ""
-            case "location": return event.location ?? ""
-            default: return nil
-            }
-        }
-        return fields.contains { field in
-            guard let new = value(field, saved), let was = value(field, old), new != was else { return false }
-            return before.detached.contains { value(field, $0.snapshot) == new }
+    /// The values the call wrote, read from the call (not from the read-back after the save, which
+    /// may be stale in the same process), for the fields it passed; nil and "" are the same.
+    static func writtenValues(title: String?, notes: String?, location: String?) -> [String: String] {
+        var written: [String: String] = [:]
+        if let title { written["title"] = title }
+        if let notes { written["notes"] = notes }
+        if let location { written["location"] = location }
+        return written
+    }
+
+    /// A restorable field of `event` as this record compares it: nil and "" are the same (as
+    /// `differsFromSeries` reads them); nil for a field that is not restorable.
+    static func normalised(_ field: String, _ event: EventSnapshot) -> String? {
+        switch field {
+        case "title": return event.title
+        case "notes": return event.notes ?? ""
+        case "location": return event.location ?? ""
+        default: return nil
         }
     }
 
-    /// Whether the listing saw every occurrence of the series: it starts and ends inside one of the
-    /// listed windows (`SeriesExceptionsPlanner.deleteWindow`, at most 1460 days). A series with no
-    /// end, or whose end cannot be shown, is never covered, so its update stays the marker.
+    /// `changedFields` of two snapshots for this record's comparisons, with nil and "" the same in
+    /// notes and location (verify r1: a store can read a cleared field back either way). #236's guard
+    /// is not changed.
+    static func changedFields(_ a: EventSnapshot, _ b: EventSnapshot) -> [String] {
+        a.changedFields(in: b, restoring: nil).filter { field in
+            switch field {
+            case "notes", "location":
+                return normalised(field, a) != normalised(field, b)
+            case "structured_location":
+                // A place without coordinates is its title; an empty location string reads back as an
+                // empty place title in memory, an absent one as none.
+                let noCoordinates = a.structuredLocationLat == nil && b.structuredLocationLat == nil
+                return !(noCoordinates && (a.structuredLocationTitle ?? "") == (b.structuredLocationTitle ?? ""))
+            default:
+                return true
+            }
+        }
+    }
+
+    /// #263 verify r1 (A): whether every occurrence edited on its own is in one of the two shapes whose
+    /// inverse was measured (Diagnosis 2026-11-09), judged from the listings before and after the save.
+    /// The detached slots before and after must be the same set, and for each such occurrence and each
+    /// restored field exactly one of these holds; nothing else of the occurrence changed:
+    /// - **follows**: it had the series' old value and has the written value (measured: it took the new
+    ///   notes and location, and the inverse write gave the old ones back);
+    /// - **keeps**: its own value differs from both the series' old value and the written one, and did not
+    ///   change (measured: an own title different from both values was kept by both writes). An
+    ///   occurrence that had the series' old value and did not take the new one is neither (not measured).
+    /// Anything else keeps the marker: an own value the write replaced (it had another value and has the
+    /// written one now), an occurrence that already held the written value (it cannot be told from one
+    /// that followed), one that did not follow, or one that changed in another field. When `location` is
+    /// written, an occurrence whose place has coordinates keeps the marker too: writing the string back
+    /// cannot give them back (as for the series' own place). nil and "" are the same.
+    static func occurrencesFollowOrKeep(before: SeriesExceptions, after: SeriesExceptions, old: EventSnapshot,
+                                        written: [String: String], fields: [String]) -> Bool {
+        guard fields.allSatisfy({ written[$0] != nil }) else { return false }
+        guard before.detached.count == after.detached.count else { return false }
+        if fields.contains("location"), before.detached.contains(where: { $0.snapshot.structuredLocationLat != nil }) { return false }
+        for was in before.detached {
+            guard let now = after.detached.first(where: { UndoPostState.sameInstant($0.slot, was.slot) }) else { return false }
+            guard Set(changedFields(was.snapshot, now.snapshot)).isSubset(of: Set(fields)) else { return false }
+            for field in fields {
+                guard let b = normalised(field, was.snapshot), let a = normalised(field, now.snapshot),
+                      let o = normalised(field, old), let n = written[field] else { return false }
+                let follows = b == o && a == n
+                let keeps = b == a && b != n && b != o
+                guard follows != keeps else { return false }
+            }
+        }
+        return true
+    }
+
+    /// Whether the series starts and ends inside one of the listed windows
+    /// (`SeriesExceptionsPlanner.deleteWindow`, at most 1460 days), so every slot of its rule is listed
+    /// over. A series with no end, or whose end cannot be shown, is never covered, so its update stays
+    /// the marker. Known limit (as for the delete-undo): the listing reaches a year past each window, so
+    /// an occurrence edited on its own and moved further than that is not listed; its slot counts as
+    /// deleted, and it is not checked or compared.
     static func covers(_ exceptions: SeriesExceptions, firstStart: Date, end: SeriesExceptionsPlanner.SeriesEnd) -> Bool {
         guard !exceptions.seriesStartsBeforeWindow, !exceptions.seriesContinuesAfterWindow,
               !exceptions.seriesMayContinueAfterWindow else { return false }
@@ -147,7 +202,7 @@ enum SeriesUpdateUndo {
             switch (detached(recorded.detached, at: slot), detached(current.detached, at: slot)) {
             case (nil, nil): continue
             case let (was?, now?):
-                if !was.snapshot.changedFields(in: now.snapshot, restoring: nil).isEmpty { result.edited.append(slot) }
+                if !changedFields(was.snapshot, now.snapshot).isEmpty { result.edited.append(slot) }
             default:
                 result.edited.append(slot)
             }
@@ -180,6 +235,8 @@ enum SeriesUpdateUndo {
         case notICloud
         case notCovered
         case unlisted
+        /// The series has no calendar now (verify r1 INFO).
+        case noCalendar
         case exceptionsChanged(ExceptionsDiff)
     }
 
@@ -213,6 +270,8 @@ enum SeriesUpdateUndo {
             reason = "the series no longer ends within the dates its occurrences were listed over, so occurrences changed after the update could not all be checked"
         case .unlisted:
             reason = "the occurrences of the series could not be listed to check them"
+        case .noCalendar:
+            reason = "the series has no calendar now"
         case .exceptionsChanged(let diff):
             reason = "occurrences of the series were changed on their own after the update (\(changedCounts(diff)))"
         }
@@ -239,7 +298,7 @@ enum SeriesUpdateUndo {
     static func readBackMismatch(_ record: SeriesUpdateRecord, readBack: ReadBack) -> [String] {
         var mismatch: [String] = []
         if let series = readBack.series {
-            let changed = record.old.changedFields(in: series, restoring: nil)
+            let changed = changedFields(record.old, series)
             mismatch += record.fields.filter(changed.contains)
             if !RecurrenceRuleSnapshot.sameRules(record.old.recurrenceRules, series.recurrenceRules, allDay: record.old.isAllDay) {
                 mismatch.append("recurrence")
@@ -266,7 +325,7 @@ enum SeriesUpdateUndo {
     }
 
     static func undoneMessage(_ record: SeriesUpdateRecord) -> String {
-        "Undone: restored the \(list(record.fields)) of the whole recurring event '\(undoVisibleTitle(record.old.title))' to \(record.fields.count == 1 ? "its value" : "their values") before the update; its occurrences edited or deleted on their own were checked before and after the write and are as they were before the update"
+        "Undone: restored the \(list(record.fields)) of the whole recurring event '\(undoVisibleTitle(record.old.title))' to \(record.fields.count == 1 ? "its value" : "their values") before the update; its occurrences edited or deleted on their own within a year of the series' dates were listed before and after the write and are as they were before the update"
     }
 
     /// "title", "title and notes", "title, notes and location".
